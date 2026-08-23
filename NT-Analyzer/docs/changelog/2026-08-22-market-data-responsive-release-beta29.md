@@ -1,6 +1,7 @@
 # Beta.29 — market-data fan-out and responsive acceptance
 
 Дата Development-проверки: `2026-08-23T01:29:45Z`.
+Дата release closeout: `2026-08-23T02:27:02Z`.
 
 ## Scope
 
@@ -72,10 +73,54 @@ per-user entitlement mapping.
 
 ## Release state
 
-Implementation acceptance: PASS. Git/CI/Canary/Production identity записывается
-после прохождения штатной цепочки из clean merged commit и одного signed
-immutable artifact. До этого live Canary/Production остаются beta.28.
+Release cycle: PASS.
+
+- implementation commit `93b357d73a3dcb8db294df6eb3d1dc301a83af9a`;
+- [PR #142](https://github.com/OMNOM-111/NT-Analyzer/pull/142), все пять
+  обязательных GitHub checks зелёные;
+- merge SHA `4d15f1d2250e2c52bde02b902d88ec7aad043543`;
+- candidate `rc_a7c6c0afb95d410f92474614efeb1b35`;
+- artifact `art_ccaadc3a536e4272809d32073f072918`;
+- build `sf-0.10.0-beta.29-4d15f1d2250e-20260823T020155Z`;
+- archive SHA256
+  `882FF3520DDD43BF65925F3DFA5AA95DA56107336DA98EFDC64146A81981195B`;
+- runtime/manifest SHA256
+  `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379`.
+
+Canary deployment `dep_de061542f96641e1a10b7bb4456c2df0` получил тот
+же artifact, прошёл authenticated owner UI/Documents/charts acceptance и был
+зафиксирован как `canary_passed` в `2026-08-23T02:08:54Z`. Production
+deployment `dep_8716b7cf463f4cf8af092ba6a4e5bdae` затем продвинул этот
+же artifact без rebuild и завершился `production_live` / external PASS в
+`2026-08-23T02:16:30Z`. Expand migrations корректно пропущены: pending `0`.
+
+Детерминированный executor ref и активный release-directory suffix для обоих
+окружений: `0.10.0-beta.29-4d15f1d2250e`; previous/rollback slot после
+promotion — принятый beta.28 `0.10.0-beta.28-36600dba3d73`. Executor на обоих
+переключениях проверил current symlink, manifest identity, signature,
+readiness и `same_immutable_artifact=true`.
+
+## Canary and Production live smoke
+
+- `/api/runtime/env` и `/api/health/ready` на обоих origins: beta.29, exact
+  merge SHA/build/runtime digest, `dirty=false`, ready PASS.
+- `theme.css`, `api.js`, `chart-engine.js` и `pages/desktop.js`: byte-identical
+  Canary ↔ Production и соответствуют принятому artifact.
+- Production owner login: `DMYTRO CHEREVKO`; два одновременных browser clients
+  получили MES 5m `7687.5` → `7,687.50` green и MNQ 5m `29370` →
+  `29,370.00` red, `external_live=true`, `price_marker_live=true`. MNQ 15m
+  повторил тот же live contract и был возвращён на 5m.
+- Production Admin: gateway `hub/direct_hub`, TopstepX `LIVE`; Canary и LOCAL:
+  `consumer/owner_gateway_consumer`. Browser resource inventory содержит
+  только same-origin StratForge bars/batch endpoints; direct TopstepX/ProjectX
+  browser requests и provider credentials: `0`.
+- Production responsive smoke на 390×844 и 768×1024: whole-document
+  horizontal overflow `0`; два chart windows сохранены. Полная 84/84 matrix
+  доказана тем же byte-identical artifact в Development.
+- CME был закрыт: новый raw trade не утверждается. Fresh quote/SignalR
+  heartbeat честно удерживал неизменившуюся цену в live green/red состоянии.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-23T01:29:45Z | GPT-5.5 через Codex по запросу owner | Создан технический acceptance snapshot beta.29: воспроизводимые fixes, 12-page fan-out evidence, responsive matrix и неизменённая entitlement boundary.
+2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Закрыта цепочка PR #142 → merge 4d15f1d → signed artifact → Canary acceptance → same-artifact Production; добавлены live chart, gateway, responsive и exact identity evidence.
 -->

@@ -1,7 +1,7 @@
 # StratForge AI External GPT Context Pack
 
 - Context Pack document: 00_STRATFORGE_CONTEXT_INDEX.md
-- Last verified UTC: 2026-08-14T06:20:00Z
+- Last verified UTC: 2026-08-23T02:27:02Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: Entry point, pack inventory, reading order and status legend
 - Status: DONE
@@ -20,13 +20,13 @@ GitHub, локальному компьютеру, серверу или runtime
 | Продукт | StratForge AI |
 | Техническое имя репозитория | `NT-Analyzer` |
 | Проверенный Git root | корень репозитория; живой продуктовый код находится в `NT-Analyzer/` |
-| Public version | `0.10.0-beta.1` |
+| Public version | `0.10.0-beta.29` |
 | Release status | `beta`, `pre_release` |
-| Repository evidence snapshot | `7ebda6faf2e7c64d4a707a41062b29857882181a` |
-| Operational release snapshot | Live Canary+Production process identity `1fae1f39` / build `sf-0.10.0-beta.1-1fae1f3966dc-20260814T052203Z` / artifact `08265412…`; previous slot `0f2a90ea`. Repository Documents/Charts follow-up is not that artifact. Historical Canary `7ebda6fa` and hang-fix Production `6b6dc458` remain in changelog |
-| DEV | `http://127.0.0.1:8765/ui/` `[DEV]`; local process was not listening in this session |
-| CANARY | `https://canary.stratforges.com` `[CANARY]`, process git `1fae1f39`, `instance=stratforge-canary-01`, DB `stratforge_canary` |
-| PRODUCTION | `https://app.stratforges.com` `[BETA]`, process git `1fae1f39`, `instance=stratforge-linux-production-01`, DB `stratforge_production` |
+| Repository evidence snapshot | deployed implementation merge `4d15f1d2250e2c52bde02b902d88ec7aad043543`; this operational docs-only closeout follows it |
+| Operational release snapshot | Canary+Production beta.29 / build `sf-0.10.0-beta.29-4d15f1d2250e-20260823T020155Z` / runtime artifact `CBA4FA70…2379`; archive `882FF352…195B`; previous slot beta.28 `0.10.0-beta.28-36600dba3d73` |
+| DEV | `http://127.0.0.1:8765/ui/` `[DEV]`; clean beta.29 merge, gateway consumer, load/responsive acceptance PASS |
+| CANARY | `https://canary.stratforges.com` `[CANARY]`, beta.29 `4d15f1d`, `instance=stratforge-canary-01`, isolated DB/storage/session, gateway consumer |
+| PRODUCTION | `https://app.stratforges.com` `[BETA]`, beta.29 `4d15f1d`, `instance=stratforge-linux-production-01`, isolated DB/storage/session, sole market-data hub |
 
 ## Порядок чтения
 
@@ -84,9 +84,8 @@ smaller external vocabulary.
 - **Repository evidence**: current code, schema, config and current canonical docs
 	that describe what the repository implements.
 - **Operational evidence**: the latest accepted release/deployment closeout
-	captured in canonical repo docs: current Canary in
-	[../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md), current Production in
-	[../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md).
+	captured in canonical repo docs: current Canary and Production in
+	[../changelog/2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md).
 - **Historical evidence**: plans, older audits and handoffs used only to explain
 	why the system looks the way it does today.
 
@@ -100,8 +99,9 @@ evidence. Do not collapse the two into one undifferentiated claim.
 - Docs tree and governance: [../DOCS_STRUCTURE.md](../DOCS_STRUCTURE.md), [../DOCUMENTATION_GOVERNANCE.md](../DOCUMENTATION_GOVERNANCE.md)
 - Environment and identity ADRs: [../adr/0001-environments-and-release-identity.md](../adr/0001-environments-and-release-identity.md), [../adr/0002-unified-identity.md](../adr/0002-unified-identity.md), [../adr/0003-trusted-devices-and-step-up.md](../adr/0003-trusted-devices-and-step-up.md), [../adr/0004-admin-panel-and-capabilities.md](../adr/0004-admin-panel-and-capabilities.md), [../adr/0005-immutable-release-promotion.md](../adr/0005-immutable-release-promotion.md)
 - Connector and market-data contracts: [../architecture/CONNECTOR_PROTOCOL_V1.md](../architecture/CONNECTOR_PROTOCOL_V1.md), [../architecture/MARKET_DATA_RESILIENCE_PLAN.md](../architecture/MARKET_DATA_RESILIENCE_PLAN.md), [../architecture/UI_API_MAP.md](../architecture/UI_API_MAP.md)
-- Operational release evidence: [../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md](../changelog/2026-08-14-live-identity-1fae1f39-and-server-chart-fix.md), [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md), [../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md](../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md), [../changelog/NEXT_ARCHITECTURE_CHANGELOG.md](../changelog/NEXT_ARCHITECTURE_CHANGELOG.md)
+- Operational release evidence: [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md), [../current/CLEAN_CLOSEOUT_HANDOFF.md](../current/CLEAN_CLOSEOUT_HANDOFF.md), [../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md](../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md), [../changelog/NEXT_ARCHITECTURE_CHANGELOG.md](../changelog/NEXT_ARCHITECTURE_CHANGELOG.md)
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Recorded live HTTP identity 1fae1f39 vs repository Documents/Charts follow-up; not STAGE CLOSED.
+2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Replaced obsolete beta.1 index snapshot with accepted beta.29 DEV/Canary/Production identity, gateway roles, rollback slot and canonical operational evidence.
 -->

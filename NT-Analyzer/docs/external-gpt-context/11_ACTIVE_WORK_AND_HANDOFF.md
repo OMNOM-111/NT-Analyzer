@@ -1,28 +1,29 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-08-23T01:29:45Z
+- Last verified UTC: 2026-08-23T02:27:02Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Repository baseline: beta.28 is live; beta.29 is active in Development
+- Repository baseline: beta.29 implementation merge is live; this operational docs-only closeout follows it
 - Candidate: `0.10.0-beta.29`
 - Scope: Market-data fan-out and responsive application acceptance
-- Status: IN DEVELOPMENT
-- Acceptance note: Development browser/load/responsive checks passed; PR, mandatory CI, immutable Canary acceptance and same-artifact Production promotion remain.
-- Current Production version/build/artifact when known: `0.10.0-beta.28`; build `sf-0.10.0-beta.28-36600dba3d73-20260821T031309Z`; runtime SHA256 `864F7D16C03999EF2119EA13C73FBD05DD7FF160E49ADD8EA6D02E91555D916C`
+- Status: DONE
+- Acceptance note: Development, PR/CI, immutable Canary acceptance and same-artifact Production promotion all passed; no market-data architecture rewrite was introduced.
+- Current Production version/build/artifact when known: `0.10.0-beta.29`; build `sf-0.10.0-beta.29-4d15f1d2250e-20260823T020155Z`; runtime SHA256 `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379`
 
 ## Current checkpoint
 
 | Field | Value |
 | --- | --- |
-| Current Git SHA | `7ebda6faf2e7c64d4a707a41062b29857882181a` remains the pack-wide verification baseline; current repository baseline is main `516480bce337eebbd3dbdae4da0a2a92ce9d934d` plus the unmerged beta.29 acceptance change set |
-| LOCAL | beta.29 implementation/browser acceptance PASS; `1924 passed`, `32 skipped`, `0 failed`; Git closeout pending |
-| Canary | beta.28 `36600dba`, runtime manifest `864F7D16...D916C`, authenticated owner UI/Documents/charts PASS |
-| Production | same beta.28 `36600dba` and runtime manifest, public live/ready/exact UI PASS; isolated owner login awaiting physical confirmation |
+| Current Git SHA | `7ebda6faf2e7c64d4a707a41062b29857882181a` remains the pack-wide verification baseline |
+| Deployed implementation SHA | `4d15f1d2250e2c52bde02b902d88ec7aad043543`; post-release operational docs-only closeout does not mutate the artifact |
+| LOCAL | beta.29 implementation/browser/load/responsive PASS; `1924 passed`, `32 skipped`, `0 failed`; main clean before docs closeout |
+| Canary | beta.29 `4d15f1d`, runtime manifest `CBA4FA70...2379`, authenticated owner UI/Documents/36-chart/second-client PASS |
+| Production | same beta.29 merge/build/runtime manifest; authenticated owner, two-client MES/MNQ, MNQ 15m and responsive smoke PASS |
 | Release parity | YES: same candidate/artifact/build/archive/runtime identity; no rebuild |
 | Market-data baseline | protected; TopstepX/SignalR/history/cache/failover order unchanged; only reproduced disconnect/refcount diagnostics fixed |
-| Secret rotation | explicitly deferred; do not rotate the four Google/Resend secrets |
+| Secret rotation | explicitly deferred; no Google/Resend or provider secret was exposed or rotated |
 
-## Implemented in the beta.29 change set
+## Released in beta.29
 
 - Responsive shell breakpoints keep environment/System controls reachable on
   large desktop, tablet and phone without whole-page horizontal overflow.
@@ -56,13 +57,17 @@
 Detailed evidence:
 [2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md).
 
-## Remaining release sequence
+## Completed release sequence
 
-1. Scoped commit, PR and mandatory CI.
-2. Merge clean implementation SHA and build/sign exactly one beta.29 artifact.
-3. Canary identity, authenticated UI/responsive/gateway acceptance.
-4. Promote the same accepted artifact to Production without rebuild and repeat
-   live identity/readiness smoke.
+1. [PR #142](https://github.com/OMNOM-111/NT-Analyzer/pull/142): five mandatory
+   checks green; merge `4d15f1d2250e`.
+2. Candidate `rc_a7c6c0afb95d410f92474614efeb1b35`, artifact
+   `art_ccaadc3a536e4272809d32073f072918`, archive
+   `882FF352...195B`, runtime manifest `CBA4FA70...2379`.
+3. Canary deployment `dep_de061542f96641e1a10b7bb4456c2df0` and acceptance
+   `2026-08-23T02:08:54Z`: PASS.
+4. Production deployment `dep_8716b7cf463f4cf8af092ba6a4e5bdae`, same artifact,
+   no rebuild, `production_live` at `2026-08-23T02:16:30Z`: PASS.
 
 ## Explicitly deferred / external
 
@@ -73,11 +78,11 @@ Detailed evidence:
   separate provider/security closeout.
 - Legal package publication remains `IN DEVELOPMENT` / DRAFT.
 
-## Stop conditions
+## Next development boundary
 
-Do not touch Canary/Production until the clean beta.29 merge and mandatory CI
-exist. Any code/UI/document correction after Canary acceptance starts a new
-artifact cycle; do not rebuild or hotfix an accepted artifact in place.
+Beta.29 infrastructure closeout is complete. New product work starts from a new
+Development branch/cycle. Any code, UI or user-document correction requires a
+new commit, artifact and Canary acceptance; do not hotfix beta.29 in place.
 
 ## Canonical evidence
 
@@ -96,4 +101,5 @@ artifact cycle; do not rebuild or hotfix an accepted artifact in place.
 2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Recorded 2790fb43 Canary visual acceptance, the real authoritative promotion state blocker and mandatory new release cycle; Production stayed beta.26.
 2026-08-21T03:50:00Z | GPT-5.5 через Codex по запросу owner | Closed the immutable beta.28 release sequence through accepted Canary and same-artifact Production; retained the physical Production Telegram login as the sole explicit interaction.
 2026-08-23T01:29:45Z | GPT-5.5 через Codex по запросу owner | Opened beta.29 release handoff with completed Development fan-out/responsive evidence and the exact remaining PR/CI/Canary/same-artifact Production sequence.
+2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Closed beta.29 handoff after PR #142, exact immutable Canary acceptance and same-artifact Production live promotion; remaining items are explicit external/product boundaries, not release blockers.
 -->

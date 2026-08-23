@@ -1,7 +1,7 @@
 # 08. UI, UX and Product Contracts
 
 - Context Pack document: 08_UI_UX_AND_PRODUCT_CONTRACTS.md
-- Last verified UTC: 2026-08-13T09:49:37Z
+- Last verified UTC: 2026-08-23T02:27:02Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: Major UI areas, visibility rules and important UX contracts
 - Status: DONE
@@ -22,6 +22,7 @@
 | Documents | ordinary user + owner | `PARTIAL` | governance/public docs with actor/reason aware saves and revisions |
 | Environment Switcher | owner / developer / admin | `PARTIAL` | separate-origin navigation by capability, not an in-place backend swap |
 | Release Center | owner / explicitly permitted operator | `BETA` | real clean-candidate/build/sign/Canary/check/rollback workflow; Production promotion remains a separate owner gate |
+| Responsive shell and drawers | all audiences | `DONE` | desktop/tablet/mobile reflow preserves important data and controls without whole-page horizontal overflow; chart geometry stacks below the compact breakpoint |
 
 ## Visibility contracts
 
@@ -50,21 +51,28 @@
   presentation layer.
 - Release Center should be treated as a structured owner/admin workflow, not as
   a public user feature.
-- The owner-facing workflow was accepted through a real Canary deploy and
-  rollback/re-promote rehearsal on artifact `7ebda6fa`; Production execution was
-  not approved or invoked.
-- Final design/spacing acceptance remains an owner gate. Functional chart
-  acceptance on clean `7ebda6fa` ran for `619.899 s` with MNQ/MES 5m across
-  independent in-app and Chrome clients and recorded `0` grey/OFF/non-live
-  marker states. Documents UI uses a mission-led CHARTER, nine legal DRAFT
-  badges and compact red/green semantic revisions with details collapsed.
+- The owner-facing workflow is live through beta.29 candidate
+  `rc_a7c6c0afb95d410f92474614efeb1b35`: authenticated Canary acceptance and
+  same-artifact Production promotion both passed.
+- Functional responsiveness passed 84/84 page/viewport checks from 2560×1440
+  to 360×800. Authenticated Production mobile/tablet smoke had zero
+  whole-document overflow; two-client MES/MNQ and MNQ 15m charts retained
+  colored live markers. Broader visual taste/design acceptance remains a
+  separate owner decision, not a functional blocker.
+- Documents UI uses a mission-led CHARTER, legal DRAFT badges and compact
+  red/green semantic revisions with details collapsed.
 
 ## Canonical evidence
 
 - [../architecture/UI_API_MAP.md](../architecture/UI_API_MAP.md)
 - [../adr/0004-admin-panel-and-capabilities.md](../adr/0004-admin-panel-and-capabilities.md)
 - [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md)
+- [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md)
 - `app/static/aurora/assets/ui.js`
 - `app/static/aurora/assets/api.js`
 - `app/static/aurora/assets/pages/desktop.js`
 - `app/static/aurora/assets/pages/documents.js`
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Replaced historical Canary-only UI acceptance with beta.29 84/84 responsive, authenticated Canary and same-artifact Production browser evidence.
+-->

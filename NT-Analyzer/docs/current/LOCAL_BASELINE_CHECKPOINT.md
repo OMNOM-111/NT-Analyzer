@@ -59,49 +59,36 @@ identities unique    yes
 `/api/account/security` (2 device), `/api/admin/development-sync` = `current`
 (running == head). LOCAL DB остаётся изолированной от Canary/Production.
 
-## Текущий checkpoint — FINAL PRODUCT ACCEPTANCE
+## Текущий checkpoint — BETA.29 RELEASE CLOSED
 
-Ранее указанная работа по UI завершена: единый модуль «Окружения и релизы»
-выпущен в PR #130, Admin navigation консолидирована в PR #131, а управление
-промоушеном из LOCAL с authoritative server-side решением — в PR #135.
+Реализованный market-data/chart baseline сохранён: TopstepX authentication,
+ProjectX SignalR protocol, history/cache/failover/rollover и candle rendering
+не рефакторились. Beta.29 исправляет только доказанные WebSocket close/refcount,
+reconnect observability, bounded Operations probes и responsive layout defects.
 
-Текущая release-кандидатура `0.10.0-beta.28` закрывает воспроизводимые
-closeout-дефекты без изменения market-data/chart архитектуры:
+Финальный LOCAL regression: `1924 passed`, `32 skipped`, `0 failed`; targeted
+market/chart/Operations/responsive: `251 passed`. Load acceptance на трёх
+browser profiles: 12 pages / 24 charts, peak `browser_ws=14`, `logical=22`,
+`wire=2`, `signalr=1`; после закрытия `browser_ws=2`, `logical=4`, direct
+provider/loginKey calls `0`. Responsive matrix: 84/84 checks, 2560×1440 →
+360×800, whole-document overflow `0`.
 
-1. LOCAL принимает решение о Production только от Canary/Production и только
-   для точных `candidate_id` + artifact SHA с действующим коротким TTL;
-   ответ другого кандидата, stale/replayed решение и Development-responder
-   блокируются fail-closed.
-2. Pytest больше не читает и не изменяет живой LOCAL `data/` как test root:
-   Production и Development получают раздельные disposable roots, а полный
-   suite завершается ошибкой при любом изменении live state. Корректность CI
-   больше не зависит от shared concurrency group.
-3. DEV dirty-state не выдаёт недоказанное утверждение о запущенном процессе,
-   HTTP observability считает реально отправленный status, а штатный abort при
-   навигации не создаёт ложную console/UI ошибку.
-4. В layout на 36 charts единая виртуальная сетка масштабируется под viewport;
-   соседнее окно больше не перекрывает timeframe/settings hit targets из-за
-   CSS minimum-размеров.
-
-Финальный LOCAL regression: `1915 passed`, `32 skipped`, `0 failed`; legacy
-release runner `13/13 suites passed`; live `data/` digest до и после совпал.
-TopstepX с NinjaTrader OFF подтверждён двумя MNQ/MES 5m browser clients на
-clean implementation commit непрерывно `610.473 s`; marker оставался live и
-прошёл две границы новых 5m candles.
-
-Этот blocker исправлен в PR #140 и слит в main как
-`36600dba3d739601660768db98b429b0f752ad1a`. Из clean merge SHA собран
-один signed immutable artifact `art_3537e6c88e554b0094554c75e403ce31`:
-build `sf-0.10.0-beta.28-36600dba3d73-20260821T031309Z`, archive
-`A5E906D27B49118AF4E7155B4F08217E433EF03CC598BF6BFB60DBF087005D8A`,
+[PR #142](https://github.com/OMNOM-111/NT-Analyzer/pull/142) прошёл все пять
+mandatory CI jobs и слит в main как
+`4d15f1d2250e2c52bde02b902d88ec7aad043543`. Из clean merge SHA собран один
+signed immutable artifact `art_ccaadc3a536e4272809d32073f072918`: build
+`sf-0.10.0-beta.29-4d15f1d2250e-20260823T020155Z`, archive
+`882FF3520DDD43BF65925F3DFA5AA95DA56107336DA98EFDC64146A81981195B`,
 runtime manifest
-`864F7D16C03999EF2119EA13C73FBD05DD7FF160E49ADD8EA6D02E91555D916C`.
+`CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379`.
 
-Canary acceptance: owner UI/Documents/Admin PASS; 36 charts без перекрытий;
-MES 5m + MNQ 5m непрерывно `610 s`, 26 row checks, ноль
-grey/OFF и price mismatches. Затем тот же artifact без rebuild
-продвинут в Production deployment
-`dep_030ba44c26bd4c3db40dc253adab5c42`; public live/ready и exact identity PASS.
+Canary deployment `dep_de061542f96641e1a10b7bb4456c2df0` прошёл owner
+UI/Documents/36-chart/second-client acceptance. Production deployment
+`dep_8716b7cf463f4cf8af092ba6a4e5bdae` продвинул тот же artifact без rebuild
+и завершился `production_live`. На живом Production два клиента совпали по
+MES/MNQ close и цветным live markers; MNQ 15m PASS; mobile/tablet document
+overflow `0`. Production — единственный gateway hub, Canary и LOCAL —
+consumers. Unrelated-user redistribution остаётся `EXTERNAL BLOCKED`.
 
 Физическое enrollment нового NinjaTrader Connector остаётся отдельной
 hardware-зависимой проверкой и не имитируется. Текущий Connector/NinjaTrader
@@ -116,4 +103,5 @@ Canary → acceptance → SAME artifact Production`.
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Актуализирован LOCAL checkpoint: закрытые PR #130/#131/#135, fail-closed release decision и полная test-root isolation для final acceptance beta.28.
 2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Добавлен фактический Canary PASS 2790fb43 и найденный в штатном promotion flow blocker approved_for_production; новый цикл обязателен, Production не менялся.
 2026-08-21T03:50:00Z | GPT-5.5 через Codex по запросу owner | Закрыт полный release cycle merge 36600dba → signed artifact → Canary acceptance → same-artifact Production; market-data baseline сохранён.
+2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Обновлён checkpoint после beta.29: чистый merge, зелёный PR #142, один immutable artifact, Canary/Production PASS, fan-out и responsive evidence.
 -->
