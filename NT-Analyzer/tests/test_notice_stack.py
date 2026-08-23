@@ -155,4 +155,6 @@ def test_a_phone_shows_at_most_two():
         start = found + 1
     phone = next(b[:b.index("\n}")] for b in blocks if ".sf-notice-wrap" in b[:900])
     assert ".sf-notice + .sf-notice + .sf-notice { display: none; }" in phone
-    assert "body.has-drawer .sf-notice-wrap { right: 10px; }" in phone
+    assert "top: 108px" in phone
+    assert "body.has-drawer .sf-notice-wrap { display: none; }" in phone
+    assert "body:has(.menu.open) .sf-notice-wrap { display: none; }" in phone

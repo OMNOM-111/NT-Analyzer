@@ -382,6 +382,11 @@ def handle_websocket_upgrade(handler: Any) -> bool:
                     continue
                 _on_client_message(client, msg)
                 client.flush()
+    except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+        # A browser can close the underlying TCP socket without completing the
+        # WebSocket close handshake (navigation, refresh, process exit).  This
+        # is a normal client disconnect: release its fan-out leases quietly.
+        pass
     finally:
         client.alive = False
         unregister_client(client)

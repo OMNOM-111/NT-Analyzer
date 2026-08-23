@@ -905,7 +905,17 @@ class OwnerGatewayChartAdapter:
                 "timeframe": str(timeframe or "1m"),
                 "consumers": set(),
             })
-            row.setdefault("consumers", set()).add(consumer)
+            consumers = row.setdefault("consumers", set())
+            # The browser WS can acquire first while its initial HTTP history
+            # request is still in flight.  In that ordering a later bootstrap
+            # must not survive the browser close as an orphan logical ref.  The
+            # direct TopstepX adapter enforces the same contract.
+            bootstrap = consumer.startswith("bootstrap:")
+            has_browser_consumer = any(
+                not str(item).startswith("bootstrap:") for item in consumers
+            )
+            if not (bootstrap and has_browser_consumer):
+                consumers.add(consumer)
             self._wire_subscribed_contract_ids.add(contract)
         self.connect()
         self._send_ws({"type": "subscribe", "exact_contract": contract, "timeframe": str(timeframe or "1m")})
@@ -1037,8 +1047,12 @@ class OwnerGatewayChartAdapter:
 
     async def _consume_ws(self, ws: Any) -> None:
         self._ws_client = ws
-        self._runtime_state = "AUTHENTICATED"
         with self._lock:
+            self._runtime_state = "AUTHENTICATED"
+            # A previous transport close is historical once the authenticated
+            # gateway connection has been re-established. Leaving it here made
+            # a healthy consumer look failed after any normal reconnect.
+            self._last_error = ""
             pending = [
                 {"type": "subscribe", "exact_contract": row.get("exact_contract"),
                  "timeframe": row.get("timeframe") or "1m"}

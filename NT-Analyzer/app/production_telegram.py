@@ -405,9 +405,23 @@ class ProductionTelegramQueue:
                           leased_until >= clock_timestamp() AS active
                    FROM sf_service_leases WHERE lease_name='telegram-consumer'"""
             ).fetchone()
+        public_consumer = dict(lease) if lease else {"active": False}
+        # psycopg returns timestamptz columns as datetime instances.  This
+        # status document is embedded in /api/admin/operations and therefore
+        # must already be JSON-safe before the HTTP encoder sees it.  The live
+        # server used to turn an otherwise healthy Operations panel into a 500
+        # as soon as a Telegram consumer lease existed.
+        for key in ("leased_until", "heartbeat_at"):
+            value = public_consumer.get(key)
+            if isinstance(value, datetime):
+                if value.tzinfo is None:
+                    value = value.replace(tzinfo=timezone.utc)
+                public_consumer[key] = value.astimezone(timezone.utc).isoformat(
+                    timespec="milliseconds",
+                ).replace("+00:00", "Z")
         return {
             "ok": True, "counts": counts,
-            "consumer": dict(lease) if lease else {"active": False},
+            "consumer": public_consumer,
         }
 
     def sweep_retention(self, *, limit: int = 5000) -> Dict[str, int]:

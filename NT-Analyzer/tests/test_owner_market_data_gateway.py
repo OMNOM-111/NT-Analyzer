@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import tempfile
@@ -492,6 +493,41 @@ def test_consumer_subscriptions_dedupe_same_instrument(monkeypatch) -> None:
     health = adapter.health()
     assert health["wire_subscriptions"] == 1
     assert health["logical_subscription_refcount"] == 1
+
+
+def test_consumer_history_bootstrap_does_not_outlive_an_existing_browser(monkeypatch) -> None:
+    _consumer_env(monkeypatch)
+    monkeypatch.setattr(gw.OwnerGatewayChartAdapter, "connect", lambda self: self.health())
+    monkeypatch.setattr(gw.OwnerGatewayChartAdapter, "_send_ws", lambda self, message: None)
+    adapter = gw.OwnerGatewayChartAdapter()
+
+    adapter.subscribe("MNQ 09-26", "quotes", timeframe="15m", consumer_id="browser-ws:1")
+    adapter.subscribe(
+        "MNQ 09-26", "quotes", timeframe="15m",
+        consumer_id="bootstrap:MNQ 09-26:15m",
+    )
+    assert adapter.health()["logical_subscription_refcount"] == 1
+
+    adapter.release_subscription(
+        "MNQ 09-26", "quotes", timeframe="15m", consumer_id="browser-ws:1",
+    )
+    assert adapter.health()["logical_subscription_refcount"] == 0
+    assert adapter.health()["wire_subscriptions"] == 0
+
+
+def test_consumer_successful_reconnect_clears_historical_transport_error() -> None:
+    adapter = gw.OwnerGatewayChartAdapter()
+    adapter._last_error = "owner gateway WS: ConnectionClosedError"
+    adapter._stop.set()
+
+    class FakeWs:
+        async def send(self, _message):
+            return None
+
+    asyncio.run(adapter._consume_ws(FakeWs()))
+
+    assert adapter.health()["runtime_state"] == "AUTHENTICATED"
+    assert adapter.health()["last_error"] == ""
 
 
 # --------------------------------------------------------------------------- #

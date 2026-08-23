@@ -258,6 +258,37 @@ class TestProductionTelegramStructure:
         assert isinstance(result, dict)
         assert "ok" in result
 
+    def test_status_with_live_consumer_lease_is_json_safe(self):
+        from app.production_telegram import ProductionTelegramQueue
+
+        now = datetime(2026, 8, 23, 1, 2, 3, 456000, tzinfo=timezone.utc)
+        counts_result = mock.Mock()
+        counts_result.fetchone.return_value = {
+            "updates_queued": 0,
+            "updates_running": 0,
+            "updates_dead_letter": 0,
+            "outbox_queued": 0,
+            "outbox_sending": 0,
+            "outbox_dead_letter": 0,
+        }
+        lease_result = mock.Mock()
+        lease_result.fetchone.return_value = {
+            "owner_id": "telegram-canary-1",
+            "leased_until": now + timedelta(seconds=30),
+            "heartbeat_at": now,
+            "active": True,
+        }
+        connection = mock.Mock()
+        connection.execute.side_effect = [counts_result, lease_result]
+        client = mock.MagicMock()
+        client.transaction.return_value.__enter__.return_value = connection
+
+        payload = ProductionTelegramQueue(client).status()
+
+        assert payload["consumer"]["leased_until"].endswith("Z")
+        assert payload["consumer"]["heartbeat_at"] == "2026-08-23T01:02:03.456Z"
+        assert json.loads(json.dumps(payload, allow_nan=False)) == payload
+
     def test_max_constants(self):
         from app import production_telegram
         assert production_telegram.MAX_UPDATE_BYTES == 256 * 1024
