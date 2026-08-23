@@ -14,7 +14,8 @@ promo redemption consistently controls what a user can see and do.
 Resolution order for a non-owner user's capability ``C``:
 
     1. Start from the capabilities of the user's *active* entitlement plan.
-    2. If the user has no active entitlement, fall back to the Free Preview plan.
+    2. If the user has no active entitlement, fall back to the authenticated
+       account baseline.  This never creates anonymous/blurred access.
     3. Apply the owner's per-user ``permission_overrides`` (explicit grant/revoke
        of an individual capability) on top — these always win.
     The owner (``is_owner``) always has every capability.
@@ -27,8 +28,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from . import subscriptions
 
 
-# The default contour for a brand-new, unpaid user.
-FREE_PREVIEW_PLAN_ID = "free_preview"
+# The post-trial contour for an authenticated account. ``free_preview`` remains
+# a migration-only stored plan and is never an authorization fallback.
+AUTHENTICATED_BASIC_PLAN_ID = "authenticated_basic"
 
 # The canonical capability catalog IS the subscription privilege matrix. The
 # owner edits it per-plan (subscriptions.set_plan_feature) and per-user
@@ -89,7 +91,7 @@ CAPABILITY_NAV: Dict[str, tuple] = {
 _OWNER_ONLY_NAV = ("topstep",)
 _STRICT_OWNER_ONLY_NAV = ("agents",)
 
-# Shown on a locked section in Free Preview.
+# Shown on a locked section in the authenticated account baseline.
 UNLOCK_MESSAGE = (
     "Раздел откроется после активации подписки, ввода промокода "
     "или доступа от владельца."
@@ -272,8 +274,8 @@ def _features_from_plan(plan: Optional[Dict[str, Any]]) -> Dict[str, bool]:
     return {}
 
 
-def _free_preview_features() -> Dict[str, bool]:
-    feats = _features_from_plan(subscriptions.effective_plan(FREE_PREVIEW_PLAN_ID))
+def _authenticated_basic_features() -> Dict[str, bool]:
+    feats = _features_from_plan(subscriptions.effective_plan(AUTHENTICATED_BASIC_PLAN_ID))
     return feats or {cid: False for cid in CAPABILITY_IDS}
 
 
@@ -289,8 +291,8 @@ def resolve(user: Optional[Dict[str, Any]],
     """Compute a user's effective capabilities + navigation from their plan.
 
     ``entitlement`` is the user's active entitlement row (as returned by
-    ``subscriptions.active_entitlement``) or None/{} for a Free Preview user.
-    Pure function: no I/O beyond reading the Free Preview plan matrix.
+    ``subscriptions.active_entitlement``) or None/{} for an authenticated
+    post-trial account. Pure function: no I/O beyond reading the baseline plan.
     """
     user = user or {}
     if user.get("is_owner"):
@@ -315,7 +317,7 @@ def resolve(user: Optional[Dict[str, Any]],
         caps = {cid: False for cid in CAPABILITY_IDS}
         nav = {nid: False for nid in NAV_SECTIONS}
         return {
-            "is_owner": False, "plan_id": "", "free_preview": True,
+            "is_owner": False, "plan_id": "", "free_preview": False,
             "capabilities": caps, "admin_capabilities": admin_caps, "nav": nav,
             "locked_nav": list(NAV_SECTIONS),
             "unlock_message": UNLOCK_MESSAGE, "demo_tier": False,
@@ -324,10 +326,10 @@ def resolve(user: Optional[Dict[str, Any]],
 
     plan_feats = _features_from_plan((entitlement or {}).get("plan"))
     plan_id = str((entitlement or {}).get("plan_id") or "")
-    free_preview = not plan_feats
-    if free_preview:
-        plan_feats = _free_preview_features()
-        plan_id = FREE_PREVIEW_PLAN_ID
+    baseline_access = not plan_feats
+    if baseline_access:
+        plan_feats = _authenticated_basic_features()
+        plan_id = AUTHENTICATED_BASIC_PLAN_ID
 
     cap_ov = user.get("permission_overrides")
     cap_ov = cap_ov if isinstance(cap_ov, dict) else {}
@@ -368,7 +370,8 @@ def resolve(user: Optional[Dict[str, Any]],
     if ux_mode == "beginner":
         demo_tier = True
     return {
-        "is_owner": False, "plan_id": plan_id, "free_preview": free_preview,
+        "is_owner": False, "plan_id": plan_id, "free_preview": False,
+        "baseline_access": baseline_access,
         "capabilities": caps, "admin_capabilities": admin_caps,
         "nav": nav, "locked_nav": locked,
         "unlock_message": DEMO_UNLOCK_MESSAGE if demo_tier else UNLOCK_MESSAGE,
@@ -389,6 +392,10 @@ def resolve_for_user_id(user_id: Any, user: Optional[Dict[str, Any]] = None) -> 
 def required_capability(path: str) -> Optional[str]:
     """The capability an API path requires, or None when unrestricted."""
     p = str(path or "")
+    # Provider/Connector setup status must remain visible after trial expiry so
+    # the account can establish its own market-data source.
+    if p == "/api/ops/runtime/bars/status":
+        return None
     best: Optional[str] = None
     best_len = -1
     for prefix, cap in ROUTE_CAPABILITY:
@@ -417,9 +424,6 @@ def required_admin_capability(path: str, method: str = "GET") -> Optional[str]:
 
 def beginner_path_denied(path: str) -> bool:
     p = str(path or "")
-    # Market observation for practice charts (not NT control).
-    if p.startswith("/api/ops/runtime/bars"):
-        return False
     for prefix in BEGINNER_DENIED_PREFIXES:
         if p == prefix.rstrip("/") or p.startswith(prefix):
             return True
@@ -466,21 +470,12 @@ def enforce(path: str, context: Optional[Dict[str, Any]]) -> None:
         raise PermissionError(
             "Режим «Студент»: раздел недоступен. Переключитесь в «Профессионал» в кабинете.",
             403)
-    if ux_mode == "beginner" and p.startswith("/api/ops/runtime/bars"):
-        # Practice charts use market observation only; all other runtime data
-        # and every command remain unavailable in beginner mode.
-        return
     cap = required_capability(path)
     if not cap:
         return
     caps = context.get("capabilities")
     if not isinstance(caps, dict):
         caps = resolve_for_user_id(context.get("user_id"), context.get("user") or {})["capabilities"]
-    if p.startswith("/api/ops/runtime/bars") and (
-        bool(caps.get("practice_trading"))
-        or str(context.get("role") or "") == "read_only"
-    ):
-        return
     demo_job_read = (
         cap == "backtesting" and method in {"GET", "HEAD"}
         and p.startswith("/api/jobs") and bool(caps.get("demo_backtest"))

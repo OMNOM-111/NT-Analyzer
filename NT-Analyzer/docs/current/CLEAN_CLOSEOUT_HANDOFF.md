@@ -1,6 +1,39 @@
-# Clean closeout — release accepted
+# Clean closeout — beta.29 accepted; new Development candidate open
 
 Дата проверки: `2026-08-23T02:27:02Z`.
+
+## Current Development delta — 2026-08-23T21:36:03Z
+
+Beta.29 ниже остаётся неизменённым accepted live baseline. На ветке
+`codex/trial-connector-release-20260823` от
+`653f2b5bcfae2597dc0d14a22f07e741acd84cc8` открыт новый release cycle:
+
+- anonymous blurred/preview entry удалён;
+- verified human registration получает один полный 7-дневный trial;
+- owner продлевает trial по дням или точной UTC-дате с before/after history;
+- после expiry аккаунт остаётся активным и может настроить собственный
+  TopstepX/NinjaTrader;
+- HTTP и browser WebSocket используют единый scoped market-data admission;
+- owner TopstepX history/SignalR/cache/failover baseline не рефакторился.
+
+LOCAL automated evidence: `1943 passed`, `32 skipped`, `0 failed`; custom
+runner `13/13`; bridge Debug build `0 warnings / 0 errors`; compileall, 22
+Aurora JavaScript syntax checks, CSP/secret/Markdown/link, External GPT Context
+и `git diff --check` — PASS.
+
+LOCAL browser evidence: два одновременных клиента держали MNQ 5m и MES 5m
+`10m56s`; WebSocket `lastPrice`, close последнего бара и фактически
+отрисованный цветной right-side marker совпали в обоих клиентах. Fan-out peak:
+`browser_ws=2`, `logical=4`, `wire=2`, общий upstream `signalr=1`, direct
+provider/auth/loginKey `0`; после закрытия browser/logical/wire вернулись к
+нулю. Загруженные `api.js`, `ui.js`, `chart-engine.js`, `pages/desktop.js`
+совпали с disk bytes, service worker отсутствует.
+
+Release ещё не готов: cross-user shared trial feed остаётся
+`EXTERNAL BLOCKED` без письменного provider/exchange redistribution authority;
+реальный Connector требует физического save/close/restart NinjaTrader;
+Production Connector package требует разрешённого Authenticode tool/material.
+Canary и Production не изменялись и остаются beta.29.
 
 ## Current release identity
 
@@ -62,4 +95,6 @@ Canonical operational evidence:
 2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Зафиксирован реальный blocker canary_passed→approved_for_production в authoritative promotion gate; artifact 2790fb43 не продвигался, Production остался beta.26.
 2026-08-21T03:50:00Z | GPT-5.5 через Codex по запросу owner | Final beta.28 artifact принят в Canary и без пересборки продвинут в Production; точная identity, rollback slots, tests и chart evidence записаны в current handoff.
 2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Заменён beta.28 handoff фактическим beta.29 closeout: PR/CI, exact artifact, Canary/Production deploy IDs, fan-out, responsive и owner browser evidence.
+2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Opened the new verified-trial and per-user market-data admission cycle, recorded complete LOCAL automated evidence and retained exact redistribution, Authenticode and physical NinjaTrader blockers; beta.29 live environments remain unchanged.
+2026-08-23T22:20:31Z | GPT-5.5 через Codex по запросу owner | Зафиксирован LOCAL acceptance нового trial/access candidate: 1943/32/0 и 10m56s двухклиентный MNQ/MES visual fan-out PASS; внешние Connector/redistribution gates сохранены.
 -->

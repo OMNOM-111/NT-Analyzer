@@ -1,7 +1,7 @@
 # 06. Market Data, Trading and Connector
 
 - Context Pack document: 06_MARKET_DATA_TRADING_CONNECTOR.md
-- Last verified UTC: 2026-08-23T02:27:02Z
+- Last verified UTC: 2026-08-23T21:36:03Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: NinjaTrader authority, Connector protocol, market-data gateway and trading safety gates
 - Status: PARTIAL
@@ -26,6 +26,13 @@
    session. A process opens one only with
    `NTA_OWNER_MARKET_DATA_GATEWAY_ROLE=hub`; consumers require an approved
    canonical/loopback origin and a configured internal token.
+8. Product access and provider/exchange permission are independent. A seven-day
+   product trial cannot consume the owner feed unless both remote-server use and
+   cross-user redistribution are explicitly authorized.
+9. A non-owner chart request resolves exactly one server-owned scope: verified
+   private provider, fresh online personal Connector, or an explicitly
+   authorized shared trial. HTTP cache keys and WebSocket events are filtered by
+   that scope; browser messages cannot assert an entitlement.
 
 ## Current status matrix
 
@@ -38,7 +45,26 @@
 | SignalR/session/freshness | `AVAILABLE` | Quote/SignalR heartbeat freshness is independent of price movement. A fresh heartbeat keeps the marker live when the last price is unchanged; stale/offline states mute it honestly |
 | Responsive chart UI | `BETA` | Desktop free-positioned layouts remain intact; at 1100 px and below chart windows reflow into a readable vertical stack without whole-page horizontal overflow |
 | Cross-user market-data redistribution | `EXTERNAL BLOCKED` | The owner gateway is not a license grant. Serving one owner entitlement to unrelated users remains fail-closed until written provider/CME distribution authority and per-user entitlement mapping exist |
+| Per-user HTTP/WS admission | `IN DEVELOPMENT` | Development candidate gates every bars/chart/practice-tick request and every WebSocket subscription through the same resolver, revalidates live sockets every five seconds or sooner at expiry, purges queued events on revoke/source change and exposes only hashed scope diagnostics |
+| User-owned source isolation | `IN DEVELOPMENT` | Verified private provider data uses private cache/backfill only; personal Connector data uses its workspace snapshot only. Neither path can fall through to global owner TopstepX/cache/failover |
 | Simulation/paper runtime control | `BETA` | Safe runtime commands exist for paper/demo/playback contours |
+
+## Current physical NinjaTrader / Connector checkpoint
+
+- NinjaTrader `8.1.7.2` is running on the owner workstation and was not killed or
+  restarted by automation.
+- Installed `NTAnalyzerBridge.dll` SHA256 is
+  `06490032D84635D1030DA9CB089BC54A7C8D978C34D7FECA9D7860E32E459F8C`.
+- The active Connector is bound to Canary, reports version `0.4.0-dev.1`, has no
+  configured market-data streams and repeatedly reports
+  `enrollment_unavailable`; no authenticated heartbeat/session exists.
+- Development package `0.4.1-dev.10` verifies locally, but a publishable
+  Production Connector is blocked because the required Authenticode signing
+  tool/material is unavailable in the current environment.
+- One physical NinjaTrader instance can bind to one environment at a time.
+  LOCAL, Canary and Production acceptance therefore requires sequential manual
+  save/close, install/restart and any native license/provider confirmation; it
+  must not be simulated or automated by terminating the process.
 
 ## Verified beta.29 Development evidence
 
@@ -112,4 +138,5 @@ Detailed evidence and defect scope:
 2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Recorded repository TopstepX-first server chart order; live 1fae1f39 still stubs/skips TopstepX.
 2026-08-23T01:29:45Z | GPT-5.5 через Codex по запросу owner | Удалены устаревшие live 1fae1f39/IN DEVELOPMENT формулировки; зафиксированы фактический Production hub, Canary/DEV consumer fan-out, browser/load evidence и внешний entitlement blocker.
 2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Добавлены live beta.29 Canary/Production gateway roles, exact artifact, two-client chart/marker and same-origin browser-network evidence; Connector/redistribution gaps оставлены честно PARTIAL/EXTERNAL BLOCKED.
+2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Added the Development per-user HTTP/WS admission and source-isolation contracts, recorded the real running Connector/NinjaTrader checkpoint and preserved redistribution, Authenticode and physical-interaction blockers without changing the accepted TopstepX baseline.
 -->

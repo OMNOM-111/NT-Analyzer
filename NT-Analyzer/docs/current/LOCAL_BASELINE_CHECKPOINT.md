@@ -59,7 +59,27 @@ identities unique    yes
 `/api/account/security` (2 device), `/api/admin/development-sync` = `current`
 (running == head). LOCAL DB остаётся изолированной от Canary/Production.
 
-## Текущий checkpoint — BETA.29 RELEASE CLOSED
+## Новый Development checkpoint — TRIAL / MARKET-DATA / CONNECTOR OPEN
+
+Ветка `codex/trial-connector-release-20260823` от `653f2b5b` реализует
+защищённый вход без anonymous preview, один автоматический полный 7-дневный
+trial, owner extension history и единый scoped HTTP/WS market-data admission.
+После expiry аккаунт не блокируется; live charts допускаются через проверенный
+user-owned provider/личный Connector либо продлённый trial вместе с обоими
+explicit authority flags; shared owner feed остаётся fail-closed без отдельного
+remote-server/redistribution authority.
+
+Автоматический LOCAL checkpoint: `1943 passed`, `32 skipped`, `0 failed`;
+custom suites `13/13`; bridge Debug build без предупреждений/ошибок; Python,
+JavaScript, CSP, secret, Markdown/link, Context Pack и diff gates PASS. LOCAL
+browser: два клиента MNQ/MES 5m, `10m56s`, точное совпадение WS price → close →
+цветной rendered marker; `browser_ws=2`, `logical=4`, `wire=2`, общий
+`signalr=1`, direct/auth/loginKey `0`, после закрытия browser/logical/wire `0`.
+Ни Canary, ни Production не менялись. Следующий обязательный шаг — physical
+NinjaTrader interaction и PR/CI; выпуск нового artifact пока не разрешён
+фактическими acceptance gates.
+
+## Предыдущий accepted checkpoint — BETA.29 RELEASE CLOSED
 
 Реализованный market-data/chart baseline сохранён: TopstepX authentication,
 ProjectX SignalR protocol, history/cache/failover/rollover и candle rendering
@@ -104,4 +124,6 @@ Canary → acceptance → SAME artifact Production`.
 2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Добавлен фактический Canary PASS 2790fb43 и найденный в штатном promotion flow blocker approved_for_production; новый цикл обязателен, Production не менялся.
 2026-08-21T03:50:00Z | GPT-5.5 через Codex по запросу owner | Закрыт полный release cycle merge 36600dba → signed artifact → Canary acceptance → same-artifact Production; market-data baseline сохранён.
 2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Обновлён checkpoint после beta.29: чистый merge, зелёный PR #142, один immutable artifact, Canary/Production PASS, fan-out и responsive evidence.
+2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Added the open Development trial/market-data/Connector checkpoint and its LOCAL automated evidence; beta.29 remains the unchanged live rollback-safe baseline.
+2026-08-23T22:20:31Z | GPT-5.5 через Codex по запросу owner | Added clean 1943/32/0 regression and 10m56s two-client MNQ/MES browser fan-out evidence; retained the physical Connector and redistribution blockers.
 -->

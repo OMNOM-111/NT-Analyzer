@@ -7,9 +7,12 @@
 
 ## Текущее состояние
 
-- `app/account_auth.py` уже даёт identity layer: Telegram user id, профиль,
-  сессии, роли `read_only`, `full_control`, `owner`, подтверждение владельцем и
-  DPAPI-хранилище `data/integrations/accounts.dpapi`.
+- `app/account_auth.py` уже даёт identity layer: canonical UUID, Telegram /
+  Google / e-mail provider identities, профиль, сессии, роли `read_only`,
+  `full_control`, `owner` и DPAPI-хранилище
+  `data/integrations/accounts.dpapi`. Новая verified human registration
+  активируется автоматически; legacy owner-approval challenge сохраняется
+  только для уже выданных migration/recovery записей.
 - `/api/auth/users` и экран `Пользователи` управляют identity и доступом;
   workspace, membership, subscription и bridge connection существуют как
   отдельные сущности.
@@ -97,8 +100,8 @@ on the user's local node and be signed/audited there.
 Право пользоваться функциями:
 
 - `entitlement_id`, `user_id`, optional `workspace_id`;
-- `plan_id`: `owner_unlimited`, `developer_free`, `learner_viewer`,
-  `personal_basic`, `personal_pro`;
+- `plan_id`: `founder`, `trial_full`, `authenticated_basic`,
+  `developer_free`, `learner_viewer`, `personal_basic`, `personal_pro`;
 - `status`: `trial`, `promo_grant`, `active`, `past_due`, `cancelled`,
   `expired`;
 - `features`: derived capabilities, for example `ai_lab`, `personal_nt`,
@@ -107,8 +110,15 @@ on the user's local node and be signed/audited there.
 - `starts_at_utc`, `expires_at_utc`, `renew_at_utc`;
 - `source`: `owner_grant`, `promo_code`, `payment_provider`, `manual`.
 
-Owner всегда получает `owner_unlimited`. Разработчикам для тестирования выдаётся
-`developer_free` или план через promo voucher без требования карты.
+Owner всегда получает `founder`. Новый verified human получает один
+неперезапускаемый `trial_full` на 7 дней; после истечения identity остаётся
+активной и переходит на `authenticated_basic`. Разработчикам для тестирования
+выдаётся `developer_free` или план через promo voucher без требования карты.
+
+Product entitlement не является market-data entitlement. После trial live
+chart может открыть подтверждённый user-owned provider или свежий личный
+Connector; общий owner feed допустим только при отдельно подтверждённом праве
+remote-server use и cross-user redistribution.
 
 ### PaymentProfile
 
@@ -325,3 +335,7 @@ data/
   topbar показывает active workspace и открывает drawer переключения.
 - Regression coverage: `tests/test_account_auth.py`, `tests/test_subscriptions.py`,
   `tests/test_workspaces.py`.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Reconciled canonical identity activation, one seven-day trial, post-trial baseline and the separate per-user market-data entitlement boundary with the Development implementation.
+-->

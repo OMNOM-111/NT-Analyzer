@@ -12,7 +12,7 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from app import account_auth, permissions, secure_store, workspaces
+from app import account_auth, permissions, secure_store, subscriptions, workspaces
 from app import server as server_mod
 from app.production_storage import MigrationRunner
 from app.production_storage.core import DocumentRepository
@@ -22,6 +22,7 @@ from app.production_storage.core import DocumentRepository
 def auth_store(monkeypatch, tmp_path):
     monkeypatch.setenv("NTA_TELEGRAM_CHAT_ID", "999")
     monkeypatch.setattr(account_auth, "_root", lambda: tmp_path)
+    monkeypatch.setattr(subscriptions, "_root", lambda: tmp_path)
     monkeypatch.setattr(workspaces, "_root", lambda: tmp_path)
     monkeypatch.setattr(secure_store, "available", lambda: True)
     monkeypatch.setattr(secure_store, "backend_name", lambda: "test DPAPI")
@@ -75,7 +76,7 @@ def test_dpapi_read_cache_is_isolated_and_refreshes_after_write(auth_store, monk
     assert len(decrypts) == 1
 
 
-def test_new_account_waits_for_owner_after_contact_profile_and_terms(auth_store) -> None:
+def test_new_account_activates_full_trial_after_contact_profile_and_terms(auth_store) -> None:
     account_auth.ensure_owner(999)
     login = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
     calls, api = _api_recorder()
@@ -103,18 +104,12 @@ def test_new_account_waits_for_owner_after_contact_profile_and_terms(auth_store)
         "first_name": "Ada", "last_name": "Lovelace", "email": "ADA@example.com",
         "accept_terms": True,
     }, api_call=api, owner_chat_id="999")
-    # New accounts wait for the owner's personal confirmation.
-    assert state["status"] == "pending_owner"
-    assert account_auth._user(account_auth._read_doc(), 42)["status"] == "pending"
-    notice = next(payload for method, payload in calls if method == "sendMessage" and (payload.get("reply_markup") or {}).get("inline_keyboard"))
-    allow = notice["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
-    assert allow.startswith("account_allow:")
-
-    assert account_auth.process_update({"callback_query": {
-        "id": "cb1", "data": allow, "from": {"id": 999},
-    }}, api_call=api, owner_chat_id="999")
-    assert account_auth.login_state(login["challenge_id"])["status"] == "login_approved"
-    assert account_auth._user(account_auth._read_doc(), 42)["status"] == "active"
+    assert state["status"] == "login_approved"
+    registered = account_auth._user(account_auth._read_doc(), 42)
+    assert registered["status"] == "active"
+    assert registered["role"] == "full_control"
+    assert registered["ux_mode"] == "professional"
+    assert subscriptions.trial_access_for_user(42)["state"] == "active"
 
     result = account_auth.create_session_for_challenge(
         login["challenge_id"], ip="127.0.0.1", user_agent="pytest",
@@ -555,29 +550,20 @@ def test_local_owner_keeps_professional_mode_and_full_capabilities(monkeypatch) 
     assert all(payload["capabilities"].values())
 
 
-def test_register_via_telegram_waits_for_owner(auth_store) -> None:
+def test_register_via_telegram_activates_full_trial(auth_store) -> None:
     account_auth.ensure_owner(999)
     calls, api = _api_recorder()
     out = account_auth.register_via_telegram(
         {"id": 42, "first_name": "Ada", "username": "ada"},
         email="ada@example.com", accept_terms=True, api_call=api, owner_chat_id="999")
-    assert out["status"] == "pending_owner" and out["authenticated"] is False
-    assert uuid.UUID(out["user"]["id"]) and out["user"]["status"] == "pending"
-    assert out["challenge_id"]
-    assert account_auth.find_active_user(42) is None
-    # Owner gets allow/deny buttons.
-    assert any((p.get("reply_markup") or {}).get("inline_keyboard") for _m, p in calls)
-    allow = next(
-        btn["callback_data"]
-        for _m, p in calls
-        for row in (p.get("reply_markup") or {}).get("inline_keyboard") or []
-        for btn in row
-        if str(btn.get("callback_data") or "").startswith("account_allow:")
-    )
-    assert account_auth.process_update({"callback_query": {
-        "id": "cb1", "data": allow, "from": {"id": 999},
-    }}, api_call=api, owner_chat_id="999")
-    assert account_auth.find_active_user(42) is not None
+    assert out["status"] == "active" and out["authenticated"] is True
+    assert uuid.UUID(out["user"]["id"]) and out["user"]["status"] == "active"
+    assert out["challenge_id"] == ""
+    registered = account_auth.find_active_user(42)
+    assert registered is not None
+    assert registered["role"] == "full_control"
+    assert registered["ux_mode"] == "professional"
+    assert subscriptions.trial_access_for_user(42)["state"] == "active"
 
     # Terms acceptance is mandatory.
     with pytest.raises(account_auth.AccountAuthError):
@@ -908,29 +894,19 @@ def test_phase3_public_user_uses_uuid_without_legacy_identity(auth_store) -> Non
     assert admin["legacy_user_id"] == 42
 
 
-def test_phase3_email_otp_login_requires_approval_then_reuses_identity(auth_store, monkeypatch) -> None:
+def test_phase3_email_otp_login_activates_trial_then_reuses_identity(auth_store, monkeypatch) -> None:
     monkeypatch.setattr(account_auth, "email_auth_status", lambda: {"available": True})
     account_auth.ensure_owner(999)
     calls, api = _api_recorder()
 
     started = account_auth.start_email_auth("ada@example.com", ip="127.0.0.1")
-    pending = account_auth.verify_email_auth(
+    first_login = account_auth.verify_email_auth(
         started["challenge_id"], code=started["test_code"],
         profile={"first_name": "Ada", "last_name": "Lovelace", "accept_terms": True},
         ip="127.0.0.1", user_agent="pytest", api_call=api, owner_chat_id="999",
     )
-    assert pending["status"] == "pending_owner"
-    user_uuid = pending["user"]["id"]
-    allow = next(
-        button["callback_data"]
-        for _method, payload in calls
-        for row in (payload.get("reply_markup") or {}).get("inline_keyboard") or []
-        for button in row
-        if str(button.get("callback_data") or "").startswith("account_allow:")
-    )
-    assert account_auth.process_update({"callback_query": {
-        "id": "email-allow", "data": allow, "from": {"id": 999},
-    }}, api_call=api, owner_chat_id="999")
+    assert first_login["status"] == "authenticated"
+    user_uuid = first_login["user"]["id"]
 
     returning = account_auth.start_email_auth("ADA@example.com", ip="127.0.0.1")
     authenticated = account_auth.verify_email_auth(
@@ -942,27 +918,17 @@ def test_phase3_email_otp_login_requires_approval_then_reuses_identity(auth_stor
     assert account_auth.authenticate_session(authenticated["session_token"])["user_uuid"] == user_uuid
 
 
-def test_phase3_google_login_requires_approval_then_reuses_identity(auth_store) -> None:
+def test_phase3_google_login_activates_trial_then_reuses_identity(auth_store) -> None:
     account_auth.ensure_owner(999)
     calls, api = _api_recorder()
 
-    pending = account_auth.login_via_google_identity(
+    first_login = account_auth.login_via_google_identity(
         google_sub="google-ada", google_email="ada@gmail.example", google_name="Ada Lovelace",
         email_verified=True, accept_terms=True, ip="127.0.0.1", user_agent="pytest",
         api_call=api, owner_chat_id="999",
     )
-    assert pending["status"] == "pending_owner"
-    user_uuid = pending["user"]["id"]
-    allow = next(
-        button["callback_data"]
-        for _method, payload in calls
-        for row in (payload.get("reply_markup") or {}).get("inline_keyboard") or []
-        for button in row
-        if str(button.get("callback_data") or "").startswith("account_allow:")
-    )
-    assert account_auth.process_update({"callback_query": {
-        "id": "google-allow", "data": allow, "from": {"id": 999},
-    }}, api_call=api, owner_chat_id="999")
+    assert first_login["status"] == "authenticated"
+    user_uuid = first_login["user"]["id"]
 
     authenticated = account_auth.login_via_google_identity(
         google_sub="google-ada", google_email="ada@gmail.example", google_name="Ada Lovelace",
@@ -984,18 +950,18 @@ def test_phase3_same_email_does_not_merge_telegram_and_email_accounts(auth_store
     assert telegram_user is not None
 
     started = account_auth.start_email_auth("shared@example.com", ip="127.0.0.1")
-    pending = account_auth.verify_email_auth(
+    email_login = account_auth.verify_email_auth(
         started["challenge_id"], code=started["test_code"],
         profile={"first_name": "Ada", "last_name": "Email", "accept_terms": True},
         ip="127.0.0.1", user_agent="pytest",
     )
 
-    assert pending["status"] == "pending_owner"
-    assert pending["user"]["id"] != telegram_user["user_uuid"]
+    assert email_login["status"] == "authenticated"
+    assert email_login["user"]["id"] != telegram_user["user_uuid"]
     identities = account_auth._read_doc()["auth_identities"]
     assert {(row["provider"], row["user_uuid"]) for row in identities if row["provider"] in {"telegram", "email"}} >= {
         ("telegram", telegram_user["user_uuid"]),
-        ("email", pending["user"]["id"]),
+        ("email", email_login["user"]["id"]),
     }
 
 
@@ -1163,12 +1129,12 @@ def test_live_email_delivery_hides_the_code_and_still_verifies(auth_store, monke
 
     _calls, api = _api_recorder()
     delivered_code = sent[0][1]
-    pending = account_auth.verify_email_auth(
+    authenticated = account_auth.verify_email_auth(
         started["challenge_id"], code=delivered_code,
         profile={"first_name": "Grace", "last_name": "Hopper", "accept_terms": True},
         ip="127.0.0.1", user_agent="pytest", api_call=api, owner_chat_id="999",
     )
-    assert pending["status"] == "pending_owner"
+    assert authenticated["status"] == "authenticated"
 
 
 def test_email_delivery_failure_is_a_service_error_without_provider_internals(

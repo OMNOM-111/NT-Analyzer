@@ -1,10 +1,10 @@
 # 05. Auth, Users and Security
 
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
-- Last verified UTC: 2026-08-23T02:27:02Z
+- Last verified UTC: 2026-08-23T21:36:03Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
-- Status: DONE
+- Status: PARTIAL
 
 ## Identity model
 
@@ -46,6 +46,27 @@ Key admin capability names already in the contract: `admin.view`,
 `releases.rollback_production`, `environment.switch`, `docs.manage_global`,
 `docs.manage_workspace`.
 
+## Development candidate: registration and one trial clock
+
+- Anonymous visitors receive only the protected sign-in/registration surface;
+  the former blurred application shell and "watch without sign-in" path are
+  removed.
+- A new human account activates only after an identity provider has verified
+  the subject, the required profile is complete and terms are accepted.
+- The verified account receives `full_control`, professional UX and exactly one
+  `trial_full` entitlement for seven days. Linking another identity or signing
+  in on another browser/device returns the existing clock and never restarts it.
+- Revoked, denied, blocked, deleted, owner and service accounts never receive
+  an automatic trial through this path.
+- Trial expiry does not revoke the identity or sessions. Authorization falls
+  back to the authenticated account baseline; provider setup remains reachable.
+- Owner-only `POST /api/owner/trial/extend` extends by whole days or an exact
+  future UTC date. Every grant/extension records actor, source, reason and
+  compact `before -> after` access history shown in the Admin user card.
+- Account activation and subscription persistence use an idempotent outbox
+  marker. If the entitlement store is unavailable, session creation fails
+  closed instead of silently opening an unrecorded trial.
+
 ## Sessions, trusted devices and step-up
 
 - Device identity is not IP-based.
@@ -82,6 +103,8 @@ Key admin capability names already in the contract: `admin.view`,
   incomplete until the step-up workflow is fully rolled out across those paths.
 - Treat wide public personal-NT onboarding as incomplete even though the model,
   endpoints and schema are already present.
+- Treat the new automatic-trial UX as Development-only until its PR/CI and
+  immutable Canary acceptance complete.
 
 ## Threat-model summary
 
@@ -105,4 +128,5 @@ Key admin capability names already in the contract: `admin.view`,
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Noted live Telegram login on 1fae1f39 and remaining Canary Cloudflare 1010 forward gap.
 2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Replaced stale beta.1/Canary-bot blocker with authenticated beta.29 existing-owner login and isolated shared-bot routing facts; Google/email external gates remain.
+2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Documented the Development-only verified-registration activation, one seven-day trial clock, owner extension history and removal of anonymous blurred access; four Google/Resend secrets remain untouched.
 -->

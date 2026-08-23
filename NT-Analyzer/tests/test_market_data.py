@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from app import (account_auth, market_data, runtime, secure_store, server as server_mod,
-                 telegram_remote, telegram_service, workspaces)
+                 subscriptions, telegram_remote, telegram_service, workspaces)
 
 
 def _init_data(user_id: int, *, token: str) -> str:
@@ -385,12 +385,15 @@ def test_bars_batch_allows_https_tunnel_same_origin(tmp_path: Path, monkeypatch)
     monkeypatch.setenv(telegram_service.TOKEN_ENV, token)
     monkeypatch.setattr(market_data, "_root", lambda: tmp_path)
     monkeypatch.setattr(account_auth, "_root", lambda: tmp_path)
+    monkeypatch.setattr(subscriptions, "_root", lambda: tmp_path)
     monkeypatch.setattr(telegram_remote, "_root", lambda: tmp_path)
     monkeypatch.setattr(workspaces, "_root", lambda: tmp_path)
     monkeypatch.setattr(secure_store, "available", lambda: True)
     monkeypatch.setattr(secure_store, "backend_name", lambda: "test DPAPI")
     monkeypatch.setattr(secure_store, "_protect", lambda value: value[::-1])
     monkeypatch.setattr(secure_store, "_unprotect", lambda value: value[::-1])
+    monkeypatch.setenv("NTA_TOPSTEPX_REMOTE_SERVER_AUTHORIZED", "1")
+    monkeypatch.setenv("NTA_TOPSTEPX_REDISTRIBUTION_AUTHORIZED", "1")
     _write_snapshot(tmp_path, close=100, high=101, low=99)
 
     # Production posture: remote Mini App enabled, desktop auth off.
@@ -403,9 +406,11 @@ def test_bars_batch_allows_https_tunnel_same_origin(tmp_path: Path, monkeypatch)
     account_auth._write_doc({
         "version": 1,
         "users": [{"user_id": 42, "first_name": "View", "last_name": "Er", "email": "v@e.com",
-                   "role": "read_only", "status": "active", "is_owner": False}],
+                   "role": "full_control", "status": "active", "is_owner": False,
+                   "ux_mode": "professional"}],
         "challenges": [], "sessions": [],
     })
+    subscriptions.ensure_initial_trial(42, source="test_verified_registration")
     viewer = _init_data(42, token=token)
 
     server = ThreadingHTTPServer((server_mod.HOST, 0), server_mod.Handler)

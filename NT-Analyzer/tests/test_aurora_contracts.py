@@ -154,7 +154,21 @@ def test_every_aurora_page_uses_current_theme_cache_version():
         marker = 'href="assets/theme.css?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260812-phase12-owner1"}, versions
+    assert set(versions.values()) == {"20260823-trial-access1"}, versions
+
+
+def test_development_preview_is_rewired_after_async_build_identity():
+    js = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    apply_identity = js[
+        js.index("function applyBuildIdentity(payload)"):
+        js.index("async function refreshBuildIdentity(seed)")
+    ]
+
+    assert "if (CURRENT_AUTH)" in apply_identity
+    assert "wireAdminEnvironmentButton();" in apply_identity
+    assert "wireDevPreviewButton();" in apply_identity
+    assert "renderDevPreviewBanner();" in apply_identity
+    assert "label: 'Developer Preview', onClick: () => openDevPreviewPanel()" in js
 
 
 def test_unified_identity_ui_uses_public_uuid_and_provider_login_contract():
@@ -179,11 +193,16 @@ def test_unauthenticated_entry_uses_provider_login_not_promo_gate():
         "CURRENT_AUTH = result.auth", 1
     )[0]
     assert "Вход и регистрация" in ui
+    assert "Живые графики используют только разрешённый для аккаунта источник market data" in ui
     assert 'id="auth-open-promo"' in ui
-    assert "Смотреть без входа" in ui
+    assert "Смотреть без входа" not in ui
+    assert "Смотреть бесплатно" not in ui
+    assert "guestAuthStub" not in ui
+    assert "startGuestBrowse" not in ui
+    assert "guest-browse" not in ui
     assert "renderTelegramLogin('')" in boot
     assert "if (!dismissed) renderWelcomeAccess" not in boot
-    assert "startGuestBrowse(newsStrip);" in boot
+    assert "stratforge.welcome.dismissed" not in boot
     require_signin = ui.split("function requireSignIn()", 1)[1].split("window.UI", 1)[0]
     assert "renderTelegramLogin('')" in require_signin
     assert "renderWelcomeAccess" not in require_signin
@@ -198,7 +217,7 @@ def test_every_aurora_page_uses_current_ui_cache_version():
             continue
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
     assert versions
-    assert set(versions.values()) == {"20260820-final-acceptance1"}, versions
+    assert set(versions.values()) == {"20260823-trial-access1"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():

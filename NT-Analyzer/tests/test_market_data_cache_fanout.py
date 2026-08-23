@@ -249,8 +249,15 @@ def test_browser_ws_broadcast_does_not_block_provider_reader_on_slow_client() ->
         "wfile": BlockingWriter(),
         "connection": Connection(),
     })()
-    client = market_data_ws_http.WsClient(handler)
+    client = market_data_ws_http.WsClient(
+        handler, context={"is_owner": True, "user_id": 1},
+    )
     client.subscriptions.add("MNQ 09-26|5m")
+    client.access_decisions["MNQ 09-26|5m"] = (
+        market_data_ws_http.market_data_access.resolve_market_data_access(
+            client.context, exact_contract="MNQ 09-26", timeframe="5m",
+        )
+    )
     market_data_ws_http.register_client(client)
     caller_thread_id = threading.get_ident()
     dropped_before = market_data_ws_http.metrics()["dropped"]
@@ -316,7 +323,9 @@ def test_browser_ws_topstep_subscription_is_refcounted_per_client(monkeypatch) -
             return True
 
     monkeypatch.setattr(market_data_failover, "TopstepXProvider", FakeTopstep)
-    client = market_data_ws_http.WsClient(request_handler=None)
+    client = market_data_ws_http.WsClient(
+        request_handler=None, context={"is_owner": True, "user_id": 1},
+    )
     market_data_ws_http._on_client_message(client, {
         "type": "subscribe", "exact_contract": "MNQ 09-26", "timeframe": "5m",
     })

@@ -251,6 +251,7 @@ def test_admin_user_panel_endpoints(cabinet_store, monkeypatch) -> None:
     owner_token, owner_csrf = "o" * 64, "p" * 48
     user_token, user_csrf = "u" * 64, "v" * 48
     _seed_two_accounts(owner_token, owner_csrf, user_token, user_csrf)
+    initial_trial = subscriptions.ensure_initial_trial(42, source="test_registration")
 
     server = ThreadingHTTPServer((server_mod.HOST, 0), server_mod.Handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -261,6 +262,27 @@ def test_admin_user_panel_endpoints(cabinet_store, monkeypatch) -> None:
         assert detail["user"]["user_id"] == 42
         assert "capabilities" in detail and "capability_catalog" in detail
         assert "nt_connection" in detail and "login_history" in detail["user"]
+        assert detail["access"]["state"] == "active"
+
+        extended = _request(
+            base, "/api/owner/trial/extend", method="POST",
+            token=owner_token, csrf=owner_csrf,
+            body={
+                "user_id": 42, "days": 3,
+                "reason": "Owner QA extension",
+                "idempotency_key": "cabinet-trial-extension-1",
+            },
+        )
+        assert extended["access"]["expires_at_utc"] > initial_trial["access"]["expires_at_utc"]
+        assert extended["access"]["history"][0]["reason"] == "Owner QA extension"
+
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _request(
+                base, "/api/owner/trial/extend", method="POST",
+                token=user_token, csrf=user_csrf,
+                body={"user_id": 42, "days": 1, "reason": "self-extension"},
+            )
+        assert exc.value.code == 403
 
         _request(base, "/api/auth/users/42/permission", method="POST", token=owner_token, csrf=owner_csrf,
                  body={"capability": "ai_lab", "enabled": True})
@@ -667,7 +689,7 @@ def test_owner_row_exposes_details_and_support_bridge() -> None:
     assert "ownerSupportDeviceName" in ui
 
 
-def test_miniapp_register_waits_for_owner_confirmation(cabinet_store, monkeypatch) -> None:
+def test_miniapp_verified_registration_activates_initial_trial(cabinet_store, monkeypatch) -> None:
     monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
     token = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_123456"
     monkeypatch.setenv(telegram_service.TOKEN_ENV, token)
@@ -698,12 +720,13 @@ def test_miniapp_register_waits_for_owner_confirmation(cabinet_store, monkeypatc
             _request(base, "/api/auth/me", extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
         assert exc.value.code == 403
 
-        # Direct Mini App registration waits for owner confirmation.
+        # Verified Mini App registration activates immediately and mints the
+        # account's one bounded initial trial.
         out = _request(base, "/api/auth/miniapp/register", method="POST",
                        body={"email": "s@e.com", "first_name": "Sam", "last_name": "Lee", "accept_terms": True},
                        extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
-        assert out["ok"] is True and out["authenticated"] is False
-        assert out["status"] == "pending_owner" and out["challenge_id"]
+        assert out["ok"] is True and out["authenticated"] is True
+        assert out["status"] == "active" and out["challenge_id"] == ""
 
         # Registration without accepting the terms is rejected.
         other = _init_data(778, token=token)
@@ -713,27 +736,29 @@ def test_miniapp_register_waits_for_owner_confirmation(cabinet_store, monkeypatc
                      extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: other})
         assert exc.value.code == 400
 
-        # Pending user still cannot use the app until the owner allows.
-        with pytest.raises(urllib.error.HTTPError) as exc:
-            _request(base, "/api/auth/me", extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
-        assert exc.value.code == 403
+        me = _request(base, "/api/auth/me", extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
+        assert me["is_owner"] is False and me["free_preview"] is False
+        assert me["plan_id"] == subscriptions.TRIAL_PLAN_ID
+        assert me["trial_access"]["state"] == "active"
+        assert me["ux_mode"] == "professional" and me["ux_pending"] is False
+        assert me["features"]["docs"] is True
+        # Product trial and market-data redistribution are separate. Without
+        # explicit policy authorization this account is prompted for BYOMD.
+        assert me["market_data_access"]["allowed"] is False
+        assert me["market_data_access"]["reason"] == "redistribution_not_authorized"
 
         # Public access options are readable without auth (welcome screen).
         access = _request(base, "/api/billing/access-options", extra_headers=tunnel)
         assert "tiers" in access
 
-        # Owner activates the pending account via the challenge allow callback path.
-        allow = "account_allow:" + out["challenge_id"]
-        assert account_auth.process_update({"callback_query": {
-            "id": "cb1", "data": allow, "from": {"id": 999},
-        }}, api_call=lambda *a, **k: {}, owner_chat_id="999")
-
-        me = _request(base, "/api/auth/me", extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
-        assert me["is_owner"] is False and me["free_preview"] is True
-        # A newly approved account does not receive professional features
-        # until it chooses that contour.
-        assert me["ux_pending"] is True
-        assert me["features"]["news"] is False
+        # Re-registering the same verified identity never restarts the clock.
+        first_expiry = me["trial_access"]["expires_at_utc"]
+        replay = _request(base, "/api/auth/miniapp/register", method="POST",
+                          body={"email": "s@e.com", "first_name": "Sam", "last_name": "Lee", "accept_terms": True},
+                          extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
+        assert replay["authenticated"] is True
+        me_again = _request(base, "/api/auth/me", extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
+        assert me_again["trial_access"]["expires_at_utc"] == first_expiry
     finally:
         server.shutdown()
         server.server_close()

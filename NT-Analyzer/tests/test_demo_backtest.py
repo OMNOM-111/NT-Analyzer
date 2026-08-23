@@ -70,9 +70,11 @@ def _request(base, path, *, token="", csrf="", method="GET", body=None):
         return json.loads(resp.read().decode("utf-8"))
 
 
-def test_free_preview_unlocks_demo_backtest_nav():
+def test_authenticated_baseline_unlocks_demo_backtest_nav():
     perm = permissions.resolve({"user_id": 1, "is_owner": False, "ux_mode": "professional"}, None)
-    assert perm["free_preview"] is True
+    assert perm["free_preview"] is False
+    assert perm["baseline_access"] is True
+    assert perm["plan_id"] == "authenticated_basic"
     assert perm["capabilities"]["demo_backtest"] is True
     assert perm["capabilities"]["backtesting"] is False
     assert perm["nav"]["backtest"] is True

@@ -7,7 +7,7 @@ from app import permissions, subscriptions
 
 @pytest.fixture(autouse=True)
 def isolated_subscriptions(monkeypatch, tmp_path):
-    # Keep the Free Preview plan-matrix lookup off the real DPAPI store.
+    # Keep the authenticated baseline plan lookup off the real DPAPI store.
     monkeypatch.setattr(subscriptions, "_root", lambda: tmp_path)
     return tmp_path
 
@@ -60,11 +60,13 @@ def test_delegated_admin_grants_are_explicit_and_expire() -> None:
     assert caps["users.manage"] is False
 
 
-def test_free_preview_when_no_entitlement() -> None:
+def test_authenticated_baseline_when_no_entitlement() -> None:
     perm = permissions.resolve({"is_owner": False, "ux_mode": "professional"}, {})
-    assert perm["free_preview"] is True
-    assert perm["plan_id"] == permissions.FREE_PREVIEW_PLAN_ID
-    # Free Preview professional rail: news, docs and demo backtest.
+    assert perm["free_preview"] is False
+    assert perm["baseline_access"] is True
+    assert perm["plan_id"] == permissions.AUTHENTICATED_BASIC_PLAN_ID
+    # The authenticated post-trial contour retains account utilities but not
+    # an implicit live market-data grant.
     assert perm["nav"]["news"] is True
     assert perm["nav"]["docs"] is True
     assert perm["nav"]["backtest"] is True
@@ -181,10 +183,12 @@ def test_enforce_allows_with_capability() -> None:
     permissions.enforce("/api/ai-lab/x", ctx)  # must not raise
 
 
-def test_beginner_may_read_market_bars_for_charts() -> None:
+def test_beginner_market_bars_require_explicit_market_admission() -> None:
     ctx = {"is_owner": False, "user": {"ux_mode": "beginner"}, "capabilities": {"practice_trading": True, "community": True}}
-    permissions.enforce("/api/ops/runtime/bars", ctx)
-    permissions.enforce("/api/ops/runtime/bars/batch", ctx)
+    with pytest.raises(permissions.PermissionError):
+        permissions.enforce("/api/ops/runtime/bars", ctx)
+    with pytest.raises(permissions.PermissionError):
+        permissions.enforce("/api/ops/runtime/bars/batch", ctx)
     permissions.enforce("/api/community/feed", ctx)
     with pytest.raises(permissions.PermissionError):
         permissions.enforce("/api/governance/summary", ctx)
@@ -199,7 +203,7 @@ def test_beginner_may_read_market_bars_for_charts() -> None:
             permissions.enforce(path, ctx)
 
 
-def test_professional_free_preview_cannot_bypass_paid_routes() -> None:
+def test_professional_baseline_cannot_bypass_paid_routes() -> None:
     perm = permissions.resolve({"ux_mode": "professional"}, {})
     ctx = {
         "is_owner": False,
