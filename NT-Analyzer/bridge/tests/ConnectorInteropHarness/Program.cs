@@ -90,6 +90,14 @@ internal static class Program
                 },
             };
             bool validConfigAccepted = LoadConfig(configType, stateDir, "valid.json", validConfig);
+            JObject loopbackConfig = (JObject)validConfig.DeepClone();
+            loopbackConfig["production_connector"]["server_origin"] = "http://127.0.0.1:8765";
+            bool loopbackHttpAccepted = LoadConfig(
+                configType, stateDir, "loopback.json", loopbackConfig);
+            JObject remoteHttpConfig = (JObject)validConfig.DeepClone();
+            remoteHttpConfig["production_connector"]["server_origin"] = "http://example.invalid";
+            bool remoteHttpRejected = !LoadConfig(
+                configType, stateDir, "remote-http.json", remoteHttpConfig);
             JObject unknownConfig = (JObject)validConfig.DeepClone();
             unknownConfig["production_connector"]["unexpected_network_field"] = true;
             bool unknownConfigRejected = !LoadConfig(
@@ -109,6 +117,8 @@ internal static class Program
                 ["config_contract"] = new JObject
                 {
                     ["schema3_without_project_root"] = validConfigAccepted,
+                    ["development_loopback_http_accepted"] = loopbackHttpAccepted,
+                    ["remote_http_rejected"] = remoteHttpRejected,
                     ["unknown_production_field_rejected"] = unknownConfigRejected,
                     ["plaintext_enrollment_code_rejected"] = plaintextCodeRejected,
                 },

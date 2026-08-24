@@ -140,7 +140,11 @@ namespace StratForge.Connector.Setup
                         parsed.Action = action;
                     }
                     else if (arg == "--ninja-user-dir") parsed.Options.NinjaUserDir = Value(args, ref index, arg);
-                    else if (arg == "--server-origin") parsed.Options.ServerOrigin = Value(args, ref index, arg);
+                    else if (arg == "--server-origin")
+                    {
+                        parsed.Options.ServerOrigin = Value(args, ref index, arg);
+                        parsed.Options.ServerOriginExplicit = true;
+                    }
                     else if (arg == "--enrollment-code") parsed.Options.EnrollmentCode = Value(args, ref index, arg);
                     else if (arg == "--channel") parsed.Options.Channel = Value(args, ref index, arg);
                     else if (arg == "--update-policy") parsed.Options.UpdatePolicy = Value(args, ref index, arg);

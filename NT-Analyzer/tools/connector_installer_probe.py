@@ -34,16 +34,23 @@ def _run(setup: Path, *args: str) -> tuple[int, dict, str]:
     return completed.returncode, payload, text
 
 
-def _common(ninja_dir: Path, state_root: Path) -> list[str]:
-    return [
+def _common(
+    ninja_dir: Path,
+    state_root: Path,
+    *,
+    server_origin: str | None = "https://app.stratforges.com",
+) -> list[str]:
+    args = [
         "--ninja-user-dir", str(ninja_dir),
         "--state-root", str(state_root),
-        "--server-origin", "https://app.stratforges.com",
         "--channel", "stable",
         "--update-policy", "safe_restart",
         "--skip-uri-registration",
         "--non-interactive",
     ]
+    if server_origin is not None:
+        args[4:4] = ["--server-origin", server_origin]
+    return args
 
 
 def main() -> int:
@@ -123,11 +130,49 @@ def main() -> int:
         )
 
         dll_target.write_bytes(b"tampered-installed-dll")
-        code, repaired, repaired_text = _run(setup, "--repair", *common)
+        loopback_common = _common(
+            ninja_dir, state_root, server_origin="http://127.0.0.1:8765",
+        )
+        code, repaired, repaired_text = _run(setup, "--repair", *loopback_common)
+        rebound_config = json.loads(config_target.read_text(encoding="utf-8"))
         checks["repair_restores_payload"] = (
             code == 0 and repaired.get("ok") is True
             and _hash(dll_target) == _hash(payload_dll)
             and bootstrap.is_file()
+        )
+        checks["explicit_loopback_development_rebind"] = (
+            code == 0
+            and rebound_config["production_connector"].get("server_origin")
+            == "http://127.0.0.1:8765"
+        )
+
+        code, preserved, preserved_text = _run(
+            setup,
+            "--repair",
+            *_common(ninja_dir, state_root, server_origin=None),
+        )
+        preserved_config = json.loads(config_target.read_text(encoding="utf-8"))
+        checks["repair_without_origin_preserves_binding"] = (
+            code == 0
+            and preserved.get("ok") is True
+            and preserved_config["production_connector"].get("server_origin")
+            == "http://127.0.0.1:8765"
+        )
+
+        preserved_hash = _hash(config_target)
+        code, rejected_http, _ = _run(
+            setup,
+            "--repair",
+            *_common(
+                ninja_dir,
+                state_root,
+                server_origin="http://connector.example.invalid",
+            ),
+        )
+        checks["remote_http_rejected_without_mutation"] = (
+            code != 0
+            and rejected_http.get("error_class") == "InvalidDataException"
+            and _hash(config_target) == preserved_hash
         )
 
         tampered_payload = temp_root / "tampered-payload"
