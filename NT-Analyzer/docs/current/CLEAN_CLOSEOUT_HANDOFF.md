@@ -1,12 +1,12 @@
-# Clean closeout — beta.29 accepted; new Development candidate open
+# Clean closeout — beta.29 accepted; beta.30 release preparation
 
-Дата проверки: `2026-08-24T01:52:25Z`.
+Дата проверки: `2026-08-24T02:41:31Z`.
 
-## Current Development delta — 2026-08-23T21:36:03Z
+## Current Development delta — 2026-08-24T02:41:31Z
 
 Beta.29 ниже остаётся неизменённым accepted live baseline. На ветке
-`codex/trial-connector-release-20260823` от
-`653f2b5bcfae2597dc0d14a22f07e741acd84cc8` открыт новый release cycle:
+`codex/release-beta30-20260824` из clean `main` merge
+`fb7d7f9b973a77efde629c75ab97daf82dbeafce` готовится versioned beta.30 release:
 
 - anonymous blurred/preview entry удалён;
 - verified human registration получает один полный 7-дневный trial;
@@ -37,8 +37,12 @@ long-poll» исправлен bounded burst drain: за `3m02s` source sequence
 `110 → 375`, `drops=0`, `transport_errors=0`. Безопасный demo-backtest
 `#18781` завершил 28 синтетических сделок и не создавал реальных ордеров.
 
-Release ещё не готов только к Git/release gates: PR #144 и обязательный CI
-pending. Cross-user shared trial feed остаётся `EXTERNAL BLOCKED` без
+PR #144 прошёл mandatory CI и слит owner-authorized merge commit
+`fb7d7f9b973a77efde629c75ab97daf82dbeafce`. На этом clean SHA повторно
+подтверждены signed Connector hello/heartbeat, непрерывные MNQ/MES history/live
+batches и безопасный UI demo-backtest `#18782` без реальных ордеров. Следующий
+gate — versioned beta.30 release-preparation PR, затем один signed immutable
+artifact. Cross-user shared trial feed остаётся `EXTERNAL BLOCKED` без
 письменного provider/exchange redistribution authority; публичный Production
 Connector package требует разрешённого Authenticode tool/material. Canary и
 Production не изменялись и остаются beta.29.
@@ -108,4 +112,5 @@ Canonical operational evidence:
 2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Opened the new verified-trial and per-user market-data admission cycle, recorded complete LOCAL automated evidence and retained exact redistribution, Authenticode and physical NinjaTrader blockers; beta.29 live environments remain unchanged.
 2026-08-23T22:20:31Z | GPT-5.5 через Codex по запросу owner | Зафиксирован LOCAL acceptance нового trial/access candidate: 1943/32/0 и 10m56s двухклиентный MNQ/MES visual fan-out PASS; внешние Connector/redistribution gates сохранены.
 2026-08-24T01:52:25Z | GPT-5.5 через Codex по запросу owner | Закрыт physical Development Connector acceptance: проверенный dev.14, сохранённое enrollment, heartbeat, MNQ/MES history/live, bounded transport drain без drops и безопасный demo-backtest; следующий gate — PR #144 CI.
+2026-08-24T02:41:31Z | GPT-5.5 через Codex по запросу owner | PR #144 слит owner-authorized merge fb7d7f9b; на clean merge повторно подтверждены Connector heartbeat/history/live и demo-backtest #18782; VERSION подготовлен к единственному immutable beta.30 cycle.
 -->

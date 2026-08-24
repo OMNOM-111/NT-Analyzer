@@ -1,18 +1,18 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
-- Last verified UTC: 2026-08-23T21:36:03Z
+- Last verified UTC: 2026-08-24T02:41:31Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Repository baseline: beta.29 remains live in Canary and Production; a new Development-only trial/access and per-user market-data admission candidate is based on `653f2b5bcfae2597dc0d14a22f07e741acd84cc8`
-- Candidate in this closeout: unversioned Development candidate; no Canary or Production deployment yet
+- Repository baseline: PR #144 is merged into clean `main`; beta.29 remains live in Canary and Production while the same accepted Development content is versioned as beta.30
+- Candidate in this closeout: beta.30 release preparation; no new Canary or Production deployment yet
 - Scope: Current factual subsystem snapshot only
 - Status: PARTIAL
-- Acceptance note: beta.29 remains the accepted live release. The new Development candidate has automated/browser LOCAL and physical Development Connector acceptance; PR/CI and a new immutable release cycle remain open.
+- Acceptance note: beta.29 remains the accepted live release. PR #144 mandatory CI and merge are complete; merge-SHA browser/Connector/backtest revalidation passed. Only the versioned release PR and new immutable Canary cycle remain open.
 - Current Production version/build/artifact when known: `0.10.0-beta.29`; build `sf-0.10.0-beta.29-4d15f1d2250e-20260823T020155Z`; runtime artifact SHA256 `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379`
 
 ## Evidence modes
 
-- Repository evidence is merge `4d15f1d2250e` and its regression contracts.
+- Repository evidence is beta.30 parent merge `fb7d7f9b973a77efde629c75ab97daf82dbeafce`, PR #144 green CI and its regression contracts.
 - Operational evidence is queried from `/api/runtime/env`, `/api/live` and
   `/api/ready` and from Release Center candidate/deployment records. Canary and
   Production report the same beta.29 build/runtime digest and `ready` status.
@@ -75,4 +75,5 @@ Previous/rollback suffix for both environments is
 2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Closed beta.29 as the current live Canary/Production identity with exact artifact, CI, browser chart, gateway and responsive evidence; beta.28 moved to rollback-only status.
 2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Opened the Development-only unified trial/access candidate, removed anonymous preview entry, recorded per-user HTTP/WS market-data admission and retained the cross-user redistribution and physical Connector gates honestly.
 2026-08-24T01:52:25Z | GPT-5.5 через Codex по запросу owner | Recorded physical Development Connector dev.14 acceptance, exact package identity, authenticated MNQ/MES ingestion and safe demo-backtest; retained PR/release, Authenticode and redistribution gates.
+2026-08-24T02:41:31Z | GPT-5.5 через Codex по запросу owner | Recorded clean owner-authorized PR #144 merge fb7d7f9b, repeated Connector heartbeat/history/live and safe UI demo-backtest #18782, and opened the beta.30 version-only immutable release preparation.
 -->
