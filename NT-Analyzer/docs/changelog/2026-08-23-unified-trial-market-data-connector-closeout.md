@@ -4,7 +4,7 @@
 - Author: GPT-5.5 через Codex по запросу owner
 - Development base: `653f2b5bcfae2597dc0d14a22f07e741acd84cc8`
 - Branch: `codex/trial-connector-release-20260823`
-- Status: `IN DEVELOPMENT / LOCAL ACCEPTANCE PASS / EXTERNAL GATES OPEN`
+- Status: `IN DEVELOPMENT / LOCAL ACCEPTANCE PASS / CONNECTOR ACCEPTANCE PASS / EXTERNAL GATES OPEN`
 - Live environments: unchanged `0.10.0-beta.29`
 
 ## Product change
@@ -39,20 +39,28 @@ through to another workspace or the owner's global feed.
 - Current policy has no written cross-user redistribution authority; the shared
   trial feed therefore remains fail-closed. This is independent from the
   seven-day StratForge product grant.
-- The running NinjaTrader `8.1.7.2` process was observed but not terminated or
-  restarted. Its installed Connector is Canary-bound, not enrolled and has no
-  authenticated heartbeat/market-data streams.
-- A Development Connector package verifies locally, but a publishable
-  Production package still requires the authorized Authenticode tool/material.
-- The next acceptance step is physical: owner saves/closes NinjaTrader, then the
-  candidate Connector can be installed and the owner restarts/approves native
-  prompts. No synthetic enrollment is accepted.
+- NinjaTrader `8.1.7.2` was explicitly saved and closed by the owner, then the
+  verified Development Connector was installed and NinjaTrader was restarted.
+  Device-owned enrollment remained intact; signed hello, heartbeat and the two
+  configured `MNQ SEP26 5m` / `MES SEP26 5m` subscriptions are authenticated
+  against Development with no cross-environment binding.
+- A reproduced Connector transport defect sent one market-data snapshot before
+  each 15-second command long poll. The bounded queue therefore discarded
+  intermediate live snapshots. `0.4.1-dev.14` drains a capped burst before the
+  poll. Runtime evidence for 3m02s advanced `source_sequence 110 -> 375` with
+  `drops=0` and `transport_errors=0`; Admin reported one installation online.
+- The safe product demo-backtest completed as report `#18781` / `done` with 28
+  explicitly synthetic trades and zero real orders. Production Connector mode
+  remains read-only for this device (`telemetry`, `accounts_read`).
+- A publishable Production Connector package still requires the authorized
+  Authenticode tool/material. The tested package is Development trust only and
+  is not exposed as a public download.
 - Four Google/Resend secrets were not read, changed or rotated.
 
 ## Verification checkpoint
 
-- Focused trial/auth/permissions/cabinet/market-data/fan-out suites: PASS.
-- Full repository suite: `1943 passed`, `32 skipped`, `0 failed`.
+- Focused Connector/installer/Admin/trial/market-data suites: `50 passed`.
+- Full repository suite: `1945 passed`, `32 skipped`, `0 failed`.
 - Custom release runner: `13/13` suites passed.
 - Bridge Debug build: `0 warnings`, `0 errors`.
 - Compileall, 22 Aurora JavaScript syntax checks, CSP, secret, Markdown/link,
@@ -74,8 +82,19 @@ through to another workspace or the owner's global feed.
   `dev-0.10.0-beta.29-653f2b5bcfae`. No service-worker registration exists.
 - Git/PR/CI and immutable release evidence are recorded only after they
   complete; no early Canary/Production PASS is claimed here.
+- Final LOCAL Connector package: `0.4.1-dev.14`, source
+  `a3979a3f42ab55dc968e69ae57f4742d5d56879a`, archive SHA256
+  `8B3B7D3A1271829406EE5ED57F8D31B315C82F75AA1E655A9903B5415ED08C84`,
+  manifest SHA256
+  `9FBAD8AB1276393249504564D2C1E398872D83A3987CF68880D06BD4E7E50E32`.
+  Installed DLL exactly matched the verified payload SHA256
+  `DB55FCCC1980B2AE2E5CC75912836F3519E88949A6E6B0181FBD39524CE5DAE5`.
+- Clean `a3979a3f` browser smoke kept the accepted TopstepX baseline intact:
+  MNQ/MES were `LIVE`, colored price labels remained rendered and a second
+  simultaneous client saw the same two live instruments.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Created the canonical Development checkpoint for unified trial/access, scoped market-data admission and real Connector closeout boundaries.
 2026-08-23T22:20:31Z | GPT-5.5 через Codex по запросу owner | Recorded clean LOCAL automated and two-client 10-minute visual acceptance; preserved external redistribution, physical Connector and signing gates.
+2026-08-24T01:52:25Z | GPT-5.5 через Codex по запросу owner | Recorded physical Development Connector install, retained enrollment, heartbeat/history/live evidence, bounded transport-drain fix and safe demo-backtest; retained Authenticode and redistribution gates.
 -->

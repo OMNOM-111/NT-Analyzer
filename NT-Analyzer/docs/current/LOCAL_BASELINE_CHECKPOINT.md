@@ -69,15 +69,22 @@ user-owned provider/личный Connector либо продлённый trial �
 explicit authority flags; shared owner feed остаётся fail-closed без отдельного
 remote-server/redistribution authority.
 
-Автоматический LOCAL checkpoint: `1943 passed`, `32 skipped`, `0 failed`;
+Автоматический LOCAL checkpoint: `1945 passed`, `32 skipped`, `0 failed`;
 custom suites `13/13`; bridge Debug build без предупреждений/ошибок; Python,
 JavaScript, CSP, secret, Markdown/link, Context Pack и diff gates PASS. LOCAL
 browser: два клиента MNQ/MES 5m, `10m56s`, точное совпадение WS price → close →
 цветной rendered marker; `browser_ws=2`, `logical=4`, `wire=2`, общий
 `signalr=1`, direct/auth/loginKey `0`, после закрытия browser/logical/wire `0`.
-Ни Canary, ни Production не менялись. Следующий обязательный шаг — physical
-NinjaTrader interaction и PR/CI; выпуск нового artifact пока не разрешён
-фактическими acceptance gates.
+
+Physical Development Connector checkpoint: owner сохранил/закрыл NinjaTrader,
+проверенный `0.4.1-dev.14` установлен с сохранением enrollment/device key;
+signed hello/heartbeat, MNQ/MES 5m history/live и late-feed resubscribe PASS.
+После исправления воспроизводимого long-poll queue defect наблюдение `3m02s`
+дало source sequence `110 → 375`, `drops=0`, `transport_errors=0`.
+Demo-backtest `#18781` завершил 28 явно синтетических сделок без реальных
+ордеров. Ни Canary, ни Production не менялись. Следующий обязательный шаг —
+PR #144/CI и единичное owner merge decision; выпуск artifact начинается только
+из итогового merge SHA.
 
 ## Предыдущий accepted checkpoint — BETA.29 RELEASE CLOSED
 
@@ -110,9 +117,10 @@ MES/MNQ close и цветным live markers; MNQ 15m PASS; mobile/tablet docume
 overflow `0`. Production — единственный gateway hub, Canary и LOCAL —
 consumers. Unrelated-user redistribution остаётся `EXTERNAL BLOCKED`.
 
-Физическое enrollment нового NinjaTrader Connector остаётся отдельной
-hardware-зависимой проверкой и не имитируется. Текущий Connector/NinjaTrader
-не перезапускается без воспроизводимой необходимости.
+Физическое enrollment текущего Development NinjaTrader Connector подтверждено
+реальным устройством и не имитировалось. Публичный Production Connector
+package отдельно остаётся `EXTERNAL BLOCKED` до появления разрешённого
+Authenticode tool/material; runtime Connector protocol принят.
 
 Релизы только: `LOCAL → mandatory CI → PR → merge → immutable candidate →
 Canary → acceptance → SAME artifact Production`.
@@ -126,4 +134,5 @@ Canary → acceptance → SAME artifact Production`.
 2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Обновлён checkpoint после beta.29: чистый merge, зелёный PR #142, один immutable artifact, Canary/Production PASS, fan-out и responsive evidence.
 2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Added the open Development trial/market-data/Connector checkpoint and its LOCAL automated evidence; beta.29 remains the unchanged live rollback-safe baseline.
 2026-08-23T22:20:31Z | GPT-5.5 через Codex по запросу owner | Added clean 1943/32/0 regression and 10m56s two-client MNQ/MES browser fan-out evidence; retained the physical Connector and redistribution blockers.
+2026-08-24T01:52:25Z | GPT-5.5 через Codex по запросу owner | Recorded physical Development Connector dev.14 acceptance with retained enrollment, signed heartbeat, MNQ/MES history/live, zero-drop bounded drain and a safe synthetic no-order demo-backtest.
 -->

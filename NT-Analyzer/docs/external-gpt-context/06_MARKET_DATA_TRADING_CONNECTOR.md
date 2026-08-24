@@ -51,16 +51,33 @@
 
 ## Current physical NinjaTrader / Connector checkpoint
 
-- NinjaTrader `8.1.7.2` is running on the owner workstation and was not killed or
-  restarted by automation.
-- Installed `NTAnalyzerBridge.dll` SHA256 is
-  `06490032D84635D1030DA9CB089BC54A7C8D978C34D7FECA9D7860E32E459F8C`.
-- The active Connector is bound to Canary, reports version `0.4.0-dev.1`, has no
-  configured market-data streams and repeatedly reports
-  `enrollment_unavailable`; no authenticated heartbeat/session exists.
-- Development package `0.4.1-dev.10` verifies locally, but a publishable
-  Production Connector is blocked because the required Authenticode signing
-  tool/material is unavailable in the current environment.
+- The owner explicitly saved and closed NinjaTrader `8.1.7.2`; verified package
+  `0.4.1-dev.14` was installed and NinjaTrader was restarted normally. The
+  running Connector is bound only to `http://127.0.0.1:8765` Development.
+- Device-owned enrollment survived repair. Signed hello was accepted, Admin
+  reported `installations=1`, `online=1`, and heartbeat
+  `2026-08-24T01:48:40Z`; no bootstrap credential remained on disk.
+- The exact configured read-only streams are `MNQ SEP26 5m` and `MES SEP26 5m`.
+  Both history requests subscribed, late price-connection readiness triggered
+  one bounded resubscribe, and live batches reached the authenticated server.
+- The reproduced one-batch-per-long-poll transport lag was fixed by draining a
+  bounded queue burst before command polling. A 3m02s post-fix observation
+  advanced source sequence `110 -> 375` with `drops=0` and
+  `transport_errors=0`. The prior dev.13 control advanced only one batch about
+  every 15 seconds and logged continuous oldest-batch drops.
+- Package source is `a3979a3f42ab55dc968e69ae57f4742d5d56879a`;
+  archive SHA256 is
+  `8B3B7D3A1271829406EE5ED57F8D31B315C82F75AA1E655A9903B5415ED08C84`,
+  manifest SHA256 is
+  `9FBAD8AB1276393249504564D2C1E398872D83A3987CF68880D06BD4E7E50E32`,
+  and installed/payload DLL SHA256 is
+  `DB55FCCC1980B2AE2E5CC75912836F3519E88949A6E6B0181FBD39524CE5DAE5`.
+- A safe in-product demo-backtest finished `done` as report `#18781` with 28
+  explicitly synthetic trades and no real orders. The enrolled Production
+  Connector device has only `telemetry` and `accounts_read` capabilities.
+- A publishable Production Connector remains blocked because the authorized
+  Authenticode signing tool/material is unavailable. The dev.14 package is
+  Development trust only and is not offered as a public installer.
 - One physical NinjaTrader instance can bind to one environment at a time.
   LOCAL, Canary and Production acceptance therefore requires sequential manual
   save/close, install/restart and any native license/provider confirmation; it
@@ -139,4 +156,5 @@ Detailed evidence and defect scope:
 2026-08-23T01:29:45Z | GPT-5.5 через Codex по запросу owner | Удалены устаревшие live 1fae1f39/IN DEVELOPMENT формулировки; зафиксированы фактический Production hub, Canary/DEV consumer fan-out, browser/load evidence и внешний entitlement blocker.
 2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Добавлены live beta.29 Canary/Production gateway roles, exact artifact, two-client chart/marker and same-origin browser-network evidence; Connector/redistribution gaps оставлены честно PARTIAL/EXTERNAL BLOCKED.
 2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Added the Development per-user HTTP/WS admission and source-isolation contracts, recorded the real running Connector/NinjaTrader checkpoint and preserved redistribution, Authenticode and physical-interaction blockers without changing the accepted TopstepX baseline.
+2026-08-24T01:52:25Z | GPT-5.5 через Codex по запросу owner | Replaced the obsolete unenrolled Connector checkpoint with verified dev.14 install, signed enrollment/heartbeat, two-stream history/live ingestion, bounded drain evidence and safe no-order demo-backtest; Authenticode remains external.
 -->

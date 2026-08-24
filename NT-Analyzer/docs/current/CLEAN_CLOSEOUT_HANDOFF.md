@@ -1,6 +1,6 @@
 # Clean closeout — beta.29 accepted; new Development candidate open
 
-Дата проверки: `2026-08-23T02:27:02Z`.
+Дата проверки: `2026-08-24T01:52:25Z`.
 
 ## Current Development delta — 2026-08-23T21:36:03Z
 
@@ -16,7 +16,7 @@ Beta.29 ниже остаётся неизменённым accepted live baselin
 - HTTP и browser WebSocket используют единый scoped market-data admission;
 - owner TopstepX history/SignalR/cache/failover baseline не рефакторился.
 
-LOCAL automated evidence: `1943 passed`, `32 skipped`, `0 failed`; custom
+LOCAL automated evidence: `1945 passed`, `32 skipped`, `0 failed`; custom
 runner `13/13`; bridge Debug build `0 warnings / 0 errors`; compileall, 22
 Aurora JavaScript syntax checks, CSP/secret/Markdown/link, External GPT Context
 и `git diff --check` — PASS.
@@ -29,11 +29,19 @@ provider/auth/loginKey `0`; после закрытия browser/logical/wire в�
 нулю. Загруженные `api.js`, `ui.js`, `chart-engine.js`, `pages/desktop.js`
 совпали с disk bytes, service worker отсутствует.
 
-Release ещё не готов: cross-user shared trial feed остаётся
-`EXTERNAL BLOCKED` без письменного provider/exchange redistribution authority;
-реальный Connector требует физического save/close/restart NinjaTrader;
-Production Connector package требует разрешённого Authenticode tool/material.
-Canary и Production не изменялись и остаются beta.29.
+Physical Development Connector acceptance также PASS. После owner save/close
+NinjaTrader установлен проверенный `0.4.1-dev.14`; enrollment/device key
+сохранены, signed hello/heartbeat приняты, MNQ/MES 5m history/live дошли до
+gateway. Доказанный transport-дефект «одна отправка перед 15-секундным
+long-poll» исправлен bounded burst drain: за `3m02s` source sequence
+`110 → 375`, `drops=0`, `transport_errors=0`. Безопасный demo-backtest
+`#18781` завершил 28 синтетических сделок и не создавал реальных ордеров.
+
+Release ещё не готов только к Git/release gates: PR #144 и обязательный CI
+pending. Cross-user shared trial feed остаётся `EXTERNAL BLOCKED` без
+письменного provider/exchange redistribution authority; публичный Production
+Connector package требует разрешённого Authenticode tool/material. Canary и
+Production не изменялись и остаются beta.29.
 
 ## Current release identity
 
@@ -80,9 +88,11 @@ Immutable identity:
 
 TopstepX remains the primary independent read-only history/realtime chart
 source. NinjaTrader remains the execution/backtest/runtime truth and was kept
-OFF during chart acceptance; it was not restarted. Physical enrollment of a
-new Connector device remains a separate hardware acceptance, not a software
-release blocker.
+OFF during independent TopstepX chart acceptance. The current Development
+Connector device then completed physical install/enrollment/heartbeat,
+MNQ/MES history/live and safe no-order demo-backtest acceptance. A public
+Production Connector package remains externally blocked on authorized
+Authenticode material, not on runtime protocol behavior.
 
 Google OAuth, transactional e-mail and legal publication remain their existing
 `EXTERNAL BLOCKED` / `IN DEVELOPMENT` boundaries. Legal documents remain DRAFT.
@@ -97,4 +107,5 @@ Canonical operational evidence:
 2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Заменён beta.28 handoff фактическим beta.29 closeout: PR/CI, exact artifact, Canary/Production deploy IDs, fan-out, responsive и owner browser evidence.
 2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Opened the new verified-trial and per-user market-data admission cycle, recorded complete LOCAL automated evidence and retained exact redistribution, Authenticode and physical NinjaTrader blockers; beta.29 live environments remain unchanged.
 2026-08-23T22:20:31Z | GPT-5.5 через Codex по запросу owner | Зафиксирован LOCAL acceptance нового trial/access candidate: 1943/32/0 и 10m56s двухклиентный MNQ/MES visual fan-out PASS; внешние Connector/redistribution gates сохранены.
+2026-08-24T01:52:25Z | GPT-5.5 через Codex по запросу owner | Закрыт physical Development Connector acceptance: проверенный dev.14, сохранённое enrollment, heartbeat, MNQ/MES history/live, bounded transport drain без drops и безопасный demo-backtest; следующий gate — PR #144 CI.
 -->
