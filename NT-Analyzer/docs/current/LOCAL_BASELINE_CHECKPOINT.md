@@ -59,9 +59,9 @@ identities unique    yes
 `/api/account/security` (2 device), `/api/admin/development-sync` = `current`
 (running == head). LOCAL DB остаётся изолированной от Canary/Production.
 
-## Новый Development checkpoint — TRIAL / MARKET-DATA / CONNECTOR OPEN
+## Новый Development checkpoint — TRIAL / MARKET-DATA / CONNECTOR RELEASE READY
 
-Ветка `codex/trial-connector-release-20260823` от `653f2b5b` реализует
+Clean `main` merge `fb7d7f9b973a77efde629c75ab97daf82dbeafce` реализует
 защищённый вход без anonymous preview, один автоматический полный 7-дневный
 trial, owner extension history и единый scoped HTTP/WS market-data admission.
 После expiry аккаунт не блокируется; live charts допускаются через проверенный
@@ -82,9 +82,11 @@ signed hello/heartbeat, MNQ/MES 5m history/live и late-feed resubscribe PASS.
 После исправления воспроизводимого long-poll queue defect наблюдение `3m02s`
 дало source sequence `110 → 375`, `drops=0`, `transport_errors=0`.
 Demo-backtest `#18781` завершил 28 явно синтетических сделок без реальных
-ордеров. Ни Canary, ни Production не менялись. Следующий обязательный шаг —
-PR #144/CI и единичное owner merge decision; выпуск artifact начинается только
-из итогового merge SHA.
+ордеров. После owner-authorized PR #144 merge повторный clean-SHA контроль
+подтвердил непрерывный heartbeat/history/live и UI demo-backtest `#18782` с тем
+же no-order contract. Ни Canary, ни Production не менялись. Следующий
+обязательный шаг — versioned beta.30 release-preparation PR; artifact строится
+один раз только из его clean merge SHA.
 
 ## Предыдущий accepted checkpoint — BETA.29 RELEASE CLOSED
 
@@ -135,4 +137,5 @@ Canary → acceptance → SAME artifact Production`.
 2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Added the open Development trial/market-data/Connector checkpoint and its LOCAL automated evidence; beta.29 remains the unchanged live rollback-safe baseline.
 2026-08-23T22:20:31Z | GPT-5.5 через Codex по запросу owner | Added clean 1943/32/0 regression and 10m56s two-client MNQ/MES browser fan-out evidence; retained the physical Connector and redistribution blockers.
 2026-08-24T01:52:25Z | GPT-5.5 через Codex по запросу owner | Recorded physical Development Connector dev.14 acceptance with retained enrollment, signed heartbeat, MNQ/MES history/live, zero-drop bounded drain and a safe synthetic no-order demo-backtest.
+2026-08-24T02:41:31Z | GPT-5.5 через Codex по запросу owner | Recorded owner-authorized PR #144 merge fb7d7f9b and repeated clean-merge Connector heartbeat/history/live plus safe UI demo-backtest #18782; opened only the required beta.30 versioned release commit.
 -->
