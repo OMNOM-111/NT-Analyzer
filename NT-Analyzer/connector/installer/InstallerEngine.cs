@@ -244,7 +244,7 @@ namespace StratForge.Connector.Setup
                 "enabled", "server_origin", "protocol_version", "connector_version",
                 "enrollment_code", "enrollment_credential_ref", "state_dir",
                 "heartbeat_interval_ms", "command_poll_seconds", "release_channel",
-                "update_policy", "extensions",
+                "update_policy", "market_data_streams", "extensions",
             };
             foreach (JProperty property in connector.Properties())
                 if (!fields.Contains(property.Name))

@@ -129,6 +129,14 @@ def main() -> int:
             and TEST_CODE not in installed_text
         )
 
+        configured_streams = [
+            {"exact_contract": "MNQ SEP26", "timeframe": "5m"},
+            {"exact_contract": "MES SEP26", "timeframe": "5m"},
+        ]
+        config["production_connector"]["market_data_streams"] = configured_streams
+        config_target.write_text(
+            json.dumps(config, indent=2), encoding="utf-8",
+        )
         dll_target.write_bytes(b"tampered-installed-dll")
         loopback_common = _common(
             ninja_dir, state_root, server_origin="http://127.0.0.1:8765",
@@ -144,6 +152,10 @@ def main() -> int:
             code == 0
             and rebound_config["production_connector"].get("server_origin")
             == "http://127.0.0.1:8765"
+        )
+        checks["market_data_streams_preserved_on_repair"] = (
+            rebound_config["production_connector"].get("market_data_streams")
+            == configured_streams
         )
 
         code, preserved, preserved_text = _run(
