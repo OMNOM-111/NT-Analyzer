@@ -194,10 +194,10 @@ namespace NTAnalyzerBridge.Config
                     }
                     Uri endpoint;
                     if (!Uri.TryCreate(cfg.ProductionConnector.ServerOrigin, UriKind.Absolute, out endpoint) ||
-                        !string.Equals(endpoint.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
+                        !IsAllowedConnectorOrigin(endpoint) ||
                         endpoint.PathAndQuery != "/" || !string.IsNullOrEmpty(endpoint.UserInfo))
                     {
-                        error = "config: production_connector.server_origin must be an HTTPS origin without path or credentials";
+                        error = "config: production_connector.server_origin must be HTTPS, or HTTP on localhost/127.0.0.1 for Development, without path or credentials";
                         return null;
                     }
                     cfg.ProductionConnector.ServerOrigin = endpoint.GetLeftPart(UriPartial.Authority);
@@ -297,6 +297,15 @@ namespace NTAnalyzerBridge.Config
                 error = "failed to read config: " + ex.Message;
                 return null;
             }
+        }
+
+        private static bool IsAllowedConnectorOrigin(Uri endpoint)
+        {
+            if (string.Equals(endpoint.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+                return true;
+            return string.Equals(endpoint.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+                (string.Equals(endpoint.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(endpoint.Host, "localhost", StringComparison.OrdinalIgnoreCase));
         }
 
         private static bool TryNormalizeMarketDataContract(string value, out string normalized)

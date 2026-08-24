@@ -45,6 +45,10 @@ def test_installer_is_standalone_strict_and_transactional() -> None:
     assert "absent from manifest" in verifier
     assert "Path.GetFullPath(release.Root)" in engine
     assert "string.Equals" in engine
+    assert "ServerOriginExplicit" in engine
+    assert 'string.Equals(uri.Host, "127.0.0.1"' in engine
+    assert 'string.Equals(uri.Host, "localhost"' in engine
+    assert "options.ServerOriginExplicit" in engine
     client = (root / "bridge" / "src" / "Connector" / "ConnectorClient.cs").read_text(encoding="utf-8")
     assert 'File.Exists(Path.Combine(_stateDir, "bootstrap.dpapi"))' in client
     assert '_state.Revoked = false;' in client

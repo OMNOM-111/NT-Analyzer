@@ -85,6 +85,7 @@ if __package__ is None or __package__ == "":
     from app import market_data_router  # type: ignore[no-redef]
     from app import market_data_gap_recovery  # type: ignore[no-redef]
     from app import market_data_ws_http  # type: ignore[no-redef]
+    from app import market_data_access  # type: ignore[no-redef]
     from app import market_data_cache_keys  # type: ignore[no-redef]
     from app import market_data_subscriptions  # type: ignore[no-redef]
     from app import market_data_live_supervisor  # type: ignore[no-redef]
@@ -180,6 +181,7 @@ else:
     from . import market_data_router
     from . import market_data_gap_recovery
     from . import market_data_ws_http
+    from . import market_data_access
     from . import market_data_cache_keys
     from . import market_data_subscriptions
     from . import market_data_live_supervisor
@@ -549,7 +551,7 @@ def _connectors_dashboard_payload(context: Dict[str, Any]) -> Dict[str, Any]:
 
     def connector_installations() -> Dict[str, Any]:
         out = connector_protocol.list_installations(context.get("user_id"))
-        rows = list(out.get("installations") or [])
+        rows = list(out.get("connections") or [])
         online = [r for r in rows if str(r.get("status") or "") in {"online", "active"}]
         return {
             "label": "Windows Connector / NinjaTrader",
@@ -1167,7 +1169,9 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
                          max_points: int = 0,
                          workspace_id: str = "",
                          connector_snapshot_index: Optional[Dict[str, Any]] = None,
-                         from_ts: str = "", to_ts: str = "") -> Dict[str, Any]:
+                         from_ts: str = "", to_ts: str = "",
+                         access_decision: Optional[market_data_access.MarketDataAccessDecision] = None,
+                         ) -> Dict[str, Any]:
     with market_data_baseline.StageTimer(
         "backend.bars_payload_ms",
         instrument=str(instrument or ""),
@@ -1176,7 +1180,7 @@ def _market_bars_payload(instrument: str, timeframe: str, limit: int,
         return _market_bars_payload_impl(
             instrument, timeframe, limit, range_days, from_date, to_date,
             register, snapshot_index, alerts_index, max_points, workspace_id,
-            connector_snapshot_index, from_ts, to_ts,
+            connector_snapshot_index, from_ts, to_ts, access_decision,
         )
 
 
@@ -1188,7 +1192,9 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
                               max_points: int = 0,
                               workspace_id: str = "",
                               connector_snapshot_index: Optional[Dict[str, Any]] = None,
-                              from_ts: str = "", to_ts: str = "") -> Dict[str, Any]:
+                              from_ts: str = "", to_ts: str = "",
+                              access_decision: Optional[market_data_access.MarketDataAccessDecision] = None,
+                              ) -> Dict[str, Any]:
     requested_instrument = " ".join(str(instrument or "").strip().upper().split())
     resolved_instrument = market_data.resolve_chart_instrument(requested_instrument) or requested_instrument
     production_mode = _server_environment_explicit()
@@ -1212,8 +1218,11 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
     if not start and range_days > 0:
         end = end or datetime.now(timezone.utc)
         start = end - timedelta(days=range_days)
+    access_source = str((access_decision or {}).source if access_decision else "")
+    isolated_source = access_source in {"owned_provider", "personal_connector"}
+    access_scope_key = str((access_decision or {}).scope_id if access_decision else "")
     remote_bars = None
-    if workspace_id:
+    if workspace_id and access_source != "owned_provider":
         remote_bars = market_data_ingestion.workspace_series(
             str(workspace_id), resolved_instrument, str(timeframe or "5m"), limit,
             snapshot_index=connector_snapshot_index,
@@ -1228,6 +1237,7 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
     except (TypeError, ValueError):
         max_points = 0
     cache_key = (
+        access_scope_key,
         str(workspace_id or ""),
         resolved_instrument,
         str(timeframe or "5m"),
@@ -1256,14 +1266,50 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
     # object whenever the active workspace had no Connector snapshot.
     topstep = market_data_failover.TopstepXProvider()
     topstep_request = requested_instrument if " " not in requested_instrument else resolved_instrument
-    if topstep.configured():
+    if not isolated_source and topstep.configured():
         out = market_data_failover.fetch_external_series(
             topstep_request, timeframe, limit, providers=[topstep],
             start_time=start, end_time=end,
         )
         if out is not None and " " not in requested_instrument:
             resolved_instrument = str(out.get("instrument") or resolved_instrument).upper()
-    if out is None and remote_bars:
+    if access_source == "owned_provider" and out is None:
+        connector = access_decision.connector if access_decision is not None else None
+        try:
+            owned_rows = connector.backfill(resolved_instrument, timeframe, limit) if connector else []
+        except Exception:
+            owned_rows = []
+        owned_bars = market_data_failover.normalize_bars(owned_rows)
+        if owned_bars:
+            owned_bars = market_data_failover.resample_bars(owned_bars, timeframe)[-max(1, int(limit or 1500)):]
+            freshness = market_data_failover.series_freshness(owned_bars, timeframe)
+            live = bool(freshness.get("fresh"))
+            out = {
+                "instrument": resolved_instrument,
+                "bars": owned_bars,
+                "total": len(owned_bars),
+                "raw_total": len(owned_rows),
+                "live": live,
+                "status": "live" if live else "offline",
+                "market_data_available": True,
+                "price_marker_live": live,
+                "requested_timeframe": str(timeframe or "5m"),
+                "matched_timeframe": str(timeframe or "5m"),
+                "freshness": freshness,
+                "source": {
+                    "kind": "owned_provider",
+                    "provider": str(access_decision.provider or "owned_provider"),
+                    "sharing_scope": "private",
+                    "scope_hash": market_data_access.scope_hash(access_decision.scope_id),
+                    "runtime_state": "LIVE" if live else "OFFLINE",
+                    "fresh": live,
+                },
+                "quote": {
+                    "last": float(owned_bars[-1]["c"]),
+                    "source": str(access_decision.provider or "owned_provider"),
+                },
+            }
+    if out is None and remote_bars and access_source != "owned_provider":
         primary_healthy = bool(
             remote_bars.get("live")
             and ((remote_bars.get("freshness") or {}).get("fresh"))
@@ -1287,7 +1333,7 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
                 "price_marker_live": True,
                 "note": "NinjaTrader Connector is serving this chart while TopstepX is unavailable.",
             })
-    if out is None and not production_mode:
+    if out is None and not production_mode and not isolated_source:
         if snapshot_index is not None:
             runtime_bars = market_data.series_from_index(snapshot_index, resolved_instrument, timeframe, limit)
         else:
@@ -1348,7 +1394,7 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
                     out["gap_recovery"] = {"attempted": True, "provider_available": False, "mode": "historical_artifact" if out.get("bars") else "unavailable", "recovered_bars": 0, "unresolved_gaps": 0, "primary_healthy": primary_healthy}
                     if not primary_healthy:
                         out = market_data_failover.mark_offline_snapshot(out, reason="all_live_providers_unavailable", last_source="historical_artifact" if out.get("bars") else "none", backup_providers_available=0)
-    elif out is None:
+    elif out is None and not isolated_source:
         backups = [provider for provider in market_data_failover.live_backup_candidates()
                    if provider.name != "topstepx"]
         out = market_data_failover.fetch_external_series(
@@ -1384,6 +1430,26 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
                 last_source="ninjatrader_connector" if remote_bars else "none",
                 backup_providers_available=0,
             )
+    if out is None:
+        seed = remote_bars or {
+            "instrument": resolved_instrument,
+            "bars": [],
+            "total": 0,
+            "requested_timeframe": str(timeframe or "5m"),
+            "matched_timeframe": str(timeframe or "5m"),
+            "source": {
+                "kind": access_source or "market_data_access",
+                "provider": str((access_decision or {}).provider if access_decision else ""),
+                "sharing_scope": str((access_decision or {}).sharing_scope if access_decision else "none"),
+                "scope_hash": market_data_access.scope_hash(access_scope_key),
+            },
+        }
+        out = market_data_failover.mark_offline_snapshot(
+            seed,
+            reason=f"{access_source or 'authorized'}_source_unavailable",
+            last_source=access_source or "none",
+            backup_providers_available=0,
+        )
     if start or end:
         out["bars"] = [row for row in (out.get("bars") or []) if isinstance(row, dict)
                        and (lambda dt: dt is not None and (start is None or dt >= start)
@@ -1413,14 +1479,33 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
         "execution": out["execution_source"],
         "note": "Chart source is never an automatic execution authority",
     }
+    if access_decision is not None:
+        out["access"] = access_decision.to_public_dict()
     try:
+        sharing_scope = "global"
+        cache_workspace_id = ""
+        cache_user_id = ""
+        cache_account_id = ""
+        if access_decision is not None and access_decision.sharing_scope == "private":
+            sharing_scope = "private"
+            cache_workspace_id = str(access_decision.workspace_id or workspace_id)
+            cache_user_id = str(access_decision.user_id or "")
+            cache_account_id = str(access_decision.account_id or "")
+        elif access_decision is not None and access_decision.sharing_scope == "workspace":
+            sharing_scope = "workspace"
+            cache_workspace_id = str(access_decision.workspace_id or workspace_id)
+        elif access_decision is None and workspace_id:
+            sharing_scope = "workspace"
+            cache_workspace_id = str(workspace_id)
         md_cache_key = market_data_cache_keys.market_cache_key(
             provider=out["chart_source"] or "ninjatrader",
             exchange="CME",
             exact_contract=resolved_instrument,
             channel="trades",
-            sharing_scope="workspace" if workspace_id else "global",
-            workspace_id=workspace_id,
+            sharing_scope=sharing_scope,
+            workspace_id=cache_workspace_id,
+            user_id=cache_user_id,
+            account_id=cache_account_id,
             timeframe=str(timeframe or "5m"),
             source_epoch=int(
                 (out.get("source") or {}).get("source_epoch")
@@ -1452,13 +1537,17 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
             age = float((out.get("freshness") or {}).get("age_sec"))
         except (TypeError, ValueError):
             age = None
+        public_cache_key = (
+            "md:private:" + hashlib.sha256(md_cache_key.encode("utf-8")).hexdigest()[:20]
+            if sharing_scope == "private" else md_cache_key
+        )
         out["diagnostics"] = market_data_cache_keys.diagnostics_for_series(
             requested_symbol=requested_instrument,
             exact_contract=resolved_instrument,
             timeframe=str(timeframe or "5m"),
             provider=out["chart_source"],
             bars=out.get("bars") or [],
-            cache_key=md_cache_key,
+            cache_key=public_cache_key,
             cache_level="L2" if cache_hit else ("L1" if out.get("bars") else "MISS"),
             cache_hit=cache_hit,
             transport="http",
@@ -1488,7 +1577,10 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
     return out
 
 
-def _practice_market_quote(instrument: str, *, workspace_id: str = "") -> Dict[str, Any]:
+def _practice_market_quote(
+    instrument: str, *, workspace_id: str = "",
+    access_decision: Optional[market_data_access.MarketDataAccessDecision] = None,
+) -> Dict[str, Any]:
     """Build the only quote allowed to fill an educational virtual order.
 
     The browser never supplies a price.  This intentionally shares the same
@@ -1502,6 +1594,7 @@ def _practice_market_quote(instrument: str, *, workspace_id: str = "") -> Dict[s
         series = _market_bars_payload(
             requested, "1m", 4, register=True, max_points=4,
             workspace_id=str(workspace_id or ""),
+            access_decision=access_decision,
         )
     except Exception as exc:  # Fail closed: market availability is never an order error/500.
         return {
@@ -2313,8 +2406,13 @@ class Handler(BaseHTTPRequestHandler):
         membership = context["active_membership"]
         context["workspace_id"] = str(active.get("workspace_id") or "")
         context["membership_role"] = str(membership.get("role") or context.get("role") or "")
+        resolved_user = dict(context.get("user") or {}) if isinstance(context.get("user"), dict) else {}
+        user_uuid = str(context.get("user_uuid") or resolved_user.get("user_uuid") or "").strip()
+        if not user_uuid and context.get("user_id"):
+            user_uuid = account_auth.user_uuid_for_legacy_id(context.get("user_id"))
+        if user_uuid:
+            context["user_uuid"] = user_uuid
         try:
-            resolved_user = dict(context.get("user") or {}) if isinstance(context.get("user"), dict) else {}
             if context.get("is_owner"):
                 resolved_user["is_owner"] = True
             resolved = permissions.resolve_for_user_id(
@@ -2350,12 +2448,45 @@ class Handler(BaseHTTPRequestHandler):
                 capability_id: True for capability_id in permissions.ADMIN_CAPABILITY_IDS
             }
             context["ux_mode"] = "professional"
+            resolved = permissions.resolve({**resolved_user, "is_owner": True}, None)
         else:
             context["capabilities"] = dict(resolved.get("capabilities") or {})
             context["admin_capabilities"] = dict(
                 resolved.get("admin_capabilities") or {}
             )
             context["ux_mode"] = str(resolved.get("ux_mode") or "")
+
+        # Product entitlement and provider/exchange permission are separate.
+        # Keep the desktop/chart capability aligned with the actual admissible
+        # source: owner runtime, verified private BYOMD, online personal
+        # Connector, or an explicitly authorised shared trial. A current trial
+        # alone must never imply redistribution permission.
+        try:
+            market_decision = market_data_access.resolve_market_data_access(context)
+        except Exception:
+            market_decision = market_data_access.MarketDataAccessDecision(
+                allowed=False,
+                reason="market_data_access_unavailable",
+                user_id=str(context.get("user_uuid") or context.get("user_id") or ""),
+                workspace_id=str(context.get("workspace_id") or ""),
+            )
+        context["_market_data_access_decision"] = market_decision
+        context["market_data_access"] = market_decision.to_public_dict()
+        if not context.get("is_owner"):
+            charts_allowed = bool(market_decision.allowed)
+            context["capabilities"]["charts_realtime"] = charts_allowed
+            if isinstance(resolved, dict):
+                resolved_caps = dict(resolved.get("capabilities") or {})
+                resolved_caps["charts_realtime"] = charts_allowed
+                resolved["capabilities"] = resolved_caps
+                nav = dict(resolved.get("nav") or {})
+                if str(resolved.get("ux_mode") or "") == "professional":
+                    nav["desktop"] = charts_allowed
+                resolved["nav"] = nav
+                resolved["locked_nav"] = [
+                    section for section in permissions.NAV_SECTIONS
+                    if section != "overview" and not nav.get(section)
+                ]
         context["_permissions"] = resolved
         return context
 
@@ -2469,6 +2600,59 @@ class Handler(BaseHTTPRequestHandler):
                 return False
             q.append(now)
         return True
+
+    @staticmethod
+    def _is_market_data_delivery_path(path: str) -> bool:
+        normalized = str(path or "")
+        if normalized == "/api/ops/runtime/bars/status":
+            return False
+        return (
+            normalized.startswith("/api/ops/runtime/bars")
+            or normalized.startswith("/api/chart/")
+            or normalized == "/api/practice/tick"
+        )
+
+    def _enforce_market_data_delivery(
+        self, path: str, context: Dict[str, Any], *, write_error: bool = True,
+    ) -> bool:
+        """Apply the same fail-closed source admission to HTTP and WS entry."""
+        if not self._is_market_data_delivery_path(path):
+            return True
+        decision = context.get("_market_data_access_decision")
+        if not isinstance(decision, market_data_access.MarketDataAccessDecision):
+            try:
+                decision = market_data_access.resolve_market_data_access(context)
+            except Exception:
+                decision = market_data_access.MarketDataAccessDecision(
+                    allowed=False,
+                    reason="market_data_access_unavailable",
+                    user_id=str(context.get("user_uuid") or context.get("user_id") or ""),
+                    workspace_id=str(context.get("workspace_id") or ""),
+                )
+        context["_market_data_access_decision"] = decision
+        context["market_data_access"] = decision.to_public_dict()
+        if decision.allowed:
+            return True
+        if write_error:
+            messages = {
+                "redistribution_not_authorized": (
+                    "Пробный период активен, но общий live-feed недоступен без "
+                    "подтверждённого разрешения на server-side redistribution. "
+                    "Подключите собственный TopstepX или NinjaTrader."
+                ),
+                "market_data_entitlement_required": (
+                    "Для live-графиков подключите собственный TopstepX или "
+                    "NinjaTrader. Продление владельцем открывает общий trial-feed "
+                    "только там, где подтверждено разрешение на redistribution."
+                ),
+                "authentication_required": "Для live-графиков требуется вход.",
+            }
+            self._err(
+                HTTPStatus.FORBIDDEN,
+                messages.get(decision.reason, "Источник live market data недоступен."),
+                code=decision.reason,
+            )
+        return False
 
     def _authorize_api(self, path: str) -> bool:
         # Internal owner market-data consumers authenticate with a shared
@@ -2586,6 +2770,12 @@ class Handler(BaseHTTPRequestHandler):
                     )
                 try:
                     self._remote_context["_request_method"] = method
+                    if (not impersonation_exit
+                            and Handler._is_market_data_delivery_path(path)
+                            and not Handler._enforce_market_data_delivery(
+                                self, path, self._remote_context,
+                            )):
+                        return False
                     if not impersonation_exit:
                         permissions.enforce(path, self._remote_context)
                 except permissions.PermissionError as exc:
@@ -2635,6 +2825,10 @@ class Handler(BaseHTTPRequestHandler):
             return False
         try:
             context["_request_method"] = method
+            if (not impersonation_exit
+                    and Handler._is_market_data_delivery_path(path)
+                    and not Handler._enforce_market_data_delivery(self, path, context)):
+                return False
             if not impersonation_exit:
                 permissions.enforce(path, context)
         except permissions.PermissionError as exc:
@@ -2752,7 +2946,11 @@ class Handler(BaseHTTPRequestHandler):
             except subscriptions.SubscriptionError:
                 subscription = {}
         permission_user = {**user, "is_owner": True} if is_owner else user
-        perm = permissions.resolve(permission_user, None if is_owner else subscription)
+        perm = (
+            context.get("_permissions")
+            if isinstance(context.get("_permissions"), dict)
+            else permissions.resolve(permission_user, None if is_owner else subscription)
+        )
         if isinstance(user, dict):
             payload["user"] = {**user, "features": perm["nav"]}
         payload["features"] = perm["nav"]
@@ -2767,6 +2965,17 @@ class Handler(BaseHTTPRequestHandler):
         payload["ux_mode"] = perm.get("ux_mode") or (user.get("ux_mode") if isinstance(user, dict) else "") or ""
         payload["ux_pending"] = bool(perm.get("ux_pending"))
         payload["demo_tier"] = bool(perm.get("demo_tier"))
+        payload["market_data_access"] = dict(context.get("market_data_access") or {})
+        if not is_owner and context.get("user_id"):
+            try:
+                payload["trial_access"] = subscriptions.trial_access_for_user(
+                    context.get("user_id"), include_history=False,
+                )
+            except subscriptions.SubscriptionError:
+                payload["trial_access"] = {
+                    "kind": "initial_trial", "state": "unavailable",
+                    "plan_id": subscriptions.TRIAL_PLAN_ID,
+                }
         return payload
 
     def _ai_conversation_scope(self) -> Dict[str, Any]:
@@ -2825,7 +3034,7 @@ class Handler(BaseHTTPRequestHandler):
         return {
             "ok": True,
             "identity_model": "uuid",
-            "owner_approval_required": True,
+            "owner_approval_required": False,
             "providers": {
                 "telegram": {
                     "available": bool(bot_username),
@@ -3055,6 +3264,17 @@ class Handler(BaseHTTPRequestHandler):
         nav_features = perm["nav"]
         if isinstance(user, dict):
             user = {**user, "features": nav_features}
+        try:
+            trial_access = (
+                {"kind": "owner", "state": "unlimited", "history": []}
+                if is_owner
+                else subscriptions.trial_access_for_user(uid, include_history=False)
+            )
+        except subscriptions.SubscriptionError:
+            trial_access = {
+                "kind": "initial_trial", "state": "unavailable",
+                "plan_id": subscriptions.TRIAL_PLAN_ID,
+            }
         return {
             "authenticated": True,
             "source": context.get("source"),
@@ -3077,6 +3297,8 @@ class Handler(BaseHTTPRequestHandler):
             "locked_nav": perm["locked_nav"],
             "unlock_message": perm["unlock_message"],
             "demo_tier": bool(perm.get("demo_tier")),
+            "trial_access": trial_access,
+            "market_data_access": dict(context.get("market_data_access") or {}),
             # Keep /api/auth/me consistent with /api/auth/status.  Mini App
             # clients use this cabinet endpoint after Telegram authorization,
             # so they must receive the mandatory UX-mode state as well.
@@ -3462,7 +3684,9 @@ class Handler(BaseHTTPRequestHandler):
                 accept_terms=bool(body.get("accept_terms")),
                 api_call=telegram_service._api_call, owner_chat_id=owner_id,
             )
-            # New accounts return pending_owner until the owner confirms.
+            # Verified human registration activates immediately and receives
+            # its one initial trial. ``pending_owner`` remains only for
+            # already-issued legacy challenges during migration.
             self._json(HTTPStatus.OK, {
                 "ok": True,
                 "authenticated": bool(out.get("authenticated")),
@@ -5669,8 +5893,12 @@ class Handler(BaseHTTPRequestHandler):
                         continue
                     try:
                         row["subscription"] = subscriptions.active_entitlement(row.get("user_id"))
+                        row["access"] = subscriptions.trial_access_for_user(
+                            row.get("user_id"), include_history=False,
+                        )
                     except subscriptions.SubscriptionError:
                         row["subscription"] = {}
+                        row["access"] = {}
                 self._json(HTTPStatus.OK, out)
             except account_auth.AccountAuthError as exc:
                 self._err(exc.status, str(exc))
@@ -5695,6 +5923,11 @@ class Handler(BaseHTTPRequestHandler):
                     perm = permissions.resolve(user, subscription)
                     detail["subscription"] = subscription
                     detail["entitlements"] = entitlements
+                    detail["access"] = (
+                        {"kind": "owner", "state": "unlimited", "history": []}
+                        if user.get("is_owner")
+                        else subscriptions.trial_access_for_user(target)
+                    )
                     detail["capabilities"] = perm["capabilities"]
                     detail["capability_catalog"] = permissions.capability_catalog()
                     detail["admin_capabilities"] = perm["admin_capabilities"]
@@ -6501,11 +6734,14 @@ class Handler(BaseHTTPRequestHandler):
                 return True
             try:
                 context = getattr(self, "_remote_context", None) or {}
+                access_decision = context.get("_market_data_access_decision")
                 effective_points = min(
                     max(1, int(limit or 1500)),
                     int(max_points) if int(max_points or 0) >= 3 else max(1, int(limit or 1500)),
                 )
-                if effective_points > 10000:
+                if effective_points > 10000 and getattr(
+                    access_decision, "source", "",
+                ) in {"owner", "shared_trial", ""}:
                     if (not _server_environment_explicit()
                             and not market_data_failover.TopstepXProvider().configured()):
                         market_data.register_request(
@@ -6527,6 +6763,11 @@ class Handler(BaseHTTPRequestHandler):
                         max_points=max_points,
                         workspace_id=str(context.get("workspace_id") or ""),
                         from_ts=from_ts, to_ts=to_ts,
+                        access_decision=(
+                            access_decision
+                            if isinstance(access_decision, market_data_access.MarketDataAccessDecision)
+                            else None
+                        ),
                     )
             except market_data.MarketDataError as exc:
                 self._err(HTTPStatus.BAD_REQUEST, str(exc))
@@ -7923,7 +8164,12 @@ class Handler(BaseHTTPRequestHandler):
             result = []
             try:
                 production_mode = _server_environment_explicit()
-                if not production_mode and not market_data_failover.TopstepXProvider().configured():
+                context = getattr(self, "_remote_context", None) or {}
+                access_decision = context.get("_market_data_access_decision")
+                access_source = str(getattr(access_decision, "source", ""))
+                if (not production_mode
+                        and access_source in {"owner", "shared_trial", ""}
+                        and not market_data_failover.TopstepXProvider().configured()):
                     market_data.register_requests(row for row in rows if isinstance(row, dict))
                 normalized_rows: list[Dict[str, Any]] = []
                 work_points = 0
@@ -7947,8 +8193,8 @@ class Handler(BaseHTTPRequestHandler):
                         "to_ts": str(raw.get("to_ts") or ""),
                         "max_points": max_value,
                     })
-                context = getattr(self, "_remote_context", None) or {}
-                if oversized or work_points > 100000:
+                if ((oversized or work_points > 100000)
+                        and access_source in {"owner", "shared_trial", ""}):
                     queued = self._run_large_chart_batch(normalized_rows, context)
                     if queued is None:
                         return
@@ -7989,6 +8235,11 @@ class Handler(BaseHTTPRequestHandler):
                             max_points=req_key[8], workspace_id=workspace_id,
                             connector_snapshot_index=connector_snapshot_index,
                             from_ts=req_key[6], to_ts=req_key[7],
+                            access_decision=(
+                                access_decision
+                                if isinstance(access_decision, market_data_access.MarketDataAccessDecision)
+                                else None
+                            ),
                         )
                         batch_cache[req_key] = payload
                     result.append(payload)
@@ -8886,11 +9137,25 @@ class Handler(BaseHTTPRequestHandler):
                         market = _practice_market_quote(
                             symbol,
                             workspace_id=str(context.get("workspace_id") or ""),
+                            access_decision=(
+                                context.get("_market_data_access_decision")
+                                if isinstance(
+                                    context.get("_market_data_access_decision"),
+                                    market_data_access.MarketDataAccessDecision,
+                                ) else None
+                            ),
                         )
                 else:
                     market = _practice_market_quote(
                         symbol,
                         workspace_id=str(context.get("workspace_id") or ""),
+                        access_decision=(
+                            context.get("_market_data_access_decision")
+                            if isinstance(
+                                context.get("_market_data_access_decision"),
+                                market_data_access.MarketDataAccessDecision,
+                            ) else None
+                        ),
                     )
                 out = practice_trading.tick_marks(
                     context.get("user_id"), symbol=symbol,
@@ -8931,7 +9196,10 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 limit = 3
                 try:
-                    plan = subscriptions.effective_plan(str((context.get("user") or {}).get("plan_id") or "free_preview"))
+                    plan = subscriptions.effective_plan(str(
+                        (context.get("user") or {}).get("plan_id")
+                        or permissions.AUTHENTICATED_BASIC_PLAN_ID
+                    ))
                     limit = int(((plan or {}).get("limits") or {}).get("max_demo_backtests_per_day") or 3)
                 except Exception:
                     pass
@@ -8959,6 +9227,9 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 # Refresh auth payload so client gets new nav immediately.
                 user = result.get("user") or {}
+                context["user"] = user
+                context = self._decorate_workspace_context(context)
+                self._remote_context = context
                 payload = self._augment_permissions(context, {
                     "ok": True,
                     "authenticated": True,
@@ -9240,7 +9511,10 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 out = workspaces.ensure_personal_workspace(
                     context.get("user_id"), display_name=str(body.get("display_name") or ""),
-                    require_entitlement=not bool(context.get("is_owner")),
+                    # An expired account must remain able to establish its own
+                    # isolated BYOMD/Connector path. Live delivery is still
+                    # authorised independently by market_data_access.
+                    require_entitlement=False,
                 )
                 self._json(HTTPStatus.OK, {"ok": True, "workspace": out})
             except workspaces.WorkspaceError as exc:
@@ -9579,6 +9853,27 @@ class Handler(BaseHTTPRequestHandler):
                         duration_days=body.get("duration_days"), note=str(body.get("note") or ""))
                 else:
                     out = subscriptions.clear_user_plan(actor, body.get("user_id"))
+                self._json(HTTPStatus.OK, out)
+            except subscriptions.SubscriptionError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/owner/trial/extend":
+            if not self._check_local_post():
+                return
+            body = self._read_body()
+            if body is None:
+                return
+            actor = (getattr(self, "_remote_context", None) or {}).get("user_id")
+            try:
+                out = subscriptions.extend_trial_access(
+                    actor,
+                    body.get("user_id"),
+                    days=body.get("days"),
+                    expires_at_utc=body.get("expires_at_utc"),
+                    reason=str(body.get("reason") or ""),
+                    idempotency_key=str(body.get("idempotency_key") or ""),
+                )
                 self._json(HTTPStatus.OK, out)
             except subscriptions.SubscriptionError as exc:
                 self._err(exc.status, str(exc))

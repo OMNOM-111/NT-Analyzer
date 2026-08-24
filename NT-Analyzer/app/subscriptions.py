@@ -33,7 +33,9 @@ _LOCK = threading.RLock()
 # copies so callers cannot mutate privilege state without an explicit write.
 _DOC_CACHE_KEY: Optional[Tuple[str, int, int]] = None
 _DOC_CACHE_DOC: Optional[Dict[str, Any]] = None
-ENTITLEMENT_STORE_VERSION = 2
+ENTITLEMENT_STORE_VERSION = 3
+INITIAL_TRIAL_DAYS = 7
+TRIAL_PLAN_ID = "trial_full"
 
 # Canonical subscription privilege catalog. Owner edits the plan matrix over
 # these ids; each plan enables a subset. Ordered for display.
@@ -78,13 +80,33 @@ PLANS: Dict[str, Dict[str, Any]] = {
         "features": _feat_all(),
         "limits": {"max_backtests_per_day": 1000000, "max_charts": 1000},
     },
-    # Free Preview — the default contour for every new user before they redeem a
-    # promo code, activate a subscription or receive owner access. A few sections
-    # are unlocked so the app can be explored; the rest are visible but locked.
+    # One automatic, non-renewing trial per canonical human account.  It is an
+    # internal access grant rather than a sellable plan; repeated logins and
+    # additional linked identities must never mint another seven-day window.
+    TRIAL_PLAN_ID: {
+        "label": "Полный пробный доступ", "badge": "7 дней", "category": "trial", "tier": "trial",
+        "price_usd": 0.0, "period": "7 дней", "public": False,
+        "tagline": "Полный доступ к возможностям StratForge на пробный период",
+        "features": _feat_all(),
+        "limits": {"max_backtests_per_day": 1000, "max_charts": 32},
+    },
+    # Authenticated account baseline after the full trial expires.  The account
+    # and provider-setup surfaces remain available, while shared live market data
+    # is decided separately by the market-source entitlement resolver.
+    "authenticated_basic": {
+        "label": "Базовый доступ аккаунта", "badge": "Аккаунт", "category": "baseline", "tier": "baseline",
+        "price_usd": 0.0, "period": "без срока", "public": False,
+        "tagline": "Профиль, документы, практика и подключение собственного market-data источника",
+        "features": _feat("demo_backtest", "news", "documents", "personal_nt", "practice_trading", "community"),
+        "limits": {"max_backtests_per_day": 0, "max_demo_backtests_per_day": 3, "max_charts": 2},
+    },
+    # Legacy only. New authorization must never fall back to this blurred
+    # unauthenticated preview contour.
     "free_preview": {
         "label": "Free Preview", "badge": "Демо", "category": "free", "tier": "free",
         "price_usd": 0.0, "period": "ознакомление", "public": False,
-        "tagline": "Живое демо: бэктест на тестовых данных + новости и документы",
+        "tagline": "Устаревший preview-контур; новые аккаунты не используют",
+        "deprecated": True, "replacement_plan_id": "authenticated_basic",
         "features": _feat("news", "documents", "demo_backtest", "practice_trading", "community"),
         "limits": {"max_backtests_per_day": 0, "max_demo_backtests_per_day": 3, "max_charts": 2},
     },
@@ -218,6 +240,7 @@ def _default_doc() -> Dict[str, Any]:
         "payment_config": {},
         "paypal": {},
         "payment_requests": [],
+        "access_history": [],
         "identity_schema": {"stage": "dual_write", "canonical_key": "user_uuid"},
     }
 
@@ -249,7 +272,7 @@ def _resolved_user_uuids(values: Iterable[Any]) -> list[str]:
 
 def _migrate_doc(doc: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
     changed = False
-    for key in ("vouchers", "entitlements", "payment_requests"):
+    for key in ("vouchers", "entitlements", "payment_requests", "access_history"):
         if not isinstance(doc.get(key), list):
             doc[key] = []
             changed = True
@@ -277,6 +300,10 @@ def _migrate_doc(doc: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
         if isinstance(row, dict):
             changed = _backfill_user_uuid(row, "user_id", "user_uuid") or changed
             changed = _backfill_user_uuid(row, "resolver_user_id", "resolver_user_uuid") or changed
+    for row in doc["access_history"]:
+        if isinstance(row, dict):
+            changed = _backfill_user_uuid(row, "user_id", "user_uuid") or changed
+            changed = _backfill_user_uuid(row, "actor_user_id", "actor_user_uuid") or changed
     identity_schema = doc.get("identity_schema") if isinstance(doc.get("identity_schema"), dict) else {}
     expected_schema = dict(identity_schema)
     expected_schema.update({
@@ -310,7 +337,7 @@ def _read_doc() -> Dict[str, Any]:
             ) from None
         if not isinstance(doc, dict):
             raise SubscriptionError("Production entitlement repository returned invalid data.", 500)
-        for key in ("vouchers", "entitlements"):
+        for key in ("vouchers", "entitlements", "access_history"):
             if not isinstance(doc.get(key), list):
                 doc[key] = []
         if not isinstance(doc.get("plan_overrides"), dict):
@@ -347,7 +374,7 @@ def _read_doc() -> Dict[str, Any]:
         raise SubscriptionError(f"Не удалось прочитать подписки: {exc}", 500) from None
     if not isinstance(doc, dict):
         raise SubscriptionError("Хранилище подписок повреждено.", 500)
-    for key in ("vouchers", "entitlements"):
+    for key in ("vouchers", "entitlements", "access_history"):
         if not isinstance(doc.get(key), list):
             doc[key] = []
     if not isinstance(doc.get("plan_overrides"), dict):
@@ -511,8 +538,8 @@ def set_plan_feature(actor_user_id: Any, plan_id: str, feature: str, enabled: bo
     pid = str(plan_id or "")
     if pid not in PLANS:
         raise SubscriptionError("Неизвестный тарифный план.")
-    if pid == "founder":
-        raise SubscriptionError("План владельца изменять нельзя.", 400)
+    if pid in {"founder", TRIAL_PLAN_ID}:
+        raise SubscriptionError("Системный план изменять нельзя.", 400)
     if feature not in _ALL_FEATURE_IDS:
         raise SubscriptionError("Неизвестная привилегия.")
     with _LOCK:
@@ -857,6 +884,322 @@ def manual_checkout(user_id: Any, plan_id: Any) -> Dict[str, Any]:
     }
 
 
+def _canonical_user_uuid(user_id: int, supplied: Any = "") -> str:
+    raw = str(supplied or "").strip()
+    if raw:
+        try:
+            return str(uuid.UUID(raw))
+        except (ValueError, AttributeError, TypeError):
+            raise SubscriptionError("Canonical user UUID некорректен.", 400) from None
+    return _user_uuid_for_legacy_id(user_id)
+
+
+def _trial_row(doc: Dict[str, Any], *, user_id: int, user_uuid: str = "") -> Optional[Dict[str, Any]]:
+    """Return the account's one canonical initial-trial row, regardless of state."""
+    canonical = str(user_uuid or "")
+    matches = []
+    for row in doc.get("entitlements") or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("plan_id") or "") != TRIAL_PLAN_ID and str(row.get("access_kind") or "") != "initial_trial":
+            continue
+        same_user = int(row.get("user_id") or 0) == user_id
+        same_uuid = bool(canonical) and str(row.get("user_uuid") or "") == canonical
+        if same_user or same_uuid:
+            matches.append(row)
+    if not matches:
+        return None
+    matches.sort(key=lambda row: str(row.get("created_at_utc") or ""))
+    return matches[0]
+
+
+def _access_state(row: Dict[str, Any]) -> str:
+    status = str(row.get("status") or "")
+    if status in _ACTIVE_STATUSES:
+        return "expired" if _is_expired(row.get("expires_at_utc")) else "active"
+    return status or "unknown"
+
+
+def _public_access_history(row: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: row.get(key) for key in (
+        "history_id", "event", "user_id", "user_uuid", "entitlement_id",
+        "actor_user_id", "actor_user_uuid", "source", "reason",
+        "idempotency_key", "at_utc", "before", "after",
+    )}
+
+
+def _trial_access_payload(
+    doc: Dict[str, Any], row: Optional[Dict[str, Any]], *, user_id: int,
+    user_uuid: str = "", include_history: bool = True,
+) -> Dict[str, Any]:
+    history_with_order = []
+    if include_history:
+        for index, event in enumerate(doc.get("access_history") or []):
+            if not isinstance(event, dict):
+                continue
+            same_user = int(event.get("user_id") or 0) == user_id
+            same_uuid = bool(user_uuid) and str(event.get("user_uuid") or "") == user_uuid
+            if same_user or same_uuid:
+                history_with_order.append((index, _public_access_history(event)))
+        history_with_order.sort(
+            key=lambda item: (str(item[1].get("at_utc") or ""), item[0]),
+            reverse=True,
+        )
+    history = [event for _index, event in history_with_order]
+    if row is None:
+        return {
+            "kind": "initial_trial", "state": "not_granted", "plan_id": TRIAL_PLAN_ID,
+            "starts_at_utc": "", "expires_at_utc": "", "history": history,
+        }
+    return {
+        "kind": "initial_trial",
+        "state": _access_state(row),
+        "plan_id": TRIAL_PLAN_ID,
+        "entitlement_id": str(row.get("entitlement_id") or ""),
+        "starts_at_utc": str(row.get("starts_at_utc") or ""),
+        "expires_at_utc": str(row.get("expires_at_utc") or ""),
+        "created_at_utc": str(row.get("created_at_utc") or ""),
+        "updated_at_utc": str(row.get("updated_at_utc") or ""),
+        "history": history,
+    }
+
+
+def trial_access_for_user(user_id: Any, *, include_history: bool = True) -> Dict[str, Any]:
+    """Return the canonical trial state without changing or renewing it."""
+    try:
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        uid = 0
+    if uid <= 0:
+        raise SubscriptionError("Пользователь обязателен.", 400)
+    canonical = _canonical_user_uuid(uid)
+    with _LOCK:
+        doc = _read_doc_reference()
+        row = _trial_row(doc, user_id=uid, user_uuid=canonical)
+        return _trial_access_payload(
+            doc, row, user_id=uid, user_uuid=canonical,
+            include_history=include_history,
+        )
+
+
+def ensure_initial_trial(
+    user_id: Any, *, user_uuid: Any = "", source: str = "verified_registration",
+    duration_days: Any = INITIAL_TRIAL_DAYS,
+) -> Dict[str, Any]:
+    """Mint the one non-renewing full trial for a verified human account.
+
+    Idempotency is keyed by the canonical account (UUID when available, legacy
+    id during migration).  A repeated login or a newly-linked identity returns
+    the original row and never moves its expiry.  If a paid/owner grant already
+    exists, the trial clock is still recorded from registration time but marked
+    superseded so it cannot unexpectedly start after that grant expires.
+    """
+    try:
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        uid = 0
+    if uid <= 0:
+        raise SubscriptionError("Пользователь обязателен.", 400)
+    days = _clean_positive_int(
+        duration_days, default=INITIAL_TRIAL_DAYS, maximum=3650,
+        field="trial duration",
+    )
+    canonical = _canonical_user_uuid(uid, user_uuid)
+    event_snapshot: Dict[str, Any] = {}
+    with _LOCK:
+        doc = _read_doc()
+        existing = _trial_row(doc, user_id=uid, user_uuid=canonical)
+        if existing is not None:
+            return {
+                "ok": True, "created": False,
+                "entitlement": _public_entitlement(existing, doc.get("plan_overrides") or {}),
+                "access": _trial_access_payload(doc, existing, user_id=uid, user_uuid=canonical),
+            }
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat(timespec="seconds").replace("+00:00", "Z")
+        expiry = (now + timedelta(days=days)).isoformat(timespec="seconds").replace("+00:00", "Z")
+        has_other_active = any(
+            isinstance(other, dict)
+            and str(other.get("plan_id") or "") != TRIAL_PLAN_ID
+            and int(other.get("user_id") or 0) == uid
+            and _entitlement_active(other)
+            for other in doc.get("entitlements") or []
+        )
+        entitlement = {
+            "entitlement_id": "ent_" + secrets.token_urlsafe(12),
+            "user_id": uid, "user_uuid": canonical, "workspace_id": "",
+            "plan_id": TRIAL_PLAN_ID,
+            "status": "superseded" if has_other_active else "active",
+            "source": str(source or "verified_registration")[:80],
+            "provider": "registration", "provider_subscription_id": "",
+            "source_voucher_id": "", "note": "Automatic initial full trial",
+            "access_kind": "initial_trial", "trial_days": days,
+            "starts_at_utc": now_iso, "expires_at_utc": expiry,
+            "created_at_utc": now_iso, "updated_at_utc": now_iso,
+        }
+        doc["entitlements"].append(entitlement)
+        event_snapshot = {
+            "history_id": "ach_" + secrets.token_urlsafe(12),
+            "event": "initial_trial_granted",
+            "user_id": uid, "user_uuid": canonical,
+            "entitlement_id": entitlement["entitlement_id"],
+            "actor_user_id": uid, "actor_user_uuid": canonical,
+            "source": str(source or "verified_registration")[:80],
+            "reason": "verified_registration", "idempotency_key": "",
+            "at_utc": now_iso, "before": None,
+            "after": {
+                "status": entitlement["status"],
+                "starts_at_utc": now_iso, "expires_at_utc": expiry,
+            },
+        }
+        doc["access_history"].append(event_snapshot)
+        _write_doc(doc)
+        public = _public_entitlement(entitlement, doc.get("plan_overrides") or {})
+        access = _trial_access_payload(doc, entitlement, user_id=uid, user_uuid=canonical)
+    _audit(
+        "initial_trial_granted", user_id=uid,
+        entitlement_id=event_snapshot.get("entitlement_id"),
+        expires_at_utc=(event_snapshot.get("after") or {}).get("expires_at_utc"),
+        source=str(source or "verified_registration")[:80],
+    )
+    return {"ok": True, "created": True, "entitlement": public, "access": access}
+
+
+def _future_utc(value: Any, *, now: datetime) -> datetime:
+    raw = str(value or "").strip()
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        raise SubscriptionError("Дата окончания trial должна быть UTC ISO-8601.") from None
+    if parsed.tzinfo is None:
+        raise SubscriptionError("Дата окончания trial должна содержать UTC offset.")
+    normalized = parsed.astimezone(timezone.utc)
+    if normalized <= now:
+        raise SubscriptionError("Дата окончания trial должна быть в будущем.")
+    return normalized
+
+
+def extend_trial_access(
+    actor_user_id: Any, user_id: Any, *, days: Any = None,
+    expires_at_utc: Any = "", reason: str = "", idempotency_key: Any = "",
+) -> Dict[str, Any]:
+    """Owner extension by whole days or by an exact UTC date, with history."""
+    try:
+        actor = int(actor_user_id or 0)
+    except (TypeError, ValueError):
+        actor = 0
+    try:
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        uid = 0
+    if actor <= 0:
+        raise SubscriptionError("Owner identity обязательна.", 403)
+    if uid <= 0:
+        raise SubscriptionError("Пользователь обязателен.", 400)
+    has_days = days not in (None, "")
+    has_date = bool(str(expires_at_utc or "").strip())
+    if has_days == has_date:
+        raise SubscriptionError("Укажите либо количество дней, либо точную UTC-дату.")
+    extension_days = (
+        _clean_positive_int(days, default=1, maximum=3650, field="extension days")
+        if has_days else 0
+    )
+    request_key = str(idempotency_key or "").strip()[:120]
+    note = " ".join(str(reason or "").strip().split())[:300]
+    canonical = _canonical_user_uuid(uid)
+    actor_uuid = _canonical_user_uuid(actor)
+    audit_snapshot: Dict[str, Any] = {}
+    with _LOCK:
+        doc = _read_doc()
+        row = _trial_row(doc, user_id=uid, user_uuid=canonical)
+        if request_key:
+            replay = next((
+                event for event in doc.get("access_history") or []
+                if isinstance(event, dict)
+                and str(event.get("event") or "") in {"trial_extended", "trial_created_by_owner"}
+                and str(event.get("idempotency_key") or "") == request_key
+                and int(event.get("user_id") or 0) == uid
+            ), None)
+            if replay is not None:
+                return {
+                    "ok": True, "replayed": True,
+                    "access": _trial_access_payload(doc, row, user_id=uid, user_uuid=canonical),
+                }
+        conflicting = next((
+            other for other in doc.get("entitlements") or []
+            if isinstance(other, dict)
+            and int(other.get("user_id") or 0) == uid
+            and str(other.get("plan_id") or "") != TRIAL_PLAN_ID
+            and _entitlement_active(other)
+        ), None)
+        if conflicting is not None:
+            raise SubscriptionError("У пользователя уже действует другой план доступа.", 409)
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat(timespec="seconds").replace("+00:00", "Z")
+        event_name = "trial_extended"
+        if row is None:
+            row = {
+                "entitlement_id": "ent_" + secrets.token_urlsafe(12),
+                "user_id": uid, "user_uuid": canonical, "workspace_id": "",
+                "plan_id": TRIAL_PLAN_ID, "status": "active",
+                "source": "owner_extension", "provider": "owner",
+                "provider_subscription_id": "", "source_voucher_id": "",
+                "note": note, "access_kind": "initial_trial", "trial_days": 0,
+                "starts_at_utc": now_iso, "expires_at_utc": "",
+                "created_at_utc": now_iso, "updated_at_utc": now_iso,
+            }
+            doc["entitlements"].append(row)
+            event_name = "trial_created_by_owner"
+        before = {
+            "status": str(row.get("status") or ""),
+            "starts_at_utc": str(row.get("starts_at_utc") or ""),
+            "expires_at_utc": str(row.get("expires_at_utc") or ""),
+        }
+        current_expiry = _parse_iso(row.get("expires_at_utc"))
+        if current_expiry is not None and current_expiry.tzinfo is None:
+            current_expiry = current_expiry.replace(tzinfo=timezone.utc)
+        if has_days:
+            base = current_expiry if current_expiry and current_expiry > now else now
+            new_expiry = base + timedelta(days=extension_days)
+        else:
+            new_expiry = _future_utc(expires_at_utc, now=now)
+            if current_expiry and current_expiry > now and new_expiry <= current_expiry:
+                raise SubscriptionError("Новая дата должна продлевать текущий trial.", 409)
+        expiry_iso = new_expiry.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        row.update({
+            "status": "active", "expires_at_utc": expiry_iso,
+            "updated_at_utc": now_iso, "last_extended_at_utc": now_iso,
+            "last_extended_by_user_id": actor,
+            "last_extended_by_user_uuid": actor_uuid,
+        })
+        if note:
+            row["note"] = note
+        after = {
+            "status": "active",
+            "starts_at_utc": str(row.get("starts_at_utc") or ""),
+            "expires_at_utc": expiry_iso,
+        }
+        audit_snapshot = {
+            "history_id": "ach_" + secrets.token_urlsafe(12),
+            "event": event_name, "user_id": uid, "user_uuid": canonical,
+            "entitlement_id": row["entitlement_id"],
+            "actor_user_id": actor, "actor_user_uuid": actor_uuid,
+            "source": "owner", "reason": note,
+            "idempotency_key": request_key, "at_utc": now_iso,
+            "before": before, "after": after,
+        }
+        doc["access_history"].append(audit_snapshot)
+        _write_doc(doc)
+        access = _trial_access_payload(doc, row, user_id=uid, user_uuid=canonical)
+    _audit(
+        audit_snapshot["event"], owner_id=actor, user_id=uid,
+        entitlement_id=audit_snapshot["entitlement_id"],
+        before=audit_snapshot["before"], after=audit_snapshot["after"],
+        reason=note,
+    )
+    return {"ok": True, "replayed": False, "access": access}
+
+
 def grant_plan(actor_user_id: Any, user_id: Any, plan_id: Any, *, duration_days: Any = 0,
                note: str = "", source: str = "manual") -> Dict[str, Any]:
     try:
@@ -1172,9 +1515,11 @@ def _public_entitlement(row: Dict[str, Any], overrides: Optional[Dict[str, Any]]
         "provider": row.get("provider") or "",
         "provider_subscription_id": row.get("provider_subscription_id") or "",
         "source_voucher_id": row.get("source_voucher_id") or "",
+        "access_kind": row.get("access_kind") or "",
         "starts_at_utc": row.get("starts_at_utc") or "",
         "expires_at_utc": row.get("expires_at_utc") or "",
         "created_at_utc": row.get("created_at_utc") or "",
+        "updated_at_utc": row.get("updated_at_utc") or "",
     }
 
 

@@ -1,7 +1,7 @@
 # 06. Market Data, Trading and Connector
 
 - Context Pack document: 06_MARKET_DATA_TRADING_CONNECTOR.md
-- Last verified UTC: 2026-08-23T02:27:02Z
+- Last verified UTC: 2026-08-23T21:36:03Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: NinjaTrader authority, Connector protocol, market-data gateway and trading safety gates
 - Status: PARTIAL
@@ -26,6 +26,13 @@
    session. A process opens one only with
    `NTA_OWNER_MARKET_DATA_GATEWAY_ROLE=hub`; consumers require an approved
    canonical/loopback origin and a configured internal token.
+8. Product access and provider/exchange permission are independent. A seven-day
+   product trial cannot consume the owner feed unless both remote-server use and
+   cross-user redistribution are explicitly authorized.
+9. A non-owner chart request resolves exactly one server-owned scope: verified
+   private provider, fresh online personal Connector, or an explicitly
+   authorized shared trial. HTTP cache keys and WebSocket events are filtered by
+   that scope; browser messages cannot assert an entitlement.
 
 ## Current status matrix
 
@@ -38,7 +45,43 @@
 | SignalR/session/freshness | `AVAILABLE` | Quote/SignalR heartbeat freshness is independent of price movement. A fresh heartbeat keeps the marker live when the last price is unchanged; stale/offline states mute it honestly |
 | Responsive chart UI | `BETA` | Desktop free-positioned layouts remain intact; at 1100 px and below chart windows reflow into a readable vertical stack without whole-page horizontal overflow |
 | Cross-user market-data redistribution | `EXTERNAL BLOCKED` | The owner gateway is not a license grant. Serving one owner entitlement to unrelated users remains fail-closed until written provider/CME distribution authority and per-user entitlement mapping exist |
+| Per-user HTTP/WS admission | `IN DEVELOPMENT` | Development candidate gates every bars/chart/practice-tick request and every WebSocket subscription through the same resolver, revalidates live sockets every five seconds or sooner at expiry, purges queued events on revoke/source change and exposes only hashed scope diagnostics |
+| User-owned source isolation | `IN DEVELOPMENT` | Verified private provider data uses private cache/backfill only; personal Connector data uses its workspace snapshot only. Neither path can fall through to global owner TopstepX/cache/failover |
 | Simulation/paper runtime control | `BETA` | Safe runtime commands exist for paper/demo/playback contours |
+
+## Current physical NinjaTrader / Connector checkpoint
+
+- The owner explicitly saved and closed NinjaTrader `8.1.7.2`; verified package
+  `0.4.1-dev.14` was installed and NinjaTrader was restarted normally. The
+  running Connector is bound only to `http://127.0.0.1:8765` Development.
+- Device-owned enrollment survived repair. Signed hello was accepted, Admin
+  reported `installations=1`, `online=1`, and heartbeat
+  `2026-08-24T01:48:40Z`; no bootstrap credential remained on disk.
+- The exact configured read-only streams are `MNQ SEP26 5m` and `MES SEP26 5m`.
+  Both history requests subscribed, late price-connection readiness triggered
+  one bounded resubscribe, and live batches reached the authenticated server.
+- The reproduced one-batch-per-long-poll transport lag was fixed by draining a
+  bounded queue burst before command polling. A 3m02s post-fix observation
+  advanced source sequence `110 -> 375` with `drops=0` and
+  `transport_errors=0`. The prior dev.13 control advanced only one batch about
+  every 15 seconds and logged continuous oldest-batch drops.
+- Package source is `a3979a3f42ab55dc968e69ae57f4742d5d56879a`;
+  archive SHA256 is
+  `8B3B7D3A1271829406EE5ED57F8D31B315C82F75AA1E655A9903B5415ED08C84`,
+  manifest SHA256 is
+  `9FBAD8AB1276393249504564D2C1E398872D83A3987CF68880D06BD4E7E50E32`,
+  and installed/payload DLL SHA256 is
+  `DB55FCCC1980B2AE2E5CC75912836F3519E88949A6E6B0181FBD39524CE5DAE5`.
+- A safe in-product demo-backtest finished `done` as report `#18781` with 28
+  explicitly synthetic trades and no real orders. The enrolled Production
+  Connector device has only `telemetry` and `accounts_read` capabilities.
+- A publishable Production Connector remains blocked because the authorized
+  Authenticode signing tool/material is unavailable. The dev.14 package is
+  Development trust only and is not offered as a public installer.
+- One physical NinjaTrader instance can bind to one environment at a time.
+  LOCAL, Canary and Production acceptance therefore requires sequential manual
+  save/close, install/restart and any native license/provider confirmation; it
+  must not be simulated or automated by terminating the process.
 
 ## Verified beta.29 Development evidence
 
@@ -112,4 +155,6 @@ Detailed evidence and defect scope:
 2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Recorded repository TopstepX-first server chart order; live 1fae1f39 still stubs/skips TopstepX.
 2026-08-23T01:29:45Z | GPT-5.5 через Codex по запросу owner | Удалены устаревшие live 1fae1f39/IN DEVELOPMENT формулировки; зафиксированы фактический Production hub, Canary/DEV consumer fan-out, browser/load evidence и внешний entitlement blocker.
 2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Добавлены live beta.29 Canary/Production gateway roles, exact artifact, two-client chart/marker and same-origin browser-network evidence; Connector/redistribution gaps оставлены честно PARTIAL/EXTERNAL BLOCKED.
+2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Added the Development per-user HTTP/WS admission and source-isolation contracts, recorded the real running Connector/NinjaTrader checkpoint and preserved redistribution, Authenticode and physical-interaction blockers without changing the accepted TopstepX baseline.
+2026-08-24T01:52:25Z | GPT-5.5 через Codex по запросу owner | Replaced the obsolete unenrolled Connector checkpoint with verified dev.14 install, signed enrollment/heartbeat, two-stream history/live ingestion, bounded drain evidence and safe no-order demo-backtest; Authenticode remains external.
 -->

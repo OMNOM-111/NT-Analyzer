@@ -33,6 +33,7 @@ namespace NTAnalyzerBridge.Connector
         private Thread _sender;
         private volatile bool _running;
         private long _droppedBatches;
+        private int _connectionRefreshPending;
 
         private sealed class Subscription
         {
@@ -72,6 +73,7 @@ namespace NTAnalyzerBridge.Connector
         {
             if (_running) return;
             _running = true;
+            Connection.ConnectionStatusUpdate += OnConnectionStatusUpdate;
             _sender = new Thread(SenderLoop)
             {
                 IsBackground = true,
@@ -86,6 +88,8 @@ namespace NTAnalyzerBridge.Connector
         public void Stop()
         {
             _running = false;
+            try { Connection.ConnectionStatusUpdate -= OnConnectionStatusUpdate; }
+            catch { }
             _pendingSignal.Set();
             try
             {
@@ -104,6 +108,47 @@ namespace NTAnalyzerBridge.Connector
             BridgeLog.Info(
                 "ProductionMarketDataExporter: stopped dropped=" +
                 Interlocked.Read(ref _droppedBatches));
+        }
+
+        /// <summary>
+        /// NinjaTrader may activate a saved price connection after AddOn startup.
+        /// BarsRequest instances created before that transition can contain the
+        /// requested history but never enter real-time delivery. Recreate only the
+        /// locally configured read-only subscriptions when a price connection is
+        /// confirmed, with a bounded debounce for multi-provider status bursts.
+        /// </summary>
+        private void OnConnectionStatusUpdate(object sender, ConnectionStatusEventArgs args)
+        {
+            if (!_running || args == null) return;
+            ConnectionStatusEventArgs snapshot = args;
+            if (snapshot.PriceStatus != ConnectionStatus.Connected &&
+                snapshot.Status != ConnectionStatus.Connected)
+                return;
+            if (Interlocked.CompareExchange(ref _connectionRefreshPending, 1, 0) != 0)
+                return;
+
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    // Price and order status commonly arrive as adjacent events.
+                    // Let the burst settle before rebuilding the BarsRequests once.
+                    Thread.Sleep(500);
+                    if (_running && ForceResubscribe())
+                        BridgeLog.Info(
+                            "ProductionMarketDataExporter: connection ready; subscriptions refreshed");
+                }
+                catch (Exception ex)
+                {
+                    BridgeLog.Warn(
+                        "ProductionMarketDataExporter: connection refresh failed " +
+                        ex.GetType().Name);
+                }
+                finally
+                {
+                    Interlocked.Exchange(ref _connectionRefreshPending, 0);
+                }
+            });
         }
 
         /// <summary>

@@ -290,5 +290,7 @@ def test_aurora_bundle_carries_init_data_and_mobile_contract() -> None:
     assert "X-Telegram-Init-Data" in api
     assert "telegramRemoteMe" in api
     assert "telegram-mini-app" in css
-    assert "Новый аккаунт активируется только вашим подтверждением" in ui
+    assert "новый пользователь автоматически получает полный пробный доступ к продукту на 7 дней" in ui
+    assert "Живые графики используют только разрешённый для аккаунта источник market data" in ui
+    assert "Новый аккаунт активируется только вашим подтверждением" not in ui
     assert "https://web.telegram.org" in server_mod.STATIC_CSP

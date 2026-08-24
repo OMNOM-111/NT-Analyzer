@@ -11,9 +11,12 @@ import json
 import socket
 import struct
 import threading
+import time
 from collections import deque
 from datetime import datetime, timezone
-from typing import Any, Deque, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Deque, Dict, List, Mapping, Optional, Set, Tuple
+
+from . import market_data_access
 
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 MAX_OUTBOUND = 64
@@ -27,6 +30,10 @@ _METRICS = {
     "coalesced": 0,
     "dropped": 0,
     "non_bar_events_filtered": 0,
+    "scope_mismatch_filtered": 0,
+    "access_granted": 0,
+    "access_denied": 0,
+    "access_revoked": 0,
     "clients": 0,
 }
 
@@ -100,10 +107,29 @@ def decode_frames(buffer: bytearray) -> Tuple[List[str], bytearray]:
 
 
 class WsClient:
-    def __init__(self, request_handler: Any, user_id: str = "") -> None:
+    def __init__(
+        self,
+        request_handler: Any,
+        user_id: str = "",
+        *,
+        context: Optional[Mapping[str, Any]] = None,
+        access_resolver: Optional[Callable[..., market_data_access.MarketDataAccessDecision]] = None,
+    ) -> None:
         self.handler = request_handler
-        self.user_id = user_id
+        self.context: Dict[str, Any] = dict(context or {})
+        if user_id and not self.context.get("user_id"):
+            self.context["user_id"] = user_id
+        self.user_id = str(
+            self.context.get("user_uuid") or self.context.get("user_id") or user_id or ""
+        )
+        self.device_id = str(self.context.get("device_id") or "")
+        self.session_id = str(self.context.get("session_id") or "")
+        self.access_resolver = access_resolver or market_data_access.resolve_market_data_access
         self.subscriptions: Set[str] = set()  # exact_contract|tf
+        self.access_decisions: Dict[
+            str, market_data_access.MarketDataAccessDecision
+        ] = {}
+        self.next_access_revalidate_at = 0.0
         # Browser WebSocket subscriptions own a ref-counted upstream lease.  A
         # large layout remains one browser connection and one shared ProjectX
         # market socket, while closing/reconfiguring a chart releases its lease.
@@ -184,6 +210,7 @@ class WsClient:
         while self.alive:
             self._wake.wait(timeout=1.0)
             self._wake.clear()
+            _revalidate_client_access(self)
             while self.alive:
                 msg = self._next_outbound()
                 if msg is None:
@@ -273,7 +300,16 @@ def broadcast(message: Dict[str, Any]) -> None:
     for client in clients:
         if not client.alive:
             continue
-        filtered = _message_for_subscriptions(message, set(client.subscriptions))
+        authorized_subscriptions = {
+            key
+            for key, decision in client.access_decisions.items()
+            if key in client.subscriptions
+            and market_data_access.decision_allows_message(decision, message)
+        }
+        if client.subscriptions and not authorized_subscriptions:
+            with _LOCK:
+                _METRICS["scope_mismatch_filtered"] += 1
+        filtered = _message_for_subscriptions(message, authorized_subscriptions)
         if filtered is not None:
             client.enqueue(filtered)
 
@@ -281,11 +317,43 @@ def broadcast(message: Dict[str, Any]) -> None:
 def metrics() -> Dict[str, Any]:
     with _LOCK:
         out = dict(_METRICS)
+        subject_hashes = {
+            market_data_access.subject_hash(client.context)
+            for client in _CLIENTS
+        }
+        device_hashes = {
+            hashlib.sha256(client.device_id.encode("utf-8")).hexdigest()[:16]
+            for client in _CLIENTS if client.device_id
+        }
+        scope_hashes = {
+            market_data_access.scope_hash(decision.scope_id)
+            for client in _CLIENTS
+            for decision in client.access_decisions.values()
+            if decision.scope_id
+        }
+        access_sources: Dict[str, int] = {}
+        for client in _CLIENTS:
+            for decision in client.access_decisions.values():
+                access_sources[decision.source] = access_sources.get(decision.source, 0) + 1
+        out["unique_subjects"] = len(subject_hashes)
+        out["unique_devices"] = len(device_hashes)
+        out["active_access_scopes"] = len(scope_hashes)
+        out["access_sources"] = access_sources
         out["active_clients"] = [
             {
                 "connected_at": client.connected_at,
+                "subject_hash": market_data_access.subject_hash(client.context),
+                "device_hash": (
+                    hashlib.sha256(client.device_id.encode("utf-8")).hexdigest()[:16]
+                    if client.device_id else ""
+                ),
                 "subscriptions": sorted(client.subscriptions),
                 "upstream_leases": len(client.upstream_refs),
+                "access_scopes": sorted({
+                    market_data_access.scope_hash(decision.scope_id)
+                    for decision in client.access_decisions.values()
+                    if decision.scope_id
+                }),
             }
             for client in sorted(_CLIENTS, key=lambda row: row.connected_at)
         ]
@@ -316,15 +384,15 @@ def handle_websocket_upgrade(handler: Any) -> bool:
         handler.send_error(400, "missing Sec-WebSocket-Key")
         return True
 
-    # Prefer authenticated session cookie / bearer when present; allow staging.
-    user_id = ""
-    try:
-        from . import account_auth
-        # Best-effort: reuse remote context if handler already authenticated.
-        ctx = getattr(handler, "_remote_context", None) or {}
-        user_id = str(ctx.get("user_id") or "")
-    except Exception:
-        user_id = ""
+    # ``server._authorize_api`` authenticates before dispatching the upgrade.
+    # Re-check the bound context here because a 101 response cannot be taken
+    # back safely after discovering a missing subject.
+    ctx = getattr(handler, "_remote_context", None) or {}
+    if not market_data_access.authenticated_subject(ctx):
+        reject()
+        handler.send_error(401, "authenticated market-data subject required")
+        return True
+    user_id = str(ctx.get("user_uuid") or ctx.get("user_id") or "")
 
     # ``BaseHTTPRequestHandler`` defaults to an HTTP/1.0 status line. Chromium
     # accepts that leniently, but RFC6455 clients (including ``websockets``)
@@ -342,7 +410,7 @@ def handle_websocket_upgrade(handler: Any) -> bool:
     finally:
         handler.protocol_version = previous_protocol
 
-    client = WsClient(handler, user_id=user_id)
+    client = WsClient(handler, user_id=user_id, context=ctx)
     welcome = {
         "type": "welcome",
         "server_time_utc": _iso(),
@@ -400,28 +468,223 @@ def _on_client_message(client: WsClient, msg: Dict[str, Any]) -> None:
         timeframe = str(msg.get("timeframe") or "*").lower()
         if contract:
             key = f"{contract}|{timeframe}"
+            decision = _resolve_client_access(client, contract, timeframe)
+            if not decision.allowed:
+                with _LOCK:
+                    _METRICS["access_denied"] += 1
+                client.enqueue({
+                    "type": "subscribe_nack",
+                    "exact_contract": contract,
+                    "timeframe": timeframe,
+                    "code": decision.reason,
+                })
+                return
+            previous = client.access_decisions.get(key)
+            if previous is not None and (
+                previous.scope_id != decision.scope_id
+                or previous.source != decision.source
+                or previous.account_id != decision.account_id
+            ):
+                _release_client_upstream(client, key)
+            client.access_decisions[key] = decision
+            if not _acquire_client_upstream(client, contract, timeframe, decision):
+                client.access_decisions.pop(key, None)
+                client.subscriptions.discard(key)
+                with _LOCK:
+                    _METRICS["access_denied"] += 1
+                client.enqueue({
+                    "type": "subscribe_nack",
+                    "exact_contract": contract,
+                    "timeframe": timeframe,
+                    "code": "market_data_source_unavailable",
+                })
+                return
+            first = key not in client.subscriptions
             client.subscriptions.add(key)
-            _acquire_client_upstream(client, contract, timeframe)
+            if first:
+                with _LOCK:
+                    _METRICS["access_granted"] += 1
+            client.next_access_revalidate_at = min(
+                client.next_access_revalidate_at or float("inf"),
+                time.monotonic() + max(0.1, decision.revalidate_after_sec),
+            )
             client.enqueue({
                 "type": "subscribe_ack",
                 "exact_contract": contract,
                 "timeframe": timeframe,
+                "access": decision.to_public_dict(),
             })
     elif mtype == "unsubscribe":
         contract = str(msg.get("exact_contract") or msg.get("instrument") or "").upper()
         timeframe = str(msg.get("timeframe") or "*").lower()
         key = f"{contract}|{timeframe}"
         client.subscriptions.discard(key)
+        client.access_decisions.pop(key, None)
         _release_client_upstream(client, key)
     elif mtype == "ping":
+        _revalidate_client_access(client, force=True)
         client.enqueue({"type": "pong", "server_time_utc": _iso()})
 
 
-def _acquire_client_upstream(client: WsClient, contract: str, timeframe: str) -> None:
+def _resolve_client_access(
+    client: WsClient, contract: str, timeframe: str,
+) -> market_data_access.MarketDataAccessDecision:
+    try:
+        return client.access_resolver(
+            client.context,
+            exact_contract=contract,
+            timeframe=timeframe,
+            channel="trades",
+        )
+    except Exception:
+        return market_data_access.MarketDataAccessDecision(
+            allowed=False,
+            reason="market_data_access_unavailable",
+            user_id=client.user_id,
+            workspace_id=str(client.context.get("workspace_id") or ""),
+        )
+
+
+def _purge_client_market_events(client: WsClient) -> None:
+    """Drop already queued live data before an expired/switching grant writes."""
+    with client._queue_lock:
+        client.outbound = deque(
+            row for row in client.outbound
+            if str(row.get("type") or "") != "market_event"
+        )
+        client.coalesce_slot = {
+            key: row for key, row in client.coalesce_slot.items()
+            if str(row.get("type") or "") != "market_event"
+        }
+
+
+def _revalidate_client_access(client: WsClient, *, force: bool = False) -> None:
+    """Re-check live grants while a socket remains open and release on expiry."""
+    if not client.alive or not client.subscriptions:
+        return
+    now = time.monotonic()
+    if not force and now < client.next_access_revalidate_at:
+        return
+    next_delay = market_data_access.DEFAULT_REVALIDATE_SECONDS
+    for key in list(client.subscriptions):
+        try:
+            contract, timeframe = key.rsplit("|", 1)
+        except ValueError:
+            contract, timeframe = key, "*"
+        previous = client.access_decisions.get(key)
+        decision = _resolve_client_access(client, contract, timeframe)
+        if not decision.allowed:
+            _purge_client_market_events(client)
+            client.subscriptions.discard(key)
+            client.access_decisions.pop(key, None)
+            _release_client_upstream(client, key)
+            with _LOCK:
+                _METRICS["access_revoked"] += 1
+            client.enqueue({
+                "type": "access_revoked",
+                "exact_contract": contract,
+                "timeframe": timeframe,
+                "code": decision.reason,
+            })
+            continue
+        source_changed = bool(
+            previous is None
+            or previous.scope_id != decision.scope_id
+            or previous.source != decision.source
+            or previous.account_id != decision.account_id
+        )
+        if source_changed:
+            _purge_client_market_events(client)
+            _release_client_upstream(client, key)
+            client.access_decisions[key] = decision
+            if not _acquire_client_upstream(client, contract, timeframe, decision):
+                client.subscriptions.discard(key)
+                client.access_decisions.pop(key, None)
+                with _LOCK:
+                    _METRICS["access_revoked"] += 1
+                client.enqueue({
+                    "type": "access_revoked",
+                    "exact_contract": contract,
+                    "timeframe": timeframe,
+                    "code": "market_data_source_unavailable",
+                })
+                continue
+            client.enqueue({
+                "type": "access_changed",
+                "exact_contract": contract,
+                "timeframe": timeframe,
+                "access": decision.to_public_dict(),
+            })
+        else:
+            client.access_decisions[key] = decision
+        next_delay = min(next_delay, max(0.1, decision.revalidate_after_sec))
+    client.next_access_revalidate_at = time.monotonic() + next_delay
+
+
+def _acquire_client_upstream(
+    client: WsClient,
+    contract: str,
+    timeframe: str,
+    decision: market_data_access.MarketDataAccessDecision,
+) -> bool:
     """Acquire one factual upstream lease; never open a provider per chart."""
     key = f"{contract}|{timeframe}"
     if key in client.upstream_refs:
-        return
+        return True
+    if decision.source == "owned_provider":
+        connector = decision.connector
+        if connector is None:
+            if decision.metadata.get("transport_managed"):
+                client.upstream_refs[key] = {
+                    "provider": "owned_provider_managed",
+                    "contract": contract,
+                    "timeframe": timeframe,
+                    "consumer_id": "",
+                }
+                return True
+            return False
+        try:
+            subscription_id = connector.subscribe(contract, "trades")
+        except Exception:
+            return False
+        if not subscription_id:
+            return False
+        client.upstream_refs[key] = {
+            "provider": "owned_provider",
+            "contract": contract,
+            "timeframe": timeframe,
+            "consumer_id": str(subscription_id),
+            "connector": connector,
+        }
+        return True
+    if decision.source == "personal_connector":
+        installation_id = str(
+            decision.metadata.get("installation_id") or decision.account_id or ""
+        )
+        try:
+            from . import market_data_ingestion
+
+            result = market_data_ingestion.subscribe(
+                decision.workspace_id,
+                installation_id,
+                int(client.context.get("user_id") or 0),
+                contract,
+                timeframe,
+            )
+        except Exception:
+            return False
+        if not result.get("ok"):
+            return False
+        client.upstream_refs[key] = {
+            "provider": "personal_connector",
+            "contract": contract,
+            "timeframe": timeframe,
+            "consumer_id": installation_id,
+            "workspace_id": decision.workspace_id,
+        }
+        return True
+    if decision.source not in {"owner", "shared_trial"}:
+        return False
     # TopstepX owns independent read-only charts when configured.  Root symbols
     # are intentionally deferred until HTTP contract resolution sends the exact
     # expiry, avoiding a duplicate search/login burst during cold layout load.
@@ -435,11 +698,12 @@ def _acquire_client_upstream(client: WsClient, contract: str, timeframe: str) ->
                     "provider": "topstepx", "contract": contract,
                     "timeframe": timeframe, "consumer_id": consumer,
                 }
-            return
+                return True
+            return False
     except Exception:
         # The history route reports the provider failure/failover.  Do not use
         # this browser-side lease helper to manufacture a second connection.
-        return
+        return False
     try:
         from .market_data_subscriptions import get_subscription_registry
         get_subscription_registry().acquire("ninjatrader", contract, "trades")
@@ -447,8 +711,9 @@ def _acquire_client_upstream(client: WsClient, contract: str, timeframe: str) ->
             "provider": "ninjatrader", "contract": contract,
             "timeframe": timeframe, "consumer_id": "",
         }
+        return True
     except Exception:
-        pass
+        return False
 
 
 def _release_client_upstream(client: WsClient, key: str) -> None:
@@ -466,6 +731,18 @@ def _release_client_upstream(client: WsClient, key: str) -> None:
         elif provider == "ninjatrader":
             from .market_data_subscriptions import get_subscription_registry
             get_subscription_registry().release("ninjatrader", str(ref.get("contract") or ""), "trades")
+        elif provider == "owned_provider":
+            connector = ref.get("connector")
+            if connector is not None:
+                connector.unsubscribe(str(ref.get("consumer_id") or ""))
+        elif provider == "personal_connector":
+            from . import market_data_ingestion
+            market_data_ingestion.unsubscribe(
+                str(ref.get("workspace_id") or ""),
+                str(ref.get("consumer_id") or ""),
+                str(ref.get("contract") or ""),
+                str(ref.get("timeframe") or "1m"),
+            )
     except Exception:
         pass
 

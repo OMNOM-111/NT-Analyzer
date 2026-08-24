@@ -369,11 +369,19 @@ def test_csharp_connector_exposes_bounded_market_data_upload_hook() -> None:
     assert "QueueMarketDataBatch" in client
     assert '"api/connector/v1/market-data"' in client
     assert "MaxMarketDataBarsPerBatch = 64" in client
+    assert "MaxMarketDataFlushBurst = MaxQueuedMarketDataBatches * 2" in client
+    assert "for (int sent = 0; sent < MaxMarketDataFlushBurst; sent++)" in client
+    assert "if (!FlushOneMarketDataBatch()) return;" in client
     assert "market_data_source_sequence" in state
     assert "QueueProductionMarketData" in addon
     assert "new ProductionMarketDataExporter" in addon
     assert "MaxBarsPerBatch = 64" in exporter
     assert "Thread(SenderLoop)" in exporter
+    assert "Connection.ConnectionStatusUpdate += OnConnectionStatusUpdate" in exporter
+    assert "Connection.ConnectionStatusUpdate -= OnConnectionStatusUpdate" in exporter
+    assert "snapshot.PriceStatus != ConnectionStatus.Connected" in exporter
+    assert "Interlocked.CompareExchange(ref _connectionRefreshPending, 1, 0)" in exporter
+    assert "if (_running && ForceResubscribe())" in exporter
     assert "MarketDataIpcClient" not in exporter
     assert "market_data_streams" in config
     assert example["production_connector"]["market_data_streams"] == []
@@ -810,4 +818,3 @@ def test_blocked_handshake_rollback(connector_store) -> None:
         42, workspace_id=workspace["workspace_id"],
     )
     assert listed["connections"][0]["status"] == "pending"
-

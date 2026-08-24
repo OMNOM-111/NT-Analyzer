@@ -10,9 +10,10 @@ control actions (personal bridge, live/paper commands that drive NT) — see
 ``nt_action_gate`` / ``require_nt_dual_auth``.
 
 Personal data, login challenges and session-token hashes are stored in one
-Windows DPAPI-encrypted document. Only an owner callback from the configured
-private bot chat can activate a new account. Plain session tokens exist only in
-the browser cookie and in the single response that creates them.
+Windows DPAPI-encrypted document. A verified human registration with accepted
+terms activates a professional account and one non-renewing seven-day full
+trial. Plain session tokens exist only in the browser cookie and in the single
+response that creates them.
 
 Staging-only helpers: virtual users, test-auth sessions, owner impersonation
 (see ``runtime_env`` / ``test_auth``).
@@ -1164,6 +1165,85 @@ def _profile_complete(user: Dict[str, Any]) -> bool:
     return bool(user.get("first_name") and user.get("last_name") and user.get("email"))
 
 
+def _activate_verified_human_in_doc(user: Dict[str, Any], *, source: str) -> bool:
+    """Activate one verified human account and queue its one initial trial.
+
+    Workspace membership remains the data/write boundary: a full-control trial
+    user is still a viewer in the owner's workspace and an owner only in their
+    isolated personal workspace. Returning active accounts are intentionally
+    not altered or queued, so deploying this model cannot restart old access.
+    """
+    if user.get("is_owner") or user.get("is_service_account"):
+        return False
+    if str(user.get("status") or "") in {"revoked", "denied", "blocked", "deleted"}:
+        return False
+    newly_activated = str(user.get("status") or "") != "active"
+    if not newly_activated:
+        return False
+    now = _now_iso()
+    user.update({
+        "status": "active",
+        "role": "full_control",
+        "ux_mode": "professional",
+        "approved_at_utc": user.get("approved_at_utc") or now,
+        "revoked_at_utc": "",
+        "updated_at_utc": now,
+        "initial_trial_pending": True,
+        "initial_trial_source": str(source or "verified_registration")[:80],
+    })
+    return True
+
+
+def _ensure_registration_trial(user: Dict[str, Any], *, source: str = "") -> Dict[str, Any]:
+    """Complete the cross-store registration outbox, idempotently."""
+    snapshot = dict(user or {})
+    if (not snapshot.get("initial_trial_pending") or snapshot.get("is_owner")
+            or snapshot.get("is_service_account")):
+        return {}
+    uid = int(snapshot.get("user_id") or 0)
+    if uid <= 0 or str(snapshot.get("status") or "") != "active":
+        return {}
+    from . import subscriptions  # lazy import keeps authentication/storage layers acyclic
+    try:
+        granted = subscriptions.ensure_initial_trial(
+            uid,
+            user_uuid=_user_uuid(snapshot),
+            source=str(source or snapshot.get("initial_trial_source") or "verified_registration"),
+        )
+    except subscriptions.SubscriptionError as exc:
+        raise AccountAuthError(
+            f"Аккаунт подтверждён, но trial пока не сохранён: {exc}",
+            getattr(exc, "status", 503),
+            code="initial_trial_unavailable",
+        ) from None
+    with _LOCK:
+        doc = _read_doc()
+        current = _user(doc, uid)
+        if current and _user_uuid(current) == _user_uuid(snapshot) and current.get("initial_trial_pending"):
+            current["initial_trial_pending"] = False
+            current["initial_trial_granted_at_utc"] = _now_iso()
+            current["initial_trial_entitlement_id"] = str(
+                (granted.get("entitlement") or {}).get("entitlement_id") or ""
+            )
+            current["updated_at_utc"] = _now_iso()
+            _write_doc(doc)
+    return granted
+
+
+def _ensure_pending_registration_trial(user_id: Any) -> Dict[str, Any]:
+    try:
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        uid = 0
+    if uid <= 0:
+        return {}
+    with _LOCK:
+        doc = _read_doc_reference()
+        user = _user(doc, uid)
+        snapshot = copy.deepcopy(user) if user and user.get("initial_trial_pending") else {}
+    return _ensure_registration_trial(snapshot)
+
+
 def feature_catalog() -> list[Dict[str, Any]]:
     return [{"id": fid, "label": meta["label"], "default": bool(meta["default"])} for fid, meta in FEATURES.items()]
 
@@ -2243,11 +2323,8 @@ def complete_profile(challenge_id: str, profile: Dict[str, Any], *,
                 user["approved_at_utc"] = _now_iso()
             challenge["status"] = "login_approved"
         else:
-            # New accounts wait for the owner's personal confirmation after
-            # Telegram + profile. Free Preview opens only after allow.
-            user["status"] = "pending"
-            challenge["status"] = "pending_owner"
-            challenge["expires_at"] = time.time() + OWNER_APPROVAL_TTL_SEC
+            _activate_verified_human_in_doc(user, source="telegram_profile")
+            challenge["status"] = "login_approved"
         _write_doc(doc)
         activated = challenge["status"] == "login_approved"
         awaiting_owner = challenge["status"] == "pending_owner"
@@ -2255,9 +2332,11 @@ def complete_profile(challenge_id: str, profile: Dict[str, Any], *,
         snapshot = dict(user)
         cid = str(challenge.get("challenge_id") or "")
     if activated:
+        if snapshot.get("initial_trial_pending"):
+            _ensure_registration_trial(snapshot, source="telegram_profile")
         if newly and not snapshot.get("is_owner"):
             _notify_owner_new_user(api_call, owner_chat_id, snapshot)
-        api_call("sendMessage", {"chat_id": int(snapshot["user_id"]), "text": "Профиль заполнен. Открыт ознакомительный доступ — вернитесь в приложение."})
+        api_call("sendMessage", {"chat_id": int(snapshot["user_id"]), "text": "Профиль заполнен. Открыт полный пробный доступ на 7 дней — вернитесь в приложение."})
     elif awaiting_owner:
         _send_owner_approval(api_call, owner_chat_id, snapshot, cid)
         api_call("sendMessage", {"chat_id": int(snapshot["user_id"]), "text": "Профиль заполнен. Ожидайте личного подтверждения владельца — мы сообщим, когда доступ откроется."})
@@ -2276,7 +2355,7 @@ def _notify_owner_new_user(api_call: Callable[..., Any], owner_chat_id: str,
             "🆕 <b>Новый пользователь StratForge AI</b>\n"
             f"<b>{label}</b> · id <code>{uid}</code> · @{html.escape(str(user.get('username') or '—'))}\n"
             f"E-mail: <code>{html.escape(str(user.get('email') or ''))}</code>\n"
-            "Открыт ознакомительный доступ (Free Preview). Управляйте доступом и тарифом в кабинете."
+            "Открыт полный пробный доступ на 7 дней. Продлить период можно в карточке пользователя."
         ),
         "reply_markup": {"inline_keyboard": [[
             {"text": "⛔ Заблокировать", "callback_data": f"account_revoke:{uid}"},
@@ -2291,8 +2370,9 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
                           owner_chat_id: str = "") -> Dict[str, Any]:
     """Register from a verified Telegram Mini App identity (initData).
 
-    New non-owner accounts stay ``pending`` until the owner confirms. Returning
-    active users keep their access. The caller MUST have validated initData.
+    New non-owner accounts activate after verified initData + accepted terms.
+    Returning active users keep their original access clock. The caller MUST
+    have validated initData.
     """
     try:
         uid = int(tg_user.get("id") or 0)
@@ -2347,7 +2427,7 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
             elif user.get("status") == "active":
                 pass  # returning active user — keep access
             else:
-                user["status"] = "pending"
+                _activate_verified_human_in_doc(user, source="telegram_mini_app")
             user["telegram_user_id"] = uid
         user["terms_accepted_at_utc"] = now
         user["terms_version"] = legal.TERMS_VERSION
@@ -2361,6 +2441,9 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
         _sync_user_identity_summary(doc, user)
         _append_login(user, source="telegram_mini_app", user_agent="Telegram Mini App", email=em)
 
+        if not is_owner and user.get("status") != "active":
+            _activate_verified_human_in_doc(user, source="telegram_mini_app")
+
         status_out = "active" if user.get("status") == "active" else "pending_owner"
         if status_out == "pending_owner":
             challenge_id = secrets.token_urlsafe(24)
@@ -2372,6 +2455,8 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
             })
         _write_doc(doc)
         snapshot = dict(user)
+    if snapshot.get("initial_trial_pending"):
+        _ensure_registration_trial(snapshot, source="telegram_mini_app")
     if status_out == "pending_owner" and api_call is not None:
         try:
             _send_owner_approval(api_call, owner_env, snapshot, challenge_id)
@@ -2518,7 +2603,7 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
                 return True
             allowed = match.group(1) == "allow"
             if allowed:
-                user.update({"status": "active", "role": "read_only", "approved_at_utc": _now_iso(), "revoked_at_utc": ""})
+                _activate_verified_human_in_doc(user, source="legacy_owner_approval")
                 next_challenge_status = "login_approved"
             else:
                 user.update({"status": "denied", "revoked_at_utc": _now_iso()})
@@ -2541,6 +2626,9 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
             telegram_id = _telegram_subject_for_user(doc, user)
             _write_doc(doc)
             uid = int(user["user_id"])
+            snapshot = dict(user)
+        if allowed and snapshot.get("initial_trial_pending"):
+            _ensure_registration_trial(snapshot, source="legacy_owner_approval")
         api_call("answerCallbackQuery", {"callback_query_id": callback.get("id"), "text": "Аккаунт разрешён." if allowed else "Запрос отклонён."})
         if telegram_id:
             api_call("sendMessage", {"chat_id": telegram_id, "text": "✅ Аккаунт StratForge AI активирован." if allowed else "⛔ Владелец отклонил создание аккаунта."})
@@ -2672,10 +2760,7 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
                 # Owner explicitly removed access — re-verification does not restore it.
                 challenge["status"] = "account_blocked"
             elif _profile_complete(user):
-                # Telegram-verified users enter immediately in Free Preview.
-                user["status"] = "active"
-                if not user.get("approved_at_utc"):
-                    user["approved_at_utc"] = _now_iso()
+                _activate_verified_human_in_doc(user, source="telegram_contact")
                 challenge["status"] = "login_approved"
             else:
                 user["status"] = "pending"
@@ -2685,11 +2770,13 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
             cid = str(challenge["challenge_id"])
             newly_activated = next_status == "login_approved" and prior_status != "active"
             snapshot = dict(user)
+        if snapshot.get("initial_trial_pending"):
+            _ensure_registration_trial(snapshot, source="telegram_contact")
         if newly_activated and not snapshot.get("is_owner"):
             _notify_owner_new_user(api_call, owner_chat_id, snapshot)
         messages = {
             "awaiting_profile": "Телефон подтверждён. Вернитесь в приложение и заполните обязательные поля профиля.",
-            "login_approved": "Личность подтверждена. Вернитесь в приложение — открыт ознакомительный доступ (Free Preview).",
+            "login_approved": "Личность подтверждена. Вернитесь в приложение — открыт полный пробный доступ на 7 дней.",
             "account_blocked": "Доступ к StratForge AI ограничен владельцем.",
         }
         api_call("sendMessage", {"chat_id": uid, "text": messages.get(next_status, "Готово."), "reply_markup": {"remove_keyboard": True}})
@@ -2700,6 +2787,16 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
 
 def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str,
                                  device_credential: str = "") -> Dict[str, Any]:
+    with _LOCK:
+        preflight_doc = _read_doc_reference()
+        preflight_challenge = _challenge(
+            preflight_doc,
+            challenge_id=str(challenge_id or ""),
+            statuses=("login_approved", "pending_owner"),
+        )
+        preflight_uid = int((preflight_challenge or {}).get("user_id") or 0)
+    if preflight_uid:
+        _ensure_pending_registration_trial(preflight_uid)
     with _LOCK:
         doc = _read_doc()
         challenge = _challenge(
@@ -3236,6 +3333,8 @@ def create_session_for_user(
     device_credential: str = "",
 ) -> Dict[str, Any]:
     uid = int(user_id)
+    if not impersonator_owner_id:
+        _ensure_pending_registration_trial(uid)
     with _LOCK:
         doc = _read_doc()
         user = _user(doc, uid)
@@ -3582,6 +3681,7 @@ def _new_external_user(
         "terms_accepted_at_utc": now,
         "terms_version": legal.TERMS_VERSION,
     }
+    _activate_verified_human_in_doc(user, source=f"{provider}_verified_registration")
     doc["users"].append(user)
     return user
 
@@ -3674,6 +3774,8 @@ def verify_email_auth(
         challenge["user_uuid"] = _user_uuid(user)
         verified_uid = int(user.get("user_id") or 0)
         _sync_user_identity_summary(doc, user)
+        if user.get("status") == "pending" and _profile_complete(user):
+            _activate_verified_human_in_doc(user, source="email_verified_registration")
         if user.get("status") == "active":
             challenge["status"] = "login_approved"
             active_uid = int(user.get("user_id") or 0)
@@ -3681,10 +3783,13 @@ def verify_email_auth(
             challenge["status"] = "pending_owner"
             challenge["expires_at"] = time.time() + OWNER_APPROVAL_TTL_SEC
         public = _public_user(user, include_contact=True)
+        registration_snapshot = dict(user)
         _write_doc(doc)
+    if registration_snapshot.get("initial_trial_pending"):
+        _ensure_registration_trial(registration_snapshot, source="email_verified_registration")
     if notify and api_call is not None:
         try:
-            _send_owner_approval(api_call, owner_chat_id, notify[0], notify[1])
+            _notify_owner_new_user(api_call, owner_chat_id, notify[0])
         except Exception:
             pass
     if active_uid:
@@ -3744,19 +3849,8 @@ def login_via_google_identity(
                 metadata={"email": email, "name": str(google_name or "")[:120]},
                 source="google_login",
             )
-            challenge_id = secrets.token_urlsafe(24)
-            doc["challenges"].append({
-                "challenge_id": challenge_id,
-                "code": "",
-                "status": "pending_owner",
-                "kind": "provider_auth",
-                "provider": "google",
-                "purpose": "login",
-                "user_id": int(user["user_id"]),
-                "user_uuid": _user_uuid(user),
-                "created_at_utc": _now_iso(),
-                "expires_at": time.time() + OWNER_APPROVAL_TTL_SEC,
-            })
+            challenge_id = ""
+            active_uid = int(user["user_id"])
             notify = (dict(user), challenge_id)
         elif user.get("status") in {"revoked", "denied", "blocked", "deleted"}:
             raise AccountAuthError("Доступ к аккаунту ограничен владельцем.", 403)
@@ -3772,6 +3866,8 @@ def login_via_google_identity(
                 metadata={"email": email, "name": str(google_name or "")[:120]},
                 source="google_login",
             )
+            if user.get("status") == "pending" and _profile_complete(user):
+                _activate_verified_human_in_doc(user, source="google_verified_registration")
             if user.get("status") == "active":
                 active_uid = int(user.get("user_id") or 0)
                 challenge_id = ""
@@ -3790,10 +3886,13 @@ def login_via_google_identity(
                     "expires_at": time.time() + OWNER_APPROVAL_TTL_SEC,
                 })
         _sync_user_identity_summary(doc, user)
+        registration_snapshot = dict(user)
         _write_doc(doc)
+    if registration_snapshot.get("initial_trial_pending"):
+        _ensure_registration_trial(registration_snapshot, source="google_verified_registration")
     if notify and api_call is not None:
         try:
-            _send_owner_approval(api_call, owner_chat_id, notify[0], notify[1])
+            _notify_owner_new_user(api_call, owner_chat_id, notify[0])
         except Exception:
             pass
     if active_uid:

@@ -418,6 +418,7 @@
     ownerPaypalSet: (body) => send('/api/owner/paypal', 'POST', body || {}),
     ownerPaypalEnsurePlans: () => send('/api/owner/paypal/plans', 'POST', {}),
     ownerGrant: (userId, planId, durationDays) => send('/api/owner/grant', 'POST', { user_id: userId, plan_id: planId, duration_days: durationDays }),
+    ownerTrialExtend: (userId, body) => send('/api/owner/trial/extend', 'POST', { user_id: userId, ...(body || {}) }),
     ownerPaymentRequests: (o) => getJSON('/api/owner/payment-requests', o),
     ownerPaymentRequestResolve: (id, approve, durationDays) => send('/api/owner/payment-requests/resolve', 'POST', { request_id: id, approve, duration_days: durationDays }),
     bridgeSetup: (o) => getJSON('/api/bridge/setup', o),

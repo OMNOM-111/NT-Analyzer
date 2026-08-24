@@ -161,7 +161,11 @@
     applyReleaseIcon(label.icon);
     const baseTitle = String(document.title || APP_NAME).replace(/^\[(DEV|CANARY|BETA|STABLE)\]\s*/, '');
     document.title = label.short ? `[${label.short}] ${baseTitle}` : baseTitle;
-    if (CURRENT_AUTH) wireAdminEnvironmentButton();
+    if (CURRENT_AUTH) {
+      wireAdminEnvironmentButton();
+      wireDevPreviewButton();
+      renderDevPreviewBanner();
+    }
   }
 
   async function refreshBuildIdentity(seed) {
@@ -1038,15 +1042,7 @@
       const adminRevoked = result.error.code === 'session_admin_revoked'
         || /Сессия завершена администратором/i.test(String(result.error.message || ''));
       if (adminRevoked) {
-        try { sessionStorage.setItem('stratforge.welcome.dismissed', '1'); } catch (e) { /* ignore */ }
-        toast('Сессия завершена администратором');
-        startGuestBrowse(newsStrip);
-        renderSessionEndedNotice();
-        return;
-      }
-      const dismissed = (() => { try { return sessionStorage.getItem('stratforge.welcome.dismissed') === '1'; } catch (e) { return false; } })();
-      if (dismissed) {
-        startGuestBrowse(newsStrip);
+        renderTelegramLogin('Сессия завершена администратором. Войдите снова.');
         return;
       }
       renderTelegramLogin('');
@@ -1054,7 +1050,6 @@
     }
     CURRENT_AUTH = result.auth || { role: 'owner', is_owner: true, user: {} };
     document.documentElement.classList.remove('auth-locked');
-    document.documentElement.classList.remove('guest-browse');
     const user = CURRENT_AUTH.user || {};
     applyChipUser(user);
     captureReferral();
@@ -1486,98 +1481,8 @@
     } catch (e) { /* keep code for retry from cabinet */ }
   }
 
-  function entryMode() {
-    try {
-      const saved = String(sessionStorage.getItem('stratforge.entry.mode') || '').toLowerCase();
-      return saved === 'student' ? 'beginner' : 'professional';
-    } catch (e) { return 'professional'; }
-  }
-  function guestAuthStub() {
-    const uxMode = entryMode();
-    return {
-      role: 'guest', is_owner: false, guest: true, free_preview: true,
-      plan_id: 'free_preview',
-      ux_mode: uxMode,
-      features: uxMode === 'beginner'
-        ? { practice: true, community: true }
-        : { overview: true, news: true, docs: true },
-      locked_nav: uxMode === 'beginner'
-        ? []
-        : ['backtest', 'trading', 'desktop', 'performance', 'strategies', 'ai', 'agents', 'topstep'],
-      unlock_message: 'Чтобы открыть больше возможностей — введите промокод или отблагодарите донатом.',
-      user: { first_name: 'Гость', last_name: '', user_id: 0, ux_mode: uxMode },
-    };
-  }
-
   function isGuest() {
     return !!(CURRENT_AUTH && CURRENT_AUTH.guest);
-  }
-
-  function startGuestBrowse(newsStrip) {
-    CURRENT_AUTH = guestAuthStub();
-    document.documentElement.classList.remove('auth-locked');
-    document.documentElement.classList.add('guest-browse');
-    // If a previous full-screen auth/welcome wiped the page, go back to overview.
-    const content = qs('.content');
-    if (content && (qs('#welcome-access', content) || qs('.auth-screen', content))) {
-      try { sessionStorage.setItem('stratforge.welcome.dismissed', '1'); } catch (e) { /* ignore */ }
-      location.href = 'index.html';
-      return;
-    }
-    applyChipUser(CURRENT_AUTH.user);
-    applyNavAccess(CURRENT_AUTH);
-    if (maybeRedirectBeginnerHome(CURRENT_AUTH.user || {})) return;
-    const studentShell = isStudentContour(CURRENT_AUTH);
-    if (studentShell) applyStudentShell(newsStrip);
-    const chipUser = qs('#chip-user');
-    if (chipUser) chipUser.onclick = () => renderTelegramLogin('');
-    startClock();
-    if (!studentShell) {
-      // Guest preview must not hit authenticated APIs (whitelist 403 spam).
-      wireGuestPreviewChrome();
-      wireTopbar();
-      wireSearch();
-      // Keep the established StratForge Orchestrator entry point visible.  In
-      // guest mode it becomes a clear sign-in surface instead of disappearing.
-      buildOrchestratorWidget();
-    }
-    if (!studentShell && newsStrip) {
-      newsStrip.hidden = false;
-      const track = qs('.global-news-track', newsStrip);
-      if (track) track.innerHTML = '<span class="global-news-static">Ознакомительный просмотр · войдите, чтобы видеть живую ленту</span>';
-    }
-    ensureGuestPreviewBanner();
-    if (!READY._done) runReady();
-  }
-
-  function wireGuestPreviewChrome() {
-    const ntC = qs('#chip-nt'), brC = qs('#chip-bridge'), lmC = qs('#chip-lm'), mkC = qs('#chip-market'), accC = qs('#chip-account');
-    const tickMarket = () => {
-      try {
-        const m = AuroraDomain.marketStatus(new Date());
-        setChip(mkC, m.state, m.label, m.title);
-      } catch (e) { setChip(mkC, 'off', 'Рынок', 'ознакомительный просмотр'); }
-    };
-    tickMarket();
-    setChip(ntC, 'off', 'NinjaTrader', 'ознакомительный просмотр');
-    setChip(brC, 'off', 'Bridge', 'ознакомительный просмотр');
-    setChip(lmC, 'off', 'LM Studio', 'ознакомительный просмотр');
-    setChip(accC, 'off', 'Счёт · демо', 'Войдите, чтобы видеть реальные счета');
-  }
-
-  function ensureGuestPreviewBanner() {
-    if (qs('#guest-preview-banner')) return;
-    const main = qs('.main');
-    if (!main) return;
-    const bar = el(`<div id="guest-preview-banner" class="guest-preview-banner">
-      <span>Ознакомительный просмотр · под размытием демо-данные интерфейса</span>
-      <button type="button" class="btn sm primary" id="guest-preview-open">Войти через Telegram</button>
-    </div>`);
-    const content = qs('.content', main);
-    if (content) main.insertBefore(bar, content);
-    else main.appendChild(bar);
-    const btn = qs('#guest-preview-open', bar);
-    if (btn) btn.onclick = () => renderTelegramLogin('');
   }
 
   function dismissWelcomeAccess() {
@@ -1589,8 +1494,7 @@
 
   function lockedNavClick(e) {
     if (e) { e.preventDefault(); e.stopPropagation(); }
-    if (CURRENT_AUTH && CURRENT_AUTH.guest) renderTelegramLogin('');
-    else openCabinet('plans');
+    openCabinet('plans');
   }
 
   // ---- avatars + personal / owner cabinet -----------------------------------
@@ -1652,10 +1556,9 @@
       node.setAttribute('aria-hidden', 'true');
     });
   }
-  // Central access control: in Free Preview (or any non-owner with locked
-  // sections) the rail keeps every section VISIBLE but marks locked ones, and a
-  // locked page is covered by an unlock gate instead of being hidden.
-  // Demo-tier unlocks backtest/practice without full subscription blur.
+  // Central access control for authenticated accounts with locked sections.
+  // Anonymous users never reach this shell; a locked page gets an explicit
+  // access gate instead of the retired blurred preview.
   // Beginner UX: hide pro sections entirely (not lock-blur).
   function applyNavAccess(auth) {
     auth = auth || {};
@@ -1754,8 +1657,6 @@
     opts = opts || {};
     const existing = qs('#welcome-access');
     if (existing) existing.remove();
-    // Ensure guest shell under the sheet (e.g. after leaving Telegram login).
-    if (!(CURRENT_AUTH && CURRENT_AUTH.guest)) startGuestBrowse(opts.newsStrip);
     const ref = (typeof getReferral === 'function' ? getReferral() : '') || '';
     let donate = { tiers: [], payment: {} };
     try { donate = await API.http.billingAccessOptions({ retries: 0 }); } catch (e) {
@@ -1794,7 +1695,7 @@
         </div>
         <div class="welcome-access-actions">
           <button type="button" class="btn primary" id="wa-telegram">Войти через Telegram</button>
-          <button type="button" class="btn ghost" id="wa-close">Смотреть бесплатно</button>
+          <button type="button" class="btn ghost" id="wa-close">Вернуться ко входу</button>
         </div>
       </div>
     </div>`);
@@ -1813,11 +1714,7 @@
     const wantAccess = () => !!(qs('#wa-donate-request', root) && qs('#wa-donate-request', root).checked);
     const onClose = () => {
       dismissWelcomeAccess();
-      if (!(CURRENT_AUTH && CURRENT_AUTH.guest)) startGuestBrowse(opts.newsStrip);
-      // Stay on the current first page under the sheet — do not navigate away.
-      if (document.body.dataset.page && document.body.dataset.page !== 'overview') {
-        location.href = 'index.html';
-      }
+      if (!CURRENT_AUTH) renderTelegramLogin('');
     };
 
     const xBtn = qs('#wa-x', root); if (xBtn) xBtn.onclick = onClose;
@@ -2134,7 +2031,7 @@
     const feats = u.features || {};
     const featPanel = u.is_owner ? '' : `<div class="feat-panel" data-feat-panel="${esc(u.user_id)}" hidden>${(catalog || []).map(f => `<div class="feat-row"><span>${esc(f.label)}</span><label class="switch"><input type="checkbox" data-feat-toggle="${esc(u.user_id)}" data-feat-id="${esc(f.id)}" ${feats[f.id] !== false ? 'checked' : ''}><span class="sl"></span></label></div>`).join('')}</div>`;
     const planLabel = u.subscription && u.subscription.plan && u.subscription.plan.label ? u.subscription.plan.label : '';
-    const planPanel = u.is_owner ? '' : `<div class="feat-panel" data-plan-panel="${esc(u.user_id)}" hidden><div class="finance-note">Текущий тариф: <strong>${esc(planLabel || 'Free Preview')}</strong>. Назначьте тариф после проверки оплаты в PayPal.</div><div class="flex gap-sm" style="align-items:flex-end;flex-wrap:wrap"><label style="flex:1;min-width:160px">Тариф<select data-grant-plan="${esc(u.user_id)}">${planOptions || ''}</select></label><label>Срок дней (0=бессрочно)<input type="number" data-grant-days="${esc(u.user_id)}" min="0" max="3650" value="30" style="width:90px"></label><button class="btn sm primary" data-grant-apply="${esc(u.user_id)}">Назначить</button><button class="btn sm ghost" data-grant-clear="${esc(u.user_id)}">Сбросить</button></div></div>`;
+    const planPanel = u.is_owner ? '' : `<div class="feat-panel" data-plan-panel="${esc(u.user_id)}" hidden><div class="finance-note">Текущий тариф: <strong>${esc(planLabel || 'Базовый доступ аккаунта')}</strong>. Назначьте тариф после проверки оплаты в PayPal.</div><div class="flex gap-sm" style="align-items:flex-end;flex-wrap:wrap"><label style="flex:1;min-width:160px">Тариф<select data-grant-plan="${esc(u.user_id)}">${planOptions || ''}</select></label><label>Срок дней (0=бессрочно)<input type="number" data-grant-days="${esc(u.user_id)}" min="0" max="3650" value="30" style="width:90px"></label><button class="btn sm primary" data-grant-apply="${esc(u.user_id)}">Назначить</button><button class="btn sm ghost" data-grant-clear="${esc(u.user_id)}">Сбросить</button></div></div>`;
     const detailPanel = `<div class="feat-panel user-detail-panel" data-detail-panel="${esc(u.user_id)}" hidden></div>`;
     const statusCls = u.status === 'active' ? 'live' : u.status === 'pending' ? 'pending' : u.status === 'blocked' ? 'pending' : 'archived';
     const mon = monitoring || {};
@@ -2261,7 +2158,8 @@
       const hist = u.login_history || [];
       const devices = u.devices || [];
       const sub = d.subscription || {};
-      const planLabel = (sub.plan && sub.plan.label) || 'Free Preview';
+      const access = d.access || {};
+      const planLabel = (sub.plan && sub.plan.label) || 'Базовый доступ аккаунта';
       const ntMode = nt.mode === 'own_ninjatrader' ? 'Свой NinjaTrader' : 'Наблюдение за владельцем';
       const telegramIdentity = (u.linked_providers || []).find(item => item && item.provider === 'telegram');
       const permissionsHtml = u.is_owner
@@ -2276,7 +2174,24 @@
           const expiry = String(grant.expires_at_utc || '').replace('Z', '').slice(0, 16);
           return `<div class="admin-grant-row"><div><strong>${esc(c.label)}</strong><div class="cab-sub mono">${esc(c.id)} · risk=${esc(c.risk || 'high')}</div></div>${canGrant ? `<input type="datetime-local" aria-label="UTC expiry" data-admin-cap-expiry="${esc(c.id)}" value="${esc(expiry)}"><label class="switch"><input type="checkbox" data-admin-cap-toggle="${esc(uid)}" data-admin-cap-id="${esc(c.id)}" ${adminCaps[c.id] ? 'checked' : ''}><span class="sl"></span></label>` : `<span class="badge ${adminCaps[c.id] ? 'live' : 'archived'}">${adminCaps[c.id] ? 'активно' : 'нет'}</span>`}</div>`;
         }).join('')}</div>`;
-      // Three tabs instead of one long column of technical fields. The card tab
+      const accessStateLabel = {
+        active: 'активен', expired: 'истёк', not_granted: 'не выдавался',
+        unlimited: 'бессрочно', superseded: 'заменён другим доступом',
+      }[String(access.state || '')] || String(access.state || '—');
+      const accessStateBadge = access.state === 'active' || access.state === 'unlimited'
+        ? 'live' : (access.state === 'expired' ? 'failed' : 'pending');
+      const accessDate = (value) => {
+        if (!value) return '—';
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString('ru-RU');
+      };
+      const accessHistoryHtml = (access.history || []).map(event => {
+        const before = event.before || {};
+        const after = event.after || {};
+        const actor = event.actor_user_id ? `owner ${event.actor_user_id}` : (event.source || 'system');
+        return `<div class="row"><div class="row-main"><div class="row-title">${esc(event.event === 'initial_trial_granted' ? 'Пробный период создан' : 'Пробный период продлён')}</div><div class="row-sub">${esc(accessDate(event.at_utc))} · ${esc(actor)}${event.reason ? ' · ' + esc(event.reason) : ''}</div><div class="row-sub">Было: ${esc(accessDate(before.expires_at_utc))} → Стало: ${esc(accessDate(after.expires_at_utc))}</div></div></div>`;
+      }).join('') || '<div class="empty-state">История доступа пока пуста.</div>';
+      // Compact tabs keep identity, access, rights and support separated. The card tab
       // is the canonical builder at admin scope: the same facts the account
       // sees in its own Cabinet, rendered by the same function. The identity,
       // device and session lists that used to live here were a second,
@@ -2284,6 +2199,7 @@
       panel.innerHTML = `
         <div class="cab-tabs udetail-tabs">
           <button class="cab-tab on" data-udetail-tab="card">Карточка</button>
+          <button class="cab-tab" data-udetail-tab="access">Доступ</button>
           <button class="cab-tab" data-udetail-tab="rights">Права</button>
           <button class="cab-tab" data-udetail-tab="support">Поддержка</button>
         </div>
@@ -2310,10 +2226,57 @@
           } catch (e) { t.checked = !t.checked; reportError(e); t.disabled = false; }
         });
       };
+      const wireAccess = () => {
+        const runExtend = async (payload, button) => {
+          button.disabled = true;
+          try {
+            const reason = (qs('[data-trial-reason]', tabBody) || {}).value || '';
+            const idempotencyKey = (window.crypto && crypto.randomUUID)
+              ? crypto.randomUUID() : `trial-${uid}-${Date.now()}`;
+            await API.http.ownerTrialExtend(uid, { ...payload, reason, idempotency_key: idempotencyKey });
+            toast('Пробный период продлён');
+            await renderUserDetail(panel, uid, listNode);
+            const accessTab = qs('[data-udetail-tab="access"]', panel);
+            if (accessTab) accessTab.click();
+          } catch (e) { reportError(e); button.disabled = false; }
+        };
+        const daysButton = qs('[data-trial-extend-days]', tabBody);
+        if (daysButton) daysButton.onclick = () => {
+          const days = Number((qs('[data-trial-days]', tabBody) || {}).value || 0);
+          if (!Number.isInteger(days) || days < 1) { toast('Укажите целое число дней'); return; }
+          runExtend({ days }, daysButton);
+        };
+        const dateButton = qs('[data-trial-extend-date]', tabBody);
+        if (dateButton) dateButton.onclick = () => {
+          const raw = (qs('[data-trial-date]', tabBody) || {}).value || '';
+          if (!raw) { toast('Укажите дату окончания'); return; }
+          const date = new Date(raw);
+          if (Number.isNaN(date.getTime())) { toast('Дата некорректна'); return; }
+          runExtend({ expires_at_utc: date.toISOString() }, dateButton);
+        };
+      };
       const showTab = (which) => {
         qsa('[data-udetail-tab]', panel).forEach(
           b => b.classList.toggle('on', b.dataset.udetailTab === which));
-        if (which === 'rights') {
+        if (which === 'access') {
+          tabBody.innerHTML = `
+            <div class="udetail-grid">
+              <div class="cab-kv"><span class="k">Пробный доступ</span><span class="v"><span class="badge ${accessStateBadge}">${esc(accessStateLabel)}</span></span></div>
+              <div class="cab-kv"><span class="k">Начало</span><span class="v">${esc(accessDate(access.starts_at_utc))}</span></div>
+              <div class="cab-kv"><span class="k">Окончание</span><span class="v">${esc(accessDate(access.expires_at_utc))}</span></div>
+            </div>
+            ${canGrant && !u.is_owner ? `<div class="section-title">Продлить доступ</div>
+              <div class="finance-note">Количество дней прибавляется к текущему сроку; если он истёк — от текущего момента. Точная дата должна быть позже действующего срока.</div>
+              <div class="trial-access-controls">
+                <label>На дней<input type="number" min="1" max="3650" value="7" data-trial-days></label>
+                <button class="btn primary" type="button" data-trial-extend-days>Продлить</button>
+                <label>До даты<input type="datetime-local" data-trial-date></label>
+                <button class="btn ghost" type="button" data-trial-extend-date>Установить дату</button>
+                <label class="trial-access-reason">Основание<input maxlength="300" placeholder="Причина продления" data-trial-reason></label>
+              </div>` : ''}
+            <div class="section-title">История изменений</div><div class="list">${accessHistoryHtml}</div>`;
+          wireAccess();
+        } else if (which === 'rights') {
           tabBody.innerHTML = `
             <div class="udetail-grid">
               <div class="cab-kv"><span class="k">Тариф</span><span class="v">${esc(planLabel)}</span></div>
@@ -2343,7 +2306,7 @@
       const planOptions = buildPlanOptions(plansData.plans || []);
       const monitoring = new Map((monitorData.users || []).map(row => [String(row.user_id), row]));
       node.innerHTML = `<div class="dchart-actions" style="justify-content:flex-start"><button class="btn primary" id="users-invite">＋ Пригласить (ссылка + промокод)</button></div>
-        <div class="finance-note"><strong>Хранилище:</strong> ${esc((data.storage || {}).backend || '—')} · ${data.storage && data.storage.encrypted ? 'зашифровано' : 'ещё не создано'}. Новый аккаунт активируется только вашим подтверждением в боте.</div>
+        <div class="finance-note"><strong>Хранилище:</strong> ${esc((data.storage || {}).backend || '—')} · ${data.storage && data.storage.encrypted ? 'зашифровано' : 'ещё не создано'}. После подтверждения личности новый аккаунт автоматически получает полный пробный доступ на 7 дней.</div>
         <div class="finance-note"><strong>Мониторинг:</strong> ${esc(monitorData.online_count || 0)} пользователей онлайн${monitorData.alert_count ? ` · <span class="support-alert-inline">⚠ ${esc(monitorData.alert_count)} предупреждений</span>` : ' · превышений нет'}. Показатели относятся к вкладкам StratForge AI.</div>
         <div class="list account-user-list">${users.map(u => userRowHtml(u, catalog, planOptions, monitoring.get(String(u.user_id)))).join('') || '<div class="empty-state">Аккаунтов пока нет.</div>'}</div>`;
       const invite = qs('#users-invite', node);
@@ -3796,6 +3759,10 @@
     return API.http.bridgePairStart({
       machine_label: (qs('#conn-enroll-label', node).value || '').trim(),
       workspace_id: (qs('#conn-enroll-ws', node).value || '').trim(),
+      // This Admin flow installs the authenticated Connector, even in LOCAL.
+      // Without the explicit transport Development falls back to the legacy
+      // eight-character bridge code, which the Connector correctly rejects.
+      transport: 'production_connector',
     });
   }
 
@@ -4002,7 +3969,7 @@
   }
 
   function loginCard(inner) {
-    return `<div class="auth-screen"><section class="auth-card"><div class="auth-brand"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Защищённый вход</span></div></div>${inner}<div class="auth-security">Единый профиль · Telegram, Google или e-mail · подтверждение владельца<br>Внутренний идентификатор аккаунта — UUID; способы входа не объединяются автоматически</div></section></div>`;
+    return `<div class="auth-screen"><section class="auth-card"><div class="auth-brand"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Защищённый вход</span></div></div>${inner}<div class="auth-security">Единый профиль · подтверждённые Telegram, Google или e-mail<br>Внутренний идентификатор аккаунта — UUID; способы входа не объединяются автоматически</div></section></div>`;
   }
 
   async function showTermsModal() {
@@ -4036,7 +4003,7 @@
       const telegramDisabled = telegram.available === false;
       const googleEnabled = !!(google.available || google.test_auth_fallback);
       const emailEnabled = !!email.available;
-      content.innerHTML = loginCard(`<div id="auth-provider-start"><div class="auth-copy"><h1>Вход и регистрация</h1><p>Войдите в существующий аккаунт или зарегистрируйте новый. Доступны Telegram, Google и e-mail. Новый профиль активируется после личного подтверждения владельца.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<button class="btn primary auth-main-action" id="auth-start" ${telegramDisabled ? 'disabled' : ''}>Продолжить через Telegram</button><button class="btn ghost auth-main-action" id="auth-google-start" ${googleEnabled ? '' : 'disabled'}>${google.test_auth_fallback && !google.available ? 'Google · Development test' : (googleEnabled ? 'Продолжить через Google' : 'Google пока не настроен')}</button><div class="auth-copy"><p>Или используйте подтверждённый e-mail.</p></div><form id="auth-email-start-form" class="auth-form"><div class="field"><label for="auth-login-email">E-mail</label><input id="auth-login-email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com"></div><div class="field"><label for="auth-login-first">Имя <span class="cab-sub">(для нового профиля)</span></label><input id="auth-login-first" autocomplete="given-name" maxlength="80"></div><div class="field"><label for="auth-login-last">Фамилия <span class="cab-sub">(для нового профиля)</span></label><input id="auth-login-last" autocomplete="family-name" maxlength="80"></div><label class="auth-terms"><input type="checkbox" id="auth-provider-accept"> <span>Для нового профиля я принимаю <button type="button" class="linklike" id="auth-provider-terms">условия использования</button>.</span></label><button class="btn ghost auth-main-action" type="submit" ${emailEnabled ? '' : 'disabled'}>${emailEnabled ? 'Получить код по e-mail' : 'E-mail вход пока недоступен'}</button></form><button class="btn ghost auth-main-action" id="auth-open-promo" type="button">Промокод или донат</button><button class="btn ghost auth-main-action" id="auth-back-preview" type="button">Смотреть без входа</button></div>`);
+      content.innerHTML = loginCard(`<div id="auth-provider-start"><div class="auth-copy"><h1>Вход и регистрация</h1><p>Войдите в существующий аккаунт или зарегистрируйте новый. После подтверждения личности новый пользователь автоматически получает полный пробный доступ к продукту на 7 дней. Живые графики используют только разрешённый для аккаунта источник market data.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<button class="btn primary auth-main-action" id="auth-start" ${telegramDisabled ? 'disabled' : ''}>Продолжить через Telegram</button><button class="btn ghost auth-main-action" id="auth-google-start" ${googleEnabled ? '' : 'disabled'}>${google.test_auth_fallback && !google.available ? 'Google · Development test' : (googleEnabled ? 'Продолжить через Google' : 'Google пока не настроен')}</button><div class="auth-copy"><p>Или используйте подтверждённый e-mail.</p></div><form id="auth-email-start-form" class="auth-form"><div class="field"><label for="auth-login-email">E-mail</label><input id="auth-login-email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com"></div><div class="field"><label for="auth-login-first">Имя <span class="cab-sub">(для нового профиля)</span></label><input id="auth-login-first" autocomplete="given-name" maxlength="80"></div><div class="field"><label for="auth-login-last">Фамилия <span class="cab-sub">(для нового профиля)</span></label><input id="auth-login-last" autocomplete="family-name" maxlength="80"></div><label class="auth-terms"><input type="checkbox" id="auth-provider-accept"> <span>Для нового профиля я принимаю <button type="button" class="linklike" id="auth-provider-terms">условия использования</button>.</span></label><button class="btn ghost auth-main-action" type="submit" ${emailEnabled ? '' : 'disabled'}>${emailEnabled ? 'Получить код по e-mail' : 'E-mail вход пока недоступен'}</button></form><button class="btn ghost auth-main-action" id="auth-open-promo" type="button">Промокод или донат</button></div>`);
       const button = qs('#auth-start', content);
       if (button) button.onclick = async () => {
         button.disabled = true;
@@ -4075,15 +4042,13 @@
         try { renderEmailCode(await API.http.authEmailStart({ email: details.email }), details); }
         catch (error) { renderStart(error.message || String(error)); }
       };
-      const back = qs('#auth-back-preview', content);
-      if (back) back.onclick = () => startGuestBrowse();
       const promo = qs('#auth-open-promo', content);
       if (promo) promo.onclick = () => renderWelcomeAccess({ asOverlay: true });
     };
     const renderProfile = (challengeId, state) => {
       stopPolling();
       const profile = state.profile || {};
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Завершите профиль</h1><p>Telegram подтвердил личность. Укажите имя, фамилию и e-mail — затем дождитесь личного подтверждения владельца.</p></div><form id="auth-profile-form" class="auth-form"><div class="field"><label for="auth-first-name">Имя</label><input id="auth-first-name" autocomplete="given-name" required maxlength="80" value="${esc(profile.first_name || '')}"></div><div class="field"><label for="auth-last-name">Фамилия</label><input id="auth-last-name" autocomplete="family-name" required maxlength="80" value="${esc(profile.last_name || '')}"></div><div class="field"><label for="auth-email">E-mail</label><input id="auth-email" type="email" autocomplete="email" required maxlength="254" value="${esc(profile.email || '')}"></div><label class="auth-terms"><input type="checkbox" id="auth-accept-terms"> <span>Я принимаю <button type="button" class="linklike" id="auth-terms-link">условия использования</button> и беру все риски на себя.</span></label><button class="btn primary auth-main-action" type="submit">Зарегистрироваться и ждать подтверждения</button></form>`);
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Завершите профиль</h1><p>Telegram подтвердил личность. Укажите имя, фамилию и e-mail — после регистрации полный 7-дневный доступ включится автоматически.</p></div><form id="auth-profile-form" class="auth-form"><div class="field"><label for="auth-first-name">Имя</label><input id="auth-first-name" autocomplete="given-name" required maxlength="80" value="${esc(profile.first_name || '')}"></div><div class="field"><label for="auth-last-name">Фамилия</label><input id="auth-last-name" autocomplete="family-name" required maxlength="80" value="${esc(profile.last_name || '')}"></div><div class="field"><label for="auth-email">E-mail</label><input id="auth-email" type="email" autocomplete="email" required maxlength="254" value="${esc(profile.email || '')}"></div><label class="auth-terms"><input type="checkbox" id="auth-accept-terms"> <span>Я принимаю <button type="button" class="linklike" id="auth-terms-link">условия использования</button> и беру все риски на себя.</span></label><button class="btn primary auth-main-action" type="submit">Зарегистрироваться</button></form>`);
       const form = qs('#auth-profile-form', content);
       const termsLink = qs('#auth-terms-link', form);
       if (termsLink) termsLink.onclick = () => showTermsModal();
@@ -4177,7 +4142,7 @@
     const renderMiniAppRegister = (message) => {
       stopPolling();
       const tg = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) || {};
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Регистрация</h1><p>Telegram уже подтвердил личность. Заполните профиль — доступ откроется после личного подтверждения владельцем.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<form id="auth-mini-form" class="auth-form"><div class="field"><label for="mini-first">Имя</label><input id="mini-first" required maxlength="80" value="${esc(tg.first_name || '')}"></div><div class="field"><label for="mini-last">Фамилия</label><input id="mini-last" required maxlength="80" value="${esc(tg.last_name || '')}"></div><div class="field"><label for="mini-email">E-mail</label><input id="mini-email" type="email" required maxlength="254" placeholder="you@example.com"></div><label class="auth-terms"><input type="checkbox" id="mini-accept"> <span>Я принимаю <button type="button" class="linklike" id="mini-terms-link">условия использования</button> и беру все риски на себя.</span></label><button class="btn primary auth-main-action" type="submit">Зарегистрироваться и ждать подтверждения</button></form><button class="btn ghost" id="auth-back-welcome" style="margin-top:10px">Назад</button>`);
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Регистрация</h1><p>Telegram уже подтвердил личность. Заполните профиль — полный пробный доступ на 7 дней включится автоматически.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<form id="auth-mini-form" class="auth-form"><div class="field"><label for="mini-first">Имя</label><input id="mini-first" required maxlength="80" value="${esc(tg.first_name || '')}"></div><div class="field"><label for="mini-last">Фамилия</label><input id="mini-last" required maxlength="80" value="${esc(tg.last_name || '')}"></div><div class="field"><label for="mini-email">E-mail</label><input id="mini-email" type="email" required maxlength="254" placeholder="you@example.com"></div><label class="auth-terms"><input type="checkbox" id="mini-accept"> <span>Я принимаю <button type="button" class="linklike" id="mini-terms-link">условия использования</button> и беру все риски на себя.</span></label><button class="btn primary auth-main-action" type="submit">Зарегистрироваться</button></form><button class="btn ghost" id="auth-back-welcome" style="margin-top:10px">Назад</button>`);
       const form = qs('#auth-mini-form', content);
       const link = qs('#mini-terms-link', form); if (link) link.onclick = () => showTermsModal();
       const back = qs('#auth-back-welcome', content);
@@ -4201,8 +4166,7 @@
             renderWaiting({ challenge_id: out.challenge_id }, { status: 'pending_owner' });
             return;
           }
-          toast('Заявка отправлена владельцу');
-          renderWaiting({ challenge_id: out && out.challenge_id }, { status: 'pending_owner' });
+          throw new Error('Регистрация подтверждена, но сессия не активирована. Повторите вход.');
         } catch (error) { submit.disabled = false; renderMiniAppRegister(error.message || String(error)); }
       };
     };
@@ -4532,7 +4496,7 @@
 
           <section class="telegram-card">
             <div class="flex between"><div><div class="section-title">Аккаунты и вход</div><div class="row-sub">${accounts ? `${(accounts.users || []).filter(user => user.status === 'active').length} активных · ${(accounts.users || []).filter(user => user.status === 'pending').length} ожидают` : 'статус недоступен'}</div></div><button class="btn" id="telegram-open-users">Управление пользователями</button></div>
-            <div class="finance-note"><strong>Новый порядок:</strong> пользователь нажимает «Войти через Telegram», подтверждает свой контакт и заполняет имя, фамилию и e-mail. Новый аккаунт активируется только вашей кнопкой в личном чате бота.</div>
+            <div class="finance-note"><strong>Новый порядок:</strong> пользователь нажимает «Войти через Telegram», подтверждает свой контакт и заполняет имя, фамилию и e-mail. После подтверждения личности аккаунт активируется автоматически с полным пробным доступом на 7 дней.</div>
           </section>
 
           <section class="telegram-card">
@@ -5794,6 +5758,7 @@
       const systemItems = [
         { icon: 'users', label: 'Кабинет', onClick: () => openCabinet() },
         ...(hasAdminCapability('admin.view') ? [{ icon: 'cpu', label: 'Панель администратора', onClick: () => openAdminPanel() }] : []),
+        ...(devPreviewAvailable() ? [{ icon: 'eye', label: 'Developer Preview', onClick: () => openDevPreviewPanel() }] : []),
         { icon: 'palette', label: 'Настройки дизайна', onClick: () => showDesignSettings() },
         { icon: 'back', label: 'Перейти в старый интерфейс', onClick: () => { window.location.href = (window.API && API.config && API.config.legacyUrl) || '/ui/legacy/'; } },
         { divider: true },
@@ -6177,7 +6142,7 @@
     if (!node) return;
     if (isGuest() && err && (err.status === 401 || err.status === 403
         || /whitelist|не входит/i.test(String(err && err.message || '')))) {
-      node.innerHTML = `<div class="empty-state">Ознакомительный просмотр · данные появятся после входа и подтверждения доступа.</div>`;
+      node.innerHTML = `<div class="empty-state">Данные недоступны · войдите в подтверждённый аккаунт.</div>`;
       return;
     }
     const msg = (err && err.message) ? err.message : String(err);

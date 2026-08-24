@@ -18,6 +18,7 @@ namespace StratForge.Connector.Setup
     {
         public string NinjaUserDir { get; set; }
         public string ServerOrigin { get; set; } = "https://app.stratforges.com";
+        public bool ServerOriginExplicit { get; set; }
         public string EnrollmentCode { get; set; } = "";
         public string Channel { get; set; } = "stable";
         public string UpdatePolicy { get; set; } = "safe_restart";
@@ -199,8 +200,10 @@ namespace StratForge.Connector.Setup
             JObject connector = existing?["production_connector"] as JObject ?? new JObject();
             connector.Remove("enrollment_code");
             connector["enabled"] = true;
-            connector["server_origin"] = NormalizeOrigin(
-                (string)connector["server_origin"] ?? options.ServerOrigin);
+            string serverOrigin = options.ServerOriginExplicit
+                ? options.ServerOrigin
+                : (string)connector["server_origin"] ?? options.ServerOrigin;
+            connector["server_origin"] = NormalizeOrigin(serverOrigin);
             connector["protocol_version"] = (string)release.Manifest["protocol_version"] ?? "1.0";
             connector["connector_version"] = release.Version;
             connector["enrollment_credential_ref"] = "dpapi:bootstrap-v1";
@@ -241,7 +244,7 @@ namespace StratForge.Connector.Setup
                 "enabled", "server_origin", "protocol_version", "connector_version",
                 "enrollment_code", "enrollment_credential_ref", "state_dir",
                 "heartbeat_interval_ms", "command_poll_seconds", "release_channel",
-                "update_policy", "extensions",
+                "update_policy", "market_data_streams", "extensions",
             };
             foreach (JProperty property in connector.Properties())
                 if (!fields.Contains(property.Name))
@@ -404,10 +407,20 @@ namespace StratForge.Connector.Setup
         {
             Uri uri;
             if (!Uri.TryCreate(value ?? "", UriKind.Absolute, out uri) ||
-                uri.Scheme != Uri.UriSchemeHttps || uri.PathAndQuery != "/" ||
+                !IsAllowedOriginTransport(uri) || uri.PathAndQuery != "/" ||
                 !string.IsNullOrEmpty(uri.UserInfo))
-                throw new InvalidDataException("Server origin must be an HTTPS origin without path or credentials.");
+                throw new InvalidDataException(
+                    "Server origin must be HTTPS, or HTTP on localhost/127.0.0.1 for Development, without path or credentials.");
             return uri.GetLeftPart(UriPartial.Authority);
+        }
+
+        private static bool IsAllowedOriginTransport(Uri uri)
+        {
+            if (string.Equals(uri.Scheme, Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+                return true;
+            return string.Equals(uri.Scheme, Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) &&
+                (string.Equals(uri.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase));
         }
 
         private static string RequireNinjaDirectory(string value)

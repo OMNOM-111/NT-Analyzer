@@ -129,6 +129,12 @@ def test_authorising_hands_the_grant_to_the_program_not_to_the_person():
     assert "res.code" not in authorize
 
 
+def test_admin_connector_requests_the_authenticated_connector_transport():
+    section = UI[UI.index("async function connectorMintPairing"):]
+    section = section[:section.index("function wireConnectorEnroll")]
+    assert "transport: 'production_connector'" in section
+
+
 def test_a_missing_installer_is_stated_rather_than_linked():
     """A download button that goes nowhere teaches the reader that the page
     lies."""

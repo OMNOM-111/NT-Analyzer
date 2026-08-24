@@ -1,14 +1,17 @@
 # StratForge Market Data Pivot: Bring Your Own Market Data (BYOMD)
 
-Status: architecture plus connector prototypes. Only the existing NinjaTrader
-path has automated integration coverage; every credentialed vendor connector
-remains disabled/unverified until an owner acceptance run and contract review.
+Status: Development implementation plus connector prototypes. The owner
+TopstepX hub is accepted for the owner's own charts, while unrelated-user
+redistribution remains fail-closed. Personal credentialed connectors remain
+disabled/unverified until account-specific acceptance and contract review.
 
 This document establishes the strategic, legal, and technical framework for the user-owned market data model. Under this architecture, StratForge remains free for the first 100 users by avoiding centralized enterprise data subscriptions, shifting the entitlement burden to the end-users.
 
 ## 1. Strategic Goals
 
-- **Zero Platform Market Data Costs:** StratForge does not purchase or redistribute live market data for retail users.
+- **No implied redistribution:** a StratForge product trial is not a provider or
+  exchange market-data grant. The owner feed is not shared with unrelated users
+  unless written authority is represented by both explicit runtime policy gates.
 - **Optional Enterprise Provider:** Databento is reclassified as `OPTIONAL_ENTERPRISE_PROVIDER`, disabled by default, not required for the MVP, and blocked from auto-failover until user-explicit shadow parity checks pass.
 - **Compliance & Anti-Scraping:** No web scraping, credential sharing, or private API interception is permitted. All user connections are authenticated using official protocols.
 - **Fair-Use Multi-Chart Fanout:** 64 charts do not create 64 upstream connections. Connections are multiplexed per unique contract at the user's adapter level.
@@ -48,28 +51,46 @@ Cache keys are isolated per user group and workspace:
 md:v1:private:<workspace_id>:<user_id>:<account_id>:<provider>:<exchange>:<exact_contract>:<channel>:<timeframe>:...:epochN
 ```
 
-Global cache keys are permitted **only** for:
+Shared cache keys are permitted **only** for:
 - Instrument metadata (definitions, tick sizes, point values).
 - Trading session templates.
 - Demo/Replay sessions.
 - Publicly available/unrestricted historical files.
+
+The Development transport admission order is fixed and fail-closed:
+
+1. owner runtime;
+2. verified private user-owned provider entitlement;
+3. fresh online personal NinjaTrader Connector bound to that user/workspace;
+4. a bounded shared trial only when both `remote_server_authorized` and
+   `redistribution_authorized` are explicitly true;
+5. deny.
+
+HTTP bars/cache and WebSocket subscriptions/events use the same server-owned
+scope. Browser payloads never supply provider credentials, account ids or a
+trusted entitlement assertion. Live sockets are periodically revalidated and
+released immediately when the grant expires or source changes.
 
 ---
 
 ## 4. Feasibility Audit of the Four Connectors
 
 ### A. NinjaTrader Local Bridge
-- **Implementation:** existing authenticated localhost IPC and exact-contract export.
+- **Implementation:** authenticated localhost IPC, Connector protocol and
+  exact-contract export.
 - **Scope:** one user's local NinjaTrader process; no cross-user redistribution is
   implemented by this path.
-- **Acceptance:** Bridge build and automated IPC contracts pass; live callback,
-  disconnect and recovery scenarios still require the owner-controlled NT run.
+- **Acceptance:** Bridge build and automated IPC contracts pass. The current
+  workstation Connector is bound to Canary but is not enrolled and has no
+  authenticated heartbeat/market-data streams; live callback, disconnect,
+  fallback and recovery still require the owner-controlled physical NT run.
 - **Contract note:** permitted use depends on the owner's NinjaTrader/data-provider
   agreements; this repository does not declare those rights on their behalf.
 
 ### B. TopstepX / ProjectX Connector
-- **Official API:** ProjectX REST plus SignalR/WebSocket market hub. The adapter is
-  opt-in with `NTA_ENABLE_TOPSTEPX_LIVE=1` and is not production accepted.
+- **Official API:** ProjectX REST plus SignalR/WebSocket market hub. The owner
+  adapter is the accepted read-only chart source in the current beta.29 hub, but
+  this acceptance does not authorize a second user to consume that entitlement.
 - **Credentials:** TopstepX username plus ProjectX API key, not a Tradovate login.
 - **Current published cost (verified 2026-07-17):** Topstep says $29/month, or
   $14.50/month with its published trader code; prices can change.
@@ -100,10 +121,15 @@ Global cache keys are permitted **only** for:
 
 ## 5. Implementation Roadmap
 
-1. **Phase 1:** NinjaTrader per-user local bridge.
-2. **Phase 2:** TopstepX / ProjectX opt-in local feasibility prototype; correct
-   ProjectX contract IDs and SignalR targets are covered by mocks, but credentialed
-   acceptance remains blocked.
+1. **Phase 1:** Complete physical NinjaTrader per-user Connector acceptance and
+   signed installer publication.
+2. **Phase 2:** Complete user-owned TopstepX / ProjectX opt-in acceptance on the
+   user's authorized device/session; keep the owner shared feed denied for
+   unrelated users unless written distribution authority exists.
 3. **Phase 3:** Rithmic connector configuration interface & integration.
 4. **Phase 4:** CQG/Tradovate connector integration.
 5. **Phase 5:** Per-user failover between user's own connected sources.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Reconciled the BYOMD strategy with the accepted owner hub, the new per-user HTTP/WS source admission and the still-blocked cross-user redistribution and physical Connector acceptance.
+-->

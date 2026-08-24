@@ -63,10 +63,11 @@ Backend поднимет `cloudflared` в фоне, включит удалён�
    пользователь отправляет ручную команду `/login КОД`, показанную на экране
    авторизации.
 4. Пользователь заполняет недостающие обязательные поля: имя, фамилию и e-mail.
-5. Telegram-проверенные пользователи получают Free Preview сразу; владелец
-   получает уведомление и может заблокировать аккаунт в кабинете или кнопкой
-   в боте. Платные/расширенные права выдаются отдельно через тариф, промокод
-   или owner grant.
+5. После заполнения профиля и принятия условий Telegram-проверенный новый
+   пользователь автоматически получает один полный пробный доступ на 7 дней.
+   Владелец получает уведомление, может заблокировать аккаунт и может продлить
+   trial на нужное число дней или до точной UTC-даты в карточке пользователя.
+   Повторный вход или второй браузер не запускают новый trial.
 6. Роль можно изменить, а доступ — отозвать в любой момент. Каждый API-запрос
    заново читает whitelist, поэтому отзыв действует сразу.
 
@@ -126,7 +127,8 @@ Webhook и long-poll используют общий durable inbox. Update сн�
   Telegram-проверки. Изменяющие запросы дополнительно требуют CSRF token и
   same-origin `Origin`.
 - Backend проверяет Telegram WebApp HMAC по bot token, `auth_date` (не старше
-  15 минут), `user.id`, состояние общего выключателя, whitelist и роль.
+  15 минут), `user.id`, состояние общего выключателя, активный canonical
+  account и роль.
 - `read_only` допускает только GET/HEAD, кроме self-service действий своего
    аккаунта: промокод, выбор/создание personal workspace, bridge pairing и
    движения средств в personal workspace. POST/DELETE в owner-training контуре и
@@ -145,3 +147,7 @@ Webhook и long-poll используют общий durable inbox. Update сн�
 
 Если Mini App сообщает, что `initData` истёк, закройте и заново откройте её из
 Menu Button. Это создаст новый подписанный Telegram launch context.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Replaced the retired Free Preview/manual-activation description with verified automatic seven-day trial, idempotent multi-device behavior and owner extension history.
+-->
