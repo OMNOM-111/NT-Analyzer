@@ -2,6 +2,44 @@
 
 Дата проверки: `2026-08-24T16:33:38Z`.
 
+## Beta.32 source re-verification — 2026-08-24T22:50:07Z (remote CI container)
+
+Проверка выполнена в ephemeral remote Linux-контейнере (Claude Code on the web),
+а не на owner-хосте. Подтверждено на точном merge SHA
+`848579362f6ed49c69ac8e6684791d86a34be1f4` (`main` == `origin/main` ==
+рабочая ветка, working tree clean, `VERSION.json` = `0.10.0-beta.32`,
+`status: pre_release`):
+
+- full regression на Python 3.12 (версия CI): `1948 passed`, `31 skipped`,
+  `0 failed`;
+- `python -m compileall -q app tools tests bridge` — PASS;
+- 32 JavaScript syntax checks (`node --check`) — PASS;
+- `git diff --check` — PASS;
+- открытых PR по beta.32 нет: PR #148 слит, ничего не ожидает CI.
+
+Отличие от записанных ранее `1947 passed / 32 skipped` объясняется платформой:
+Windows-специфичный bash-syntax skip на Linux не пропускается, а исполняется.
+Исходный код beta.32 подтверждён как готовый к сборке immutable artifact.
+
+### Незакрытые шаги и их физическая причина
+
+Остаток цикла — LOCAL browser smoke (price → last bar close → rendered marker),
+сборка immutable beta.32 artifact, Canary, acceptance, promotion того же
+artifact в Production, а также Connector/NinjaTrader и live chart smoke — **в
+этом контейнере невыполним**. Причины проверены, а не предположены:
+
+- контейнер поднят с нуля (`up 0 min`), никакого LOCAL runtime, gateway или
+  release-дерева `/home/stratforge/...` в нём нет;
+- egress network policy отклоняет CONNECT (HTTP 403) к `app.stratforges.com`,
+  `canary.stratforges.com`, `api.topstepx.com` и ProjectX gateway, поэтому ни
+  live TopstepX feed, ни Canary/Production endpoints недоступны;
+- NinjaTrader и Development Connector — Windows-компоненты owner-хоста и в
+  Linux-контейнере отсутствуют.
+
+Эти шаги требуют сессии на owner-хосте с текущим LOCAL stack, живым TopstepX
+gateway и работающим NinjaTrader. Ротация четырёх Google/Resend secrets
+по-прежнему отложена в отдельный финальный security closeout.
+
 ## Current beta.32 corrective cycle — 2026-08-24T16:33:38Z
 
 PR #146 и deterministic-governance sync PR #147 прошли обязательные пять CI
@@ -134,7 +172,7 @@ Connector package требует разрешённого Authenticode tool/mate
 
 | Environment | Version | Git SHA | Runtime artifact SHA256 | Status |
 | --- | --- | --- | --- | --- |
-| LOCAL | `0.10.0-beta.32` | base `8e83d4ccbad9d9fadf10109f0afdd6b3ce9fe6eb` + scoped rate/UI correction | not built | 1947 passed, 32 skipped, 0 failed; PR/CI pending |
+| LOCAL | `0.10.0-beta.32` | `848579362f6ed49c69ac8e6684791d86a34be1f4` | not built | PR #148 merged; re-verified 1948 passed, 31 skipped, 0 failed on Python 3.12; browser smoke + artifact build pending owner host |
 | Canary | `0.10.0-beta.31` | `8e83d4ccbad9d9fadf10109f0afdd6b3ce9fe6eb` | `826625D73702EB8D63E5EF2ABE0F2B291AB1FB8616B3E3C52D4AA70E48B8E7EE` | NOT ACCEPTED; 13m26s charts passed but 15m change reproduced HTTP 429 |
 | Production | `0.10.0-beta.29` | `4d15f1d2250e2c52bde02b902d88ec7aad043543` | `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379` | live/ready + owner UI/charts/responsive PASS |
 
@@ -188,6 +226,7 @@ Canonical operational evidence:
 [2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md).
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-24T22:50:07Z | Claude Code on the web по запросу owner | Пере-верифицирован beta.32 source на merge SHA 848579362f: 1948/31/0, compileall, 32 JS checks и git diff --check PASS; зафиксировано, что LOCAL browser smoke, artifact build, Canary и Production промоушен физически недостижимы из ephemeral remote-контейнера (нет runtime, egress 403, нет NinjaTrader).
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Удалён устаревший beta.20 handoff; зафиксированы фактические beta.27 Canary, beta.26 Production и исполнимый beta.28 closeout.
 2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Зафиксирован реальный blocker canary_passed→approved_for_production в authoritative promotion gate; artifact 2790fb43 не продвигался, Production остался beta.26.
 2026-08-21T03:50:00Z | GPT-5.5 через Codex по запросу owner | Final beta.28 artifact принят в Canary и без пересборки продвинут в Production; точная identity, rollback slots, tests и chart evidence записаны в current handoff.
