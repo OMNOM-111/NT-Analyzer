@@ -41,6 +41,7 @@ namespace NTAnalyzerBridge.Connector
         public const string ClientVersion = "0.2.0";
         private static readonly object AppendLock = new object();
         private const int MaxQueuedMarketDataBatches = 32;
+        private const int MaxMarketDataFlushBurst = MaxQueuedMarketDataBatches * 2;
         private const int MaxMarketDataBarsPerBatch = 64;
         private const int MaxMarketDataBatchBytes = 128 * 1024;
 
@@ -407,10 +408,23 @@ namespace NTAnalyzerBridge.Connector
         private void FlushMarketData()
         {
             if (!_allowedCapabilities.Contains("telemetry")) return;
+            // The command endpoint is a bounded long poll. Draining only one
+            // snapshot before entering that poll makes two 1 Hz streams outrun
+            // the 32-item queue and leaves the server with systematically old
+            // bars. Drain a bounded burst first; the cap preserves command and
+            // heartbeat fairness if a producer is unusually busy.
+            for (int sent = 0; sent < MaxMarketDataFlushBurst; sent++)
+            {
+                if (!FlushOneMarketDataBatch()) return;
+            }
+        }
+
+        private bool FlushOneMarketDataBatch()
+        {
             PendingMarketDataBatch batch;
             lock (_marketDataGate)
             {
-                if (_marketDataQueue.Count == 0) return;
+                if (_marketDataQueue.Count == 0) return false;
                 batch = _marketDataQueue.Peek();
             }
             if (batch.SourceSequence < 1)
@@ -444,7 +458,7 @@ namespace NTAnalyzerBridge.Connector
                             _marketDataQueue.Dequeue();
                     }
                     BridgeLog.Warn("ConnectorClient: dropped rejected market-data batch (" + ex.ErrorCode + ")");
-                    return;
+                    return true;
                 }
                 throw;
             }
@@ -453,6 +467,7 @@ namespace NTAnalyzerBridge.Connector
                 if (_marketDataQueue.Count > 0 && Object.ReferenceEquals(_marketDataQueue.Peek(), batch))
                     _marketDataQueue.Dequeue();
             }
+            return true;
         }
 
         private void PollCommands()
