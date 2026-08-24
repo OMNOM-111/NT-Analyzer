@@ -1172,3 +1172,174 @@ def test_delivered_message_carries_the_code_and_no_credentials(monkeypatch) -> N
     assert "424242" in captured["html"]
     serialized = json.dumps(captured)
     assert "re_test_key_value" not in serialized
+
+
+# ---------------------------------------------------------------------------
+# Canonical owner contract: the owner is a person, not an environment variable.
+# A deployment that cannot name its chat id must still resolve the canonical
+# owner to full owner access, and must never greet them with a trial.
+# ---------------------------------------------------------------------------
+
+CANONICAL_UUID = "eb9d8e32-8db0-d590-9b35-ef1bd07ec61f"
+
+
+def _canonical_owner_row(doc, uid=1647145559, *, is_owner=False, status="active"):
+    """A stored account for the canonical human, optionally already demoted."""
+    row = {
+        "user_id": uid, "legacy_user_id": uid, "user_uuid": CANONICAL_UUID,
+        "telegram_user_id": uid, "username": "owner",
+        "first_name": "Owner", "last_name": "Tester",
+        "email": "owner@example.test", "phone": "", "phone_hash": "",
+        "role": "owner" if is_owner else "full_control",
+        "status": status, "is_owner": is_owner,
+        "primary_login_provider": "telegram",
+        "created_at_utc": account_auth._now_iso(),
+        "approved_at_utc": account_auth._now_iso(), "revoked_at_utc": "",
+    }
+    doc["users"].append(row)
+    account_auth._link_identity_in_doc(
+        doc, row, provider="telegram", subject=str(uid),
+        verified_at_utc=account_auth._now_iso(), metadata={}, source="test",
+        touch=False,
+    )
+    return row
+
+
+def test_canonical_owner_resolves_without_a_configured_chat_id(auth_store, monkeypatch) -> None:
+    # Exactly the Canary/Production shape: the canonical UUID is configured but
+    # the chat id is not exported, which used to yield is_owner=False.
+    monkeypatch.delenv("NTA_TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setenv(account_auth.CANONICAL_OWNER_UUID_ENV, CANONICAL_UUID)
+    doc = account_auth._read_doc()
+    _canonical_owner_row(doc, is_owner=False)
+    account_auth._write_doc(doc)
+
+    doc = account_auth._read_doc()
+    assert account_auth.owner_claim(
+        doc, provider="telegram", subject=1647145559, user_id=1647145559,
+        user=account_auth._user(doc, 1647145559),
+    ) is True
+
+
+def test_unknown_telegram_identity_is_never_promoted_to_owner(auth_store, monkeypatch) -> None:
+    monkeypatch.delenv("NTA_TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setenv(account_auth.CANONICAL_OWNER_UUID_ENV, CANONICAL_UUID)
+    doc = account_auth._read_doc()
+    _canonical_owner_row(doc, is_owner=True)
+    account_auth._write_doc(doc)
+
+    doc = account_auth._read_doc()
+    assert account_auth.owner_claim(
+        doc, provider="telegram", subject=515151, user_id=515151,
+        user=account_auth._user(doc, 515151),
+    ) is False
+
+
+def test_missing_chat_id_never_demotes_a_stored_owner(auth_store, monkeypatch) -> None:
+    # The store is authoritative: an unset variable is missing configuration,
+    # not a decision to remove someone's ownership.
+    monkeypatch.delenv("NTA_TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.delenv(account_auth.CANONICAL_OWNER_UUID_ENV, raising=False)
+    doc = account_auth._read_doc()
+    _canonical_owner_row(doc, is_owner=True)
+    account_auth._write_doc(doc)
+
+    doc = account_auth._read_doc()
+    assert account_auth.owner_claim(
+        doc, provider="telegram", subject=1647145559, user_id=1647145559,
+        user=account_auth._user(doc, 1647145559),
+    ) is True
+
+
+def test_recognised_owner_keeps_the_canonical_uuid_instead_of_a_new_one(auth_store, monkeypatch) -> None:
+    monkeypatch.setenv(account_auth.CANONICAL_OWNER_UUID_ENV, CANONICAL_UUID)
+    assert account_auth.owner_user_uuid_for_new_row(True) == CANONICAL_UUID
+    assert account_auth.owner_user_uuid_for_new_row(False) != CANONICAL_UUID
+
+
+def test_owner_telegram_login_grants_owner_access_and_no_trial_message(auth_store, monkeypatch) -> None:
+    """End to end over the real /login flow that produced the Free Preview bug."""
+    monkeypatch.delenv("NTA_TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setenv(account_auth.CANONICAL_OWNER_UUID_ENV, CANONICAL_UUID)
+    uid = 1647145559
+    doc = account_auth._read_doc()
+    # The account as Canary had already stored it: an ordinary verified human.
+    _canonical_owner_row(doc, uid, is_owner=False)
+    account_auth._write_doc(doc)
+
+    login = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
+    calls, api = _api_recorder()
+    assert account_auth.process_update({"message": {
+        "text": f"/login {login['code']}",
+        "from": {"id": uid, "first_name": "Owner", "username": "owner"},
+        "chat": {"id": uid, "type": "private"},
+    }}, api_call=api, owner_chat_id="")
+    assert account_auth.process_update({"message": {
+        "contact": {"user_id": uid, "phone_number": "+15551234567"},
+        "from": {"id": uid}, "chat": {"id": uid, "type": "private"},
+    }}, api_call=api, owner_chat_id="")
+
+    assert account_auth.login_state(login["challenge_id"])["status"] == "login_approved"
+    row = account_auth._user(account_auth._read_doc(), uid)
+    assert row["is_owner"] is True and row["role"] == "owner"
+    # The trial outbox must not be left pending for an owner.
+    assert not row.get("initial_trial_pending")
+
+    texts = [payload.get("text", "") for method, payload in calls if method == "sendMessage"]
+    approval = [t for t in texts if "Личность подтверждена" in t]
+    assert approval, texts
+    assert "полный доступ владельца" in approval[-1]
+    assert not any("пробный доступ" in t for t in approval)
+    assert not any("Free Preview" in t for t in texts)
+
+
+def test_non_owner_still_receives_the_trial_message(auth_store, monkeypatch) -> None:
+    monkeypatch.setenv(account_auth.CANONICAL_OWNER_UUID_ENV, CANONICAL_UUID)
+    account_auth.ensure_owner(999)
+    login = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
+    calls, api = _api_recorder()
+    assert account_auth.process_update({"message": {
+        "text": f"/login {login['code']}",
+        "from": {"id": 4242, "first_name": "Ada", "last_name": "L",
+                 "username": "ada"},
+        "chat": {"id": 4242, "type": "private"},
+    }}, api_call=api, owner_chat_id="999")
+    account_auth.process_update({"message": {
+        "contact": {"user_id": 4242, "phone_number": "+15559876543"},
+        "from": {"id": 4242}, "chat": {"id": 4242, "type": "private"},
+    }}, api_call=api, owner_chat_id="999")
+
+    row = account_auth._user(account_auth._read_doc(), 4242)
+    assert not row.get("is_owner")
+
+
+def test_local_owner_row_prefers_canonical_uuid_over_lowest_id(auth_store, monkeypatch) -> None:
+    """LOCAL must open as the same person Canary/Production resolve."""
+    monkeypatch.delenv("NTA_TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setenv(account_auth.CANONICAL_OWNER_UUID_ENV, CANONICAL_UUID)
+    doc = account_auth._read_doc()
+    # A lower-numbered legacy owner row must not win over the canonical one.
+    doc["users"].append({
+        "user_id": 999, "legacy_user_id": 999,
+        "user_uuid": "11111111-2222-3333-4444-555555555555",
+        "first_name": "Legacy", "role": "owner", "status": "active",
+        "is_owner": True, "created_at_utc": account_auth._now_iso(),
+    })
+    _canonical_owner_row(doc, is_owner=True)
+    account_auth._write_doc(doc)
+
+    assert account_auth.primary_owner_id() == 1647145559
+
+
+def test_developer_test_auth_cannot_exist_outside_development(monkeypatch) -> None:
+    """Other developers get owner/test access on LOCAL only -- never remotely."""
+    from app import runtime_env as rt
+
+    monkeypatch.setenv("NTA_ENABLE_TEST_AUTH", "1")
+    for environment in (rt.CANARY, rt.PRODUCTION):
+        monkeypatch.setattr(rt, "deployment_environment", lambda env=environment: env)
+        assert rt.test_auth_enabled() is False
+        with pytest.raises(rt.RuntimeEnvError):
+            rt.assert_production_safe()
+        with pytest.raises(rt.RuntimeEnvError):
+            rt.require_test_auth()
