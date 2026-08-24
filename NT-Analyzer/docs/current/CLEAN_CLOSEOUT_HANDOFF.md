@@ -1,8 +1,48 @@
-# Clean closeout — beta.29 accepted; beta.30 release preparation
+# Clean closeout — beta.30 Canary rejected; beta.31 correction in Development
 
-Дата проверки: `2026-08-24T02:41:31Z`.
+Дата проверки: `2026-08-24T04:22:21Z`.
 
-## Current Development delta — 2026-08-24T02:41:31Z
+## Current beta.31 corrective cycle — 2026-08-24T04:22:21Z
+
+PR #145 слит owner-authorized merge
+`27184197ea5d495b8e0d90d0cc5c06d6539f7ab9`; все пять mandatory CI jobs
+были зелёными. Из clean merge один раз собран beta.30 artifact
+`art_6ae472715d594d99a55a0c0efbb1ebf6`: build
+`sf-0.10.0-beta.30-27184197ea5d-20260824T035054Z`, archive SHA256
+`7A4B23D15BCF2DBCFA95CD2E9C091D59857BDFC60D45A56B84FA1E7A74779BF3`,
+runtime/manifest SHA256
+`B958DE90A2211B84C5F38D87BE202392A300D4482F0C8F6EDDAF443E59227F98`.
+
+Canary deployment `dep_dd7c5ac3c9d94f6f9c85baa8616a16ff` **не принят**.
+Два одновременных 36-chart layout визуально оставались `36/36 live`, а общий
+browser fan-out держал ровно два WebSocket, но deep-history polling постепенно
+занял все 24 bounded HTTP handler slots; `/api/ready` и Admin начали отвечать
+503. Acceptance не записывался, beta.30 в Production не продвигался;
+Production остаётся на принятом beta.29.
+
+Воспроизведённая причина ограничена consumer adapter: viewport
+`start_time/end_time` не передавались в существующий gateway endpoint, поэтому
+клиент повторно получал latest chunk вместо следующего диапазона. Beta.31
+передаёт эти две границы и возвращает уже вычисленные gateway metadata
+`cache_hit/chunks/history_exhausted`. TopstepX auth/session, SignalR,
+history provider, cache/failover, rollover, realtime и chart rendering не
+менялись.
+
+LOCAL с тем же `STRATFORGE_API_MAX_INFLIGHT=24`: два одновременных 36-chart
+клиента держались `10.26 min` и завершили `36/36 external_live + live marker`;
+readiness probes — `20/20` HTTP 200; admission peak `8`, rejected `0`;
+consumer direct provider/auth/loginKey `0`, общий upstream SignalR `1`.
+Финальный MNQ/MES sample в обоих клиентах точно совпал по WebSocket price →
+last close → цветному rendered marker. Чистый regression является последним
+LOCAL gate перед beta.31 PR/CI и новым immutable release cycle.
+
+Чистый LOCAL gate завершён: full regression `1946 passed`, `32 skipped`,
+`0 failed`; custom runner `13/13`; targeted market-data/gateway + governance/
+docs `121 passed`; bridge Debug build `0 warnings / 0 errors`; compileall, 22
+JavaScript syntax checks, CSP, secrets, Markdown, Context Pack и
+`git diff --check` — PASS.
+
+## Previous beta.30 release preparation — 2026-08-24T02:41:31Z
 
 Beta.29 ниже остаётся неизменённым accepted live baseline. На ветке
 `codex/release-beta30-20260824` из clean `main` merge
@@ -44,27 +84,27 @@ batches и безопасный UI demo-backtest `#18782` без реальны�
 gate — versioned beta.30 release-preparation PR, затем один signed immutable
 artifact. Cross-user shared trial feed остаётся `EXTERNAL BLOCKED` без
 письменного provider/exchange redistribution authority; публичный Production
-Connector package требует разрешённого Authenticode tool/material. Canary и
-Production не изменялись и остаются beta.29.
+Connector package требует разрешённого Authenticode tool/material. На момент
+этой предыдущей подготовки Canary и Production не менялись и оставались beta.29.
 
 ## Current release identity
 
 | Environment | Version | Git SHA | Runtime artifact SHA256 | Status |
 | --- | --- | --- | --- | --- |
-| LOCAL | `0.10.0-beta.29` | `4d15f1d2250e2c52bde02b902d88ec7aad043543` | clean checkout build `dev-0.10.0-beta.29-4d15f1d2250e` | implementation/load/responsive baseline PASS |
-| Canary | `0.10.0-beta.29` | `4d15f1d2250e2c52bde02b902d88ec7aad043543` | `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379` | live/ready + authenticated owner UI/Documents/charts PASS |
+| LOCAL | `0.10.0-beta.31` | base `27184197ea5d495b8e0d90d0cc5c06d6539f7ab9` + scoped correction | not built | 10.26-minute two-client/capacity PASS; PR/CI pending |
+| Canary | `0.10.0-beta.30` | `27184197ea5d495b8e0d90d0cc5c06d6539f7ab9` | `B958DE90A2211B84C5F38D87BE202392A300D4482F0C8F6EDDAF443E59227F98` | NOT ACCEPTED; readiness saturated; candidate `canary_checking` |
 | Production | `0.10.0-beta.29` | `4d15f1d2250e2c52bde02b902d88ec7aad043543` | `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379` | live/ready + owner UI/charts/responsive PASS |
 
-Immutable identity:
+Accepted Production baseline identity:
 
 - candidate `rc_a7c6c0afb95d410f92474614efeb1b35`;
 - artifact `art_ccaadc3a536e4272809d32073f072918`;
 - build `sf-0.10.0-beta.29-4d15f1d2250e-20260823T020155Z`;
 - archive SHA256 `882FF3520DDD43BF65925F3DFA5AA95DA56107336DA98EFDC64146A81981195B`;
 - runtime/manifest SHA256 `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379`;
-- active Canary/Production release directory
+- active Production release directory
   `/home/stratforge/production_data/releases/0.10.0-beta.29-4d15f1d2250e`;
-- rollback: Canary and Production `0.10.0-beta.28-36600dba3d73`.
+- Production rollback: `0.10.0-beta.28-36600dba3d73`.
 
 ## Acceptance evidence
 
@@ -113,4 +153,5 @@ Canonical operational evidence:
 2026-08-23T22:20:31Z | GPT-5.5 через Codex по запросу owner | Зафиксирован LOCAL acceptance нового trial/access candidate: 1943/32/0 и 10m56s двухклиентный MNQ/MES visual fan-out PASS; внешние Connector/redistribution gates сохранены.
 2026-08-24T01:52:25Z | GPT-5.5 через Codex по запросу owner | Закрыт physical Development Connector acceptance: проверенный dev.14, сохранённое enrollment, heartbeat, MNQ/MES history/live, bounded transport drain без drops и безопасный demo-backtest; следующий gate — PR #144 CI.
 2026-08-24T02:41:31Z | GPT-5.5 через Codex по запросу owner | PR #144 слит owner-authorized merge fb7d7f9b; на clean merge повторно подтверждены Connector heartbeat/history/live и demo-backtest #18782; VERSION подготовлен к единственному immutable beta.30 cycle.
+2026-08-24T04:22:21Z | GPT-5.5 через Codex по запросу owner | Beta.30 Canary не принят после воспроизводимого saturation deep-history polling; Production сохранён на beta.29; открыт минимальный beta.31 viewport-range corrective cycle без изменения TopstepX/SignalR baseline.
 -->
