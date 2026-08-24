@@ -947,17 +947,33 @@ class OwnerGatewayChartAdapter:
     def history_range(self, exact_contract: str, timeframe: str, *,
                       start_time: Any = None, end_time: Any = None,
                       limit: int = 1500, cancel_event: Any = None) -> Dict[str, Any]:
+        def utc_query_stamp(value: Any) -> str:
+            if value is None:
+                return ""
+            if isinstance(value, datetime):
+                stamp = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+                return stamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+            return str(value).strip()
+
         query = {
             "instrument": exact_contract,
             "timeframe": timeframe,
             "limit": max(1, min(int(limit or 1500), 20_000)),
+            # Viewport history is a different range from the latest-bars
+            # bootstrap.  Dropping these bounds made a consumer request the
+            # same latest 64 bars forever, so two large layouts eventually
+            # occupied every bounded HTTP slot even though their shared WS
+            # feed remained healthy.
+            "from_ts": utc_query_stamp(start_time),
+            "to_ts": utc_query_stamp(end_time),
         }
         payload = fetch_gateway_json("/api/ops/runtime/bars", query)
         instrument = str(payload.get("instrument") or exact_contract).upper()
         requested = " ".join(str(exact_contract or "").strip().upper().split())
+        history = payload.get("history") if isinstance(payload.get("history"), dict) else {}
+        source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
         with self._lock:
             self._resolved_exact_map[requested] = instrument
-            source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
             freshness = payload.get("freshness") if isinstance(payload.get("freshness"), dict) else {}
             self._last_feed = {
                 "fresh": bool(freshness.get("market_feed_fresh", payload.get("live"))),
@@ -979,10 +995,17 @@ class OwnerGatewayChartAdapter:
                 self._runtime_state = str(source.get("runtime_state"))
         return {
             "bars": list(payload.get("bars") or []),
-            "requested_start_utc": "",
-            "requested_end_utc": "",
-            "cache_hit": False,
-            "chunks": 1,
+            "requested_start_utc": str(history.get("requested_start_utc") or query["from_ts"]),
+            "requested_end_utc": str(history.get("requested_end_utc") or query["to_ts"]),
+            "cache_hit": bool(history.get("cache_hit") or source.get("cache_hit")),
+            "chunks": int(history.get("chunks") or 1),
+            "history_exhausted": bool(
+                history.get("exhausted") or source.get("history_exhausted")
+            ),
+            "native_aggregation_fallback": bool(
+                history.get("native_aggregation_fallback")
+                or source.get("native_aggregation_fallback")
+            ),
             "via": "owner_gateway",
         }
 

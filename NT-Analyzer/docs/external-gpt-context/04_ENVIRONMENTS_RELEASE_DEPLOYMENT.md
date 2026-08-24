@@ -1,12 +1,12 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-08-23T02:27:02Z
+- Last verified UTC: 2026-08-24T04:22:21Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Repository baseline: main `4d15f1d2250e2c52bde02b902d88ec7aad043543` plus this operational docs-only closeout
+- Repository baseline: main `27184197ea5d495b8e0d90d0cc5c06d6539f7ab9`; beta.30 Canary is non-accepted and Production remains beta.29
 - Scope: Environment isolation, immutable release, promotion and rollback
-- Status: DONE
-- Acceptance note: beta.29 immutable release is accepted in Canary and live in Production; authenticated owner UI/charts/responsive smoke passed in both server environments.
+- Status: PARTIAL
+- Acceptance note: beta.29 remains the accepted Production release. Beta.30 was built once and deployed to Canary, but capacity acceptance failed under two 36-chart layouts; no acceptance or Production promotion occurred. Beta.31 must complete a fresh clean PR/CI/artifact/Canary cycle.
 
 ## Only supported release model
 
@@ -68,6 +68,22 @@ normal UI advances the candidate to `approved_for_production` before requesting
 the authoritative decision. Approved, scheduled, deploying and retryable
 failed states retain that milestone; pre-acceptance states remain blocked.
 
+## Non-accepted beta.30 Canary attempt
+
+PR #145 merged as `27184197ea5d495b8e0d90d0cc5c06d6539f7ab9` with all
+five mandatory CI jobs green. Candidate `rc_3be5871e0bde48b392f5055e7c6dde2b`,
+artifact `art_6ae472715d594d99a55a0c0efbb1ebf6`, build
+`sf-0.10.0-beta.30-27184197ea5d-20260824T035054Z`, archive SHA256
+`7A4B23D15BCF2DBCFA95CD2E9C091D59857BDFC60D45A56B84FA1E7A74779BF3`
+and runtime/manifest SHA256
+`B958DE90A2211B84C5F38D87BE202392A300D4482F0C8F6EDDAF443E59227F98`
+were deployed only to Canary as `dep_dd7c5ac3c9d94f6f9c85baa8616a16ff`.
+
+Two 36-chart clients retained live chart WebSockets, but deep-history requests
+eventually occupied all 24 bounded HTTP slots and readiness/Admin returned 503.
+The candidate stayed `canary_checking`; acceptance was not recorded. It was not
+promoted or rebuilt. Production remained on accepted beta.29.
+
 ## Accepted beta.29 operational state
 
 | Environment | Version | Git SHA | Build ID | Runtime artifact SHA256 | Ready |
@@ -108,6 +124,7 @@ Workflow concurrency is not a correctness dependency.
 - `tests/test_release_control.py`
 - `tests/test_data_root_isolation.py`
 - [2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md)
+- [2026-08-24-beta30-canary-history-range-regression.md](../changelog/2026-08-24-beta30-canary-history-range-regression.md)
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Replaced obsolete beta.1 deployment snapshot with current beta.27/beta.26 identities, server-authoritative promotion and beta.28 acceptance contract.
@@ -115,4 +132,5 @@ Workflow concurrency is not a correctness dependency.
 2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Recorded the real approved_for_production promotion blocker and milestone-state correction; artifact 2790fb43 was not promoted and Production remained beta.26.
 2026-08-21T03:50:00Z | GPT-5.5 через Codex по запросу owner | Recorded the accepted 36600dba immutable identity, Canary/Production deployment IDs, same release directory, rollback slots and no-rebuild promotion.
 2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Recorded the accepted beta.29 identity, PR #142 merge, Canary/Production deployment IDs, same release directory, rollback slot and no-rebuild promotion.
+2026-08-24T04:22:21Z | GPT-5.5 через Codex по запросу owner | Recorded beta.30 Canary as non-accepted after reproduced capacity saturation, confirmed no Production promotion and opened a fresh beta.31 immutable cycle.
 -->

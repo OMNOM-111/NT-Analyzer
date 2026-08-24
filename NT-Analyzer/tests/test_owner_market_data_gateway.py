@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import time
+import urllib.parse
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -138,6 +139,54 @@ def test_consumer_does_not_open_projectx_hub(monkeypatch) -> None:
     health = provider._adapter().health()
     assert health["session_audit"]["login_key_calls"] == 0
     assert isinstance(provider._adapter(), gw.OwnerGatewayChartAdapter)
+
+
+def test_consumer_history_forwards_viewport_range_and_exhaustion(monkeypatch) -> None:
+    _consumer_env(monkeypatch)
+    start = datetime(2026, 8, 23, 12, 0, tzinfo=timezone.utc)
+    end = start + timedelta(hours=2)
+    seen = {}
+
+    def urlopen(request, timeout=None):
+        parsed = urllib.parse.urlsplit(
+            str(getattr(request, "full_url", "") or request.get_full_url())
+        )
+        seen.update(urllib.parse.parse_qs(parsed.query))
+        return _FakeResponse({
+            "instrument": "MNQ 09-26",
+            "bars": [],
+            "live": True,
+            "status": "external_history_exhausted",
+            "source": {
+                "provider": "topstepx",
+                "runtime_state": "LIVE",
+                "history_exhausted": True,
+                "cache_hit": True,
+            },
+            "freshness": {"market_feed_fresh": True},
+            "history": {
+                "requested_start_utc": start.isoformat().replace("+00:00", "Z"),
+                "requested_end_utc": end.isoformat().replace("+00:00", "Z"),
+                "cache_hit": True,
+                "chunks": 3,
+                "exhausted": True,
+            },
+        })
+
+    monkeypatch.setattr(gw.urllib.request, "urlopen", urlopen)
+    adapter = gw.OwnerGatewayChartAdapter()
+    result = adapter.history_range(
+        "MNQ 09-26", "5m", start_time=start, end_time=end, limit=5000,
+    )
+
+    assert seen["from_ts"] == [start.isoformat().replace("+00:00", "Z")]
+    assert seen["to_ts"] == [end.isoformat().replace("+00:00", "Z")]
+    assert seen["limit"] == ["5000"]
+    assert result["requested_start_utc"] == seen["from_ts"][0]
+    assert result["requested_end_utc"] == seen["to_ts"][0]
+    assert result["cache_hit"] is True
+    assert result["chunks"] == 3
+    assert result["history_exhausted"] is True
 
 
 def test_hub_keeps_direct_projectx_when_role_is_hub(monkeypatch) -> None:

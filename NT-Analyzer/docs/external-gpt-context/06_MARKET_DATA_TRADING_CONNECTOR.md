@@ -1,7 +1,7 @@
 # 06. Market Data, Trading and Connector
 
 - Context Pack document: 06_MARKET_DATA_TRADING_CONNECTOR.md
-- Last verified UTC: 2026-08-23T21:36:03Z
+- Last verified UTC: 2026-08-24T04:22:21Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: NinjaTrader authority, Connector protocol, market-data gateway and trading safety gates
 - Status: PARTIAL
@@ -39,8 +39,8 @@
 | Area | Status | Current fact |
 | --- | --- | --- |
 | Connector protocol v1 | `BETA` | Pair/enroll/challenge/hello/heartbeat/market-data/commands are implemented with device-owned P-256 keys and bounded capabilities |
-| Read-only charts | `BETA` | TopstepX history/realtime works with NinjaTrader OFF in Development, Canary and Production; beta.29 is the current live artifact in both server environments |
-| Owner market-data gateway | `AVAILABLE` | One Production upstream session fans out to authorized same-account/environment consumers. Browser tabs share the local StratForge WebSocket and logical subscriptions are reference-counted and released on close/reconnect |
+| Read-only charts | `BETA` | TopstepX history/realtime works with NinjaTrader OFF in Development, Canary and Production. Accepted Production remains beta.29; beta.30 Canary is deployed but non-accepted and must be replaced by beta.31 |
+| Owner market-data gateway | `AVAILABLE` | One Production upstream session fans out to authorized same-account/environment consumers. Browser tabs share the local StratForge WebSocket and logical subscriptions are reference-counted. Beta.31 forwards consumer viewport range bounds to the existing history endpoint so deep-history prefetch advances instead of repeating the latest chunk |
 | Connector fallback | `BETA` | Fresh NinjaTrader Connector bars remain a separate chart fallback when actually connected; NinjaTrader remains the execution route |
 | SignalR/session/freshness | `AVAILABLE` | Quote/SignalR heartbeat freshness is independent of price movement. A fresh heartbeat keeps the marker live when the last price is unchanged; stale/offline states mute it honestly |
 | Responsive chart UI | `BETA` | Desktop free-positioned layouts remain intact; at 1100 px and below chart windows reflow into a readable vertical stack without whole-page horizontal overflow |
@@ -48,6 +48,25 @@
 | Per-user HTTP/WS admission | `IN DEVELOPMENT` | Development candidate gates every bars/chart/practice-tick request and every WebSocket subscription through the same resolver, revalidates live sockets every five seconds or sooner at expiry, purges queued events on revoke/source change and exposes only hashed scope diagnostics |
 | User-owned source isolation | `IN DEVELOPMENT` | Verified private provider data uses private cache/backfill only; personal Connector data uses its workspace snapshot only. Neither path can fall through to global owner TopstepX/cache/failover |
 | Simulation/paper runtime control | `BETA` | Safe runtime commands exist for paper/demo/playback contours |
+
+## Reproduced beta.30 Canary range defect and beta.31 correction
+
+Beta.30 Canary kept both large-layout WebSockets live, but two simultaneous
+36-chart clients eventually occupied every bounded HTTP handler slot. The first
+divergence was not TopstepX, SignalR or rendering: consumer
+`OwnerGatewayChartAdapter.history_range()` discarded viewport
+`start_time/end_time`, so each backward-prefetch iteration asked the hub for the
+same latest range. Readiness/Admin then returned 503 even though chart events
+continued through exactly two browser WebSockets.
+
+Beta.31 only forwards those values as existing `from_ts/to_ts` query fields and
+returns the hub's existing cache/chunk/exhaustion metadata. Provider auth,
+loginKey/session ownership, SignalR, history implementation, cache/failover,
+rollover, realtime event shape and chart rendering are unchanged. With the same
+local `max_inflight=24`, two 36-chart clients stayed `36/36 external_live`, readiness
+passed `20/20`, admission peak was `8`, rejected `0`, and the consumer opened
+zero direct provider/auth/loginKey sessions while the shared upstream remained
+one SignalR connection.
 
 ## Current physical NinjaTrader / Connector checkpoint
 
@@ -147,6 +166,7 @@ Detailed evidence and defect scope:
 - [../architecture/MARKET_DATA_RESILIENCE_PLAN.md](../architecture/MARKET_DATA_RESILIENCE_PLAN.md)
 - [../changelog/2026-08-20-final-product-acceptance-beta28.md](../changelog/2026-08-20-final-product-acceptance-beta28.md)
 - [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md)
+- [../changelog/2026-08-24-beta30-canary-history-range-regression.md](../changelog/2026-08-24-beta30-canary-history-range-regression.md)
 - `app/owner_market_data_gateway.py`
 - `app/market_data_ws_http.py`
 
@@ -157,4 +177,5 @@ Detailed evidence and defect scope:
 2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Добавлены live beta.29 Canary/Production gateway roles, exact artifact, two-client chart/marker and same-origin browser-network evidence; Connector/redistribution gaps оставлены честно PARTIAL/EXTERNAL BLOCKED.
 2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Added the Development per-user HTTP/WS admission and source-isolation contracts, recorded the real running Connector/NinjaTrader checkpoint and preserved redistribution, Authenticode and physical-interaction blockers without changing the accepted TopstepX baseline.
 2026-08-24T01:52:25Z | GPT-5.5 через Codex по запросу owner | Replaced the obsolete unenrolled Connector checkpoint with verified dev.14 install, signed enrollment/heartbeat, two-stream history/live ingestion, bounded drain evidence and safe no-order demo-backtest; Authenticode remains external.
+2026-08-24T04:22:21Z | GPT-5.5 через Codex по запросу owner | Recorded the beta.30 consumer viewport-range regression and scoped beta.31 correction; protected TopstepX auth/session, SignalR, cache/failover and chart rendering from unrelated changes.
 -->

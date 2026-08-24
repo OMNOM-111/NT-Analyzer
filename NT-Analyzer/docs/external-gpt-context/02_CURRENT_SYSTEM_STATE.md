@@ -1,22 +1,24 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
-- Last verified UTC: 2026-08-24T02:41:31Z
+- Last verified UTC: 2026-08-24T04:22:21Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Repository baseline: PR #144 is merged into clean `main`; beta.29 remains live in Canary and Production while the same accepted Development content is versioned as beta.30
-- Candidate in this closeout: beta.30 release preparation; no new Canary or Production deployment yet
+- Repository baseline: PR #145 is merged into clean `main`; beta.30 was deployed only to Canary and rejected; Production remains on accepted beta.29
+- Candidate in this closeout: beta.31 minimal consumer viewport-history range correction
 - Scope: Current factual subsystem snapshot only
 - Status: PARTIAL
-- Acceptance note: beta.29 remains the accepted live release. PR #144 mandatory CI and merge are complete; merge-SHA browser/Connector/backtest revalidation passed. Only the versioned release PR and new immutable Canary cycle remain open.
+- Acceptance note: beta.30 Canary kept chart realtime live but saturated all 24 bounded HTTP slots during two simultaneous 36-chart layouts because consumer viewport bounds were dropped. It was not accepted or promoted. The beta.31 Development correction forwards those bounds without changing TopstepX/SignalR/cache/failover/rendering; LOCAL capacity evidence passes and the new PR/CI/release cycle remains open.
 - Current Production version/build/artifact when known: `0.10.0-beta.29`; build `sf-0.10.0-beta.29-4d15f1d2250e-20260823T020155Z`; runtime artifact SHA256 `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379`
 
 ## Evidence modes
 
-- Repository evidence is beta.30 parent merge `fb7d7f9b973a77efde629c75ab97daf82dbeafce`, PR #144 green CI and its regression contracts.
+- Repository evidence is PR #145 merge `27184197ea5d495b8e0d90d0cc5c06d6539f7ab9`, the non-accepted beta.30 artifact and the scoped beta.31 correction branch.
 - Operational evidence is queried from `/api/runtime/env`, `/api/live` and
-  `/api/ready` and from Release Center candidate/deployment records. Canary and
-  Production report the same beta.29 build/runtime digest and `ready` status.
+  `/api/ready` and from Release Center candidate/deployment records. Canary
+  reports non-accepted beta.30 while Production remains ready on beta.29.
 - The canonical pre-release snapshot is
+  [2026-08-24-beta30-canary-history-range-regression.md](../changelog/2026-08-24-beta30-canary-history-range-regression.md);
+  the accepted live baseline is
   [2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md);
   beta.28 is retained only as the previous/rollback slot and historical
   evidence in [2026-08-20-final-product-acceptance-beta28.md](../changelog/2026-08-20-final-product-acceptance-beta28.md).
@@ -30,9 +32,9 @@
 | Post-trial account | `IN DEVELOPMENT` | Expiry does not block the account. The authenticated baseline keeps profile, Documents, practice and personal provider/Connector setup; shared live charts require both an active extension and explicit remote-server/redistribution authority, while a verified user-owned TopstepX or fresh personal Connector can authorize the chart source independently | browser and physical provider acceptance still required |
 | Admin / Release Center | `BETA` | One environment/release module exposes DEV, Canary, Production, compare and pipeline. LOCAL submits a signed request; only Canary/Production may decide from authoritative registry state. The corrected ordinary approve→promote flow completed in Production | no release-control blocker remains |
 | Release security | `BETA` | Exact artifact, exact candidate, responder environment and decision TTL are verified; server signature/timestamp/nonce provide fail-closed replay protection. Final Production deployment recorded signature/readiness/identity and same-artifact evidence | rotate only through a future owner-approved release cycle |
-| Test isolation | `AVAILABLE` | Every test receives separate disposable Production/Development roots and any live `data/` mutation fails the suite. Current candidate full local regression passed `1945 passed, 32 skipped, 0 failed`; custom runner passed `13/13` | live PostgreSQL integration groups remain intentionally skipped without their test DSNs |
+| Test isolation | `AVAILABLE` | Every test receives separate disposable Production/Development roots and any live `data/` mutation fails the suite. Beta.31 full regression passed `1946 passed, 32 skipped, 0 failed`; combined market-data/gateway and governance/docs regression passed `121 passed` | live PostgreSQL integration groups remain intentionally skipped without their test DSNs |
 | Market data / TopstepX | `BETA` | TopstepX remains the primary independent read-only chart source. Beta.29 preserves history/SignalR/cache/failover and fixes only reproduced consumer ref/disconnect observability defects | the owner gateway does not grant cross-user redistribution rights |
-| Owner market-data gateway | `AVAILABLE` | Production is the single designated hub; Canary/Development consume it. A 12-page Development load held one gateway SignalR connection and two wire subscriptions, made zero direct provider/loginKey calls, then returned browser/logical refcounts exactly to baseline | unrelated-user redistribution remains `EXTERNAL BLOCKED` pending written authority and entitlement mapping |
+| Owner market-data gateway | `AVAILABLE` | Production is the single designated hub; Canary/Development consume it. Beta.31 consumers forward viewport `from_ts/to_ts` to the existing hub instead of repeatedly fetching the latest range; two local 36-chart clients completed a 10.26-minute soak under the Canary limit with one upstream SignalR, zero direct provider/loginKey calls, readiness `20/20` and zero admission rejects | unrelated-user redistribution remains `EXTERNAL BLOCKED` pending written authority and entitlement mapping |
 | Per-user market-data admission | `IN DEVELOPMENT` | One fail-closed resolver now gates HTTP and same-origin WebSocket delivery: owner runtime, verified private provider, fresh online personal Connector, or a bounded shared trial only when both remote-server and redistribution authority are explicitly configured. Cache/broadcast scope prevents User A data from falling through to User B or the owner feed | shared trial charts remain denied under the current false redistribution policy |
 | Charts | `BETA` | Beta.29 Development load plus authenticated Canary/Production clients showed matching MES/MNQ closes and colored live markers with NinjaTrader OFF; closed-market heartbeat kept unchanged prices live honestly | a moving raw trade could not be generated while CME was closed |
 | Responsive UI | `BETA` | 84/84 page/viewport checks passed from 2560×1440 to 360×800; real 390×844 pointer-click journeys passed core UI/Admin modules. The byte-identical Production artifact had zero whole-document overflow at 390×844 and 768×1024 | wider product design acceptance remains independent from functional responsiveness |
@@ -45,15 +47,15 @@
 
 | Environment | Live/ready | Version | Git SHA | Runtime artifact SHA256 |
 | --- | --- | --- | --- | --- |
-| Canary | live/ready + authenticated owner UI/Documents/charts PASS | `0.10.0-beta.29` | `4d15f1d2250e2c52bde02b902d88ec7aad043543` | `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379` |
+| Canary | deployed / NOT ACCEPTED; readiness saturated under two 36-chart clients | `0.10.0-beta.30` | `27184197ea5d495b8e0d90d0cc5c06d6539f7ab9` | `B958DE90A2211B84C5F38D87BE202392A300D4482F0C8F6EDDAF443E59227F98` |
 | Production | live/ready + authenticated owner UI/charts/responsive PASS | `0.10.0-beta.29` | `4d15f1d2250e2c52bde02b902d88ec7aad043543` | `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379` |
 
-Both rows are the same signed immutable artifact. Archive SHA256 is
+The accepted Production archive SHA256 is
 `882FF3520DDD43BF65925F3DFA5AA95DA56107336DA98EFDC64146A81981195B`;
-active release-directory suffix is
+its active release-directory suffix is
 `production_data/releases/0.10.0-beta.29-4d15f1d2250e` (the environment-owned
 absolute data root is intentionally not copied into this external pack).
-Previous/rollback suffix for both environments is
+The Production previous/rollback suffix is
 `0.10.0-beta.28-36600dba3d73`.
 
 ## Deprecated current-state claims
@@ -76,4 +78,5 @@ Previous/rollback suffix for both environments is
 2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Opened the Development-only unified trial/access candidate, removed anonymous preview entry, recorded per-user HTTP/WS market-data admission and retained the cross-user redistribution and physical Connector gates honestly.
 2026-08-24T01:52:25Z | GPT-5.5 через Codex по запросу owner | Recorded physical Development Connector dev.14 acceptance, exact package identity, authenticated MNQ/MES ingestion and safe demo-backtest; retained PR/release, Authenticode and redistribution gates.
 2026-08-24T02:41:31Z | GPT-5.5 через Codex по запросу owner | Recorded clean owner-authorized PR #144 merge fb7d7f9b, repeated Connector heartbeat/history/live and safe UI demo-backtest #18782, and opened the beta.30 version-only immutable release preparation.
+2026-08-24T04:22:21Z | GPT-5.5 через Codex по запросу owner | Recorded beta.30 as non-accepted Canary after reproduced HTTP-slot saturation, kept Production beta.29 unchanged and opened the scoped beta.31 viewport-range correction.
 -->

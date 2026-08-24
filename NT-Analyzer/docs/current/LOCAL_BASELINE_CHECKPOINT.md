@@ -59,6 +59,32 @@ identities unique    yes
 `/api/account/security` (2 device), `/api/admin/development-sync` = `current`
 (running == head). LOCAL DB остаётся изолированной от Canary/Production.
 
+## Текущий corrective checkpoint — BETA.31
+
+Owner-authorized PR #145 merge
+`27184197ea5d495b8e0d90d0cc5c06d6539f7ab9` прошёл mandatory CI. Собранный
+из него beta.30 artifact был развёрнут только в Canary и не принят: при двух
+36-chart layout визуальный realtime оставался live, но deep-history polling
+занял все 24 bounded HTTP handler slots, после чего readiness/Admin отвечали
+503. Acceptance не записан; Production сохранён на принятом beta.29.
+
+Причина воспроизведена в consumer gateway adapter: диапазон viewport
+`start_time/end_time` отбрасывался, и вместо следующего history range
+повторялся latest chunk. Beta.31 передаёт существующему endpoint обе границы и
+возвращает его exhaustion/cache metadata. Provider history, TopstepX
+auth/session, SignalR, cache/failover, rollover, realtime и chart rendering не
+менялись. Под тем же local лимитом 24 два 36-chart клиента прошли `10.26 min`
+и завершили `36/36 external_live + live marker`; readiness `20/20`, admission
+peak `8`, rejected `0`, direct provider/auth/loginKey `0`, общий upstream
+SignalR `1`. В обоих клиентах MNQ/MES WebSocket price, last close и цветной
+rendered marker совпали точно.
+
+После остановки старых DEV wrappers и трёх orphan multiprocessing workers
+(NinjaTrader не останавливался) live-root guard прошёл чисто: full regression
+`1946 passed`, `32 skipped`, `0 failed`; custom runner `13/13`; targeted
+market-data/gateway + governance/docs `121 passed`. Bridge Debug build,
+Python/22 JavaScript, CSP/secret/Markdown/Context/diff gates — PASS.
+
 ## Новый Development checkpoint — TRIAL / MARKET-DATA / CONNECTOR RELEASE READY
 
 Clean `main` merge `fb7d7f9b973a77efde629c75ab97daf82dbeafce` реализует
@@ -84,9 +110,10 @@ signed hello/heartbeat, MNQ/MES 5m history/live и late-feed resubscribe PASS.
 Demo-backtest `#18781` завершил 28 явно синтетических сделок без реальных
 ордеров. После owner-authorized PR #144 merge повторный clean-SHA контроль
 подтвердил непрерывный heartbeat/history/live и UI demo-backtest `#18782` с тем
-же no-order contract. Ни Canary, ни Production не менялись. Следующий
-обязательный шаг — versioned beta.30 release-preparation PR; artifact строится
-один раз только из его clean merge SHA.
+же no-order contract. Следующая beta.30 Canary попытка была отклонена по
+описанному выше saturation-дефекту; Production не менялся. Следующий
+обязательный шаг — beta.31 corrective PR/CI; новый artifact строится один раз
+только из его clean merge SHA.
 
 ## Предыдущий accepted checkpoint — BETA.29 RELEASE CLOSED
 
@@ -138,4 +165,5 @@ Canary → acceptance → SAME artifact Production`.
 2026-08-23T22:20:31Z | GPT-5.5 через Codex по запросу owner | Added clean 1943/32/0 regression and 10m56s two-client MNQ/MES browser fan-out evidence; retained the physical Connector and redistribution blockers.
 2026-08-24T01:52:25Z | GPT-5.5 через Codex по запросу owner | Recorded physical Development Connector dev.14 acceptance with retained enrollment, signed heartbeat, MNQ/MES history/live, zero-drop bounded drain and a safe synthetic no-order demo-backtest.
 2026-08-24T02:41:31Z | GPT-5.5 через Codex по запросу owner | Recorded owner-authorized PR #144 merge fb7d7f9b and repeated clean-merge Connector heartbeat/history/live plus safe UI demo-backtest #18782; opened only the required beta.30 versioned release commit.
+2026-08-24T04:22:21Z | GPT-5.5 через Codex по запросу owner | Recorded the non-accepted beta.30 Canary capacity regression, unchanged beta.29 Production and the minimal beta.31 viewport-range correction with the TopstepX/SignalR baseline preserved.
 -->
