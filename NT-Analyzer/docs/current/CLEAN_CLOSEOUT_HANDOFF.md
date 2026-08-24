@@ -1,6 +1,49 @@
-# Clean closeout — beta.30 Canary rejected; beta.31 correction in Development
+# Clean closeout — beta.31 Canary rejected; beta.32 correction in Development
 
-Дата проверки: `2026-08-24T04:22:21Z`.
+Дата проверки: `2026-08-24T16:33:38Z`.
+
+## Current beta.32 corrective cycle — 2026-08-24T16:33:38Z
+
+PR #146 и deterministic-governance sync PR #147 прошли обязательные пять CI
+jobs и были автоматически слиты в `main`; итоговый clean SHA
+`8e83d4ccbad9d9fadf10109f0afdd6b3ce9fe6eb`. Из него один раз собран и
+развёрнут только в Canary beta.31 artifact: candidate
+`rc_ff501b06706b430d953a08d41b83b573`, artifact
+`art_a519c4cf670c4d4c95b4e7d243bab330`, build
+`sf-0.10.0-beta.31-8e83d4ccbad9-20260824T155841Z`, archive SHA256
+`EC5F730C730BB764A7A4F4F98E756678A9086A6316C1BCAA7DEBB9ECCEA15EFF`,
+runtime/manifest SHA256
+`826625D73702EB8D63E5EF2ABE0F2B291AB1FB8616B3E3C52D4AA70E48B8E7EE`,
+deployment `dep_89b9dde9b15e492ba177e33f8af7ffaf`.
+
+Canary viewport/capacity correction прошла основную проверку: два
+authenticated 36-chart клиента держались `13m26s`, оба завершили `36/36`
+live; MNQ/MES TopstepX WebSocket `lastPrice` совпал с last-bar close и
+цветным rendered marker в обоих клиентах. `/api/ready` — `20/20` HTTP 200,
+загруженные `api.js`, `chart-engine.js` и `pages/desktop.js` byte-for-byte
+совпали с clean SHA.
+
+Однако acceptance не записан: при дополнительной смене MNQ `5m → 1m → 15m`
+15m history request получил воспроизводимый HTTP 429. Авторитетные
+PostgreSQL rate buckets показали `api.write=145–183/min` при лимите 120.
+Первое расхождение — read-only consolidated endpoint
+`POST /api/ops/runtime/bars/batch` ошибочно классифицировался как mutation.
+Beta.32 меняет только его rate-limit class на `read`; TopstepX auth/session,
+SignalR, history provider, cache/failover, rollover, realtime, candle и chart
+rendering не меняются.
+
+Локальные beta.32 gates завершены: full regression `1947 passed`, `32 skipped`,
+`0 failed`; расширенный market-data/chart набор `167 passed`; первоначальный
+targeted набор `70 passed`; custom runner `13/13`; Connector Debug build —
+`0 warnings / 0 errors`; Python, JavaScript, CSP/secrets/Markdown,
+External GPT Context и `git diff --check` — PASS.
+
+В той же acceptance обнаружена отдельная честная UI-ошибка: внешний
+Cloudflare ingress намеренно возвращает 404 для `/api/diagnostics`, но remote
+Admin показывал активную кнопку и затем пустой `HttpError`. Beta.32 оставляет
+этот security deny без изменений и на Canary/Production показывает кнопку
+disabled с объяснением; безопасная Worker/Telegram/Connector сводка остаётся
+доступной. Production по-прежнему beta.29 и не затрагивался.
 
 ## Current beta.31 corrective cycle — 2026-08-24T04:22:21Z
 
@@ -91,8 +134,8 @@ Connector package требует разрешённого Authenticode tool/mate
 
 | Environment | Version | Git SHA | Runtime artifact SHA256 | Status |
 | --- | --- | --- | --- | --- |
-| LOCAL | `0.10.0-beta.31` | base `27184197ea5d495b8e0d90d0cc5c06d6539f7ab9` + scoped correction | not built | 10.26-minute two-client/capacity PASS; PR/CI pending |
-| Canary | `0.10.0-beta.30` | `27184197ea5d495b8e0d90d0cc5c06d6539f7ab9` | `B958DE90A2211B84C5F38D87BE202392A300D4482F0C8F6EDDAF443E59227F98` | NOT ACCEPTED; readiness saturated; candidate `canary_checking` |
+| LOCAL | `0.10.0-beta.32` | base `8e83d4ccbad9d9fadf10109f0afdd6b3ce9fe6eb` + scoped rate/UI correction | not built | 1947 passed, 32 skipped, 0 failed; PR/CI pending |
+| Canary | `0.10.0-beta.31` | `8e83d4ccbad9d9fadf10109f0afdd6b3ce9fe6eb` | `826625D73702EB8D63E5EF2ABE0F2B291AB1FB8616B3E3C52D4AA70E48B8E7EE` | NOT ACCEPTED; 13m26s charts passed but 15m change reproduced HTTP 429 |
 | Production | `0.10.0-beta.29` | `4d15f1d2250e2c52bde02b902d88ec7aad043543` | `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379` | live/ready + owner UI/charts/responsive PASS |
 
 Accepted Production baseline identity:
@@ -154,4 +197,5 @@ Canonical operational evidence:
 2026-08-24T01:52:25Z | GPT-5.5 через Codex по запросу owner | Закрыт physical Development Connector acceptance: проверенный dev.14, сохранённое enrollment, heartbeat, MNQ/MES history/live, bounded transport drain без drops и безопасный demo-backtest; следующий gate — PR #144 CI.
 2026-08-24T02:41:31Z | GPT-5.5 через Codex по запросу owner | PR #144 слит owner-authorized merge fb7d7f9b; на clean merge повторно подтверждены Connector heartbeat/history/live и demo-backtest #18782; VERSION подготовлен к единственному immutable beta.30 cycle.
 2026-08-24T04:22:21Z | GPT-5.5 через Codex по запросу owner | Beta.30 Canary не принят после воспроизводимого saturation deep-history polling; Production сохранён на beta.29; открыт минимальный beta.31 viewport-range corrective cycle без изменения TopstepX/SignalR baseline.
+2026-08-24T16:33:38Z | GPT-5.5 через Codex по запросу owner | Beta.31 Canary не принят после воспроизводимого chart-batch 429; зафиксирован 13m26s live baseline и открыт минимальный beta.32 rate/UI corrective cycle без Production promotion.
 -->

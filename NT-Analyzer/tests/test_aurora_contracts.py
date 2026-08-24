@@ -485,6 +485,17 @@ def test_admin_panel_replaces_system_actions_in_personal_menu_and_cabinet() -> N
     assert ".admin-shell" in css and ".admin-env-grid" in css
 
 
+def test_remote_admin_diagnostics_is_disabled_instead_of_calling_blocked_edge_route() -> None:
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    operations = ui.split("async function renderAdminOperationsInto", 1)[1].split(
+        "function adminOverviewHtml", 1,
+    )[0]
+    assert "deploymentEnvironment === 'development'" in operations
+    assert "Локальная диагностика · DEV" in operations
+    assert "bridge log доступны только в Development" in operations
+    assert "diagnostics && !diagnostics.disabled" in operations
+
+
 def test_environment_switcher_never_transfers_browser_credentials() -> None:
     ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
     switcher = ui.split("async function probeEnvironmentTarget", 1)[1].split(

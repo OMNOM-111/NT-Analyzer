@@ -59,7 +59,32 @@ identities unique    yes
 `/api/account/security` (2 device), `/api/admin/development-sync` = `current`
 (running == head). LOCAL DB остаётся изолированной от Canary/Production.
 
-## Текущий corrective checkpoint — BETA.31
+## Текущий corrective checkpoint — BETA.32
+
+Clean `main` SHA `8e83d4ccbad9d9fadf10109f0afdd6b3ce9fe6eb` был
+упакован как beta.31 и развёрнут только в Canary. Два authenticated 36-chart
+клиента прошли `13m26s`, `36/36 live`, readiness `20/20`; финальный MNQ/MES
+sample в обоих клиентах точно совпал по TopstepX WebSocket price, last close и
+цветному marker. Загруженные chart assets совпали с clean artifact.
+
+Canary всё же не принят. Дополнительная смена MNQ `5m → 1m → 15m`
+воспроизвела 429 на history load. PostgreSQL показал `api.write=145–183/min`
+при лимите 120: read-only `POST /api/ops/runtime/bars/batch` считался write
+только из-за HTTP method. Beta.32 переносит ровно этот endpoint в read bucket
+и добавляет regression; market-data pipeline не меняется.
+
+Remote Admin одновременно показывал активную локальную Diagnostics action,
+хотя Cloudflare ingress намеренно скрывает `/api/diagnostics` с 404. Security
+policy сохранена: в Canary/Production control disabled с объяснением, а
+безопасная Worker/Telegram/Connector сводка остаётся доступной. Production
+остаётся на принятом beta.29.
+
+Beta.32 локально прошла full regression `1947 passed`, `32 skipped`, `0 failed`,
+расширенный market-data/chart набор `167 passed`, targeted набор `70 passed`,
+custom runner `13/13`, Connector Debug build без warnings/errors, Python/JS,
+CSP/secrets/Markdown, External GPT Context и diff gates.
+
+## Предыдущий corrective checkpoint — BETA.31
 
 Owner-authorized PR #145 merge
 `27184197ea5d495b8e0d90d0cc5c06d6539f7ab9` прошёл mandatory CI. Собранный
@@ -166,4 +191,5 @@ Canary → acceptance → SAME artifact Production`.
 2026-08-24T01:52:25Z | GPT-5.5 через Codex по запросу owner | Recorded physical Development Connector dev.14 acceptance with retained enrollment, signed heartbeat, MNQ/MES history/live, zero-drop bounded drain and a safe synthetic no-order demo-backtest.
 2026-08-24T02:41:31Z | GPT-5.5 через Codex по запросу owner | Recorded owner-authorized PR #144 merge fb7d7f9b and repeated clean-merge Connector heartbeat/history/live plus safe UI demo-backtest #18782; opened only the required beta.30 versioned release commit.
 2026-08-24T04:22:21Z | GPT-5.5 через Codex по запросу owner | Recorded the non-accepted beta.30 Canary capacity regression, unchanged beta.29 Production and the minimal beta.31 viewport-range correction with the TopstepX/SignalR baseline preserved.
+2026-08-24T16:33:38Z | GPT-5.5 через Codex по запросу owner | Recorded the non-accepted beta.31 Canary chart-batch rate regression, unchanged beta.29 Production and the minimal beta.32 admission/UI correction with the TopstepX baseline preserved.
 -->

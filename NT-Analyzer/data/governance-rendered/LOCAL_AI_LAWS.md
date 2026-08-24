@@ -1,6 +1,6 @@
 # LOCAL_AI_LAWS
 
-Дата актуализации: 2026-08-24T04:22:21Z
+Дата актуализации: 2026-08-24T16:33:38Z
 
 Короткий свод законов для локального ИИ и узкого облачного fallback в AI Lab sandbox.
 
@@ -165,5 +165,5 @@
 
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-24T04:22:21Z | GPT-5.5 через Codex по запросу owner | Зафиксировать отклонение beta.30 Canary после воспроизводимого saturation и минимальное исправление consumer viewport history range без изменения принятого TopstepX/SignalR baseline.
+2026-08-24T16:33:38Z | GPT-5.5 через Codex по запросу owner | Зафиксировать отклонение beta.31 Canary после воспроизводимого chart batch HTTP 429 и минимальную beta.32 коррекцию rate class/remote Diagnostics без изменения TopstepX gateway baseline.
 -->

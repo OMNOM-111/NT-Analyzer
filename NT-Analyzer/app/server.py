@@ -2531,6 +2531,12 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def _api_action_class(self, path: str, method: str) -> str:
+        # The consolidated chart batch is a read-only transport even though it
+        # uses POST to carry a bounded list of range queries.  Counting it as a
+        # mutation makes two large desktops exhaust the write bucket and turns
+        # an otherwise healthy shared market-data stream into HTTP 429s.
+        if path == "/api/ops/runtime/bars/batch" and method.upper() == "POST":
+            return "read"
         if permissions.required_admin_capability(path, method):
             return "owner"
         if path.startswith("/api/auth/"):
