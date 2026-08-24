@@ -551,7 +551,7 @@ def _connectors_dashboard_payload(context: Dict[str, Any]) -> Dict[str, Any]:
 
     def connector_installations() -> Dict[str, Any]:
         out = connector_protocol.list_installations(context.get("user_id"))
-        rows = list(out.get("installations") or [])
+        rows = list(out.get("connections") or [])
         online = [r for r in rows if str(r.get("status") or "") in {"online", "active"}]
         return {
             "label": "Windows Connector / NinjaTrader",

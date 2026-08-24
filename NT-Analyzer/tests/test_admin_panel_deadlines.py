@@ -12,6 +12,7 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 UI = (ROOT / "app" / "static" / "aurora" / "assets" / "ui.js").read_text(encoding="utf-8")
+SERVER = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
 
 # The panels an operator waits on, and the call each one is bounded by.
 PANELS = {
@@ -97,3 +98,10 @@ def test_a_timeout_lands_on_the_panel_s_existing_retry():
     for name in ("renderPipelineInto", "renderAdminOperationsInto", "renderJournalInto"):
         body = _body(name)
         assert "renderError" in body or "conn-refresh" in body, name
+
+
+def test_connector_summary_reads_the_canonical_connections_contract():
+    section = SERVER[SERVER.index("def connector_installations()") :]
+    section = section[: section.index("# Concurrently")]
+    assert 'out.get("connections")' in section
+    assert 'out.get("installations")' not in section
