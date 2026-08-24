@@ -403,6 +403,7 @@ def test_authenticated_auth_reads_use_read_bucket_while_mutations_stay_tight() -
     handler = object.__new__(server_mod.Handler)
     assert handler._api_action_class("/api/auth/me", "GET") == "read"
     assert handler._api_action_class("/api/auth/session", "HEAD") == "read"
+    assert handler._api_action_class("/api/ops/runtime/bars/batch", "POST") == "read"
     assert handler._api_action_class("/api/auth/logout", "POST") == "auth"
 
 

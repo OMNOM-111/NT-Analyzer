@@ -5525,6 +5525,11 @@
       const telegram = data.telegram || {};
       const connector = data.connector || {};
       const canExecute = hasAdminCapability('operations.execute');
+      const deploymentEnvironment = String(
+        (BUILD_IDENTITY && BUILD_IDENTITY.environment)
+        || document.documentElement.dataset.deploymentEnvironment || '',
+      ).toLowerCase();
+      const localDiagnosticsAvailable = deploymentEnvironment === 'development';
       // Capability answers "may this person"; the descriptor answers "does this
       // environment do that at all". A restart a supervisor performs and one
       // this process improvises are different acts, and the button used to look
@@ -5538,7 +5543,8 @@
       const opNotes = Object.values(actions).filter(r => r && !r.allowed && r.reason)
         .map(r => `<div>⚠ ${esc(r.reason)}</div>`).join('');
       node.innerHTML = `<div class="grid cols-3"><div class="kpi"><span>Worker</span><strong>${esc(worker.status || (worker.running ? 'running' : 'unknown'))}</strong></div><div class="kpi"><span>Telegram</span><strong>${esc(telegram.status || (telegram.ok ? 'ok' : 'unknown'))}</strong></div><div class="kpi"><span>Connector</span><strong>${esc(connector.status || (connector.ok ? 'ok' : 'unknown'))}</strong></div></div>
-        <div class="section-title">Безопасные операции</div><div class="flex gap-sm wrap"><button class="btn ghost" id="admin-diagnostics">Диагностика</button><button class="btn ghost" id="admin-env-status">Состояние environment</button>${hasAdminCapability('connectors.manage') ? '<button class="btn ghost" id="admin-telegram">Telegram / Connector</button>' : ''}</div>
+        <div class="section-title">Безопасные операции</div><div class="flex gap-sm wrap"><button class="btn ghost" id="admin-diagnostics"${localDiagnosticsAvailable ? '' : ' disabled'} title="${localDiagnosticsAvailable ? 'Локальный NinjaTrader и bridge log' : 'Локальные пути и bridge log не публикуются через Canary/Production edge'}">${localDiagnosticsAvailable ? 'Диагностика' : 'Локальная диагностика · DEV'}</button><button class="btn ghost" id="admin-env-status">Состояние environment</button>${hasAdminCapability('connectors.manage') ? '<button class="btn ghost" id="admin-telegram">Telegram / Connector</button>' : ''}</div>
+        ${localDiagnosticsAvailable ? '' : '<div class="finance-note">Локальные пути NinjaTrader и bridge log доступны только в Development. Серверная диагностика Canary/Production показана в безопасной сводке Worker / Telegram / Connector выше.</div>'}
         ${canExecute ? `<div class="section-title">Операции с подтверждением</div>
           <div class="flex gap-sm wrap">
             ${opBtn('admin-restart', 'Перезапустить backend', 'restart', 'danger')}
@@ -5548,7 +5554,7 @@
           </div>
           ${opNotes ? `<div class="admin-env-warnings">${opNotes}</div>` : ''}`
           : '<div class="finance-note">operations.execute не выдан: restart/recovery controls скрыты.</div>'}`;
-      const diagnostics = qs('#admin-diagnostics', node); if (diagnostics) diagnostics.onclick = () => { closeDrawer(); showDiagnostics(); };
+      const diagnostics = qs('#admin-diagnostics', node); if (diagnostics && !diagnostics.disabled) diagnostics.onclick = () => { closeDrawer(); showDiagnostics(); };
       const env = qs('#admin-env-status', node); if (env) env.onclick = () => { closeDrawer(); showEnvironment(false); };
       const telegramButton = qs('#admin-telegram', node); if (telegramButton) telegramButton.onclick = () => { closeDrawer(); showTelegram(); };
       const restart = qs('#admin-restart', node);
