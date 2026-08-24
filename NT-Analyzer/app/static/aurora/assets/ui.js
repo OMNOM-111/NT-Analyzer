@@ -3759,6 +3759,10 @@
     return API.http.bridgePairStart({
       machine_label: (qs('#conn-enroll-label', node).value || '').trim(),
       workspace_id: (qs('#conn-enroll-ws', node).value || '').trim(),
+      // This Admin flow installs the authenticated Connector, even in LOCAL.
+      // Without the explicit transport Development falls back to the legacy
+      // eight-character bridge code, which the Connector correctly rejects.
+      transport: 'production_connector',
     });
   }
 
