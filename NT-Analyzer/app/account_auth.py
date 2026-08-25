@@ -2312,27 +2312,29 @@ def start_login(*, bot_username: str, ip: str, user_agent: str = "") -> Dict[str
     canary_login = environment == runtime_env.CANARY
     start_payload = f"canary_login_{code}" if canary_login else f"login_{code}"
     manual_command = f"/login [CANARY] {code}" if canary_login else f"/login {code}"
-    # The https form is an iOS Universal Link and an Android App Link, so a
-    # phone with Telegram installed opens the app straight from the camera
-    # without a browser page in between, and a phone without it still lands
-    # somewhere useful. That makes it the right thing to put in the QR.
+    # The https form still matters: it is what a browser can follow, what a
+    # desktop falls back to, and what works when Telegram is not installed.
     deep_link = f"https://t.me/{username}?start={start_payload}"
-    # The tg: form skips the resolver entirely and is what a desktop button
-    # tries first to reach an installed Telegram Desktop. It has no web
-    # fallback of its own, so it is offered alongside the https link rather
-    # than instead of it.
+    # ...but it is the wrong thing to put in a QR. The iOS Camera app does not
+    # honour Universal Links: it hands https URLs to Safari, so scanning the
+    # t.me form lands in a browser first and the user has to continue into
+    # Telegram by hand. The tg: scheme is registered by the installed app, so
+    # the camera offers Telegram directly on iOS, and Android resolves it by
+    # intent. That makes the app scheme the correct QR payload, with the https
+    # link kept visible underneath for the no-Telegram case.
     app_link = f"tg://resolve?domain={username}&start={start_payload}"
     out = {
         "challenge_id": challenge_id, "status": "created",
         "expires_in_sec": LOGIN_CHALLENGE_TTL_SEC,
         "bot_url": deep_link,
         "app_url": app_link,
-        "qr_payload": deep_link,
+        "qr_payload": app_link,
+        "web_fallback_url": deep_link,
         "code": code,
         "manual_command": manual_command,
     }
     try:
-        out["qr_svg"] = qr_code.svg(deep_link, size_px=232, title="Вход через Telegram")
+        out["qr_svg"] = qr_code.svg(app_link, size_px=232, title="Вход через Telegram")
     except qr_code.QRError:
         # A QR is a convenience; the deep link and manual code still work.
         out["qr_svg"] = ""

@@ -4122,8 +4122,12 @@
       // The phone is the second device: scanning a QR with the normal camera
       // is the primary path, so nothing here opens a popup window. On the
       // phone itself the same deep link is one tap away.
+      const webFallback = pendingOwner ? '' : String(login.web_fallback_url || login.bot_url || '');
+      // The QR carries the tg: scheme so a phone camera opens Telegram itself.
+      // That scheme is a dead end without Telegram installed, so the https
+      // link stays visible right underneath as the escape hatch.
       const scanBlock = qrSvg
-        ? `<div class="auth-qr"><div class="auth-qr-frame">${qrSvg}</div><p class="auth-qr-copy">Наведите камеру телефона — откроется наш бот. Нажмите <strong>«Подтвердить вход»</strong>, и эта страница войдёт сама.</p><div class="auth-qr-life" id="auth-qr-life"></div></div>`
+        ? `<div class="auth-qr"><div class="auth-qr-frame">${qrSvg}</div><p class="auth-qr-copy">Наведите камеру телефона — откроется Telegram и наш бот. Нажмите <strong>«Подтвердить вход»</strong>, и эта страница войдёт сама.</p><div class="auth-qr-life" id="auth-qr-life"></div>${webFallback ? `<a class="auth-qr-fallback" id="auth-qr-web" href="${esc(webFallback)}" rel="noopener">Telegram не установлен? Открыть в браузере</a>` : ''}</div>`
         : '';
       const appUrl = pendingOwner ? '' : String(login.app_url || '');
       // The href stays the https link so the control degrades to something

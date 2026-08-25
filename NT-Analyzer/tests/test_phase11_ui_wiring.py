@@ -443,3 +443,15 @@ def test_no_popup_window_is_used_for_the_handover():
     waiting = waiting.split("const renderMiniAppRegister", 1)[0]
     assert "window.open" not in waiting
     assert 'target="_blank"' not in waiting
+
+
+def test_qr_offers_a_visible_web_fallback_under_it():
+    waiting = UI_JS.split("const renderWaiting = (login, knownState)", 1)[1]
+    waiting = waiting.split("const renderMiniAppRegister", 1)[0]
+    # The QR payload is a custom scheme, so the page must show a way out for
+    # a phone without Telegram or an OS that refused the scheme.
+    assert "login.web_fallback_url" in waiting
+    assert 'id="auth-qr-web"' in waiting
+    assert "Telegram не установлен" in waiting
+    theme = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
+    assert ".auth-qr-fallback" in theme
