@@ -1,44 +1,52 @@
-# Clean closeout — beta.31 Canary rejected; beta.32 correction in Development
+# Clean closeout — beta.38 accepted and live in Production
 
-Дата проверки: `2026-08-24T16:33:38Z`.
+Дата проверки: `2026-08-25T18:40:00Z`.
 
-## Beta.32 source re-verification — 2026-08-24T22:50:07Z (remote CI container)
+## Current beta.38 cycle — accepted and promoted
 
-Проверка выполнена в ephemeral remote Linux-контейнере (Claude Code on the web),
-а не на owner-хосте. Подтверждено на точном merge SHA
-`848579362f6ed49c69ac8e6684791d86a34be1f4` (`main` == `origin/main` ==
-рабочая ветка, working tree clean, `VERSION.json` = `0.10.0-beta.32`,
-`status: pre_release`):
+Production больше не beta.29 и не beta.33: тот же самый immutable beta.38
+artifact принят на Canary и без пересборки продвинут в Production.
 
-- full regression на Python 3.12 (версия CI): `1948 passed`, `31 skipped`,
-  `0 failed`;
-- `python -m compileall -q app tools tests bridge` — PASS;
-- 32 JavaScript syntax checks (`node --check`) — PASS;
-- `git diff --check` — PASS;
-- открытых PR по beta.32 нет: PR #148 слит, ничего не ожидает CI.
+- candidate `rc_dbd76fe013c341c382a3fe2b3b9fb5e8`;
+- artifact `art_a426dbe3ae214d8a9854e9e92d052b31`;
+- build `sf-0.10.0-beta.38-39c00b83d8ad-20260825T173719Z`;
+- archive SHA256 `F0FDC106001AAAA4A79735F08DD388D02848597B2A850E8AB6A643262F22766A`;
+- runtime/manifest SHA256 `BDCD96CEA12E4AEF0435A99C314AE7EE52F381DE766CD0C975A8212FF878D530`;
+- clean SHA `39c00b83d8ad02b0d72b1845f2d575c93f08d465`, `dirty=false`.
 
-Отличие от записанных ранее `1947 passed / 32 skipped` объясняется платформой:
-Windows-специфичный bash-syntax skip на Linux не пропускается, а исполняется.
-Исходный код beta.32 подтверждён как готовый к сборке immutable artifact.
+Три исправления в этом цикле, каждое найдено на реальном оборудовании, а не в
+тестах:
 
-### Незакрытые шаги и их физическая причина
+1. **Canonical owner.** Владелец определялся сравнением Telegram chat id с
+   `NTA_TELEGRAM_CHAT_ID`; там, где переменная не экспортирована, канонический
+   владелец попадал в registration-trial и получал 7-дневный trial (в beta.29 —
+   `Free Preview`). Теперь единственный авторитет — `owner_claim()`: строка
+   хранилища, канонический UUID, связанная provider identity, и только затем
+   legacy chat id. Во всех трёх окружениях один и тот же
+   `eb9d8e32-8db0-d590-9b35-ef1bd07ec61f`, `owner/founder/unlimited`.
+2. **QR login.** Popup удалён, контакт больше не обязателен. QR несёт
+   `tg://resolve`, потому что iOS Camera не обрабатывает Universal Links и
+   открывала Safari; https-ссылка осталась видимым fallback под QR. Жизненный
+   цикл challenge стал явным `pending → opened → confirmed → consumed`:
+   открытие повторяемо, тратит challenge только подтверждение и ровно один раз.
+3. **Shared-bot routing.** Подтверждение перестало быть `callback_query`.
+   Один бот обслуживает все окружения, Production владеет updates и маршрутизирует
+   по тексту сообщения, а Production работал на beta.33, где обработчика
+   login-callback нет вовсе. Нажатие приходило на Production, не совпадало ни с
+   чем и терялось без изменения состояния. Теперь кнопка reply-keyboard
+   отправляет свой label обычным сообщением — тем самым каналом, которым уже
+   работает `/login [CANARY] CODE`.
 
-Остаток цикла — LOCAL browser smoke (price → last bar close → rendered marker),
-сборка immutable beta.32 artifact, Canary, acceptance, promotion того же
-artifact в Production, а также Connector/NinjaTrader и live chart smoke — **в
-этом контейнере невыполним**. Причины проверены, а не предположены:
+Отдельно исправлен LOCAL logout: development подписывал владельца обратно при
+каждом запросе, поэтому «Выйти» не работал и login flow нельзя было проверить
+локально. Теперь logout ставит явный development-only hold, который снимается
+реальным входом.
 
-- контейнер поднят с нуля (`up 0 min`), никакого LOCAL runtime, gateway или
-  release-дерева `/home/stratforge/...` в нём нет;
-- egress network policy отклоняет CONNECT (HTTP 403) к `app.stratforges.com`,
-  `canary.stratforges.com`, `api.topstepx.com` и ProjectX gateway, поэтому ни
-  live TopstepX feed, ни Canary/Production endpoints недоступны;
-- NinjaTrader и Development Connector — Windows-компоненты owner-хоста и в
-  Linux-контейнере отсутствуют.
-
-Эти шаги требуют сессии на owner-хосте с текущим LOCAL stack, живым TopstepX
-gateway и работающим NinjaTrader. Ротация четырёх Google/Resend secrets
-по-прежнему отложена в отдельный финальный security closeout.
+Acceptance: owner физически отсканировал Canary QR на iPhone, Telegram открылся
+напрямую, нажатие `Подтвердить вход` автоматически авторизовало ожидающий
+browser без reload и без контакта. Машинные доказательства, полный список PR и
+открытые вопросы — в
+[2026-08-25-beta38-qr-login-shared-bot-routing.md](../changelog/2026-08-25-beta38-qr-login-shared-bot-routing.md).
 
 ## Current beta.32 corrective cycle — 2026-08-24T16:33:38Z
 
@@ -172,9 +180,12 @@ Connector package требует разрешённого Authenticode tool/mate
 
 | Environment | Version | Git SHA | Runtime artifact SHA256 | Status |
 | --- | --- | --- | --- | --- |
-| LOCAL | `0.10.0-beta.32` | `848579362f6ed49c69ac8e6684791d86a34be1f4` | not built | PR #148 merged; re-verified 1948 passed, 31 skipped, 0 failed on Python 3.12; browser smoke + artifact build pending owner host |
-| Canary | `0.10.0-beta.31` | `8e83d4ccbad9d9fadf10109f0afdd6b3ce9fe6eb` | `826625D73702EB8D63E5EF2ABE0F2B291AB1FB8616B3E3C52D4AA70E48B8E7EE` | NOT ACCEPTED; 13m26s charts passed but 15m change reproduced HTTP 429 |
-| Production | `0.10.0-beta.29` | `4d15f1d2250e2c52bde02b902d88ec7aad043543` | `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379` | live/ready + owner UI/charts/responsive PASS |
+| LOCAL | `0.10.0-beta.38` | `39c00b83d8ad02b0d72b1845f2d575c93f08d465` | not built | 2007 passed, 32 skipped, 0 failed |
+| Canary | `0.10.0-beta.38` | `39c00b83d8ad02b0d72b1845f2d575c93f08d465` | `BDCD96CEA12E4AEF0435A99C314AE7EE52F381DE766CD0C975A8212FF878D530` | ACCEPTED; real iPhone QR → confirm → auto-login |
+| Production | `0.10.0-beta.38` | `39c00b83d8ad02b0d72b1845f2d575c93f08d465` | `BDCD96CEA12E4AEF0435A99C314AE7EE52F381DE766CD0C975A8212FF878D530` | live/ready; same artifact, no rebuild |
+
+Beta.34–beta.37 не продвигались: beta.34/35 остановились на реальном mobile QR,
+beta.36/37 — на подтверждении, которое не пересекало границу окружений.
 
 Accepted Production baseline identity:
 
@@ -237,4 +248,5 @@ Canonical operational evidence:
 2026-08-24T02:41:31Z | GPT-5.5 через Codex по запросу owner | PR #144 слит owner-authorized merge fb7d7f9b; на clean merge повторно подтверждены Connector heartbeat/history/live и demo-backtest #18782; VERSION подготовлен к единственному immutable beta.30 cycle.
 2026-08-24T04:22:21Z | GPT-5.5 через Codex по запросу owner | Beta.30 Canary не принят после воспроизводимого saturation deep-history polling; Production сохранён на beta.29; открыт минимальный beta.31 viewport-range corrective cycle без изменения TopstepX/SignalR baseline.
 2026-08-24T16:33:38Z | GPT-5.5 через Codex по запросу owner | Beta.31 Canary не принят после воспроизводимого chart-batch 429; зафиксирован 13m26s live baseline и открыт минимальный beta.32 rate/UI corrective cycle без Production promotion.
+2026-08-25T18:40:00Z | Claude Opus 5 через Claude Code по запросу owner | Beta.38 принят и продвинут в Production тем же artifact: canonical owner во всех окружениях, QR/one-tap login без popup и контакта, явный challenge lifecycle и маршрутизация подтверждения через общий бот; beta.34–37 не продвигались.
 -->
