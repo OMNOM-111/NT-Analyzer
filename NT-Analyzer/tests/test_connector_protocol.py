@@ -895,3 +895,47 @@ def test_a_timed_out_probe_does_not_claim_the_source_is_unhealthy() -> None:
     assert good["status_known"] is True
     assert good["diagnostics"] == "ok"
     assert good["online"] == 1
+
+
+def test_health_summary_gives_up_on_a_busy_store_instead_of_hanging(connector_store, monkeypatch) -> None:
+    """A status question must not queue behind connector traffic."""
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    connector_protocol.signed_hello(_hello(private, pending))
+
+    monkeypatch.setattr(connector_protocol, "HEALTH_SUMMARY_LOCK_WAIT_SEC", 0.2)
+    holding = threading.Event()
+    release = threading.Event()
+
+    def hog():
+        with connector_protocol._LOCK:
+            holding.set()
+            release.wait(timeout=5)
+
+    worker = threading.Thread(target=hog, daemon=True)
+    worker.start()
+    holding.wait(timeout=5)
+    try:
+        started = time.monotonic()
+        out = connector_protocol.health_summary(
+            42, workspace_id=workspace["workspace_id"])
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+        worker.join(timeout=5)
+
+    assert elapsed < 1.0, "must not spend the caller's whole budget waiting"
+    assert out["status_known"] is False
+    assert out["reason"] == "connector_store_busy"
+    # It must not invent an answer that reads as "nothing is connected".
+    assert "online" not in out and "installations" not in out
+
+
+def test_idle_long_poll_tick_is_not_a_tight_lock_loop() -> None:
+    """Each idle tick costs a shared-lock acquisition and a database round trip."""
+    assert connector_protocol.IDLE_POLL_TICK_SEC >= 2.0
+    source = (Path(__file__).resolve().parent.parent
+              / "app" / "connector_protocol.py").read_text(encoding="utf-8")
+    body = source.split("def poll_commands", 1)[1].split("\ndef ", 1)[0]
+    assert "IDLE_POLL_TICK_SEC" in body
+    assert "min(0.5," not in body, "the half-second idle tick is what starved readers"

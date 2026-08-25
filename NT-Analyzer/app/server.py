@@ -566,6 +566,15 @@ def _connectors_dashboard_payload(context: Dict[str, Any]) -> Dict[str, Any]:
             context.get("user_id"),
             workspace_id=str(context.get("workspace_id") or ""),
         )
+        if not out.get("status_known", True):
+            # The store was busy. That is a fact about the diagnostics query,
+            # not about the connector, and it must not render as "offline".
+            return {
+                "label": "Windows Connector / NinjaTrader",
+                "state": "unknown", "status_known": False,
+                "diagnostics": "busy",
+                "detail": "хранилище коннекторов занято; состояние не измерено",
+            }
         total = int(out.get("installations") or 0)
         online = int(out.get("online") or 0)
         return {
