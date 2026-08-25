@@ -71,6 +71,14 @@ _MARKET_TIMEFRAME_RE = re.compile(
     r"(?:[1-9]|1[0-9]|2[0-4])h|1D)$"
 )
 _ENROLLMENT_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+# How long an idle long-poll sleeps between re-reads. It bounds how quickly
+# a command committed by *another* process is noticed; same-process work is
+# signalled immediately. Every tick costs a shared-lock acquisition and a
+# database round trip per polling device, so this trades a little
+# cross-process latency for a lock that other readers can actually get.
+IDLE_POLL_TICK_SEC = 2.0
+# A status probe waits this long for the shared lock before giving up.
+HEALTH_SUMMARY_LOCK_WAIT_SEC = 1.0
 _LOCK = threading.RLock()
 _COMMANDS_CHANGED = threading.Condition(_LOCK)
 
@@ -1768,7 +1776,22 @@ def poll_commands(
                 }
             if changed:
                 _write_doc(doc)
-            _COMMANDS_CHANGED.wait(timeout=min(0.5, deadline - time.monotonic()))
+            # _COMMANDS_CHANGED is bound to _LOCK, the lock every reader of the
+            # connector document needs. Each idle tick re-read the document,
+            # swept it and often wrote it back -- against an authoritative
+            # database that is a round trip per device per tick, all of it
+            # holding the shared lock. With several devices long-polling, the
+            # lock was occupied most of the time and an ordinary reader could
+            # queue for many seconds: /api/bridge/connections measured 12.6s on
+            # Production for four rows and four kilobytes.
+            #
+            # A same-process enqueue still wakes this immediately through the
+            # condition; the periodic tick only exists to notice work committed
+            # by another process, so it can be far less frequent.
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                continue
+            _COMMANDS_CHANGED.wait(timeout=min(IDLE_POLL_TICK_SEC, remaining))
 
 
 def _safe_result(value: Any) -> Any:
@@ -1932,7 +1955,17 @@ def health_summary(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
     workspace = workspaces.require_workspace_access(user, workspace_id=workspace_id)
     workspace_value = str(workspace.get("workspace_id") or "")
     now = time.time()
-    with _LOCK:
+    # A status question must not queue indefinitely behind connector traffic.
+    # If the shared lock is busy, say the state was not measured rather than
+    # spending the caller's whole probe budget waiting for it.
+    if not _LOCK.acquire(timeout=HEALTH_SUMMARY_LOCK_WAIT_SEC):
+        return {
+            "ok": False,
+            "status_known": False,
+            "reason": "connector_store_busy",
+            "workspace_id": workspace_value,
+        }
+    try:
         doc = _read_doc()
         installations = [
             copy.deepcopy(row)
@@ -1945,6 +1978,8 @@ def health_summary(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
             if row.get("status") == "active"
             and float(row.get("expires_at") or 0) > now
         }
+    finally:
+        _LOCK.release()
     online = 0
     last_heartbeat = ""
     for row in installations:
@@ -1965,6 +2000,7 @@ def health_summary(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
         online += 1
     return {
         "ok": True,
+        "status_known": True,
         "workspace_id": workspace_value,
         "installations": len(installations),
         "online": online,
