@@ -2209,6 +2209,24 @@ class Handler(BaseHTTPRequestHandler):
         )))
         return minted
 
+    def _hold_local_logout(self) -> None:
+        """Keep a localhost Development session logged out after "Выйти".
+
+        LOCAL authenticates localhost as the canonical owner when no session
+        cookie is present, which is the right default for daily development but
+        made logout a no-op: the very next request signed the owner straight
+        back in, so the login screen could not be reached or tested at all.
+        Logging out therefore records an explicit "stay signed out" mode, which
+        a real login clears again.
+        """
+        if not runtime_env.is_development():
+            return
+        value = (
+            f"{_DEV_PREVIEW_MODE_COOKIE}=unauthenticated; Path=/; Max-Age=43200; "
+            "HttpOnly; SameSite=Strict"
+        )
+        self._extra_headers.append(("Set-Cookie", value))
+
     def _set_dev_preview_mode_cookie(self, mode: str) -> None:
         secure = self._is_remote_api_request() or str(
             self.headers.get("X-Forwarded-Proto") or ""
@@ -3727,6 +3745,8 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 if out.get("status") == "authenticated":
                     self._set_session_cookie(str(out.pop("session_token")))
+                    # An actual login releases the LOCAL "stay signed out" hold.
+                    self._clear_dev_preview_mode_cookie()
             elif path == "/api/auth/profile":
                 out = account_auth.complete_profile(
                     str(body.get("challenge_id") or ""), body.get("profile") or body,
@@ -9256,6 +9276,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             account_auth.revoke_session(self._cookie_value(runtime_env.session_cookie_name()))
             self._clear_session_cookie()
+            self._hold_local_logout()
             self._json(HTTPStatus.OK, {"ok": True})
             return
 

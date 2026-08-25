@@ -455,3 +455,29 @@ def test_qr_offers_a_visible_web_fallback_under_it():
     assert "Telegram не установлен" in waiting
     theme = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
     assert ".auth-qr-fallback" in theme
+
+
+# --------------------------------------------------------------------------- #
+# LOCAL signs the canonical owner in automatically when no session cookie is
+# present. That convenience must not make "Выйти" a no-op.
+# --------------------------------------------------------------------------- #
+def test_local_logout_holds_the_session_signed_out():
+    server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
+    logout = server.split('if path == "/api/auth/logout":', 1)[1]
+    logout = logout.split('if path.startswith("/api/support/")', 1)[0]
+    assert "_hold_local_logout()" in logout, "logout must survive the next request"
+
+    hold = server.split("def _hold_local_logout(self)", 1)[1].split("def ", 1)[0]
+    # Development only: Canary/Production must never grow a logged-out mode.
+    assert "runtime_env.is_development()" in hold
+    assert "unauthenticated" in hold
+    assert "HttpOnly" in hold
+    # Long enough to actually test a login flow, not a 5-minute preview blip.
+    assert "Max-Age=43200" in hold
+
+
+def test_a_real_login_releases_the_local_logout_hold():
+    server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
+    block = server.split('elif path == "/api/auth/login/status":', 1)[1]
+    block = block.split('elif path ==', 1)[0]
+    assert "_clear_dev_preview_mode_cookie()" in block
