@@ -176,6 +176,22 @@ def _update_message(update: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _update_target_environment(update: Dict[str, Any]) -> str:
+    # A callback_query has no message text to route on. The login buttons stamp
+    # the issuing environment into their callback data precisely so this can
+    # send the confirmation to the process that owns the challenge; without it
+    # Production answered Canary confirmations against its own store and the
+    # waiting browser never authenticated.
+    callback = update.get("callback_query") if isinstance(update, dict) else None
+    if isinstance(callback, dict):
+        from . import account_auth
+
+        match = re.fullmatch(
+            r"login_(?:ok|no):([dcp]):[A-Za-z0-9_-]{20,}",
+            str(callback.get("data") or ""),
+        )
+        if match:
+            return account_auth.ENVIRONMENT_BY_TAG.get(match.group(1), "")
+        return ""
     text = " ".join(str(_update_message(update).get("text") or "").strip().split())
     if not text:
         return ""

@@ -51,10 +51,21 @@ LOGIN_OPENED = "opened"          # deep link opened, awaiting confirmation
 LOGIN_CONFIRMED = "login_approved"
 LOGIN_CONSUMED = "consumed"      # session issued: single-use, spent
 LOGIN_CANCELLED = "denied"
+# A single Telegram bot serves every environment, and Production owns the
+# webhook. A callback_query carries no message text to route on, so the
+# environment that issued the challenge is stamped into the callback data
+# itself -- otherwise Production answers a Canary confirmation against its
+# own store, finds nothing, and the waiting browser hangs forever.
+ENVIRONMENT_TAGS = {
+    runtime_env.DEVELOPMENT: "d",
+    runtime_env.CANARY: "c",
+    runtime_env.PRODUCTION: "p",
+}
+ENVIRONMENT_BY_TAG = {tag: name for name, tag in ENVIRONMENT_TAGS.items()}
 # A browser login QR is shown on screen and is a bearer token for one
 # account, so it lives for minutes rather than a quarter of an hour. The
 # login page refreshes it in place when it lapses.
-LOGIN_CHALLENGE_TTL_SEC = 3 * 60
+LOGIN_CHALLENGE_TTL_SEC = 10 * 60
 OWNER_APPROVAL_TTL_SEC = 7 * 24 * 60 * 60
 ADMIN_REVOKE_NOTICE_TTL_SEC = 24 * 60 * 60
 IMPERSONATION_TTL_SEC = 4 * 60 * 60
@@ -2701,6 +2712,7 @@ def _send_contact_request(api_call: Callable[..., Any], uid: int) -> None:
 def _send_login_confirm_request(api_call: Callable[..., Any], uid: int,
                                 challenge_id: str) -> None:
     marker = runtime_env.telegram_environment_marker()
+    tag = ENVIRONMENT_TAGS.get(runtime_env.deployment_environment(), "p")
     api_call("sendMessage", {
         "chat_id": uid,
         "text": (
@@ -2708,8 +2720,8 @@ def _send_login_confirm_request(api_call: Callable[..., Any], uid: int,
             "браузер войдёт автоматически."
         ),
         "reply_markup": {"inline_keyboard": [[
-            {"text": "✅ Подтвердить вход", "callback_data": f"login_ok:{challenge_id}"},
-            {"text": "⛔ Это не я", "callback_data": f"login_no:{challenge_id}"},
+            {"text": "✅ Подтвердить вход", "callback_data": f"login_ok:{tag}:{challenge_id}"},
+            {"text": "⛔ Это не я", "callback_data": f"login_no:{tag}:{challenge_id}"},
         ]]},
     })
 
@@ -2797,14 +2809,19 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
     callback = update.get("callback_query") if isinstance(update, dict) else None
     if isinstance(callback, dict):
         login_match = re.fullmatch(
-            r"login_(ok|no):([A-Za-z0-9_-]{20,})", str(callback.get("data") or ""))
+            r"login_(ok|no):([dcp]):([A-Za-z0-9_-]{20,})", str(callback.get("data") or ""))
         if login_match:
+            stamped = ENVIRONMENT_BY_TAG.get(login_match.group(2), "")
+            if stamped and stamped != runtime_env.deployment_environment():
+                # Belongs to another environment. Leave it entirely alone so it
+                # can be routed there, instead of answering against this store.
+                return False
             actor = int((callback.get("from") or {}).get("id") or 0)
             allowed = login_match.group(1) == "ok"
             with _LOCK:
                 doc = _read_doc()
                 result, snapshot = _apply_login_confirm(
-                    doc, challenge_id=login_match.group(2), actor_id=actor,
+                    doc, challenge_id=login_match.group(3), actor_id=actor,
                     allowed=allowed, owner_chat_id=owner_chat_id,
                 )
                 if result not in {"expired", "forbidden"}:

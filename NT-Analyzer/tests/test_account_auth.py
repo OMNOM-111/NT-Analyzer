@@ -1366,11 +1366,13 @@ def _start_and_scan(api, uid=4242, code_owner="999", first="Ada", last="L"):
     return login
 
 
-def _tap(api, challenge_id, uid=4242, owner="999", ok=True):
+def _tap(api, challenge_id, uid=4242, owner="999", ok=True, tag=None):
+    if tag is None:
+        tag = account_auth.ENVIRONMENT_TAGS[account_auth.runtime_env.deployment_environment()]
     return account_auth.process_update(
         {"callback_query": {
             "id": "cb1", "from": {"id": uid},
-            "data": f"login_{'ok' if ok else 'no'}:{challenge_id}",
+            "data": f"login_{'ok' if ok else 'no'}:{tag}:{challenge_id}",
         }}, api_call=api, owner_chat_id=owner)
 
 
@@ -1382,9 +1384,9 @@ def test_login_start_returns_a_short_lived_qr_deep_link(auth_store) -> None:
     assert login["qr_payload"].startswith("tg://resolve?domain=StratForge_bot&start=login_")
     assert login["bot_url"].startswith("https://t.me/StratForge_bot?start=login_")
     assert login["qr_svg"].startswith("<svg") and login["qr_svg"].endswith("</svg>")
-    # Short TTL: a QR on screen is a bearer token, not a 15-minute link.
+    # Short-lived, but long enough to find a phone and open the camera.
     assert login["expires_in_sec"] == account_auth.LOGIN_CHALLENGE_TTL_SEC
-    assert login["expires_in_sec"] <= 300
+    assert 300 <= login["expires_in_sec"] <= 900
     # The manual code stays available as the Advanced fallback.
     assert login["manual_command"].startswith("/login ")
 
@@ -1661,3 +1663,102 @@ def test_expired_challenge_reports_expiry_and_a_new_one_is_clean(auth_store) -> 
     assert fresh["challenge_id"] != login["challenge_id"]
     assert fresh["code"] != login["code"]
     assert account_auth.login_state(fresh["challenge_id"])["status"] == "created"
+
+
+# ---------------------------------------------------------------------------
+# One Telegram bot serves every environment and Production owns the webhook,
+# so a confirmation has to reach the process that actually holds the challenge.
+# ---------------------------------------------------------------------------
+
+def test_confirm_button_stamps_the_environment_into_its_callback_data(auth_store) -> None:
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+    login = _start_and_scan(api)
+    buttons = [
+        button
+        for _m, payload in calls
+        for row in ((payload.get("reply_markup") or {}).get("inline_keyboard") or [])
+        for button in row
+    ]
+    data = [b["callback_data"] for b in buttons if "callback_data" in b]
+    tag = account_auth.ENVIRONMENT_TAGS[
+        account_auth.runtime_env.deployment_environment()]
+    assert any(d.startswith(f"login_ok:{tag}:") for d in data), data
+    assert any(d.startswith(f"login_no:{tag}:") for d in data), data
+    # Telegram caps callback_data at 64 bytes.
+    assert all(len(d.encode("utf-8")) <= 64 for d in data), data
+    assert all(d.endswith(login["challenge_id"]) for d in data), data
+
+
+def test_a_confirmation_for_another_environment_is_left_untouched(auth_store) -> None:
+    """Production must not answer a Canary confirmation against its own store."""
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+    login = _start_and_scan(api)
+    here = account_auth.ENVIRONMENT_TAGS[
+        account_auth.runtime_env.deployment_environment()]
+    elsewhere = "c" if here != "c" else "p"
+    before = len(calls)
+    handled = _tap(api, login["challenge_id"], tag=elsewhere)
+    assert handled is False, "must decline so the router can forward it"
+    assert len(calls) == before, "it must not answer the callback either"
+    assert account_auth.login_state(login["challenge_id"])["status"] == "opened"
+
+
+def test_router_sends_a_login_callback_to_the_stamped_environment() -> None:
+    from app import telegram_service
+
+    def update(tag):
+        return {"update_id": 1, "callback_query": {
+            "id": "cb", "from": {"id": 4242},
+            "data": f"login_ok:{tag}:{'x' * 32}"}}
+
+    assert telegram_service._update_target_environment(update("c")) == "canary"
+    assert telegram_service._update_target_environment(update("p")) == "production"
+    assert telegram_service._update_target_environment(update("d")) == "development"
+    # Anything else stays unrouted rather than being sent somewhere arbitrary.
+    assert telegram_service._update_target_environment(
+        {"callback_query": {"data": "account_revoke:5"}}) == ""
+
+
+def test_three_browser_sessions_confirm_independently_end_to_end(auth_store) -> None:
+    """Three computers, three challenges: confirming each authenticates only it."""
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+    sessions = [_start_and_scan(api) for _ in range(3)]
+    assert len({s["challenge_id"] for s in sessions}) == 3
+
+    # Confirm the middle one only.
+    _tap(api, sessions[1]["challenge_id"])
+    assert account_auth.login_state(sessions[1]["challenge_id"])["status"] in {
+        "login_approved", "awaiting_profile"}
+    for other in (sessions[0], sessions[2]):
+        assert account_auth.login_state(other["challenge_id"])["status"] == "opened"
+
+    # Now confirm the first: it must authenticate on its own terms.
+    _tap(api, sessions[0]["challenge_id"])
+    assert account_auth.login_state(sessions[0]["challenge_id"])["status"] in {
+        "login_approved", "awaiting_profile"}
+    assert account_auth.login_state(sessions[2]["challenge_id"])["status"] == "opened"
+
+
+def test_confirmed_challenge_issues_a_session_to_its_own_browser_only(auth_store) -> None:
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+    doc = account_auth._read_doc()
+    account_auth._user(doc, 999).update({
+        "first_name": "Owner", "last_name": "Tester", "email": "owner@example.test"})
+    account_auth._write_doc(doc)
+    mine = _start_and_scan(api, uid=999, code_owner="999", first="Owner", last="Tester")
+    theirs = _start_and_scan(api, uid=999, code_owner="999", first="Owner", last="Tester")
+    _tap(api, mine["challenge_id"], uid=999)
+
+    issued = account_auth.create_session_for_challenge(
+        mine["challenge_id"], ip="127.0.0.1", user_agent="probe")
+    assert issued["status"] == "authenticated"
+    assert issued.get("session_token")
+    # Spent exactly once.
+    with pytest.raises(account_auth.AccountAuthError):
+        account_auth.login_state(mine["challenge_id"])
+    # The other browser is untouched and still waiting.
+    assert account_auth.login_state(theirs["challenge_id"])["status"] == "opened"
