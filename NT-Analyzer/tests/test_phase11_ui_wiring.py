@@ -138,16 +138,39 @@ def test_admin_panel_has_no_fake_placeholder_shell():
 
 
 # --------------------------------------------------------------------------- #
-# Telegram login is one click: the deep link opens itself and the page polls
-# for the result. The manual /login command stays, but only as a fallback.
+# Telegram login is a QR plus one confirmation. The page opens no popup window,
+# never demands a contact, and keeps the manual /login command as Advanced only.
 # --------------------------------------------------------------------------- #
-def test_telegram_login_opens_the_deep_link_itself():
-    assert "openedDeepLinks" in UI_JS, "the deep link must be opened by the page"
-    assert "window.open(botUrl, '_blank', 'noopener')" in UI_JS
-    # Opened at most once per challenge: the waiting screen re-renders on every
-    # poll, and re-opening a tab each time would be a popup storm.
-    assert "openedDeepLinks.has(challengeId)" in UI_JS
-    assert "openedDeepLinks.add(challengeId)" in UI_JS
+def test_telegram_login_shows_a_qr_and_opens_no_popup():
+    waiting = UI_JS.split("const renderWaiting = (login, knownState)", 1)[1]
+    waiting = waiting.split("const renderMiniAppRegister", 1)[0]
+    assert "login.qr_svg" in waiting, "the waiting screen renders the server QR"
+    assert 'class="auth-qr"' in waiting
+    # The popup window is gone: it stole focus, and browsers blocked it.
+    assert "window.open" not in waiting
+    assert "openedDeepLinks" not in UI_JS
+    # On the phone the same deep link is a plain in-page link, not a new window.
+    assert 'id="auth-open-telegram"' in waiting
+    assert 'target="_blank"' not in waiting
+
+
+def test_login_screen_promises_no_contact_upload():
+    waiting = UI_JS.split("const renderWaiting = (login, knownState)", 1)[1]
+    waiting = waiting.split("const renderMiniAppRegister", 1)[0]
+    assert "Отправлять контакт не нужно" in waiting
+    assert "отправьте контакт" not in waiting.lower()
+
+
+def test_expired_qr_is_replaced_in_place():
+    waiting = UI_JS.split("const renderWaiting = (login, knownState)", 1)[1]
+    waiting = waiting.split("const renderMiniAppRegister", 1)[0]
+    assert "login.expires_in_sec" in waiting
+    assert "API.http.authLoginStart()" in waiting, "a lapsed QR refreshes itself"
+    # The refresh timer must die with the screen, or it would re-render the
+    # waiting card on top of whatever replaced it.
+    assert "stopQrRefresh();" in UI_JS
+    stop = UI_JS.split("const stopPolling = () => {", 1)[1].split("};", 1)[0]
+    assert "stopQrRefresh()" in stop
 
 
 def test_telegram_login_polls_for_the_result():
@@ -156,18 +179,21 @@ def test_telegram_login_polls_for_the_result():
 
 
 def test_manual_login_command_is_a_fallback_not_the_instruction():
-    # The /login command is behind a collapsed "Telegram не открылся?" details
-    # block instead of being presented as the way in.
+    # The /login command sits behind a collapsed "Другой способ" block instead
+    # of being presented as the way in.
     assert 'class="auth-manual-fallback"' in UI_JS
-    assert "<summary>Telegram не открылся?</summary>" in UI_JS
+    assert "<summary>Другой способ · ввести код вручную</summary>" in UI_JS
     assert "auth-copy-code" in UI_JS, "the fallback keeps its copy button"
     theme = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
     assert ".auth-manual-fallback" in theme
 
 
-def test_blocked_popup_still_leaves_a_usable_button():
-    assert 'id="auth-open-telegram"' in UI_JS
-    assert "Браузер заблокировал автоматическое открытие" in UI_JS
+def test_qr_has_styles_including_a_small_screen_size():
+    theme = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
+    assert ".auth-qr-frame" in theme
+    # A scanner needs a light quiet zone regardless of the page theme.
+    assert "background: #ffffff" in theme.split(".auth-qr-frame", 1)[1][:200]
+    assert "max-width: 420px" in theme
 
 
 # --------------------------------------------------------------------------- #
@@ -384,3 +410,36 @@ def test_environment_probe_reports_the_artifact_digest():
     # switcher's metadata, so the digest travels with version and commit.
     assert '"artifact_sha256": str(deployment.get("artifact_sha256") or "")' in SERVER_SRC
     assert "target.artifact_sha256" in UI_JS
+
+
+# --------------------------------------------------------------------------- #
+# Fewest possible hops: reach an installed Telegram directly, and fall back to
+# the web only when the app did not take over.
+# --------------------------------------------------------------------------- #
+def test_open_button_tries_the_telegram_app_before_the_web():
+    waiting = UI_JS.split("const renderWaiting = (login, knownState)", 1)[1]
+    waiting = waiting.split("const renderMiniAppRegister", 1)[0]
+    assert "login.app_url" in waiting
+    # tg: first...
+    assert "location.href = appUrl;" in waiting
+    # ...and the https link only as the fallback.
+    assert "location.href = botUrl;" in waiting
+    # Without JS the control must still point somewhere real.
+    assert 'href="${esc(botUrl)}"' in waiting
+
+
+def test_app_handover_is_detected_rather_than_assumed():
+    waiting = UI_JS.split("const renderWaiting = (login, knownState)", 1)[1]
+    waiting = waiting.split("const renderMiniAppRegister", 1)[0]
+    # A tg: scheme that goes nowhere fires no error, so the handover is
+    # detected by the page going away/hidden instead.
+    for signal in ("pagehide", "blur", "visibilitychange", "visibilityState"):
+        assert signal in waiting
+    assert "handedOver" in waiting
+
+
+def test_no_popup_window_is_used_for_the_handover():
+    waiting = UI_JS.split("const renderWaiting = (login, knownState)", 1)[1]
+    waiting = waiting.split("const renderMiniAppRegister", 1)[0]
+    assert "window.open" not in waiting
+    assert 'target="_blank"' not in waiting

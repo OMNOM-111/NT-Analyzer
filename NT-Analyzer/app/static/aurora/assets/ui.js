@@ -3994,7 +3994,13 @@
     const initialMessage = typeof initialError === 'string'
       ? initialError
       : (initialError && initialError.status && ![401, 403].includes(Number(initialError.status)) ? initialError.message : '');
-    const stopPolling = () => { if (polling) clearInterval(polling); polling = null; };
+    let qrTick = null;
+    const stopQrRefresh = () => { if (qrTick) clearInterval(qrTick); qrTick = null; };
+    const stopPolling = () => {
+      if (polling) clearInterval(polling);
+      polling = null;
+      stopQrRefresh();
+    };
     const renderStart = (message) => {
       stopPolling();
       const telegram = providers.telegram || {};
@@ -4105,10 +4111,6 @@
         if (error.status === 410) renderStart('Ссылка входа истекла. Создайте новую.');
       }
     };
-    // A deep link is opened at most once per challenge: `check` re-renders the
-    // waiting screen on every poll, and re-opening a tab each time would be a
-    // popup storm.
-    const openedDeepLinks = new Set();
     const renderWaiting = (login, knownState) => {
       const challengeId = login.challenge_id;
       const status = (knownState || {}).status || 'created';
@@ -4116,27 +4118,67 @@
       const pendingOwner = status === 'pending_owner';
       const manual = login.manual_command || (login.code ? `/login ${login.code}` : '');
       const botUrl = pendingOwner ? '' : String(login.bot_url || '');
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>${pendingOwner ? 'Ожидается решение владельца' : 'Подтвердите вход в Telegram'}</h1><p>${pendingOwner ? 'Аккаунт будет активирован только после личного подтверждения владельцем. Это правило одинаково для Telegram, Google и e-mail.' : 'Telegram открывается сам — нажмите Start и отправьте контакт кнопкой Telegram. Вход завершится на этой странице автоматически.'}</p></div>${botUrl ? `<a class="btn primary auth-main-action" id="auth-open-telegram" href="${esc(botUrl)}" target="_blank" rel="noopener">Открыть Telegram</a><div class="row-sub" id="auth-telegram-hint"></div>` : ''}${manual ? `<details class="auth-manual-fallback"><summary>Telegram не открылся?</summary><div class="finance-note">Отправьте боту команду вручную:<br><span class="mono">${esc(manual)}</span> <button class="btn sm ghost" id="auth-copy-code" type="button">Копировать</button></div></details>` : ''}<div class="auth-wait"><span class="spinner"></span><span>Ждём подтверждения…</span></div><button class="btn ghost" id="auth-restart">Другой способ входа</button>`);
+      const qrSvg = pendingOwner ? '' : String(login.qr_svg || '');
+      // The phone is the second device: scanning a QR with the normal camera
+      // is the primary path, so nothing here opens a popup window. On the
+      // phone itself the same deep link is one tap away.
+      const scanBlock = qrSvg
+        ? `<div class="auth-qr"><div class="auth-qr-frame">${qrSvg}</div><p class="auth-qr-copy">Наведите камеру телефона — откроется наш бот. Нажмите <strong>«Подтвердить вход»</strong>, и эта страница войдёт сама.</p><div class="auth-qr-life" id="auth-qr-life"></div></div>`
+        : '';
+      const appUrl = pendingOwner ? '' : String(login.app_url || '');
+      // The href stays the https link so the control degrades to something
+      // real without JS, and so a long-press still offers a working target.
+      const sameDevice = botUrl
+        ? `<a class="btn ghost auth-main-action" id="auth-open-telegram" href="${esc(botUrl)}" rel="noopener">Открыть в Telegram</a><div class="row-sub" id="auth-telegram-hint"></div>`
+        : '';
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>${pendingOwner ? 'Ожидается решение владельца' : 'Вход через Telegram'}</h1><p>${pendingOwner ? 'Аккаунт будет активирован только после личного подтверждения владельцем. Это правило одинаково для Telegram, Google и e-mail.' : 'Одно подтверждение в Telegram — и вход завершится здесь автоматически. Отправлять контакт не нужно.'}</p></div>${scanBlock}${sameDevice}${manual ? `<details class="auth-manual-fallback"><summary>Другой способ · ввести код вручную</summary><div class="finance-note">Отправьте боту команду:<br><span class="mono">${esc(manual)}</span> <button class="btn sm ghost" id="auth-copy-code" type="button">Копировать</button></div></details>` : ''}<div class="auth-wait"><span class="spinner"></span><span>Ждём подтверждения…</span></div><button class="btn ghost" id="auth-restart">Другой способ входа</button>`);
       const copy = qs('#auth-copy-code', content);
       if (copy) copy.onclick = async () => {
         try { await navigator.clipboard.writeText(manual); toast('Код скопирован'); }
         catch (e) { toast(manual); }
       };
       const restart = qs('#auth-restart', content); if (restart) restart.onclick = () => renderStart('');
-      // One click, not two: the deep link opens itself and the poll below
-      // finishes the login, so the code never has to be copied by hand. A
-      // browser that blocks the automatic tab still has the button.
-      if (botUrl && !openedDeepLinks.has(challengeId)) {
-        openedDeepLinks.add(challengeId);
-        let opened = null;
-        try { opened = window.open(botUrl, '_blank', 'noopener'); } catch (e) { opened = null; }
+      // Reach an installed Telegram directly instead of routing through a web
+      // page. `tg:` has no fallback of its own, so watch for the app taking
+      // over: if the tab is still here and visible shortly after, the scheme
+      // went nowhere and the https link is used instead. A permission prompt
+      // the OS or browser shows is left alone -- it just delays the handover,
+      // which is why the check is on visibility rather than on a timer alone.
+      const openTelegram = qs('#auth-open-telegram', content);
+      if (openTelegram && appUrl) openTelegram.onclick = (event) => {
+        event.preventDefault();
         const hint = qs('#auth-telegram-hint', content);
-        if (hint) hint.textContent = opened
-          ? 'Telegram открыт в новой вкладке — нажмите Start и вернитесь сюда.'
-          : 'Браузер заблокировал автоматическое открытие — нажмите кнопку выше.';
-      }
+        let handedOver = false;
+        const noteHandover = () => { handedOver = true; };
+        window.addEventListener('pagehide', noteHandover, { once: true });
+        window.addEventListener('blur', noteHandover, { once: true });
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'hidden') noteHandover();
+        }, { once: true });
+        try { location.href = appUrl; } catch (e) { handedOver = false; }
+        setTimeout(() => {
+          if (handedOver || document.visibilityState === 'hidden') return;
+          if (hint) hint.textContent = 'Telegram не открылся — продолжаем в браузере.';
+          location.href = botUrl;
+        }, 1400);
+      };
+      // A QR is a bearer token with a short life. When it lapses, replace it
+      // in place rather than leaving a code on screen that no longer works.
       stopPolling();
       polling = setInterval(() => check(challengeId), 2000);
+      const ttl = Number(login.expires_in_sec || 0);
+      if (ttl > 0 && qrSvg) {
+        const deadline = Date.now() + ttl * 1000;
+        qrTick = setInterval(async () => {
+          const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+          const life = qs('#auth-qr-life', content);
+          if (life) life.textContent = left ? `Код действует ещё ${left} с` : 'Обновляем код…';
+          if (left > 0) return;
+          stopPolling();
+          try { renderWaiting(await API.http.authLoginStart()); }
+          catch (e) { renderStart('Не удалось обновить код входа. Попробуйте снова.'); }
+        }, 1000);
+      }
       check(challengeId);
     };
     const renderMiniAppRegister = (message) => {
