@@ -1564,6 +1564,64 @@ def _active_owner_rows(doc: Dict[str, Any]) -> list:
     ]
 
 
+def owner_claim(
+    doc: Dict[str, Any], *,
+    provider: Any = "", subject: Any = "",
+    user_id: Any = 0, user: Optional[Dict[str, Any]] = None,
+    owner_chat_id: Any = "",
+) -> bool:
+    """The single authority on "is this login the owner", for every provider.
+
+    Owner identity is a person, not an environment variable. A deployment that
+    simply forgot to export ``NTA_TELEGRAM_CHAT_ID`` used to turn the canonical
+    owner into an ordinary verified human, which then ran the registration
+    trial branch and greeted the owner with Free Preview. The chat id is one
+    *identity of* the owner; the canonical UUID is who they are.
+
+    Resolution order, first match wins:
+
+    * the stored row already says owner -- the store is authoritative and a
+      missing variable must never demote an existing owner;
+    * the row's UUID is the configured canonical owner UUID;
+    * the presented provider identity is linked to the canonical owner UUID,
+      which is what makes the same human resolve identically in LOCAL, Canary
+      and Production;
+    * the legacy chat-id comparison, kept so existing deployments that only
+      configure ``NTA_TELEGRAM_CHAT_ID`` keep working unchanged.
+    """
+    if isinstance(user, dict) and user.get("is_owner"):
+        return True
+    canonical = canonical_owner_uuid()
+    if canonical:
+        if isinstance(user, dict) and hmac.compare_digest(_user_uuid(user), canonical):
+            return True
+        row = _identity(doc, provider, subject) if provider and subject else None
+        if row is not None:
+            linked = _user_by_uuid(doc, row.get("user_uuid"))
+            if linked is None:
+                try:
+                    linked = _user(doc, int(row.get("legacy_user_id") or 0)) or None
+                except (TypeError, ValueError):
+                    linked = None
+            if linked is not None and hmac.compare_digest(_user_uuid(linked), canonical):
+                return True
+    configured = str(owner_chat_id or os.environ.get("NTA_TELEGRAM_CHAT_ID") or "").strip()
+    return bool(configured) and str(user_id or "").strip() == configured
+
+
+def owner_user_uuid_for_new_row(is_owner: bool) -> str:
+    """A recognised owner keeps the canonical UUID instead of a fresh one.
+
+    Minting a new UUID for an owner the deployment already names is how one
+    human became two identities across environments.
+    """
+    if is_owner:
+        canonical = canonical_owner_uuid()
+        if canonical:
+            return canonical
+    return auth_identity.new_user_uuid()
+
+
 def ensure_owner(owner_id: Any) -> Optional[Dict[str, Any]]:
     """Make sure the configured owner exists, without ever inventing a second.
 
@@ -1673,6 +1731,17 @@ def _primary_owner_row() -> Optional[Dict[str, Any]]:
         ]
     if not owners:
         return None
+    # The canonical UUID outranks the chat id: it is the same authority the
+    # login paths use, so LOCAL opens as exactly the owner Canary and
+    # Production resolve rather than merely the lowest-numbered one.
+    canonical = canonical_owner_uuid()
+    if canonical:
+        match = next(
+            (u for u in owners if hmac.compare_digest(_user_uuid(u), canonical)),
+            None,
+        )
+        if match:
+            return match
     if configured:
         match = next((u for u in owners if str(u.get("user_id") or "") == configured), None)
         if match:
@@ -2336,7 +2405,11 @@ def complete_profile(challenge_id: str, profile: Dict[str, Any], *,
             _ensure_registration_trial(snapshot, source="telegram_profile")
         if newly and not snapshot.get("is_owner"):
             _notify_owner_new_user(api_call, owner_chat_id, snapshot)
-        api_call("sendMessage", {"chat_id": int(snapshot["user_id"]), "text": "Профиль заполнен. Открыт полный пробный доступ на 7 дней — вернитесь в приложение."})
+        api_call("sendMessage", {"chat_id": int(snapshot["user_id"]), "text": (
+            "Профиль заполнен. Полный доступ владельца — вернитесь в приложение."
+            if snapshot.get("is_owner")
+            else "Профиль заполнен. Открыт полный пробный доступ на 7 дней — вернитесь в приложение."
+        )})
     elif awaiting_owner:
         _send_owner_approval(api_call, owner_chat_id, snapshot, cid)
         api_call("sendMessage", {"chat_id": int(snapshot["user_id"]), "text": "Профиль заполнен. Ожидайте личного подтверждения владельца — мы сообщим, когда доступ откроется."})
@@ -2382,8 +2455,6 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
         raise AccountAuthError("Некорректная Telegram identity.", 400)
     if not accept_terms:
         raise AccountAuthError("Необходимо принять условия использования.")
-    owner_env = str(owner_chat_id or os.environ.get("NTA_TELEGRAM_CHAT_ID") or "").strip()
-    is_owner = bool(owner_env) and str(uid) == owner_env
     fn = _clean_name(first_name or tg_user.get("first_name") or "—", "Имя")
     ln = _clean_name(last_name or tg_user.get("last_name") or "—", "Фамилия")
     em = _valid_email(email)
@@ -2392,13 +2463,19 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
     with _LOCK:
         doc = _read_doc()
         user = _user(doc, uid)
+        # Owner resolution happens against the store, so a linked canonical
+        # identity counts even when this deployment exports no chat id.
+        is_owner = owner_claim(
+            doc, provider="telegram", subject=uid,
+            user_id=uid, user=user, owner_chat_id=owner_chat_id,
+        )
         prior_status = str((user or {}).get("status") or "")
         if user and not is_owner and user.get("status") in {"revoked", "denied", "blocked"}:
             raise AccountAuthError("Доступ к StratForge AI ограничен владельцем.", 403)
         if user is None:
             user = {
                 "user_id": uid, "legacy_user_id": uid,
-                "user_uuid": auth_identity.new_user_uuid(),
+                "user_uuid": owner_user_uuid_for_new_row(is_owner),
                 "telegram_user_id": uid,
                 "username": str(tg_user.get("username") or ""),
                 "first_name": fn, "last_name": ln, "email": em,
@@ -2708,10 +2785,13 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
                 return True
             user = _user(doc, uid)
             tg = challenge.get("telegram_user") or {}
-            configured_owner = str(owner_chat_id or "").strip()
-            owner_contact_refresh = bool(
-                user and user.get("is_owner") and configured_owner and str(uid) == configured_owner
+            claim_is_owner = owner_claim(
+                doc, provider="telegram", subject=uid,
+                user_id=uid, user=user, owner_chat_id=owner_chat_id,
             )
+            # Re-verifying the owner's own contact must be able to refresh a
+            # stored number; it is the same person proving the same identity.
+            owner_contact_refresh = bool(user and claim_is_owner)
             if (
                 user and user.get("phone_hash")
                 and not hmac.compare_digest(str(user.get("phone_hash")), _phone_hash(phone))
@@ -2724,12 +2804,12 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
             if user is None:
                 user = {
                     "user_id": uid, "legacy_user_id": uid,
-                    "user_uuid": auth_identity.new_user_uuid(),
+                    "user_uuid": owner_user_uuid_for_new_row(claim_is_owner),
                     "telegram_user_id": uid,
                     "username": str(tg.get("username") or ""),
                     "first_name": str(tg.get("first_name") or ""), "last_name": str(tg.get("last_name") or ""),
                     "email": "", "phone": phone, "phone_hash": _phone_hash(phone),
-                    "role": "read_only", "status": "pending", "is_owner": str(uid) == str(owner_chat_id),
+                    "role": "read_only", "status": "pending", "is_owner": claim_is_owner,
                     "primary_login_provider": "telegram",
                     "created_at_utc": _now_iso(), "approved_at_utc": "", "revoked_at_utc": "",
                 }
@@ -2746,6 +2826,18 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
                     user["first_name"] = str(tg.get("first_name") or "")
                 if not user.get("last_name"):
                     user["last_name"] = str(tg.get("last_name") or "")
+                if claim_is_owner and not user.get("is_owner"):
+                    # An environment that could not name its owner earlier had
+                    # already stored them as an ordinary verified human. Adopt
+                    # the row rather than leaving the owner on a trial, and
+                    # clear the registration-trial outbox that never applied.
+                    user.update({
+                        "role": "owner", "is_owner": True, "status": "active",
+                        "approved_at_utc": user.get("approved_at_utc") or _now_iso(),
+                        "revoked_at_utc": "",
+                        "initial_trial_pending": False,
+                        "updated_at_utc": _now_iso(),
+                    })
             user["phone_verified_at_utc"] = _now_iso()
             _link_identity_in_doc(
                 doc, user, provider="telegram", subject=str(uid),
@@ -2776,7 +2868,13 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
             _notify_owner_new_user(api_call, owner_chat_id, snapshot)
         messages = {
             "awaiting_profile": "Телефон подтверждён. Вернитесь в приложение и заполните обязательные поля профиля.",
-            "login_approved": "Личность подтверждена. Вернитесь в приложение — открыт полный пробный доступ на 7 дней.",
+            # The owner has no trial and no preview to be granted, so they are
+            # never told they were given one.
+            "login_approved": (
+                "Личность подтверждена. Вернитесь в приложение — полный доступ владельца."
+                if snapshot.get("is_owner")
+                else "Личность подтверждена. Вернитесь в приложение — открыт полный пробный доступ на 7 дней."
+            ),
             "account_blocked": "Доступ к StratForge AI ограничен владельцем.",
         }
         api_call("sendMessage", {"chat_id": uid, "text": messages.get(next_status, "Готово."), "reply_markup": {"remove_keyboard": True}})
