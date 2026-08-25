@@ -577,12 +577,17 @@ def _connectors_dashboard_payload(context: Dict[str, Any]) -> Dict[str, Any]:
             }
         total = int(out.get("installations") or 0)
         online = int(out.get("online") or 0)
+        # "Enrolled but nothing online" is a normal operational state -- the
+        # machine running NinjaTrader can simply be down for maintenance -- so
+        # it is reported as offline rather than as a fault.
         return {
             "label": "Windows Connector / NinjaTrader",
-            "state": "healthy" if online else ("degraded" if total else "not_configured"),
+            "state": "healthy" if online else ("offline" if total else "not_configured"),
+            "status_known": True,
             "installations": total,
             "online": online,
             "last_heartbeat_utc": str(out.get("last_heartbeat_utc") or ""),
+            "stale_sec": float(out.get("stale_sec") or 0.0),
         }
 
     # Concurrently, so the page is bounded by the slowest single source rather

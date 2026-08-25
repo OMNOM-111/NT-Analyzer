@@ -79,6 +79,15 @@ _ENROLLMENT_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 IDLE_POLL_TICK_SEC = 2.0
 # A status probe waits this long for the shared lock before giving up.
 HEALTH_SUMMARY_LOCK_WAIT_SEC = 1.0
+# How long a status snapshot may be reused. Reading the connector document is
+# expensive on an authoritative deployment -- /api/bridge/connections measured
+# over twelve seconds for four rows -- and a status panel does not need the
+# document, only the counts. Serving a few-seconds-old answer, labelled with its
+# age, is better than a probe that times out and shows nothing at all. Nothing
+# that authorises a connector uses this path.
+HEALTH_SNAPSHOT_TTL_SEC = 15.0
+_HEALTH_SNAPSHOT: Dict[str, Any] = {}
+_HEALTH_SNAPSHOT_LOCK = threading.Lock()
 _LOCK = threading.RLock()
 _COMMANDS_CHANGED = threading.Condition(_LOCK)
 
@@ -1958,7 +1967,22 @@ def health_summary(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
     # A status question must not queue indefinitely behind connector traffic.
     # If the shared lock is busy, say the state was not measured rather than
     # spending the caller's whole probe budget waiting for it.
+    cache_key = workspace_value or "*"
+    with _HEALTH_SNAPSHOT_LOCK:
+        cached = _HEALTH_SNAPSHOT.get(cache_key)
+    if cached and now - float(cached.get("_taken_at") or 0) < HEALTH_SNAPSHOT_TTL_SEC:
+        fresh = dict(cached)
+        fresh.pop("_taken_at", None)
+        fresh["stale_sec"] = round(now - float(cached["_taken_at"]), 1)
+        return fresh
     if not _LOCK.acquire(timeout=HEALTH_SUMMARY_LOCK_WAIT_SEC):
+        if cached:
+            # Busy, but a recent answer exists. Say how old it is rather than
+            # claiming the state is unknown.
+            fresh = dict(cached)
+            fresh.pop("_taken_at", None)
+            fresh["stale_sec"] = round(now - float(cached["_taken_at"]), 1)
+            return fresh
         return {
             "ok": False,
             "status_known": False,
@@ -1998,14 +2022,18 @@ def health_summary(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
         if now - last > OFFLINE_AFTER_SEC:
             continue
         online += 1
-    return {
+    summary = {
         "ok": True,
         "status_known": True,
         "workspace_id": workspace_value,
         "installations": len(installations),
         "online": online,
         "last_heartbeat_utc": last_heartbeat,
+        "stale_sec": 0.0,
     }
+    with _HEALTH_SNAPSHOT_LOCK:
+        _HEALTH_SNAPSHOT[cache_key] = {**summary, "_taken_at": now}
+    return summary
 
 
 def installer_status() -> Dict[str, Any]:
