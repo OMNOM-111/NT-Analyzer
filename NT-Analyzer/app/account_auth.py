@@ -2312,11 +2312,21 @@ def start_login(*, bot_username: str, ip: str, user_agent: str = "") -> Dict[str
     canary_login = environment == runtime_env.CANARY
     start_payload = f"canary_login_{code}" if canary_login else f"login_{code}"
     manual_command = f"/login [CANARY] {code}" if canary_login else f"/login {code}"
+    # The https form is an iOS Universal Link and an Android App Link, so a
+    # phone with Telegram installed opens the app straight from the camera
+    # without a browser page in between, and a phone without it still lands
+    # somewhere useful. That makes it the right thing to put in the QR.
     deep_link = f"https://t.me/{username}?start={start_payload}"
+    # The tg: form skips the resolver entirely and is what a desktop button
+    # tries first to reach an installed Telegram Desktop. It has no web
+    # fallback of its own, so it is offered alongside the https link rather
+    # than instead of it.
+    app_link = f"tg://resolve?domain={username}&start={start_payload}"
     out = {
         "challenge_id": challenge_id, "status": "created",
         "expires_in_sec": LOGIN_CHALLENGE_TTL_SEC,
         "bot_url": deep_link,
+        "app_url": app_link,
         "qr_payload": deep_link,
         "code": code,
         "manual_command": manual_command,

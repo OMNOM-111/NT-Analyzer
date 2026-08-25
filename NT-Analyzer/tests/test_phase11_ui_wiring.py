@@ -410,3 +410,36 @@ def test_environment_probe_reports_the_artifact_digest():
     # switcher's metadata, so the digest travels with version and commit.
     assert '"artifact_sha256": str(deployment.get("artifact_sha256") or "")' in SERVER_SRC
     assert "target.artifact_sha256" in UI_JS
+
+
+# --------------------------------------------------------------------------- #
+# Fewest possible hops: reach an installed Telegram directly, and fall back to
+# the web only when the app did not take over.
+# --------------------------------------------------------------------------- #
+def test_open_button_tries_the_telegram_app_before_the_web():
+    waiting = UI_JS.split("const renderWaiting = (login, knownState)", 1)[1]
+    waiting = waiting.split("const renderMiniAppRegister", 1)[0]
+    assert "login.app_url" in waiting
+    # tg: first...
+    assert "location.href = appUrl;" in waiting
+    # ...and the https link only as the fallback.
+    assert "location.href = botUrl;" in waiting
+    # Without JS the control must still point somewhere real.
+    assert 'href="${esc(botUrl)}"' in waiting
+
+
+def test_app_handover_is_detected_rather_than_assumed():
+    waiting = UI_JS.split("const renderWaiting = (login, knownState)", 1)[1]
+    waiting = waiting.split("const renderMiniAppRegister", 1)[0]
+    # A tg: scheme that goes nowhere fires no error, so the handover is
+    # detected by the page going away/hidden instead.
+    for signal in ("pagehide", "blur", "visibilitychange", "visibilityState"):
+        assert signal in waiting
+    assert "handedOver" in waiting
+
+
+def test_no_popup_window_is_used_for_the_handover():
+    waiting = UI_JS.split("const renderWaiting = (login, knownState)", 1)[1]
+    waiting = waiting.split("const renderMiniAppRegister", 1)[0]
+    assert "window.open" not in waiting
+    assert 'target="_blank"' not in waiting

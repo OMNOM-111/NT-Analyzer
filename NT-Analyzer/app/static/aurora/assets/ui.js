@@ -4125,8 +4125,11 @@
       const scanBlock = qrSvg
         ? `<div class="auth-qr"><div class="auth-qr-frame">${qrSvg}</div><p class="auth-qr-copy">Наведите камеру телефона — откроется наш бот. Нажмите <strong>«Подтвердить вход»</strong>, и эта страница войдёт сама.</p><div class="auth-qr-life" id="auth-qr-life"></div></div>`
         : '';
+      const appUrl = pendingOwner ? '' : String(login.app_url || '');
+      // The href stays the https link so the control degrades to something
+      // real without JS, and so a long-press still offers a working target.
       const sameDevice = botUrl
-        ? `<a class="btn ghost auth-main-action" id="auth-open-telegram" href="${esc(botUrl)}" rel="noopener">Я уже на телефоне — открыть Telegram</a>`
+        ? `<a class="btn ghost auth-main-action" id="auth-open-telegram" href="${esc(botUrl)}" rel="noopener">Открыть в Telegram</a><div class="row-sub" id="auth-telegram-hint"></div>`
         : '';
       content.innerHTML = loginCard(`<div class="auth-copy"><h1>${pendingOwner ? 'Ожидается решение владельца' : 'Вход через Telegram'}</h1><p>${pendingOwner ? 'Аккаунт будет активирован только после личного подтверждения владельцем. Это правило одинаково для Telegram, Google и e-mail.' : 'Одно подтверждение в Telegram — и вход завершится здесь автоматически. Отправлять контакт не нужно.'}</p></div>${scanBlock}${sameDevice}${manual ? `<details class="auth-manual-fallback"><summary>Другой способ · ввести код вручную</summary><div class="finance-note">Отправьте боту команду:<br><span class="mono">${esc(manual)}</span> <button class="btn sm ghost" id="auth-copy-code" type="button">Копировать</button></div></details>` : ''}<div class="auth-wait"><span class="spinner"></span><span>Ждём подтверждения…</span></div><button class="btn ghost" id="auth-restart">Другой способ входа</button>`);
       const copy = qs('#auth-copy-code', content);
@@ -4135,6 +4138,30 @@
         catch (e) { toast(manual); }
       };
       const restart = qs('#auth-restart', content); if (restart) restart.onclick = () => renderStart('');
+      // Reach an installed Telegram directly instead of routing through a web
+      // page. `tg:` has no fallback of its own, so watch for the app taking
+      // over: if the tab is still here and visible shortly after, the scheme
+      // went nowhere and the https link is used instead. A permission prompt
+      // the OS or browser shows is left alone -- it just delays the handover,
+      // which is why the check is on visibility rather than on a timer alone.
+      const openTelegram = qs('#auth-open-telegram', content);
+      if (openTelegram && appUrl) openTelegram.onclick = (event) => {
+        event.preventDefault();
+        const hint = qs('#auth-telegram-hint', content);
+        let handedOver = false;
+        const noteHandover = () => { handedOver = true; };
+        window.addEventListener('pagehide', noteHandover, { once: true });
+        window.addEventListener('blur', noteHandover, { once: true });
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'hidden') noteHandover();
+        }, { once: true });
+        try { location.href = appUrl; } catch (e) { handedOver = false; }
+        setTimeout(() => {
+          if (handedOver || document.visibilityState === 'hidden') return;
+          if (hint) hint.textContent = 'Telegram не открылся — продолжаем в браузере.';
+          location.href = botUrl;
+        }, 1400);
+      };
       // A QR is a bearer token with a short life. When it lapses, replace it
       // in place rather than leaving a code on screen that no longer works.
       stopPolling();

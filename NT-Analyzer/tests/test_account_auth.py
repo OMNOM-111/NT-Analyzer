@@ -1509,3 +1509,15 @@ def test_login_start_is_rate_limited_per_ip(auth_store) -> None:
     with pytest.raises(account_auth.AccountAuthError) as excinfo:
         account_auth.start_login(bot_username="StratForge_bot", ip="10.0.0.9")
     assert excinfo.value.status == 429
+
+
+def test_login_start_offers_both_an_app_scheme_and_a_universal_link(auth_store) -> None:
+    login = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
+    # tg: reaches an installed client with no browser hop and no resolver.
+    assert login["app_url"].startswith("tg://resolve?domain=StratForge_bot&start=login_")
+    # The QR carries the https form: it is a Universal/App Link, so a phone
+    # with Telegram still opens the app, and one without it is not stranded.
+    assert login["qr_payload"].startswith("https://t.me/")
+    assert login["qr_payload"] == login["bot_url"]
+    assert login["app_url"].endswith(login["code"])
+    assert login["bot_url"].endswith(login["code"])
