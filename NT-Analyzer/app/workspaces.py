@@ -396,7 +396,13 @@ def _ensure_owner_workspace_doc(doc: Dict[str, Any], owner_id: int) -> tuple[Dic
         if row.get("display_name") in ("Учебный аккаунт владельца", "", None):
             row["display_name"] = "Аккаунт владельца · NinjaTrader"
             changed = True
-        if row.get("entitlement_id") in ("owner_unlimited", "", None):
+        # The owner's own workspace is founder by definition -- the entitlement
+        # follows from being the owner, not from whatever label a migration or
+        # an acceptance run happened to stamp on the row. Production carried
+        # "stage9_canary_acceptance" here, which displayed a plan the account
+        # does not actually hold. Normalising only a fixed list of old values
+        # let anything new drift, so any deviation is corrected.
+        if str(row.get("entitlement_id") or "") != "founder":
             row["entitlement_id"] = "founder"
             changed = True
     changed = _ensure_membership(doc, workspace_id=workspace_id, user_id=owner_id, role="owner", created_by=owner_id) or changed

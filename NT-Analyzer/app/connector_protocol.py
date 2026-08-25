@@ -1913,6 +1913,65 @@ def list_installations(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any
     return {"ok": True, "workspace": workspace, "connections": rows}
 
 
+def health_summary(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
+    """Connector health for a diagnostics panel, without writing anything.
+
+    ``list_installations`` sweeps expired enrollments, sessions and commands and
+    persists the result. That is correct for a page that manages connectors, but
+    it makes a status probe a write under the global lock, competing with the
+    heartbeats of the very connector it is asking about. On a deployment with a
+    real enrolled device and an authoritative database that is what pushed the
+    admin probe past its budget while the connector itself was perfectly
+    healthy.
+
+    So this answers the status question from a snapshot: no sweep, no write, and
+    the derived states computed for the reply only. Expiry is applied in the
+    reply too, so a stale row is never reported as online.
+    """
+    user = int(user_id or 0)
+    workspace = workspaces.require_workspace_access(user, workspace_id=workspace_id)
+    workspace_value = str(workspace.get("workspace_id") or "")
+    now = time.time()
+    with _LOCK:
+        doc = _read_doc()
+        installations = [
+            copy.deepcopy(row)
+            for row in (doc.get("installations") or [])
+            if str(row.get("workspace_id") or "") == workspace_value
+        ]
+        active_sessions = {
+            str(row.get("installation_id") or "")
+            for row in (doc.get("sessions") or [])
+            if row.get("status") == "active"
+            and float(row.get("expires_at") or 0) > now
+        }
+    online = 0
+    last_heartbeat = ""
+    for row in installations:
+        beat = str(row.get("last_heartbeat_utc") or "")
+        if beat > last_heartbeat:
+            last_heartbeat = beat
+        if str(row.get("status") or "") != "online":
+            continue
+        if str(row.get("installation_id") or "") not in active_sessions:
+            continue
+        try:
+            last = float(row.get("last_heartbeat_at") or 0)
+        except (TypeError, ValueError):
+            last = 0
+        # Same rule _refresh_states would apply, evaluated for the reply only.
+        if now - last > OFFLINE_AFTER_SEC:
+            continue
+        online += 1
+    return {
+        "ok": True,
+        "workspace_id": workspace_value,
+        "installations": len(installations),
+        "online": online,
+        "last_heartbeat_utc": last_heartbeat,
+    }
+
+
 def installer_status() -> Dict[str, Any]:
     """Whether there is a signed package to hand someone, and why not.
 

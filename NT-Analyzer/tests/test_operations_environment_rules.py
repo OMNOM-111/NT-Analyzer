@@ -117,10 +117,10 @@ def test_operations_degrades_a_stalled_connector_without_holding_the_panel(monke
 
     def stalled_connector(*_args, **_kwargs):
         time.sleep(0.25)
-        return {"ok": True, "connections": []}
+        return {"ok": True, "installations": 0, "online": 0}
 
     monkeypatch.setattr(
-        server_mod.connector_protocol, "list_installations", stalled_connector,
+        server_mod.connector_protocol, "health_summary", stalled_connector,
     )
     started = time.monotonic()
     payload = server_mod._operations_statuses({"user_id": 1, "workspace_id": "ws_test"})
@@ -129,6 +129,10 @@ def test_operations_degrades_a_stalled_connector_without_holding_the_panel(monke
     assert payload["worker"]["status"] == "running"
     assert payload["telegram"]["status"] == "connected"
     assert payload["connector"]["status"] == "timeout"
+    # A probe that ran out of time reports that it did not measure the source,
+    # rather than reporting the source as down.
+    assert payload["connector"]["probe_state"] == "timeout"
+    assert payload["connector"]["ok"] is False
     assert json.loads(json.dumps(payload, allow_nan=False)) == payload
 
 

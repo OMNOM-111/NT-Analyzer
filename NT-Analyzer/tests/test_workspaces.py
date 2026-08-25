@@ -547,3 +547,19 @@ def test_purge_user_removes_a_solely_owned_workspace(workspace_store):
     assert doc["pairings"] == []
     assert "u-7" not in doc["active_workspaces_by_uuid"]
     assert "7" not in doc["active_workspaces"]
+
+
+def test_owner_workspace_entitlement_is_normalised_to_founder(tmp_path, monkeypatch) -> None:
+    """A stale acceptance label must not display as the owner's plan."""
+    monkeypatch.setattr(workspaces, "_root", lambda: tmp_path)
+    workspaces.ensure_owner_workspace(4242)
+
+    doc = workspaces._read_doc()
+    row = next(r for r in doc["workspaces"] if r.get("kind") == "owner_training")
+    row["entitlement_id"] = "stage9_canary_acceptance"
+    workspaces._write_doc(doc)
+
+    workspaces.ensure_owner_workspace(4242)
+    doc = workspaces._read_doc()
+    row = next(r for r in doc["workspaces"] if r.get("kind") == "owner_training")
+    assert row["entitlement_id"] == "founder"
