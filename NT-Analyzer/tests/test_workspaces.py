@@ -562,3 +562,21 @@ def test_owner_workspace_entitlement_is_normalised_to_founder(workspace_store) -
     doc = workspaces._read_doc()
     row = next(r for r in doc["workspaces"] if r.get("kind") == "owner_training")
     assert row["entitlement_id"] == "founder"
+
+
+def test_owner_workspace_reports_founder_even_if_the_stored_label_is_stale(workspace_store) -> None:
+    """Display is derived, so it cannot drift from what the account holds."""
+    workspaces.ensure_owner_workspace(4242)
+    doc = workspaces._read_doc()
+    row = next(r for r in doc["workspaces"] if r.get("kind") == "owner_training")
+    row["entitlement_id"] = "stage9_canary_acceptance"
+    workspaces._write_doc(doc)
+
+    doc = workspaces._read_doc()
+    row = next(r for r in doc["workspaces"] if r.get("kind") == "owner_training")
+    public = workspaces._public_workspace(row)
+    assert public["entitlement_id"] == "founder"
+
+    # A non-owner workspace keeps whatever it legitimately holds.
+    other = {"workspace_id": "ws_x", "kind": "personal", "entitlement_id": "trial"}
+    assert workspaces._public_workspace(other)["entitlement_id"] == "trial"

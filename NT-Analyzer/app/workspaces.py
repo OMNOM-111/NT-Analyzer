@@ -420,6 +420,14 @@ def _public_membership(row: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 def _public_workspace(row: Dict[str, Any], membership: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     kind = str(row.get("kind") or "")
+    # The owner's workspace is founder by definition. Normalising only when
+    # ensure_owner_workspace happens to run left Production displaying
+    # "stage9_canary_acceptance" -- a label from an acceptance run -- for as
+    # long as nothing rewrote the row. What is shown is derived here so it
+    # cannot drift from what the account actually holds.
+    entitlement = str(row.get("entitlement_id") or "")
+    if kind == "owner_training":
+        entitlement = "founder"
     return {
         "workspace_id": row.get("workspace_id"),
         "kind": kind,
@@ -427,7 +435,7 @@ def _public_workspace(row: Dict[str, Any], membership: Optional[Dict[str, Any]] 
         "owner_user_uuid": row.get("owner_user_uuid") or "",
         "display_name": row.get("display_name") or "Workspace",
         "status": row.get("status") or "active",
-        "entitlement_id": row.get("entitlement_id") or "",
+        "entitlement_id": entitlement,
         "default_runtime_connection_id": row.get("default_runtime_connection_id") or "",
         "uses_owner_runtime": kind == "owner_training",
         "membership": _public_membership(membership),
