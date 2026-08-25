@@ -1376,7 +1376,10 @@ def _tap(api, challenge_id, uid=4242, owner="999", ok=True):
 
 def test_login_start_returns_a_short_lived_qr_deep_link(auth_store) -> None:
     login = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
-    assert login["qr_payload"] == login["bot_url"]
+    # The QR carries the app scheme, not the https link: the iOS Camera app
+    # hands https URLs to Safari, which put a browser in front of Telegram.
+    assert login["qr_payload"] == login["app_url"]
+    assert login["qr_payload"].startswith("tg://resolve?domain=StratForge_bot&start=login_")
     assert login["bot_url"].startswith("https://t.me/StratForge_bot?start=login_")
     assert login["qr_svg"].startswith("<svg") and login["qr_svg"].endswith("</svg>")
     # Short TTL: a QR on screen is a bearer token, not a 15-minute link.
@@ -1511,13 +1514,15 @@ def test_login_start_is_rate_limited_per_ip(auth_store) -> None:
     assert excinfo.value.status == 429
 
 
-def test_login_start_offers_both_an_app_scheme_and_a_universal_link(auth_store) -> None:
+def test_login_start_offers_both_an_app_scheme_and_a_web_fallback(auth_store) -> None:
     login = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
-    # tg: reaches an installed client with no browser hop and no resolver.
+    # tg: reaches an installed client with no browser hop and no resolver, and
+    # is what a phone camera scans.
     assert login["app_url"].startswith("tg://resolve?domain=StratForge_bot&start=login_")
-    # The QR carries the https form: it is a Universal/App Link, so a phone
-    # with Telegram still opens the app, and one without it is not stranded.
-    assert login["qr_payload"].startswith("https://t.me/")
-    assert login["qr_payload"] == login["bot_url"]
-    assert login["app_url"].endswith(login["code"])
-    assert login["bot_url"].endswith(login["code"])
+    assert login["qr_payload"] == login["app_url"]
+    # The scheme is a dead end without Telegram, so an https escape hatch is
+    # always offered alongside it.
+    assert login["web_fallback_url"].startswith("https://t.me/")
+    assert login["web_fallback_url"] == login["bot_url"]
+    for key in ("app_url", "bot_url", "web_fallback_url", "qr_payload"):
+        assert login[key].endswith(login["code"]), key

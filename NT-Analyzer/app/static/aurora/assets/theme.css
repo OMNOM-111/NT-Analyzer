@@ -2480,6 +2480,8 @@ html.auth-locked .content { padding: 0 !important; min-height: 100vh; }
 .auth-qr-frame svg { display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; }
 .auth-qr-copy { margin: 0; text-align: center; font-size: 12.5px; color: var(--tx-2); max-width: 300px; }
 .auth-qr-life { font-size: 11px; color: var(--tx-3); min-height: 14px; }
+.auth-qr-fallback { font-size: 11.5px; color: var(--tx-3); text-decoration: underline; text-underline-offset: 2px; }
+.auth-qr-fallback:hover { color: var(--tx-2); }
 @media (max-width: 420px) { .auth-qr-frame { width: min(188px, 100%); } }
 .auth-manual-fallback { margin-top: 12px; }
 .auth-manual-fallback > summary { cursor: pointer; color: var(--tx-3); font-size: 11.5px; text-align: center; list-style: none; }
