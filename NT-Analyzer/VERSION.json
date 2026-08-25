@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "version": "0.10.0-beta.38",
+  "version": "0.10.0-beta.39",
   "channel": "beta",
   "status": "pre_release",
   "build_date": "2026-08-25",
-  "build_timestamp_utc": "2026-08-25T17:19:27Z"
+  "build_timestamp_utc": "2026-08-25T19:49:05Z"
 }
