@@ -939,3 +939,54 @@ def test_idle_long_poll_tick_is_not_a_tight_lock_loop() -> None:
     body = source.split("def poll_commands", 1)[1].split("\ndef ", 1)[0]
     assert "IDLE_POLL_TICK_SEC" in body
     assert "min(0.5," not in body, "the half-second idle tick is what starved readers"
+
+
+def test_status_snapshot_serves_a_busy_store_instead_of_giving_up(connector_store, monkeypatch) -> None:
+    """A recent answer beats "unknown" when the document read is expensive."""
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    connector_protocol.signed_hello(_hello(private, pending))
+
+    first = connector_protocol.health_summary(42, workspace_id=workspace["workspace_id"])
+    assert first["status_known"] is True and first["stale_sec"] == 0.0
+
+    # Now make the store unreachable and hold the lock: the snapshot answers.
+    monkeypatch.setattr(connector_protocol, "HEALTH_SUMMARY_LOCK_WAIT_SEC", 0.1)
+    monkeypatch.setattr(connector_protocol, "HEALTH_SNAPSHOT_TTL_SEC", 0.0)
+    holding, release = threading.Event(), threading.Event()
+
+    def hog():
+        with connector_protocol._LOCK:
+            holding.set()
+            release.wait(timeout=5)
+
+    worker = threading.Thread(target=hog, daemon=True)
+    worker.start()
+    holding.wait(timeout=5)
+    try:
+        out = connector_protocol.health_summary(42, workspace_id=workspace["workspace_id"])
+    finally:
+        release.set()
+        worker.join(timeout=5)
+
+    assert out["status_known"] is True
+    assert out["installations"] == first["installations"]
+    assert out["online"] == first["online"]
+    assert out["stale_sec"] >= 0.0, "the age of the answer travels with it"
+
+
+def test_enrolled_but_offline_is_reported_as_offline_not_as_a_fault(connector_store) -> None:
+    """NinjaTrader being down for maintenance is an operational state."""
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    connector_protocol.signed_hello(_hello(private, pending))
+
+    doc = connector_protocol._read_doc()
+    for row in doc["installations"]:
+        row["last_heartbeat_at"] = time.time() - connector_protocol.OFFLINE_AFTER_SEC - 600
+    connector_protocol._write_doc(doc)
+    connector_protocol._HEALTH_SNAPSHOT.clear()
+
+    out = connector_protocol.health_summary(42, workspace_id=workspace["workspace_id"])
+    assert out["status_known"] is True
+    assert out["installations"] == 1 and out["online"] == 0
