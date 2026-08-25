@@ -43,6 +43,14 @@ from . import auth_identity, legal, qr_code, runtime_env, secure_store
 SESSION_COOKIE = "sf_session"
 SESSION_TTL_SEC = 30 * 24 * 60 * 60
 CHALLENGE_TTL_SEC = 15 * 60
+# Login challenge lifecycle. Opening is repeatable while the TTL lasts;
+# only an explicit confirmation spends the challenge, and only the browser
+# that owns it can exchange the result for a session.
+LOGIN_PENDING = "created"        # QR on screen, nothing has happened yet
+LOGIN_OPENED = "opened"          # deep link opened, awaiting confirmation
+LOGIN_CONFIRMED = "login_approved"
+LOGIN_CONSUMED = "consumed"      # session issued: single-use, spent
+LOGIN_CANCELLED = "denied"
 # A browser login QR is shown on screen and is a bearer token for one
 # account, so it lives for minutes rather than a quarter of an hour. The
 # login page refreshes it in place when it lapses.
@@ -2369,7 +2377,10 @@ def login_state(challenge_id: str) -> Dict[str, Any]:
         doc = _read_doc()
         challenge = _challenge(doc, challenge_id=str(challenge_id or ""))
         if challenge is None:
+            # Expired or swept: the page starts a fresh, independent attempt.
             raise AccountAuthError("Запрос входа истёк. Начните заново.", 410)
+        if str(challenge.get("status") or "") == LOGIN_CONSUMED:
+            raise AccountAuthError("Эта ссылка входа уже использована.", 410)
         user = _user(doc, int(challenge.get("user_id") or 0)) if challenge.get("user_id") else None
         return {
             "challenge_id": challenge.get("challenge_id"), "status": challenge.get("status"),
@@ -2619,18 +2630,52 @@ def _send_owner_approval(api_call: Callable[..., Any], owner_chat_id: str,
     })
 
 
+def _claim_refusal_text(doc: Dict[str, Any], *, code: str, uid: int) -> str:
+    """Explain precisely why a scanned code was not accepted."""
+    for row in reversed(doc.get("challenges") or []):
+        if not isinstance(row, dict):
+            continue
+        if not hmac.compare_digest(str(row.get("code") or "").upper(), str(code or "").upper()):
+            continue
+        status = str(row.get("status") or "")
+        bound = str(row.get("environment") or "")
+        if bound and bound != runtime_env.deployment_environment():
+            return "Эта ссылка входа выдана для другого окружения StratForge AI."
+        if status == LOGIN_CONSUMED:
+            return "Эта ссылка входа уже использована. Откройте новый QR-код."
+        if status == LOGIN_CANCELLED:
+            return "Этот вход был отменён. Откройте новый QR-код."
+        if status == LOGIN_CONFIRMED:
+            return "Этот вход уже подтверждён — вернитесь в браузер."
+        opener = int(row.get("user_id") or 0)
+        if opener and opener != int(uid):
+            return "Эта ссылка входа принадлежит другому аккаунту Telegram."
+        break
+    return "Ссылка входа истекла. Откройте новый QR-код в приложении."
+
+
 def _claim_login_challenge(doc: Dict[str, Any], *, code: str, uid: int,
                            sender: Dict[str, Any],
                            status: str = "awaiting_contact") -> Optional[Dict[str, Any]]:
-    # Only a challenge still in "created" can be claimed, which is what makes
-    # a scanned QR single-use: the second scan finds nothing to claim.
-    challenge = _challenge(doc, code=code, statuses=("created",))
+    """Open a login challenge. Opening is repeatable; only confirming spends it.
+
+    Scanning a QR, or opening the deep link twice because Telegram was closed,
+    must not invalidate a login nobody has confirmed yet. So an already-opened
+    challenge is returned again unchanged instead of being refused, and the
+    single-use transition lives in the confirmation step alone.
+    """
+    challenge = _challenge(doc, code=code, statuses=(LOGIN_PENDING, LOGIN_OPENED))
     if challenge is None:
         return None
     # A challenge is bound to the environment that issued it. A code scanned
     # against the wrong environment is refused rather than silently accepted.
     bound = str(challenge.get("environment") or "")
     if bound and bound != runtime_env.deployment_environment():
+        return None
+    # Once a Telegram account has opened a challenge it belongs to them; a
+    # second person scanning the same screen cannot take it over.
+    opener = int(challenge.get("user_id") or 0)
+    if opener and opener != int(uid):
         return None
     challenge.update({"user_id": uid, "status": status, "telegram_started_at_utc": _now_iso()})
     challenge["telegram_user"] = {
@@ -2672,7 +2717,7 @@ def _send_login_confirm_request(api_call: Callable[..., Any], uid: int,
 def _apply_login_confirm(doc: Dict[str, Any], *, challenge_id: str, actor_id: int,
                          allowed: bool, owner_chat_id: str) -> Tuple[str, Dict[str, Any]]:
     """Resolve a one-tap login confirmation. Fail-closed on every mismatch."""
-    challenge = _challenge(doc, challenge_id=challenge_id, statuses=("awaiting_confirm",))
+    challenge = _challenge(doc, challenge_id=challenge_id, statuses=(LOGIN_OPENED,))
     if challenge is None:
         return "expired", {}
     # The tap must come from the same Telegram account that opened the link,
@@ -2925,10 +2970,13 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
         with _LOCK:
             doc = _read_doc()
             challenge = _claim_login_challenge(
-                doc, code=code, uid=uid, sender=sender, status="awaiting_confirm",
+                doc, code=code, uid=uid, sender=sender, status=LOGIN_OPENED,
             )
             if challenge is None:
-                api_call("sendMessage", {"chat_id": uid, "text": "Ссылка входа истекла или уже использована."})
+                api_call("sendMessage", {
+                    "chat_id": uid,
+                    "text": _claim_refusal_text(doc, code=code, uid=uid),
+                })
                 return True
             challenge_id = str(challenge.get("challenge_id") or "")
             _write_doc(doc)
@@ -2957,7 +3005,7 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
             # phone identity -- it is simply no longer demanded on every login,
             # because the one-tap confirmation already proves the account.
             challenge = _challenge(
-                doc, user_id=uid, statuses=("awaiting_contact", "awaiting_confirm"),
+                doc, user_id=uid, statuses=("awaiting_contact", LOGIN_OPENED),
             )
             if challenge is None:
                 return False
