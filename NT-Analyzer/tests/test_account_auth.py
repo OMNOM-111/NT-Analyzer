@@ -189,7 +189,7 @@ def test_manual_login_code_recovers_when_start_parameter_is_lost(auth_store) -> 
 
     # One tap replaces the mandatory contact request: the bot offers a
     # single inline confirmation button, not a contact keyboard.
-    assert account_auth.login_state(login["challenge_id"])["status"] == "awaiting_confirm"
+    assert account_auth.login_state(login["challenge_id"])["status"] == "opened"
     assert any((payload.get("reply_markup") or {}).get("inline_keyboard") for _method, payload in calls)
     assert not any((payload.get("reply_markup") or {}).get("keyboard") for _method, payload in calls)
 
@@ -212,7 +212,7 @@ def test_canary_login_uses_environment_payload_and_marker(auth_store, monkeypatc
         "chat": {"id": 42, "type": "private"},
     }}, api_call=api, owner_chat_id="999")
 
-    assert account_auth.login_state(login["challenge_id"])["status"] == "awaiting_confirm"
+    assert account_auth.login_state(login["challenge_id"])["status"] == "opened"
     texts = [payload.get("text", "") for method, payload in calls if method == "sendMessage"]
     assert any(text.startswith("[CANARY] ") for text in texts)
 
@@ -1393,7 +1393,7 @@ def test_one_tap_confirmation_logs_in_without_any_contact(auth_store) -> None:
     account_auth.ensure_owner(999)
     calls, api = _api_recorder()
     login = _start_and_scan(api)
-    assert account_auth.login_state(login["challenge_id"])["status"] == "awaiting_confirm"
+    assert account_auth.login_state(login["challenge_id"])["status"] == "opened"
 
     _tap(api, login["challenge_id"])
     state = account_auth.login_state(login["challenge_id"])["status"]
@@ -1416,18 +1416,23 @@ def test_scanned_challenge_is_single_use(auth_store) -> None:
     assert any("истёк или уже использован" in text for text in answers)
 
 
-def test_a_second_scan_of_the_same_code_is_refused(auth_store) -> None:
+def test_a_challenge_opened_by_one_account_cannot_be_taken_over(auth_store) -> None:
     account_auth.ensure_owner(999)
     calls, api = _api_recorder()
     login = _start_and_scan(api)
-    # Someone else scanning the same QR finds nothing left to claim.
+    # A second person scanning the same screen must not take the login over.
     account_auth.process_update({"message": {
         "text": f"/start {login['bot_url'].split('?start=', 1)[1]}",
         "from": {"id": 5151, "first_name": "Mallory"},
         "chat": {"id": 5151, "type": "private"},
     }}, api_call=api, owner_chat_id="999")
     texts = [p.get("text", "") for m, p in calls if m == "sendMessage"]
-    assert any("истекла или уже использована" in text for text in texts)
+    assert any("принадлежит другому аккаунту Telegram" in text for text in texts), texts
+    # The rightful opener still owns it.
+    state = account_auth.login_state(login["challenge_id"])
+    assert state["status"] == "opened"
+    doc = account_auth._read_doc()
+    assert int(account_auth._challenge(doc, challenge_id=login["challenge_id"])["user_id"]) == 4242
 
 
 def test_only_the_scanner_can_confirm_the_login(auth_store) -> None:
@@ -1438,7 +1443,7 @@ def test_only_the_scanner_can_confirm_the_login(auth_store) -> None:
     _tap(api, login["challenge_id"], uid=5151)
     answers = [p.get("text", "") for m, p in calls if m == "answerCallbackQuery"]
     assert any("только тот, кто открыл ссылку" in text.lower() for text in answers)
-    assert account_auth.login_state(login["challenge_id"])["status"] == "awaiting_confirm"
+    assert account_auth.login_state(login["challenge_id"])["status"] == "opened"
 
 
 def test_rejecting_the_login_denies_the_waiting_browser(auth_store) -> None:
@@ -1526,3 +1531,133 @@ def test_login_start_offers_both_an_app_scheme_and_a_web_fallback(auth_store) ->
     assert login["web_fallback_url"] == login["bot_url"]
     for key in ("app_url", "bot_url", "web_fallback_url", "qr_payload"):
         assert login[key].endswith(login["code"]), key
+
+
+def test_rescanning_without_confirming_does_not_consume_the_challenge(auth_store) -> None:
+    """Opening the deep link twice must not invalidate a login nobody confirmed."""
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+    login = _start_and_scan(api)
+    assert account_auth.login_state(login["challenge_id"])["status"] == "opened"
+
+    # Same person opens the link again -- they closed Telegram, or tapped twice.
+    account_auth.process_update({"message": {
+        "text": f"/start {login['bot_url'].split('?start=', 1)[1]}",
+        "from": {"id": 4242, "first_name": "Ada", "username": "ada"},
+        "chat": {"id": 4242, "type": "private"},
+    }}, api_call=api, owner_chat_id="999")
+    texts = [p.get("text", "") for m, p in calls if m == "sendMessage"]
+    assert not any("истекла или уже использована" in t for t in texts), texts
+    assert account_auth.login_state(login["challenge_id"])["status"] == "opened"
+    # ...and it still confirms normally afterwards.
+    _tap(api, login["challenge_id"])
+    assert account_auth.login_state(login["challenge_id"])["status"] in {
+        "login_approved", "awaiting_profile"}
+
+
+def test_each_browser_attempt_is_an_independent_challenge(auth_store) -> None:
+    """A second computer's QR must not inherit the first one's state."""
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+    first = _start_and_scan(api)
+    second = _start_and_scan(api)
+    assert first["challenge_id"] != second["challenge_id"]
+    assert first["code"] != second["code"]
+
+    # Confirming the second attempt must leave the first one alone.
+    _tap(api, second["challenge_id"])
+    assert account_auth.login_state(second["challenge_id"])["status"] in {
+        "login_approved", "awaiting_profile"}
+    assert account_auth.login_state(first["challenge_id"])["status"] == "opened"
+
+
+def test_a_fresh_challenge_never_inherits_a_spent_one(auth_store) -> None:
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+    spent = _start_and_scan(api)
+    _tap(api, spent["challenge_id"])
+
+    fresh = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
+    assert account_auth.login_state(fresh["challenge_id"])["status"] == "created"
+
+
+def test_only_confirmation_spends_the_challenge_and_only_once(auth_store) -> None:
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+    login = _start_and_scan(api)
+    _tap(api, login["challenge_id"])
+    approved = account_auth.login_state(login["challenge_id"])["status"]
+    assert approved in {"login_approved", "awaiting_profile"}
+
+    # A second confirmation of the same challenge is refused, not replayed.
+    before = len([1 for m, _p in calls if m == "sendMessage"])
+    _tap(api, login["challenge_id"])
+    answers = [p.get("text", "") for m, p in calls if m == "answerCallbackQuery"]
+    assert any("истёк или уже использован" in t for t in answers), answers
+    assert account_auth.login_state(login["challenge_id"])["status"] == approved
+    assert len([1 for m, _p in calls if m == "sendMessage"]) == before
+
+
+def test_three_concurrent_attempts_stay_independent(auth_store) -> None:
+    """Two other computers must be untouched by one confirmation."""
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+    a = _start_and_scan(api)
+    b = _start_and_scan(api)
+    c = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
+
+    ids = {a["challenge_id"], b["challenge_id"], c["challenge_id"]}
+    assert len(ids) == 3
+    _tap(api, b["challenge_id"])
+
+    assert account_auth.login_state(b["challenge_id"])["status"] in {
+        "login_approved", "awaiting_profile"}
+    assert account_auth.login_state(a["challenge_id"])["status"] == "opened"
+    # Never opened at all: still pending, and still usable.
+    assert account_auth.login_state(c["challenge_id"])["status"] == "created"
+
+
+def test_cancelling_one_attempt_leaves_the_others_usable(auth_store) -> None:
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+    a = _start_and_scan(api)
+    b = _start_and_scan(api)
+    _tap(api, a["challenge_id"], ok=False)
+
+    assert account_auth.login_state(a["challenge_id"])["status"] == "denied"
+    assert account_auth.login_state(b["challenge_id"])["status"] == "opened"
+    _tap(api, b["challenge_id"])
+    assert account_auth.login_state(b["challenge_id"])["status"] in {
+        "login_approved", "awaiting_profile"}
+
+
+def test_a_cancelled_code_says_so_instead_of_saying_expired(auth_store) -> None:
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+    login = _start_and_scan(api)
+    _tap(api, login["challenge_id"], ok=False)
+    account_auth.process_update({"message": {
+        "text": f"/login {login['code']}",
+        "from": {"id": 4242, "first_name": "Ada"},
+        "chat": {"id": 4242, "type": "private"},
+    }}, api_call=api, owner_chat_id="999")
+    texts = [p.get("text", "") for m, p in calls if m == "sendMessage"]
+    assert any("отменён" in t for t in texts), texts
+
+
+def test_expired_challenge_reports_expiry_and_a_new_one_is_clean(auth_store) -> None:
+    account_auth.ensure_owner(999)
+    login = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
+    doc = account_auth._read_doc()
+    account_auth._challenge(doc, challenge_id=login["challenge_id"])["expires_at"] = time.time() - 1
+    account_auth._write_doc(doc)
+
+    with pytest.raises(account_auth.AccountAuthError) as excinfo:
+        account_auth.login_state(login["challenge_id"])
+    assert excinfo.value.status == 410
+
+    # The replacement is a genuinely new attempt, not a revived old one.
+    fresh = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
+    assert fresh["challenge_id"] != login["challenge_id"]
+    assert fresh["code"] != login["code"]
+    assert account_auth.login_state(fresh["challenge_id"])["status"] == "created"
