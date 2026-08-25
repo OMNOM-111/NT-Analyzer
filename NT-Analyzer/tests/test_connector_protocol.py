@@ -818,3 +818,80 @@ def test_blocked_handshake_rollback(connector_store) -> None:
         42, workspace_id=workspace["workspace_id"],
     )
     assert listed["connections"][0]["status"] == "pending"
+
+
+# --------------------------------------------------------------------------- #
+# A status probe must answer the status question without doing maintenance
+# work: list_installations sweeps and persists, which turns a diagnostics read
+# into a write under the connector lock, competing with the heartbeats of the
+# device it is reporting on.
+# --------------------------------------------------------------------------- #
+def test_health_summary_reports_an_online_connector(connector_store) -> None:
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    connector_protocol.signed_hello(_hello(private, pending))
+
+    summary = connector_protocol.health_summary(
+        42, workspace_id=workspace["workspace_id"])
+    assert summary["ok"] is True
+    assert summary["installations"] == 1
+    assert summary["online"] == 1
+    assert summary["last_heartbeat_utc"]
+
+
+def test_health_summary_never_writes_the_connector_document(connector_store) -> None:
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    connector_protocol.signed_hello(_hello(private, pending))
+
+    writes = []
+    original = connector_protocol._write_doc
+    connector_protocol._write_doc = lambda doc: writes.append(1) or original(doc)
+    try:
+        for _ in range(5):
+            connector_protocol.health_summary(
+                42, workspace_id=workspace["workspace_id"])
+    finally:
+        connector_protocol._write_doc = original
+    assert writes == [], "a status probe must not persist anything"
+
+
+def test_health_summary_does_not_report_a_stale_device_as_online(connector_store) -> None:
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    connector_protocol.signed_hello(_hello(private, pending))
+
+    doc = connector_protocol._read_doc()
+    for row in doc["installations"]:
+        row["last_heartbeat_at"] = time.time() - connector_protocol.OFFLINE_AFTER_SEC - 60
+    connector_protocol._write_doc(doc)
+
+    summary = connector_protocol.health_summary(
+        42, workspace_id=workspace["workspace_id"])
+    assert summary["installations"] == 1
+    assert summary["online"] == 0, "expiry is applied in the reply, not persisted"
+    # ...and still without writing.
+    after = connector_protocol._read_doc()
+    assert after["installations"][0]["status"] == "online"
+
+
+def test_a_timed_out_probe_does_not_claim_the_source_is_unhealthy() -> None:
+    """Diagnostics failure and source health are different facts."""
+    slow = server_mod._connector_probe("connector", lambda: time.sleep(5), timeout_sec=0.2)
+    assert slow["state"] == "timeout"
+    assert slow["diagnostics"] == "timeout"
+    assert slow["status_known"] is False
+    # It must not invent counts that would read as "nothing is connected".
+    assert "online" not in slow and "installations" not in slow
+    assert "не измерено" in slow["detail"]
+
+    broken = server_mod._connector_probe(
+        "connector", lambda: (_ for _ in ()).throw(RuntimeError("boom")), timeout_sec=2)
+    assert broken["state"] == "error"
+    assert broken["status_known"] is False
+
+    good = server_mod._connector_probe(
+        "connector", lambda: {"installations": 1, "online": 1}, timeout_sec=2)
+    assert good["status_known"] is True
+    assert good["diagnostics"] == "ok"
+    assert good["online"] == 1

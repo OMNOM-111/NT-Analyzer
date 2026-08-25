@@ -455,17 +455,25 @@ def _connector_probe(label: str, fn: Any,
     elapsed_ms = int((time.time() - started) * 1000)
 
     if worker.is_alive():
+        # A probe that ran out of time says nothing about the thing it was
+        # asking about. Reporting that as the source's state made a slow
+        # diagnostics query look like an outage of a perfectly healthy
+        # connector, so the two are kept apart explicitly.
         return {
             "id": label, "state": "timeout", "elapsed_ms": elapsed_ms,
-            "detail": "нет ответа за %.1f с" % float(timeout_sec),
+            "diagnostics": "timeout", "status_known": False,
+            "detail": "диагностика не ответила за %.1f с; состояние источника "
+                      "не измерено" % float(timeout_sec),
         }
     if "error" in outcome:
         return {
             "id": label, "state": "error",
+            "diagnostics": "error", "status_known": False,
             "elapsed_ms": outcome.get("elapsed_ms", elapsed_ms),
             "detail": outcome["error"],
         }
-    row = {"id": label, "state": "unknown",
+    row = {"id": label, "state": "unknown", "diagnostics": "ok",
+           "status_known": True,
            "elapsed_ms": outcome.get("elapsed_ms", elapsed_ms)}
     value = outcome.get("value")
     if isinstance(value, dict):
@@ -550,17 +558,22 @@ def _connectors_dashboard_payload(context: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     def connector_installations() -> Dict[str, Any]:
-        out = connector_protocol.list_installations(context.get("user_id"))
-        rows = list(out.get("connections") or [])
-        online = [r for r in rows if str(r.get("status") or "") in {"online", "active"}]
+        # A status panel asks a status question, so it must not run the
+        # maintenance sweep that list_installations performs: that turns a read
+        # into a write under the connector lock, contending with the heartbeats
+        # of the device being asked about.
+        out = connector_protocol.health_summary(
+            context.get("user_id"),
+            workspace_id=str(context.get("workspace_id") or ""),
+        )
+        total = int(out.get("installations") or 0)
+        online = int(out.get("online") or 0)
         return {
             "label": "Windows Connector / NinjaTrader",
-            "state": "healthy" if online else ("degraded" if rows else "not_configured"),
-            "installations": len(rows),
-            "online": len(online),
-            "last_heartbeat_utc": max(
-                [str(r.get("last_heartbeat_utc") or "") for r in rows] or [""]
-            ),
+            "state": "healthy" if online else ("degraded" if total else "not_configured"),
+            "installations": total,
+            "online": online,
+            "last_heartbeat_utc": str(out.get("last_heartbeat_utc") or ""),
         }
 
     # Concurrently, so the page is bounded by the slowest single source rather
@@ -624,7 +637,7 @@ def _operations_statuses(context: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
         ),
         (
             "connector",
-            lambda: connector_protocol.list_installations(
+            lambda: connector_protocol.health_summary(
                 context.get("user_id"),
                 workspace_id=str(context.get("workspace_id") or ""),
             ),
