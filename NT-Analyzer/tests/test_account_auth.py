@@ -86,7 +86,9 @@ def test_new_account_activates_full_trial_after_contact_profile_and_terms(auth_s
         "from": {"id": 42, "first_name": "Ada", "username": "ada"},
         "chat": {"id": 42, "type": "private"},
     }}, api_call=api, owner_chat_id="999")
-    assert any((payload.get("reply_markup") or {}).get("keyboard") for _method, payload in calls)
+    # The bot now offers one confirmation button; a contact is still accepted
+    # (and still records the phone identity) but is no longer demanded.
+    assert any((payload.get("reply_markup") or {}).get("inline_keyboard") for _method, payload in calls)
 
     assert account_auth.process_update({"message": {
         "contact": {"user_id": 42, "phone_number": "+15551234567"},
@@ -185,8 +187,11 @@ def test_manual_login_code_recovers_when_start_parameter_is_lost(auth_store) -> 
         "chat": {"id": 42, "type": "private"},
     }}, api_call=api, owner_chat_id="999")
 
-    assert account_auth.login_state(login["challenge_id"])["status"] == "awaiting_contact"
-    assert any((payload.get("reply_markup") or {}).get("keyboard") for _method, payload in calls)
+    # One tap replaces the mandatory contact request: the bot offers a
+    # single inline confirmation button, not a contact keyboard.
+    assert account_auth.login_state(login["challenge_id"])["status"] == "awaiting_confirm"
+    assert any((payload.get("reply_markup") or {}).get("inline_keyboard") for _method, payload in calls)
+    assert not any((payload.get("reply_markup") or {}).get("keyboard") for _method, payload in calls)
 
 
 def test_canary_login_uses_environment_payload_and_marker(auth_store, monkeypatch) -> None:
@@ -207,7 +212,7 @@ def test_canary_login_uses_environment_payload_and_marker(auth_store, monkeypatc
         "chat": {"id": 42, "type": "private"},
     }}, api_call=api, owner_chat_id="999")
 
-    assert account_auth.login_state(login["challenge_id"])["status"] == "awaiting_contact"
+    assert account_auth.login_state(login["challenge_id"])["status"] == "awaiting_confirm"
     texts = [payload.get("text", "") for method, payload in calls if method == "sendMessage"]
     assert any(text.startswith("[CANARY] ") for text in texts)
 
@@ -1343,3 +1348,164 @@ def test_developer_test_auth_cannot_exist_outside_development(monkeypatch) -> No
             rt.assert_production_safe()
         with pytest.raises(rt.RuntimeEnvError):
             rt.require_test_auth()
+
+
+# ---------------------------------------------------------------------------
+# QR / one-tap Telegram login. The browser shows a short-lived QR carrying a
+# deep link; the phone opens the bot and confirms once. No popup window and no
+# mandatory contact upload on every login.
+# ---------------------------------------------------------------------------
+
+def _start_and_scan(api, uid=4242, code_owner="999", first="Ada", last="L"):
+    login = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
+    account_auth.process_update({"message": {
+        "text": f"/start {login['bot_url'].split('?start=', 1)[1]}",
+        "from": {"id": uid, "first_name": first, "last_name": last, "username": "ada"},
+        "chat": {"id": uid, "type": "private"},
+    }}, api_call=api, owner_chat_id=code_owner)
+    return login
+
+
+def _tap(api, challenge_id, uid=4242, owner="999", ok=True):
+    return account_auth.process_update(
+        {"callback_query": {
+            "id": "cb1", "from": {"id": uid},
+            "data": f"login_{'ok' if ok else 'no'}:{challenge_id}",
+        }}, api_call=api, owner_chat_id=owner)
+
+
+def test_login_start_returns_a_short_lived_qr_deep_link(auth_store) -> None:
+    login = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
+    assert login["qr_payload"] == login["bot_url"]
+    assert login["bot_url"].startswith("https://t.me/StratForge_bot?start=login_")
+    assert login["qr_svg"].startswith("<svg") and login["qr_svg"].endswith("</svg>")
+    # Short TTL: a QR on screen is a bearer token, not a 15-minute link.
+    assert login["expires_in_sec"] == account_auth.LOGIN_CHALLENGE_TTL_SEC
+    assert login["expires_in_sec"] <= 300
+    # The manual code stays available as the Advanced fallback.
+    assert login["manual_command"].startswith("/login ")
+
+
+def test_one_tap_confirmation_logs_in_without_any_contact(auth_store) -> None:
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+    login = _start_and_scan(api)
+    assert account_auth.login_state(login["challenge_id"])["status"] == "awaiting_confirm"
+
+    _tap(api, login["challenge_id"])
+    state = account_auth.login_state(login["challenge_id"])["status"]
+    # A brand-new account still has to complete its profile, but it got there
+    # without ever being asked for a phone number.
+    assert state in {"login_approved", "awaiting_profile"}
+    assert not any("контакт" in str(p.get("text") or "").lower() for _m, p in calls)
+    row = account_auth._user(account_auth._read_doc(), 4242)
+    assert not row.get("phone_hash")
+
+
+def test_scanned_challenge_is_single_use(auth_store) -> None:
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+    login = _start_and_scan(api)
+    _tap(api, login["challenge_id"])
+    # A replayed tap on the same challenge must not re-authorise anything.
+    _tap(api, login["challenge_id"])
+    answers = [p.get("text", "") for m, p in calls if m == "answerCallbackQuery"]
+    assert any("истёк или уже использован" in text for text in answers)
+
+
+def test_a_second_scan_of_the_same_code_is_refused(auth_store) -> None:
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+    login = _start_and_scan(api)
+    # Someone else scanning the same QR finds nothing left to claim.
+    account_auth.process_update({"message": {
+        "text": f"/start {login['bot_url'].split('?start=', 1)[1]}",
+        "from": {"id": 5151, "first_name": "Mallory"},
+        "chat": {"id": 5151, "type": "private"},
+    }}, api_call=api, owner_chat_id="999")
+    texts = [p.get("text", "") for m, p in calls if m == "sendMessage"]
+    assert any("истекла или уже использована" in text for text in texts)
+
+
+def test_only_the_scanner_can_confirm_the_login(auth_store) -> None:
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+    login = _start_and_scan(api)
+    # A forwarded button tapped by a different Telegram account is refused.
+    _tap(api, login["challenge_id"], uid=5151)
+    answers = [p.get("text", "") for m, p in calls if m == "answerCallbackQuery"]
+    assert any("только тот, кто открыл ссылку" in text.lower() for text in answers)
+    assert account_auth.login_state(login["challenge_id"])["status"] == "awaiting_confirm"
+
+
+def test_rejecting_the_login_denies_the_waiting_browser(auth_store) -> None:
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+    login = _start_and_scan(api)
+    _tap(api, login["challenge_id"], ok=False)
+    assert account_auth.login_state(login["challenge_id"])["status"] == "denied"
+
+
+def test_challenge_is_bound_to_the_issuing_environment(auth_store, monkeypatch) -> None:
+    """A code issued by one environment is not claimable on another.
+
+    The binding lives in the stored challenge, so it is checked here directly:
+    switching runtime_env across a write would also switch the storage backend,
+    which would test the fixture rather than the rule.
+    """
+    monkeypatch.setattr(
+        account_auth.runtime_env, "deployment_environment",
+        lambda: account_auth.runtime_env.CANARY)
+    account_auth.ensure_owner(999)
+    login = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
+    doc = account_auth._read_doc()
+    stored = account_auth._challenge(doc, challenge_id=login["challenge_id"])
+    assert stored["environment"] == account_auth.runtime_env.CANARY
+
+    # Same store, different environment: the claim must be refused.
+    monkeypatch.setattr(
+        account_auth.runtime_env, "deployment_environment",
+        lambda: account_auth.runtime_env.DEVELOPMENT)
+    refused = account_auth._claim_login_challenge(
+        doc, code=login["code"], uid=4242, sender={"first_name": "Ada"},
+        status="awaiting_confirm")
+    assert refused is None
+    assert stored["status"] == "created"
+
+    # Back on the issuing environment the very same code is accepted once.
+    monkeypatch.setattr(
+        account_auth.runtime_env, "deployment_environment",
+        lambda: account_auth.runtime_env.CANARY)
+    claimed = account_auth._claim_login_challenge(
+        doc, code=login["code"], uid=4242, sender={"first_name": "Ada"},
+        status="awaiting_confirm")
+    assert claimed is not None and claimed["status"] == "awaiting_confirm"
+
+
+def test_owner_one_tap_login_is_owner_and_never_trial(auth_store, monkeypatch) -> None:
+    monkeypatch.delenv("NTA_TELEGRAM_CHAT_ID", raising=False)
+    monkeypatch.setenv(account_auth.CANONICAL_OWNER_UUID_ENV, CANONICAL_UUID)
+    uid = 1647145559
+    doc = account_auth._read_doc()
+    _canonical_owner_row(doc, uid, is_owner=False)
+    account_auth._write_doc(doc)
+
+    calls, api = _api_recorder()
+    login = _start_and_scan(api, uid=uid, code_owner="", first="Owner", last="Tester")
+    _tap(api, login["challenge_id"], uid=uid, owner="")
+
+    assert account_auth.login_state(login["challenge_id"])["status"] == "login_approved"
+    row = account_auth._user(account_auth._read_doc(), uid)
+    assert row["is_owner"] is True and row["role"] == "owner"
+    assert not row.get("initial_trial_pending")
+    texts = [p.get("text", "") for m, p in calls if m == "sendMessage"]
+    assert any("полный доступ владельца" in text for text in texts)
+    assert not any("пробный" in text or "Free Preview" in text for text in texts)
+
+
+def test_login_start_is_rate_limited_per_ip(auth_store) -> None:
+    for _ in range(10):
+        account_auth.start_login(bot_username="StratForge_bot", ip="10.0.0.9")
+    with pytest.raises(account_auth.AccountAuthError) as excinfo:
+        account_auth.start_login(bot_username="StratForge_bot", ip="10.0.0.9")
+    assert excinfo.value.status == 429

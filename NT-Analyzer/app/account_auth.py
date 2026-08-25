@@ -37,12 +37,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, Optional, Tuple
 
-from . import auth_identity, legal, runtime_env, secure_store
+from . import auth_identity, legal, qr_code, runtime_env, secure_store
 
 
 SESSION_COOKIE = "sf_session"
 SESSION_TTL_SEC = 30 * 24 * 60 * 60
 CHALLENGE_TTL_SEC = 15 * 60
+# A browser login QR is shown on screen and is a bearer token for one
+# account, so it lives for minutes rather than a quarter of an hour. The
+# login page refreshes it in place when it lapses.
+LOGIN_CHALLENGE_TTL_SEC = 3 * 60
 OWNER_APPROVAL_TTL_SEC = 7 * 24 * 60 * 60
 ADMIN_REVOKE_NOTICE_TTL_SEC = 24 * 60 * 60
 IMPERSONATION_TTL_SEC = 4 * 60 * 60
@@ -2288,26 +2292,41 @@ def start_login(*, bot_username: str, ip: str, user_agent: str = "") -> Dict[str
     challenge_id = secrets.token_urlsafe(24)
     code = secrets.token_hex(4).upper()
     now = time.time()
+    environment = runtime_env.deployment_environment()
     with _LOCK:
         doc = _read_doc()
         _cleanup(doc)
         doc["challenges"].append({
             "challenge_id": challenge_id, "code": code, "status": "created",
-            "created_at_utc": _now_iso(), "expires_at": now + CHALLENGE_TTL_SEC,
+            # The environment is part of the challenge, not just of the deep
+            # link text, so a code scanned into the wrong bot/environment is
+            # rejected by the store rather than by a string comparison.
+            "environment": environment,
+            "created_at_utc": _now_iso(),
+            "expires_at": now + LOGIN_CHALLENGE_TTL_SEC,
             "ip_hash": hashlib.sha256(str(ip or "").encode()).hexdigest(),
             "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(),
         })
         _write_doc(doc)
     _audit("login_started", ip=ip)
-    canary_login = runtime_env.deployment_environment() == runtime_env.CANARY
+    canary_login = environment == runtime_env.CANARY
     start_payload = f"canary_login_{code}" if canary_login else f"login_{code}"
     manual_command = f"/login [CANARY] {code}" if canary_login else f"/login {code}"
-    return {
-        "challenge_id": challenge_id, "status": "created", "expires_in_sec": CHALLENGE_TTL_SEC,
-        "bot_url": f"https://t.me/{username}?start={start_payload}",
+    deep_link = f"https://t.me/{username}?start={start_payload}"
+    out = {
+        "challenge_id": challenge_id, "status": "created",
+        "expires_in_sec": LOGIN_CHALLENGE_TTL_SEC,
+        "bot_url": deep_link,
+        "qr_payload": deep_link,
         "code": code,
         "manual_command": manual_command,
     }
+    try:
+        out["qr_svg"] = qr_code.svg(deep_link, size_px=232, title="Вход через Telegram")
+    except qr_code.QRError:
+        # A QR is a convenience; the deep link and manual code still work.
+        out["qr_svg"] = ""
+    return out
 
 
 def _challenge(doc: Dict[str, Any], *, challenge_id: str = "", code: str = "",
@@ -2589,11 +2608,19 @@ def _send_owner_approval(api_call: Callable[..., Any], owner_chat_id: str,
 
 
 def _claim_login_challenge(doc: Dict[str, Any], *, code: str, uid: int,
-                           sender: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+                           sender: Dict[str, Any],
+                           status: str = "awaiting_contact") -> Optional[Dict[str, Any]]:
+    # Only a challenge still in "created" can be claimed, which is what makes
+    # a scanned QR single-use: the second scan finds nothing to claim.
     challenge = _challenge(doc, code=code, statuses=("created",))
     if challenge is None:
         return None
-    challenge.update({"user_id": uid, "status": "awaiting_contact", "telegram_started_at_utc": _now_iso()})
+    # A challenge is bound to the environment that issued it. A code scanned
+    # against the wrong environment is refused rather than silently accepted.
+    bound = str(challenge.get("environment") or "")
+    if bound and bound != runtime_env.deployment_environment():
+        return None
+    challenge.update({"user_id": uid, "status": status, "telegram_started_at_utc": _now_iso()})
     challenge["telegram_user"] = {
         "username": str(sender.get("username") or ""),
         "first_name": str(sender.get("first_name") or ""),
@@ -2614,9 +2641,147 @@ def _send_contact_request(api_call: Callable[..., Any], uid: int) -> None:
     })
 
 
+def _send_login_confirm_request(api_call: Callable[..., Any], uid: int,
+                                challenge_id: str) -> None:
+    marker = runtime_env.telegram_environment_marker()
+    api_call("sendMessage", {
+        "chat_id": uid,
+        "text": (
+            f"{marker}Вход в StratForge AI. Подтвердите, что это вы — "
+            "браузер войдёт автоматически."
+        ),
+        "reply_markup": {"inline_keyboard": [[
+            {"text": "✅ Подтвердить вход", "callback_data": f"login_ok:{challenge_id}"},
+            {"text": "⛔ Это не я", "callback_data": f"login_no:{challenge_id}"},
+        ]]},
+    })
+
+
+def _apply_login_confirm(doc: Dict[str, Any], *, challenge_id: str, actor_id: int,
+                         allowed: bool, owner_chat_id: str) -> Tuple[str, Dict[str, Any]]:
+    """Resolve a one-tap login confirmation. Fail-closed on every mismatch."""
+    challenge = _challenge(doc, challenge_id=challenge_id, statuses=("awaiting_confirm",))
+    if challenge is None:
+        return "expired", {}
+    # The tap must come from the same Telegram account that opened the link,
+    # so a forwarded button cannot approve somebody else's browser.
+    if int(challenge.get("user_id") or 0) != int(actor_id or 0):
+        return "forbidden", {}
+    bound = str(challenge.get("environment") or "")
+    if bound and bound != runtime_env.deployment_environment():
+        return "expired", {}
+    if not allowed:
+        challenge["status"] = "denied"
+        return "denied", {}
+
+    uid = int(actor_id)
+    user = _user(doc, uid)
+    is_owner = owner_claim(
+        doc, provider="telegram", subject=uid, user_id=uid, user=user,
+        owner_chat_id=owner_chat_id,
+    )
+    tg = challenge.get("telegram_user") or {}
+    if user is None:
+        user = {
+            "user_id": uid, "legacy_user_id": uid,
+            "user_uuid": owner_user_uuid_for_new_row(is_owner),
+            "telegram_user_id": uid,
+            "username": str(tg.get("username") or ""),
+            "first_name": str(tg.get("first_name") or ""),
+            "last_name": str(tg.get("last_name") or ""),
+            "email": "", "phone": "", "phone_hash": "",
+            "role": "owner" if is_owner else "read_only",
+            "status": "active" if is_owner else "pending",
+            "is_owner": is_owner,
+            "primary_login_provider": "telegram",
+            "created_at_utc": _now_iso(),
+            "approved_at_utc": _now_iso() if is_owner else "",
+            "revoked_at_utc": "",
+        }
+        doc["users"].append(user)
+    else:
+        if not user.get("first_name"):
+            user["first_name"] = str(tg.get("first_name") or "")
+        if not user.get("last_name"):
+            user["last_name"] = str(tg.get("last_name") or "")
+        user["telegram_user_id"] = uid
+        if is_owner and not user.get("is_owner"):
+            user.update({
+                "role": "owner", "is_owner": True, "status": "active",
+                "approved_at_utc": user.get("approved_at_utc") or _now_iso(),
+                "revoked_at_utc": "", "initial_trial_pending": False,
+                "updated_at_utc": _now_iso(),
+            })
+    if user.get("status") in {"revoked", "denied", "blocked"}:
+        challenge["status"] = "account_blocked"
+        return "blocked", dict(user)
+
+    _link_identity_in_doc(
+        doc, user, provider="telegram", subject=str(uid),
+        verified_at_utc=_now_iso(),
+        metadata={"username": str(user.get("username") or "")},
+        source="telegram_qr_login",
+    )
+    _sync_user_identity_summary(doc, user)
+    challenge["user_uuid"] = _user_uuid(user)
+    prior_status = str(user.get("status") or "")
+    if _profile_complete(user):
+        _activate_verified_human_in_doc(user, source="telegram_qr_login")
+        challenge["status"] = "login_approved"
+    else:
+        user["status"] = user.get("status") or "pending"
+        challenge["status"] = "awaiting_profile"
+    snapshot = dict(user)
+    snapshot["_prior_status"] = prior_status
+    return challenge["status"], snapshot
+
+
 def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owner_chat_id: str) -> bool:
     callback = update.get("callback_query") if isinstance(update, dict) else None
     if isinstance(callback, dict):
+        login_match = re.fullmatch(
+            r"login_(ok|no):([A-Za-z0-9_-]{20,})", str(callback.get("data") or ""))
+        if login_match:
+            actor = int((callback.get("from") or {}).get("id") or 0)
+            allowed = login_match.group(1) == "ok"
+            with _LOCK:
+                doc = _read_doc()
+                result, snapshot = _apply_login_confirm(
+                    doc, challenge_id=login_match.group(2), actor_id=actor,
+                    allowed=allowed, owner_chat_id=owner_chat_id,
+                )
+                if result not in {"expired", "forbidden"}:
+                    _write_doc(doc)
+            answers = {
+                "expired": "Запрос входа истёк или уже использован.",
+                "forbidden": "Подтвердить может только тот, кто открыл ссылку.",
+                "denied": "Вход отклонён.",
+                "blocked": "Доступ к StratForge AI ограничен владельцем.",
+                "awaiting_profile": "Осталось заполнить профиль в приложении.",
+                "login_approved": "Готово — вернитесь в браузер.",
+            }
+            api_call("answerCallbackQuery", {
+                "callback_query_id": callback.get("id"),
+                "text": answers.get(result, "Готово."),
+                "show_alert": result in {"expired", "forbidden", "blocked"},
+            })
+            if result == "login_approved":
+                if snapshot.get("initial_trial_pending"):
+                    _ensure_registration_trial(snapshot, source="telegram_qr_login")
+                newly = str(snapshot.get("_prior_status") or "") != "active"
+                if newly and not snapshot.get("is_owner"):
+                    _notify_owner_new_user(api_call, owner_chat_id, snapshot)
+                api_call("sendMessage", {"chat_id": actor, "text": (
+                    "✅ Вход подтверждён — полный доступ владельца."
+                    if snapshot.get("is_owner")
+                    else "✅ Вход подтверждён. Вернитесь в приложение."
+                )})
+                _audit("login_confirmed", user_id=actor)
+            elif result == "awaiting_profile":
+                api_call("sendMessage", {"chat_id": actor, "text": (
+                    "Вернитесь в приложение и заполните обязательные поля профиля."
+                )})
+            return True
         nt_match = re.fullmatch(r"nt_(confirm|deny):([A-Za-z0-9_-]{20,})", str(callback.get("data") or ""))
         if nt_match:
             actor = int((callback.get("from") or {}).get("id") or 0)
@@ -2747,12 +2912,18 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
         code = start.group(2) if start else manual_login.group(1)
         with _LOCK:
             doc = _read_doc()
-            challenge = _claim_login_challenge(doc, code=code, uid=uid, sender=sender)
+            challenge = _claim_login_challenge(
+                doc, code=code, uid=uid, sender=sender, status="awaiting_confirm",
+            )
             if challenge is None:
                 api_call("sendMessage", {"chat_id": uid, "text": "Ссылка входа истекла или уже использована."})
                 return True
+            challenge_id = str(challenge.get("challenge_id") or "")
             _write_doc(doc)
-        _send_contact_request(api_call, uid)
+        # One tap. Telegram already proved control of this account when it
+        # delivered the deep link to this chat, so a contact is not asked for
+        # on every login; a phone identity is a separate, later step.
+        _send_login_confirm_request(api_call, uid, challenge_id)
         return True
 
     if re.fullmatch(r"/start(?:@[A-Za-z0-9_]+)?", text, flags=re.IGNORECASE):
@@ -2770,7 +2941,12 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
     if isinstance(contact, dict):
         with _LOCK:
             doc = _read_doc()
-            challenge = _challenge(doc, user_id=uid, statuses=("awaiting_contact",))
+            # Sending a contact still completes a login and still records the
+            # phone identity -- it is simply no longer demanded on every login,
+            # because the one-tap confirmation already proves the account.
+            challenge = _challenge(
+                doc, user_id=uid, statuses=("awaiting_contact", "awaiting_confirm"),
+            )
             if challenge is None:
                 return False
             if int(contact.get("user_id") or 0) != uid:
