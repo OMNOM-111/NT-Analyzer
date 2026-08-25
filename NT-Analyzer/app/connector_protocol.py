@@ -88,6 +88,7 @@ HEALTH_SUMMARY_LOCK_WAIT_SEC = 1.0
 HEALTH_SNAPSHOT_TTL_SEC = 15.0
 _HEALTH_SNAPSHOT: Dict[str, Any] = {}
 _HEALTH_SNAPSHOT_LOCK = threading.Lock()
+_HEALTH_REFRESHING: set = set()
 _LOCK = threading.RLock()
 _COMMANDS_CHANGED = threading.Condition(_LOCK)
 
@@ -1945,6 +1946,76 @@ def list_installations(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any
     return {"ok": True, "workspace": workspace, "connections": rows}
 
 
+def _snapshot_reply(cached: Dict[str, Any], now: float) -> Dict[str, Any]:
+    reply = dict(cached)
+    taken = float(reply.pop("_taken_at", 0) or 0)
+    reply["stale_sec"] = round(max(0.0, now - taken), 1)
+    return reply
+
+
+def _start_health_refresh(user: int, workspace_value: str, cache_key: str) -> None:
+    """Refresh one status snapshot in the background, one worker at a time."""
+    with _HEALTH_SNAPSHOT_LOCK:
+        if cache_key in _HEALTH_REFRESHING:
+            return
+        _HEALTH_REFRESHING.add(cache_key)
+
+    def run() -> None:
+        try:
+            with _LOCK:
+                doc = _read_doc()
+                snapshot = _summarise_installations(doc, workspace_value, time.time())
+            with _HEALTH_SNAPSHOT_LOCK:
+                _HEALTH_SNAPSHOT[cache_key] = snapshot
+        except Exception:
+            # A status refresh must never take the process down, and the last
+            # good snapshot keeps being served with its age attached.
+            pass
+        finally:
+            with _HEALTH_SNAPSHOT_LOCK:
+                _HEALTH_REFRESHING.discard(cache_key)
+
+    threading.Thread(
+        target=run, name=f"connector-status-{cache_key[:16]}", daemon=True,
+    ).start()
+
+
+def _summarise_installations(doc: Mapping[str, Any], workspace_value: str,
+                             now: float) -> Dict[str, Any]:
+    installations = [
+        row for row in (doc.get("installations") or [])
+        if str(row.get("workspace_id") or "") == workspace_value
+    ]
+    active_sessions = {
+        str(row.get("installation_id") or "")
+        for row in (doc.get("sessions") or [])
+        if row.get("status") == "active" and float(row.get("expires_at") or 0) > now
+    }
+    online = 0
+    last_heartbeat = ""
+    for row in installations:
+        beat = str(row.get("last_heartbeat_utc") or "")
+        if beat > last_heartbeat:
+            last_heartbeat = beat
+        if str(row.get("status") or "") != "online":
+            continue
+        if str(row.get("installation_id") or "") not in active_sessions:
+            continue
+        try:
+            last = float(row.get("last_heartbeat_at") or 0)
+        except (TypeError, ValueError):
+            last = 0
+        if now - last > OFFLINE_AFTER_SEC:
+            continue
+        online += 1
+    return {
+        "ok": True, "status_known": True, "workspace_id": workspace_value,
+        "installations": len(installations), "online": online,
+        "last_heartbeat_utc": last_heartbeat, "stale_sec": 0.0,
+        "_taken_at": now,
+    }
+
+
 def health_summary(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
     """Connector health for a diagnostics panel, without writing anything.
 
@@ -1970,19 +2041,16 @@ def health_summary(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
     cache_key = workspace_value or "*"
     with _HEALTH_SNAPSHOT_LOCK:
         cached = _HEALTH_SNAPSHOT.get(cache_key)
-    if cached and now - float(cached.get("_taken_at") or 0) < HEALTH_SNAPSHOT_TTL_SEC:
-        fresh = dict(cached)
-        fresh.pop("_taken_at", None)
-        fresh["stale_sec"] = round(now - float(cached["_taken_at"]), 1)
-        return fresh
+    if cached:
+        age = now - float(cached.get("_taken_at") or 0)
+        if age >= HEALTH_SNAPSHOT_TTL_SEC:
+            # Stale, so refresh it -- but off the request path. Waiting for the
+            # store here is what made the panel slow in the first place, and a
+            # snapshot that can never refresh just grows old in silence.
+            _start_health_refresh(user, workspace_value, cache_key)
+        return _snapshot_reply(cached, now)
     if not _LOCK.acquire(timeout=HEALTH_SUMMARY_LOCK_WAIT_SEC):
-        if cached:
-            # Busy, but a recent answer exists. Say how old it is rather than
-            # claiming the state is unknown.
-            fresh = dict(cached)
-            fresh.pop("_taken_at", None)
-            fresh["stale_sec"] = round(now - float(cached["_taken_at"]), 1)
-            return fresh
+        _start_health_refresh(user, workspace_value, cache_key)
         return {
             "ok": False,
             "status_known": False,
@@ -1991,49 +2059,13 @@ def health_summary(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
         }
     try:
         doc = _read_doc()
-        installations = [
-            copy.deepcopy(row)
-            for row in (doc.get("installations") or [])
-            if str(row.get("workspace_id") or "") == workspace_value
-        ]
-        active_sessions = {
-            str(row.get("installation_id") or "")
-            for row in (doc.get("sessions") or [])
-            if row.get("status") == "active"
-            and float(row.get("expires_at") or 0) > now
-        }
+        snapshot = _summarise_installations(doc, workspace_value, now)
     finally:
         _LOCK.release()
-    online = 0
-    last_heartbeat = ""
-    for row in installations:
-        beat = str(row.get("last_heartbeat_utc") or "")
-        if beat > last_heartbeat:
-            last_heartbeat = beat
-        if str(row.get("status") or "") != "online":
-            continue
-        if str(row.get("installation_id") or "") not in active_sessions:
-            continue
-        try:
-            last = float(row.get("last_heartbeat_at") or 0)
-        except (TypeError, ValueError):
-            last = 0
-        # Same rule _refresh_states would apply, evaluated for the reply only.
-        if now - last > OFFLINE_AFTER_SEC:
-            continue
-        online += 1
-    summary = {
-        "ok": True,
-        "status_known": True,
-        "workspace_id": workspace_value,
-        "installations": len(installations),
-        "online": online,
-        "last_heartbeat_utc": last_heartbeat,
-        "stale_sec": 0.0,
-    }
     with _HEALTH_SNAPSHOT_LOCK:
-        _HEALTH_SNAPSHOT[cache_key] = {**summary, "_taken_at": now}
-    return summary
+        _HEALTH_SNAPSHOT[cache_key] = snapshot
+    return _snapshot_reply(snapshot, now)
+
 
 
 def installer_status() -> Dict[str, Any]:

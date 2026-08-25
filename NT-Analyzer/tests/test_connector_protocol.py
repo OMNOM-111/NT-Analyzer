@@ -990,3 +990,57 @@ def test_enrolled_but_offline_is_reported_as_offline_not_as_a_fault(connector_st
     out = connector_protocol.health_summary(42, workspace_id=workspace["workspace_id"])
     assert out["status_known"] is True
     assert out["installations"] == 1 and out["online"] == 0
+
+
+def test_a_stale_snapshot_refreshes_itself_off_the_request_path(connector_store, monkeypatch) -> None:
+    """A snapshot that can never refresh just grows old in silence."""
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    connector_protocol.signed_hello(_hello(private, pending))
+    connector_protocol._HEALTH_SNAPSHOT.clear()
+
+    first = connector_protocol.health_summary(42, workspace_id=workspace["workspace_id"])
+    assert first["installations"] == 1
+
+    # A second device appears while the snapshot is still warm.
+    private2, _, _, pending2 = _enroll(workspace["workspace_id"])
+    connector_protocol.signed_hello(_hello(private2, pending2))
+
+    monkeypatch.setattr(connector_protocol, "HEALTH_SNAPSHOT_TTL_SEC", 0.0)
+    started = time.monotonic()
+    served = connector_protocol.health_summary(42, workspace_id=workspace["workspace_id"])
+    # The caller is answered immediately from the old snapshot...
+    assert time.monotonic() - started < 0.5
+    assert served["status_known"] is True
+
+    # ...and the refresh lands shortly afterwards without anyone waiting on it.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        latest = connector_protocol.health_summary(42, workspace_id=workspace["workspace_id"])
+        if latest["installations"] == 2:
+            break
+        time.sleep(0.05)
+    assert latest["installations"] == 2, "the background refresh never landed"
+
+
+def test_background_refresh_runs_one_worker_per_workspace(connector_store, monkeypatch) -> None:
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    connector_protocol.signed_hello(_hello(private, pending))
+    connector_protocol._HEALTH_SNAPSHOT.clear()
+    connector_protocol.health_summary(42, workspace_id=workspace["workspace_id"])
+
+    monkeypatch.setattr(connector_protocol, "HEALTH_SNAPSHOT_TTL_SEC", 0.0)
+    started = []
+    real = threading.Thread
+
+    class Counting(real):
+        def start(self):
+            started.append(self.name)
+            return super().start()
+
+    monkeypatch.setattr(connector_protocol.threading, "Thread", Counting)
+    with connector_protocol._LOCK:          # hold it so refreshes cannot finish
+        for _ in range(5):
+            connector_protocol.health_summary(42, workspace_id=workspace["workspace_id"])
+        assert len(started) == 1, started
