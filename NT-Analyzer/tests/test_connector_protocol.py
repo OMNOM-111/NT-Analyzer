@@ -185,6 +185,66 @@ def test_phase3_connector_identity_backfill_preserves_legacy_mappings(connector_
     assert migrated["commands"][0]["user_uuid"] == user_uuid
 
 
+def test_phase3_connector_identity_backfill_resolves_each_user_once(monkeypatch) -> None:
+    user_42 = "71900420-731c-4ee9-b842-1b0045781f2a"
+    user_7 = "805e497b-45fb-4ad5-a96b-c148d09ccfbd"
+    calls: list[int] = []
+
+    def resolve(user_id):
+        value = int(user_id or 0)
+        calls.append(value)
+        return {42: user_42, 7: user_7}.get(value, "")
+
+    monkeypatch.setattr(connector_protocol, "_user_uuid_for_legacy_id", resolve)
+    doc = {
+        "schema_version": connector_protocol.CONNECTOR_STORE_VERSION,
+        "enrollments": [{
+            "enrollment_id": "enr_cached", "created_by_user_id": 42,
+            "created_by_user_uuid": "incorrect",
+        }],
+        "installations": [{
+            "installation_id": "inst_cached", "enrolled_by_user_id": 42,
+            "user_id": 42, "user_uuid": "incorrect",
+        }],
+        "sessions": [
+            {
+                "session_id": f"csess_cached_{index}",
+                "installation_id": "inst_cached", "user_id": 42,
+                "user_uuid": user_42,
+            }
+            for index in range(1_100)
+        ],
+        "commands": [{
+            "command_id": "cmd_cached", "installation_id": "inst_cached",
+            "issued_by_user_id": 7, "user_id": 7,
+            "issued_by_user_uuid": "incorrect", "user_uuid": "incorrect",
+        }],
+        "results": [
+            {
+                "command_id": "cmd_cached", "user_id": 7,
+                "user_uuid": "incorrect",
+            },
+            {"command_id": "cmd_without_user"},
+        ],
+        "identity_schema": {
+            "stage": "dual_write", "canonical_key": "user_uuid",
+            "legacy_key": "user_id",
+        },
+    }
+
+    migrated, changed = connector_protocol._migrate_doc(doc)
+
+    assert changed is True
+    assert calls == [42, 7]
+    assert migrated["enrollments"][0]["created_by_user_uuid"] == user_42
+    assert migrated["installations"][0]["user_uuid"] == user_42
+    assert all(row["user_uuid"] == user_42 for row in migrated["sessions"])
+    assert migrated["commands"][0]["issued_by_user_uuid"] == user_7
+    assert migrated["commands"][0]["user_uuid"] == user_7
+    assert migrated["results"][0]["user_uuid"] == user_7
+    assert "user_uuid" not in migrated["results"][1]
+
+
 def test_phase3_connector_creation_dual_writes_uuid_companions(connector_store) -> None:
     workspace = connector_store[42]
     user_uuid = account_auth.user_uuid_for_legacy_id(42)

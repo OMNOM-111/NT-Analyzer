@@ -159,8 +159,28 @@ def _user_uuid_for_legacy_id(user_id: Any) -> str:
         return ""
 
 
-def _backfill_user_uuid(row: Dict[str, Any], legacy_key: str, uuid_key: str) -> bool:
-    user_uuid = _user_uuid_for_legacy_id(row.get(legacy_key))
+def _backfill_user_uuid(
+    row: Dict[str, Any], legacy_key: str, uuid_key: str,
+    *, resolved_users: Optional[Dict[int, str]] = None,
+) -> bool:
+    """Backfill one compatibility UUID without re-reading auth per history row.
+
+    A Production Connector document can retain thousands of expired sessions.
+    Resolving the same legacy owner id through the authoritative auth repository
+    for every row turns one Connector read into thousands of PostgreSQL reads.
+    Keep the existing mismatch-repair behaviour, but share one resolver result
+    per legacy id for the duration of a single document migration.
+    """
+    legacy_id = _legacy_user_id(row.get(legacy_key))
+    if legacy_id <= 0:
+        return False
+    if resolved_users is None:
+        user_uuid = _user_uuid_for_legacy_id(legacy_id)
+    elif legacy_id in resolved_users:
+        user_uuid = resolved_users[legacy_id]
+    else:
+        user_uuid = _user_uuid_for_legacy_id(legacy_id)
+        resolved_users[legacy_id] = user_uuid
     if not user_uuid or row.get(uuid_key) == user_uuid:
         return False
     row[uuid_key] = user_uuid
@@ -169,6 +189,7 @@ def _backfill_user_uuid(row: Dict[str, Any], legacy_key: str, uuid_key: str) -> 
 
 def _migrate_doc(doc: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
     changed = False
+    resolved_users: Dict[int, str] = {}
     for key in ("enrollments", "installations", "sessions", "commands", "results"):
         if not isinstance(doc.get(key), list):
             doc[key] = []
@@ -178,7 +199,10 @@ def _migrate_doc(doc: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
     changed = bool(_stamp_environments(doc)) or changed
     for row in doc["enrollments"]:
         if isinstance(row, dict):
-            changed = _backfill_user_uuid(row, "created_by_user_id", "created_by_user_uuid") or changed
+            changed = _backfill_user_uuid(
+                row, "created_by_user_id", "created_by_user_uuid",
+                resolved_users=resolved_users,
+            ) or changed
     installation_users: Dict[str, int] = {}
     for row in doc["installations"]:
         if not isinstance(row, dict):
@@ -187,8 +211,13 @@ def _migrate_doc(doc: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
         if user_id and _legacy_user_id(row.get("user_id")) != user_id:
             row["user_id"] = user_id
             changed = True
-        changed = _backfill_user_uuid(row, "enrolled_by_user_id", "enrolled_by_user_uuid") or changed
-        changed = _backfill_user_uuid(row, "user_id", "user_uuid") or changed
+        changed = _backfill_user_uuid(
+            row, "enrolled_by_user_id", "enrolled_by_user_uuid",
+            resolved_users=resolved_users,
+        ) or changed
+        changed = _backfill_user_uuid(
+            row, "user_id", "user_uuid", resolved_users=resolved_users,
+        ) or changed
         installation_id = str(row.get("installation_id") or "")
         if installation_id and user_id:
             installation_users[installation_id] = user_id
@@ -200,8 +229,13 @@ def _migrate_doc(doc: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
         if user_id and _legacy_user_id(row.get("user_id")) != user_id:
             row["user_id"] = user_id
             changed = True
-        changed = _backfill_user_uuid(row, "issued_by_user_id", "issued_by_user_uuid") or changed
-        changed = _backfill_user_uuid(row, "user_id", "user_uuid") or changed
+        changed = _backfill_user_uuid(
+            row, "issued_by_user_id", "issued_by_user_uuid",
+            resolved_users=resolved_users,
+        ) or changed
+        changed = _backfill_user_uuid(
+            row, "user_id", "user_uuid", resolved_users=resolved_users,
+        ) or changed
         command_id = str(row.get("command_id") or "")
         if command_id and user_id:
             command_users[command_id] = user_id
@@ -214,7 +248,9 @@ def _migrate_doc(doc: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
         if user_id and _legacy_user_id(row.get("user_id")) != user_id:
             row["user_id"] = user_id
             changed = True
-        changed = _backfill_user_uuid(row, "user_id", "user_uuid") or changed
+        changed = _backfill_user_uuid(
+            row, "user_id", "user_uuid", resolved_users=resolved_users,
+        ) or changed
     for row in doc["results"]:
         if not isinstance(row, dict):
             continue
@@ -224,7 +260,9 @@ def _migrate_doc(doc: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
         if user_id and _legacy_user_id(row.get("user_id")) != user_id:
             row["user_id"] = user_id
             changed = True
-        changed = _backfill_user_uuid(row, "user_id", "user_uuid") or changed
+        changed = _backfill_user_uuid(
+            row, "user_id", "user_uuid", resolved_users=resolved_users,
+        ) or changed
     identity_schema = doc.get("identity_schema") if isinstance(doc.get("identity_schema"), dict) else {}
     expected_schema = dict(identity_schema)
     expected_schema.update({
