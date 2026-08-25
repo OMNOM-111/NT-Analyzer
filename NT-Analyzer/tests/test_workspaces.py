@@ -549,9 +549,8 @@ def test_purge_user_removes_a_solely_owned_workspace(workspace_store):
     assert "7" not in doc["active_workspaces"]
 
 
-def test_owner_workspace_entitlement_is_normalised_to_founder(tmp_path, monkeypatch) -> None:
+def test_owner_workspace_entitlement_is_normalised_to_founder(workspace_store) -> None:
     """A stale acceptance label must not display as the owner's plan."""
-    monkeypatch.setattr(workspaces, "_root", lambda: tmp_path)
     workspaces.ensure_owner_workspace(4242)
 
     doc = workspaces._read_doc()
