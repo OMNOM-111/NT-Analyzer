@@ -2658,6 +2658,13 @@ def _claim_refusal_text(doc: Dict[str, Any], *, code: str, uid: int) -> str:
             return "Этот вход был отменён. Откройте новый QR-код."
         if status == LOGIN_CONFIRMED:
             return "Этот вход уже подтверждён — вернитесь в браузер."
+        if status == "awaiting_profile":
+            # Confirmed, but the account still owes a profile. Saying "expired"
+            # here sends the user to make a new QR that will stop at the same
+            # place.
+            return "Вход подтверждён. Вернитесь в приложение и заполните профиль."
+        if status == "account_blocked":
+            return "Доступ к StratForge AI ограничен владельцем."
         opener = int(row.get("user_id") or 0)
         if opener and opener != int(uid):
             return "Эта ссылка входа принадлежит другому аккаунту Telegram."
@@ -2709,20 +2716,78 @@ def _send_contact_request(api_call: Callable[..., Any], uid: int) -> None:
     })
 
 
+CONFIRM_LABEL = "✅ Подтвердить вход"
+REJECT_LABEL = "⛔ Это не я"
+# A tapped reply-keyboard button sends its own label as an ordinary message,
+# and message text is the one thing the shared bot's owner already routes
+# between environments. An inline button sends a callback_query instead, which
+# carries no text at all -- so it is answered by whichever environment owns the
+# bot, against that environment's store, no matter who owns the challenge.
+_CONFIRM_RE = re.compile(
+    r"^(?:✅|⛔)?\s*(Подтвердить вход|Это не я)"
+    r"(?:\s+\[CANARY\])?(?:\s+\[DEV\])?\s+([A-Fa-f0-9]{8})$"
+)
+
+
+def _confirm_button_label(label: str, code: str) -> str:
+    """A label that is also a routable message.
+
+    The environment marker has to sit inside the text, because the text is what
+    the bot owner routes on when it decides which environment should handle it.
+    """
+    marker = runtime_env.telegram_environment_marker().strip()
+    return f"{label} {marker} {code}".replace("  ", " ").strip() if marker else f"{label} {code}"
+
+
 def _send_login_confirm_request(api_call: Callable[..., Any], uid: int,
-                                challenge_id: str) -> None:
+                                challenge_id: str, code: str = "") -> None:
     marker = runtime_env.telegram_environment_marker()
-    tag = ENVIRONMENT_TAGS.get(runtime_env.deployment_environment(), "p")
     api_call("sendMessage", {
         "chat_id": uid,
         "text": (
             f"{marker}Вход в StratForge AI. Подтвердите, что это вы — "
             "браузер войдёт автоматически."
         ),
-        "reply_markup": {"inline_keyboard": [[
-            {"text": "✅ Подтвердить вход", "callback_data": f"login_ok:{tag}:{challenge_id}"},
-            {"text": "⛔ Это не я", "callback_data": f"login_no:{tag}:{challenge_id}"},
-        ]]},
+        "reply_markup": {
+            "keyboard": [
+                [{"text": _confirm_button_label(CONFIRM_LABEL, code)}],
+                [{"text": _confirm_button_label(REJECT_LABEL, code)}],
+            ],
+            "resize_keyboard": True,
+            "one_time_keyboard": True,
+        },
+    })
+
+
+def _finish_login_confirmation(api_call: Callable[..., Any], *, uid: int, result: str,
+                               snapshot: Dict[str, Any], owner_chat_id: str) -> None:
+    texts = {
+        "expired": "Запрос входа истёк или уже использован. Откройте новый QR-код.",
+        "forbidden": "Подтвердить может только тот, кто открыл ссылку.",
+        "denied": "Вход отклонён.",
+        "blocked": "Доступ к StratForge AI ограничен владельцем.",
+        "awaiting_profile": "Вернитесь в приложение и заполните обязательные поля профиля.",
+    }
+    if result == "login_approved":
+        if snapshot.get("initial_trial_pending"):
+            _ensure_registration_trial(snapshot, source="telegram_qr_login")
+        if str(snapshot.get("_prior_status") or "") != "active" and not snapshot.get("is_owner"):
+            _notify_owner_new_user(api_call, owner_chat_id, snapshot)
+        api_call("sendMessage", {
+            "chat_id": uid,
+            "text": (
+                "✅ Вход подтверждён — полный доступ владельца."
+                if snapshot.get("is_owner")
+                else "✅ Вход подтверждён. Вернитесь в приложение."
+            ),
+            "reply_markup": {"remove_keyboard": True},
+        })
+        _audit("login_confirmed", user_id=uid)
+        return
+    api_call("sendMessage", {
+        "chat_id": uid,
+        "text": texts.get(result, "Готово."),
+        "reply_markup": {"remove_keyboard": True},
     })
 
 
@@ -2976,6 +3041,31 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
             buttons.append([{"text": f"⛔ Отозвать {label}", "callback_data": f"account_revoke:{int(row['user_id'])}"}])
         api_call("sendMessage", {"chat_id": uid, "text": "\n".join(lines), "parse_mode": "HTML", "reply_markup": {"inline_keyboard": buttons}})
         return True
+    confirm = _CONFIRM_RE.match(text)
+    if confirm:
+        allowed = confirm.group(1) == "Подтвердить вход"
+        code = confirm.group(2)
+        with _LOCK:
+            doc = _read_doc()
+            target = _challenge(doc, code=code, statuses=(LOGIN_OPENED,))
+            if target is None:
+                api_call("sendMessage", {
+                    "chat_id": uid,
+                    "text": _claim_refusal_text(doc, code=code, uid=uid),
+                    "reply_markup": {"remove_keyboard": True},
+                })
+                return True
+            result, snapshot = _apply_login_confirm(
+                doc, challenge_id=str(target.get("challenge_id") or ""),
+                actor_id=uid, allowed=allowed, owner_chat_id=owner_chat_id,
+            )
+            if result not in {"expired", "forbidden"}:
+                _write_doc(doc)
+        _finish_login_confirmation(
+            api_call, uid=uid, result=result, snapshot=snapshot,
+            owner_chat_id=owner_chat_id,
+        )
+        return True
     start = re.fullmatch(r"/start(?:@[A-Za-z0-9_]+)?\s+(login|canary_login)_([A-Fa-f0-9]{8})", text)
     manual_login = re.fullmatch(r"/(?:login|code)(?:@[A-Za-z0-9_]+)?\s+(?:\[CANARY\]\s+)?(?:login_)?([A-Fa-f0-9]{8})", text, flags=re.IGNORECASE)
     if start or manual_login:
@@ -3000,7 +3090,7 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
         # One tap. Telegram already proved control of this account when it
         # delivered the deep link to this chat, so a contact is not asked for
         # on every login; a phone identity is a separate, later step.
-        _send_login_confirm_request(api_call, uid, challenge_id)
+        _send_login_confirm_request(api_call, uid, challenge_id, code)
         return True
 
     if re.fullmatch(r"/start(?:@[A-Za-z0-9_]+)?", text, flags=re.IGNORECASE):

@@ -88,7 +88,12 @@ def test_new_account_activates_full_trial_after_contact_profile_and_terms(auth_s
     }}, api_call=api, owner_chat_id="999")
     # The bot now offers one confirmation button; a contact is still accepted
     # (and still records the phone identity) but is no longer demanded.
-    assert any((payload.get("reply_markup") or {}).get("inline_keyboard") for _method, payload in calls)
+    assert any(
+        button["text"].startswith("✅ Подтвердить вход")
+        for _method, payload in calls
+        for row in ((payload.get("reply_markup") or {}).get("keyboard") or [])
+        for button in row
+    )
 
     assert account_auth.process_update({"message": {
         "contact": {"user_id": 42, "phone_number": "+15551234567"},
@@ -187,11 +192,20 @@ def test_manual_login_code_recovers_when_start_parameter_is_lost(auth_store) -> 
         "chat": {"id": 42, "type": "private"},
     }}, api_call=api, owner_chat_id="999")
 
-    # One tap replaces the mandatory contact request: the bot offers a
-    # single inline confirmation button, not a contact keyboard.
+    # One tap replaces the mandatory contact request: the bot offers a confirm
+    # button whose label is a routable message, and never asks for a contact.
     assert account_auth.login_state(login["challenge_id"])["status"] == "opened"
-    assert any((payload.get("reply_markup") or {}).get("inline_keyboard") for _method, payload in calls)
-    assert not any((payload.get("reply_markup") or {}).get("keyboard") for _method, payload in calls)
+    labels = [
+        button["text"]
+        for _method, payload in calls
+        for row in ((payload.get("reply_markup") or {}).get("keyboard") or [])
+        for button in row
+    ]
+    assert any(label.startswith("✅ Подтвердить вход") for label in labels), labels
+    assert not any(button.get("request_contact")
+                   for _method, payload in calls
+                   for row in ((payload.get("reply_markup") or {}).get("keyboard") or [])
+                   for button in row), labels
 
 
 def test_canary_login_uses_environment_payload_and_marker(auth_store, monkeypatch) -> None:
@@ -1366,14 +1380,21 @@ def _start_and_scan(api, uid=4242, code_owner="999", first="Ada", last="L"):
     return login
 
 
-def _tap(api, challenge_id, uid=4242, owner="999", ok=True, tag=None):
-    if tag is None:
-        tag = account_auth.ENVIRONMENT_TAGS[account_auth.runtime_env.deployment_environment()]
+def _tap(api, challenge_id, uid=4242, owner="999", ok=True, code=None, label=None):
+    """Tap the reply-keyboard button, which Telegram delivers as its label."""
+    if label is None:
+        base = account_auth.CONFIRM_LABEL if ok else account_auth.REJECT_LABEL
+        label = account_auth._confirm_button_label(base, code or _code_of(challenge_id))
     return account_auth.process_update(
-        {"callback_query": {
-            "id": "cb1", "from": {"id": uid},
-            "data": f"login_{'ok' if ok else 'no'}:{tag}:{challenge_id}",
-        }}, api_call=api, owner_chat_id=owner)
+        {"message": {"text": label, "from": {"id": uid},
+                     "chat": {"id": uid, "type": "private"}}},
+        api_call=api, owner_chat_id=owner)
+
+
+def _code_of(challenge_id):
+    doc = account_auth._read_doc()
+    row = account_auth._challenge(doc, challenge_id=challenge_id)
+    return str((row or {}).get("code") or "")
 
 
 def test_login_start_returns_a_short_lived_qr_deep_link(auth_store) -> None:
@@ -1411,11 +1432,12 @@ def test_scanned_challenge_is_single_use(auth_store) -> None:
     account_auth.ensure_owner(999)
     calls, api = _api_recorder()
     login = _start_and_scan(api)
-    _tap(api, login["challenge_id"])
+    _tap(api, login["challenge_id"], code=login["code"])
     # A replayed tap on the same challenge must not re-authorise anything.
-    _tap(api, login["challenge_id"])
-    answers = [p.get("text", "") for m, p in calls if m == "answerCallbackQuery"]
-    assert any("истёк или уже использован" in text for text in answers)
+    _tap(api, login["challenge_id"], code=login["code"])
+    texts = [p.get("text", "") for m, p in calls if m == "sendMessage"]
+    assert any("уже подтверждён" in t or "уже использована" in t
+               or "заполните профиль" in t for t in texts), texts
 
 
 def test_a_challenge_opened_by_one_account_cannot_be_taken_over(auth_store) -> None:
@@ -1442,9 +1464,10 @@ def test_only_the_scanner_can_confirm_the_login(auth_store) -> None:
     calls, api = _api_recorder()
     login = _start_and_scan(api)
     # A forwarded button tapped by a different Telegram account is refused.
-    _tap(api, login["challenge_id"], uid=5151)
-    answers = [p.get("text", "") for m, p in calls if m == "answerCallbackQuery"]
-    assert any("только тот, кто открыл ссылку" in text.lower() for text in answers)
+    _tap(api, login["challenge_id"], uid=5151, code=login["code"])
+    texts = [p.get("text", "").lower() for m, p in calls if m == "sendMessage"]
+    assert any("только тот, кто открыл ссылку" in t or "другому аккаунту" in t
+               for t in texts), texts
     assert account_auth.login_state(login["challenge_id"])["status"] == "opened"
 
 
@@ -1592,12 +1615,11 @@ def test_only_confirmation_spends_the_challenge_and_only_once(auth_store) -> Non
     assert approved in {"login_approved", "awaiting_profile"}
 
     # A second confirmation of the same challenge is refused, not replayed.
-    before = len([1 for m, _p in calls if m == "sendMessage"])
-    _tap(api, login["challenge_id"])
-    answers = [p.get("text", "") for m, p in calls if m == "answerCallbackQuery"]
-    assert any("истёк или уже использован" in t for t in answers), answers
+    _tap(api, login["challenge_id"], code=login["code"])
+    texts = [p.get("text", "") for m, p in calls if m == "sendMessage"]
+    assert any("уже подтверждён" in t or "уже использована" in t
+               or "заполните профиль" in t for t in texts), texts
     assert account_auth.login_state(login["challenge_id"])["status"] == approved
-    assert len([1 for m, _p in calls if m == "sendMessage"]) == before
 
 
 def test_three_concurrent_attempts_stay_independent(auth_store) -> None:
@@ -1670,55 +1692,53 @@ def test_expired_challenge_reports_expiry_and_a_new_one_is_clean(auth_store) -> 
 # so a confirmation has to reach the process that actually holds the challenge.
 # ---------------------------------------------------------------------------
 
-def test_confirm_button_stamps_the_environment_into_its_callback_data(auth_store) -> None:
+def test_confirm_button_is_a_routable_message_not_a_callback(auth_store) -> None:
+    """The bot owner routes on message text, so the button must produce text."""
     account_auth.ensure_owner(999)
     calls, api = _api_recorder()
     login = _start_and_scan(api)
-    buttons = [
-        button
-        for _m, payload in calls
-        for row in ((payload.get("reply_markup") or {}).get("inline_keyboard") or [])
-        for button in row
-    ]
-    data = [b["callback_data"] for b in buttons if "callback_data" in b]
-    tag = account_auth.ENVIRONMENT_TAGS[
-        account_auth.runtime_env.deployment_environment()]
-    assert any(d.startswith(f"login_ok:{tag}:") for d in data), data
-    assert any(d.startswith(f"login_no:{tag}:") for d in data), data
-    # Telegram caps callback_data at 64 bytes.
-    assert all(len(d.encode("utf-8")) <= 64 for d in data), data
-    assert all(d.endswith(login["challenge_id"]) for d in data), data
+    markups = [(p.get("reply_markup") or {}) for _m, p in calls if _m == "sendMessage"]
+    keyboards = [m for m in markups if m.get("keyboard")]
+    assert keyboards, markups
+    # An inline keyboard would send a callback_query, which carries no text and
+    # therefore cannot be routed to the environment owning the challenge.
+    assert not any(m.get("inline_keyboard") for m in markups), markups
+    labels = [b["text"] for m in keyboards for row in m["keyboard"] for b in row]
+    assert any(label.startswith("✅ Подтвердить вход") for label in labels), labels
+    assert all(label.endswith(login["code"]) for label in labels), labels
 
 
-def test_a_confirmation_for_another_environment_is_left_untouched(auth_store) -> None:
-    """Production must not answer a Canary confirmation against its own store."""
-    account_auth.ensure_owner(999)
-    calls, api = _api_recorder()
-    login = _start_and_scan(api)
-    here = account_auth.ENVIRONMENT_TAGS[
-        account_auth.runtime_env.deployment_environment()]
-    elsewhere = "c" if here != "c" else "p"
-    before = len(calls)
-    handled = _tap(api, login["challenge_id"], tag=elsewhere)
-    assert handled is False, "must decline so the router can forward it"
-    assert len(calls) == before, "it must not answer the callback either"
-    assert account_auth.login_state(login["challenge_id"])["status"] == "opened"
+def test_canary_confirmation_is_routed_to_canary_by_the_bot_owner(auth_store, monkeypatch) -> None:
+    """The regression that matters: shared bot on Production, challenge on Canary.
 
-
-def test_router_sends_a_login_callback_to_the_stamped_environment() -> None:
+    Production owns the single bot. A confirmation it cannot route is a
+    confirmation the waiting Canary browser never sees.
+    """
     from app import telegram_service
 
-    def update(tag):
-        return {"update_id": 1, "callback_query": {
-            "id": "cb", "from": {"id": 4242},
-            "data": f"login_ok:{tag}:{'x' * 32}"}}
+    monkeypatch.setattr(
+        account_auth.runtime_env, "deployment_environment",
+        lambda: account_auth.runtime_env.CANARY)
+    label = account_auth._confirm_button_label(account_auth.CONFIRM_LABEL, "A1B2C3D4")
+    assert "[CANARY]" in label, label
 
-    assert telegram_service._update_target_environment(update("c")) == "canary"
-    assert telegram_service._update_target_environment(update("p")) == "production"
-    assert telegram_service._update_target_environment(update("d")) == "development"
-    # Anything else stays unrouted rather than being sent somewhere arbitrary.
+    update = {"update_id": 7, "message": {
+        "text": label, "from": {"id": 4242}, "chat": {"id": 4242, "type": "private"}}}
+    # Production reads the marker out of the text and sends it to Canary.
+    monkeypatch.setattr(
+        telegram_service.runtime_env, "deployment_environment",
+        lambda: telegram_service.runtime_env.PRODUCTION)
+    assert telegram_service._update_target_environment(update) == "canary"
+
+    # A Production login carries no marker and stays on Production.
+    monkeypatch.setattr(
+        account_auth.runtime_env, "deployment_environment",
+        lambda: account_auth.runtime_env.PRODUCTION)
+    plain = account_auth._confirm_button_label(account_auth.CONFIRM_LABEL, "A1B2C3D4")
+    assert "[CANARY]" not in plain
     assert telegram_service._update_target_environment(
-        {"callback_query": {"data": "account_revoke:5"}}) == ""
+        {"update_id": 8, "message": {"text": plain, "from": {"id": 4242},
+                                     "chat": {"id": 4242, "type": "private"}}}) == ""
 
 
 def test_three_browser_sessions_confirm_independently_end_to_end(auth_store) -> None:
@@ -1762,3 +1782,79 @@ def test_confirmed_challenge_issues_a_session_to_its_own_browser_only(auth_store
         account_auth.login_state(mine["challenge_id"])
     # The other browser is untouched and still waiting.
     assert account_auth.login_state(theirs["challenge_id"])["status"] == "opened"
+
+
+def test_shared_bot_production_webhook_to_canary_confirm_to_browser_login(
+        auth_store, monkeypatch) -> None:
+    """The exact production topology that kept the browser waiting forever.
+
+    One Telegram bot. Production owns the inbound updates. The challenge lives
+    on Canary. The confirmation has to cross that boundary and end as a session
+    for the one browser that started it.
+    """
+    from app import telegram_service
+
+    # --- Canary issues the challenge (a browser somewhere started a login). ---
+    monkeypatch.setattr(
+        account_auth.runtime_env, "deployment_environment",
+        lambda: account_auth.runtime_env.CANARY)
+    account_auth.ensure_owner(999)
+    doc = account_auth._read_doc()
+    account_auth._user(doc, 999).update({
+        "first_name": "Owner", "last_name": "Tester", "email": "owner@example.test"})
+    account_auth._write_doc(doc)
+
+    calls, api = _api_recorder()
+    mine = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
+    other = account_auth.start_login(bot_username="StratForge_bot", ip="127.0.0.1")
+
+    # --- The phone opens the deep link. ---
+    account_auth.process_update({"message": {
+        "text": f"/start {mine['bot_url'].split('?start=', 1)[1]}",
+        "from": {"id": 999, "first_name": "Owner", "username": "owner"},
+        "chat": {"id": 999, "type": "private"},
+    }}, api_call=api, owner_chat_id="999")
+    assert account_auth.login_state(mine["challenge_id"])["status"] == "opened"
+
+    label = [
+        button["text"]
+        for _m, payload in calls
+        for row in ((payload.get("reply_markup") or {}).get("keyboard") or [])
+        for button in row
+    ][0]
+    tap = {"update_id": 42, "message": {
+        "text": label, "from": {"id": 999}, "chat": {"id": 999, "type": "private"}}}
+
+    # --- Production receives the tap and must route it to Canary. ---
+    monkeypatch.setattr(
+        telegram_service.runtime_env, "deployment_environment",
+        lambda: telegram_service.runtime_env.PRODUCTION)
+    assert telegram_service._update_target_environment(tap) == "canary", (
+        "Production must recognise this as Canary's confirmation")
+
+    # --- Canary handles the forwarded update. ---
+    monkeypatch.setattr(
+        telegram_service.runtime_env, "deployment_environment",
+        lambda: telegram_service.runtime_env.CANARY)
+    assert account_auth.process_update(tap, api_call=api, owner_chat_id="999")
+
+    # --- The challenge really transitions, and only this one. ---
+    assert account_auth.login_state(mine["challenge_id"])["status"] == "login_approved"
+    assert account_auth.login_state(other["challenge_id"])["status"] == "created"
+
+    # --- The waiting browser exchanges it for its own session. ---
+    issued = account_auth.create_session_for_challenge(
+        mine["challenge_id"], ip="203.0.113.7", user_agent="waiting-browser")
+    assert issued["status"] == "authenticated"
+    assert issued.get("session_token")
+    session = account_auth.authenticate_session(issued["session_token"])
+    assert session and int(session.get("user_id") or 0) == 999
+
+    # --- Spent exactly once; the other browser is untouched. ---
+    with pytest.raises(account_auth.AccountAuthError):
+        account_auth.login_state(mine["challenge_id"])
+    assert account_auth.login_state(other["challenge_id"])["status"] == "created"
+
+    # --- And the user was told, so the button never hangs. ---
+    replies = [p.get("text", "") for m, p in calls if m == "sendMessage"]
+    assert any("подтверждён" in t.lower() for t in replies), replies
