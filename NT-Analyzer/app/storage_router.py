@@ -88,6 +88,15 @@ def append_audit(source: str, event: str, values: Mapping[str, Any]) -> str:
     )
 
 
+def read_audit(source: str, *, limit: int = 50) -> list:
+    """Recent audit rows for one source, newest first."""
+    rows = AuditRepository(get_client(production=True)).list(
+        scope=Scope.global_service_scope(), limit=max(1, min(500, int(limit) * 5)),
+    )
+    wanted = str(source or "")
+    return [row for row in rows if str(row.get("source") or "") == wanted][:limit]
+
+
 def applied_schema_version() -> int:
     """Highest applied migration version.
 

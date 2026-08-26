@@ -421,6 +421,67 @@ def _audit(event: str, **values: Any) -> None:
             ) + "\n")
 
 
+def audit_refusal(route: str, code: str, status: int,
+                  installation_id: str = "") -> None:
+    """Record a refused connector request.
+
+    Only successful steps were ever audited, so a connector that reached the
+    server and was turned away left no trace at all: the installation kept its
+    old last_hello_utc and looked identical to a device that never called.
+    Distinguishing "not calling" from "calling and refused" is the whole
+    difference when a connector goes quiet, so refusals are recorded too --
+    route, error code and status only, never a body or a credential.
+    """
+    try:
+        _audit(
+            "request_refused",
+            route=str(route or "")[:120],
+            code=str(code or "")[:80],
+            status=int(status or 0),
+            installation_id=str(installation_id or "")[:64],
+        )
+    except Exception:
+        # Observability must never turn a refusal into a server error.
+        pass
+
+
+def recent_audit(limit: int = 50) -> list:
+    """Recent connector-protocol audit rows, redacted to status fields."""
+    allowed = {
+        "event", "event_type", "occurred_at", "timestamp_utc", "route", "code",
+        "status", "installation_id", "workspace_id", "session_id",
+        "enrollment_id", "connector_version", "update_state", "update_reason",
+        "public_key_fingerprint", "source",
+    }
+    rows: list = []
+    if runtime_env.is_production() and runtime_env.environment_explicit():
+        from . import storage_router
+        try:
+            raw = storage_router.read_audit("connector_protocol", limit=limit)
+        except Exception:
+            return []
+        for row in raw:
+            merged = dict(row.get("payload") or row.get("document") or {})
+            merged.setdefault("event", row.get("event_type"))
+            merged.setdefault("occurred_at", str(row.get("occurred_at") or ""))
+            rows.append({k: v for k, v in merged.items() if k in allowed})
+        return rows
+    path = _audit_path()
+    if not path.exists():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()[-max(1, int(limit)):]
+    except OSError:
+        return []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        rows.append({k: v for k, v in row.items() if k in allowed})
+    return rows
+
+
 def _b64url_encode(value: bytes) -> str:
     return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
 
