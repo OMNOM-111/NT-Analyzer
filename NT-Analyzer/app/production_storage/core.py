@@ -931,11 +931,37 @@ class DocumentRepository:
 
     def _sync_connectors(self, conn: Any, doc: Dict[str, Any]) -> None:
         installations = [row for row in doc.get("installations", []) if isinstance(row, dict)]
+        # The connector document is global: it carries every installation, for
+        # every workspace. Projecting it used to insert them all unconditionally,
+        # so a single installation whose workspace no longer exists made the
+        # foreign key reject the statement and failed the *entire* write. On
+        # Production that denied every connector in the deployment -- a healthy
+        # device retrying a signed challenge could never succeed, because an
+        # unrelated orphan row poisoned the transaction.
+        #
+        # An installation without a workspace is already unusable: every access
+        # path resolves the workspace first. So orphans are skipped here and
+        # pruned from the projection, instead of taking everyone else down.
+        wanted = {str(row.get("workspace_id") or "") for row in installations}
+        wanted.discard("")
+        known: set = set()
+        if wanted:
+            known = {
+                str(r[0]) for r in conn.execute(
+                    "SELECT workspace_id FROM sf_workspaces WHERE workspace_id = ANY(%s)",
+                    (list(wanted),),
+                ).fetchall()
+            }
+        orphaned = wanted - known
         install_ids: list[str] = []
+        skipped: set = set()
         for row in installations:
             key = str(row.get("installation_id") or "")[:160]
             if not key:
                 raise StorageConstraintError("Connector installation id is required.")
+            if str(row.get("workspace_id") or "") in orphaned:
+                skipped.add(key)
+                continue
             install_ids.append(key)
             conn.execute(
                 """
@@ -960,6 +986,8 @@ class DocumentRepository:
             if not re.fullmatch(r"[0-9a-f]{64}", token_hash):
                 raise StorageConstraintError("Connector session token hash is invalid.")
             key = str(row.get("session_id") or f"csess_{token_hash[:32]}")[:160]
+            if str(row.get("installation_id") or "") in skipped:
+                continue
             session_ids.append(key)
             conn.execute(
                 """
@@ -980,6 +1008,8 @@ class DocumentRepository:
         status_map = {"pending":"queued", "delivered":"leased"}
         for row in commands:
             key = str(row.get("command_id") or _stable_key("cmd", row))[:160]
+            if str(row.get("installation_id") or "") in skipped:
+                continue
             command_ids.append(key)
             status = status_map.get(str(row.get("status") or ""), str(row.get("status") or "queued"))
             conn.execute(
