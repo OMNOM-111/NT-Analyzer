@@ -929,14 +929,96 @@ class DocumentRepository:
             )
         self._delete_missing(conn, "sf_entitlements", "entitlement_id", ids)
 
+    @staticmethod
+    def _connector_reference_sets(
+        conn: Any, *, workspace_ids: Sequence[str], user_ids: Sequence[int],
+    ) -> tuple[set[str], set[int], set[tuple[str, int]]]:
+        """Return the relational identities a Connector document may reference.
+
+        The Connector JSON document is authoritative and intentionally retains
+        terminal history.  Its constrained SQL tables are a current relational
+        projection, though, so an old revoked test installation must not make an
+        unrelated live challenge impossible after that test account has been
+        removed.  Load the small reference index once per document write; the
+        caller still fails closed for every non-terminal orphan.
+        """
+        wanted_workspaces = sorted({str(value) for value in workspace_ids if str(value)})
+        wanted_users = sorted({int(value) for value in user_ids if int(value) > 0})
+        workspaces: set[str] = set()
+        users: set[int] = set()
+        memberships: set[tuple[str, int]] = set()
+        if wanted_workspaces:
+            rows = conn.execute(
+                "SELECT workspace_id FROM sf_workspaces WHERE workspace_id = ANY(%s)",
+                (wanted_workspaces,),
+            ).fetchall() or []
+            workspaces = {str(row["workspace_id"]) for row in rows}
+        if wanted_users:
+            rows = conn.execute(
+                "SELECT user_id FROM sf_users WHERE user_id = ANY(%s)",
+                (wanted_users,),
+            ).fetchall() or []
+            users = {_int(row["user_id"]) for row in rows}
+        if wanted_workspaces and wanted_users:
+            rows = conn.execute(
+                """
+                SELECT workspace_id,user_id FROM sf_workspace_memberships
+                WHERE workspace_id = ANY(%s) AND user_id = ANY(%s)
+                """,
+                (wanted_workspaces, wanted_users),
+            ).fetchall() or []
+            memberships = {
+                (str(row["workspace_id"]), _int(row["user_id"])) for row in rows
+            }
+        return workspaces, users, memberships
+
     def _sync_connectors(self, conn: Any, doc: Dict[str, Any]) -> None:
         installations = [row for row in doc.get("installations", []) if isinstance(row, dict)]
+        sessions = [row for row in doc.get("sessions", []) if isinstance(row, dict)]
+        commands = [row for row in doc.get("commands", []) if isinstance(row, dict)]
+
+        workspace_candidates = {
+            str(row.get("workspace_id") or "")
+            for row in (*installations, *commands)
+            if str(row.get("workspace_id") or "")
+        }
+        user_candidates = {
+            _int(row.get("user_id") or row.get("enrolled_by_user_id")
+                 or row.get("queued_by_user_id") or row.get("issued_by_user_id"))
+            for row in (*installations, *commands)
+        }
+        workspaces, users, memberships = self._connector_reference_sets(
+            conn,
+            workspace_ids=sorted(workspace_candidates),
+            user_ids=sorted(user_candidates),
+        )
+
         install_ids: list[str] = []
+        install_workspaces: Dict[str, str] = {}
         for row in installations:
             key = str(row.get("installation_id") or "")[:160]
             if not key:
                 raise StorageConstraintError("Connector installation id is required.")
+            workspace_id = str(row.get("workspace_id") or "")
+            user_id = _int(row.get("user_id") or row.get("enrolled_by_user_id"))
+            status = _status(
+                row.get("status"),
+                {"pending","online","offline","revoked","blocked","failed"},
+                "pending",
+            )
+            references_valid = (
+                workspace_id in workspaces
+                and user_id in users
+                and (workspace_id, user_id) in memberships
+            )
+            if not references_valid:
+                if status == "revoked":
+                    continue
+                raise StorageConstraintError(
+                    f"Connector installation {key} has non-terminal orphan references."
+                )
             install_ids.append(key)
+            install_workspaces[key] = workspace_id
             conn.execute(
                 """
                 INSERT INTO sf_connector_installations(installation_id,workspace_id,user_id,status,
@@ -947,19 +1029,30 @@ class DocumentRepository:
                   public_key_fingerprint=EXCLUDED.public_key_fingerprint,
                   document=EXCLUDED.document,updated_at=clock_timestamp()
                 """,
-                (key, str(row.get("workspace_id") or ""),
-                 _int(row.get("user_id") or row.get("enrolled_by_user_id")),
-                 _status(row.get("status"), {"pending","online","offline","revoked","blocked","failed"}, "pending"),
+                (key, workspace_id, user_id, status,
                  str(row.get("public_key_fingerprint") or row.get("fingerprint") or "missing-fingerprint"),
                  _jsonb(row), _timestamp(row.get("created_at_utc"))),
             )
-        sessions = [row for row in doc.get("sessions", []) if isinstance(row, dict)]
         session_ids: list[str] = []
         for row in sessions:
+            key = str(row.get("session_id") or "")[:160]
+            installation_id = str(row.get("installation_id") or "")
+            workspace_id = str(row.get("workspace_id") or "")
+            status = str(row.get("status") or "").strip().lower()
+            parent_valid = (
+                installation_id in install_workspaces
+                and install_workspaces[installation_id] == workspace_id
+            )
+            if not parent_valid:
+                if status in {"expired", "revoked", "superseded"}:
+                    continue
+                raise StorageConstraintError(
+                    f"Connector session {key or '<missing>'} has non-terminal orphan references."
+                )
             token_hash = str(row.get("token_hash") or "").lower()
             if not re.fullmatch(r"[0-9a-f]{64}", token_hash):
                 raise StorageConstraintError("Connector session token hash is invalid.")
-            key = str(row.get("session_id") or f"csess_{token_hash[:32]}")[:160]
+            key = key or f"csess_{token_hash[:32]}"
             session_ids.append(key)
             conn.execute(
                 """
@@ -971,17 +1064,40 @@ class DocumentRepository:
                   expires_at=EXCLUDED.expires_at,revoked_at=EXCLUDED.revoked_at,
                   document=EXCLUDED.document,updated_at=clock_timestamp()
                 """,
-                (key, str(row.get("installation_id") or ""), str(row.get("workspace_id") or ""),
+                (key, installation_id, workspace_id,
                  token_hash, _timestamp(row.get("expires_at_utc") or row.get("expires_at")) or datetime.now(timezone.utc),
                  _timestamp(row.get("revoked_at_utc")), _jsonb(row), _timestamp(row.get("created_at_utc"))),
             )
-        commands = [row for row in doc.get("commands", []) if isinstance(row, dict)]
         command_ids: list[str] = []
         status_map = {"pending":"queued", "delivered":"leased"}
         for row in commands:
             key = str(row.get("command_id") or _stable_key("cmd", row))[:160]
-            command_ids.append(key)
             status = status_map.get(str(row.get("status") or ""), str(row.get("status") or "queued"))
+            status = _status(
+                status,
+                {"queued","leased","completed","failed","rejected","expired","cancelled","review"},
+                "queued",
+            )
+            workspace_id = str(row.get("workspace_id") or "")
+            installation_id = str(row.get("installation_id") or "") or None
+            user_id = _int(row.get("user_id") or row.get("queued_by_user_id")
+                           or row.get("issued_by_user_id"))
+            references_valid = (
+                workspace_id in workspaces
+                and user_id in users
+                and (workspace_id, user_id) in memberships
+                and (
+                    installation_id is None
+                    or install_workspaces.get(installation_id) == workspace_id
+                )
+            )
+            if not references_valid:
+                if status in {"completed", "failed", "rejected", "expired", "cancelled"}:
+                    continue
+                raise StorageConstraintError(
+                    f"Connector command {key} has non-terminal orphan references."
+                )
+            command_ids.append(key)
             conn.execute(
                 """
                 INSERT INTO sf_commands(command_id,workspace_id,installation_id,user_id,command_type,
@@ -990,13 +1106,11 @@ class DocumentRepository:
                 ON CONFLICT(command_id) DO UPDATE SET status=EXCLUDED.status,
                   document=EXCLUDED.document,updated_at=clock_timestamp(),revision=sf_commands.revision+1
                 """,
-                (key, str(row.get("workspace_id") or ""), str(row.get("installation_id") or "") or None,
-                 _int(row.get("user_id") or row.get("queued_by_user_id")
-                      or row.get("issued_by_user_id")),
+                (key, workspace_id, installation_id, user_id,
                  str(row.get("command_type") or row.get("type")
                      or (row.get("payload") or {}).get("command")
                      or "connector_command")[:100],
-                 _status(status, {"queued","leased","completed","failed","rejected","expired","cancelled","review"}, "queued"),
+                 status,
                  bool(row.get("dangerous") or row.get("requires_live")
                       or row.get("capability") in {"paper_commands", "live_commands"}),
                  str(row.get("idempotency_key") or f"legacy:{key}")[:160], _jsonb(row),
