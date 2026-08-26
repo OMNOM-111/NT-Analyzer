@@ -1,6 +1,6 @@
 # beta.48 — Production LIVE Connector storage reconciliation
 
-Дата closeout: `2026-08-26T18:22:14Z`.
+Дата closeout: `2026-08-26T18:48:02Z`.
 
 Статус: **ACCEPTED / PRODUCTION LIVE**.
 
@@ -70,11 +70,16 @@ CI `5/5`.
 - `18:17:20Z` — `challenge_issued`;
 - `18:17:21Z` — `signed_hello_accepted`;
 - `18:17:22Z` — `market_data_ingested`;
-- одна активная session последовательно выросла `24 → 34 → 38` к
-  `18:22:07Z`; heartbeat и last-seen оставались свежими;
+- первая активная session последовательно выросла `24 → 34 → 38`, затем до
+  sequence `114`; heartbeat и last-seen оставались свежими;
 - installation и normalized mirror имеют `status=online`, Connector
   `0.4.2-dev.6`, NinjaTrader `8.1.8.2`, environment `production`;
-- новых `request_refused` после beta.48 `production_live` — `0`.
+- после штатного 15-минутного TTL сервер дважды ответил ожидаемым
+  `session_expired`; Connector за три секунды автоматически выполнял новый
+  challenge/hello. Вторая session достигла sequence `113`, третья была active
+  с sequence `5` и heartbeat `18:48:01Z`;
+- новых `storage_constraint` или иных unexpected refusals после beta.48
+  `production_live` — `0`.
 
 Последний beta.47 refusal в `18:16:20Z` предшествует переключению Production
 на beta.48 в `18:16:37Z`. Connector market-data ingest сохранил MES 09-26 1m
@@ -100,4 +105,5 @@ tool/material.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-26T18:22:14Z | GPT-5.5 через Codex по запросу owner | Зафиксированы root cause Production Connector FK failure, fail-closed reconciliation, exact beta.48 immutable release identity и живые challenge/hello/heartbeat/market-data evidence.
+2026-08-26T18:48:02Z | GPT-5.5 через Codex по запросу owner | Уточнён audit после двух штатных session TTL rollover: expected session_expired автоматически сменялся challenge/hello; storage_constraint и unexpected refusals отсутствуют.
 -->

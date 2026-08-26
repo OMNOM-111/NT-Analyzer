@@ -1,6 +1,6 @@
 # Clean closeout — beta.48 accepted and live in Production
 
-Дата проверки: `2026-08-26T18:22:14Z`.
+Дата проверки: `2026-08-26T18:48:02Z`.
 
 ## Outcome
 
@@ -12,9 +12,12 @@ fail-closed блокировать любой non-terminal orphan.
 
 Существующая installation `inst_9rVbadz0rNu0xlbbfsVSnkvY` восстановилась без
 reenrollment: challenge и signed hello приняты, одна активная session дала
-последовательность heartbeat `24 → 34 → 38`, status остаётся `online`, после
-момента beta.48 live новых отказов нет. Connector market-data batch также
-принят; старый source timestamp остаётся честно stale.
+последовательность heartbeat `24 → 34 → 38` и дошла до sequence `114`.
+Два последующих штатных session TTL rollover дали ожидаемый `session_expired`,
+после которого Connector автоматически повторил challenge/hello и продолжил
+heartbeat; текущая installation остаётся `online`. Новых `storage_constraint`
+или иных unexpected refusals после beta.48 live нет. Connector market-data
+batch также принят; старый source timestamp остаётся честно stale.
 
 ## Current release identity
 
@@ -69,4 +72,5 @@ acceptance `chk_4e9892b9c99d464ea3b8560217269aa5`. Затем тот же artifa
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-26T18:22:14Z | GPT-5.5 через Codex по запросу owner | Старый многоцикловый handoff заменён текущим beta.48 snapshot; подробная история вынесена в canonical changelog.
+2026-08-26T18:48:02Z | GPT-5.5 через Codex по запросу owner | Зафиксированы два штатных session rollover и точное разделение expected session_expired от отсутствующих storage/unexpected refusals.
 -->

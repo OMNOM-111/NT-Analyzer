@@ -1,7 +1,7 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-08-26T18:22:14Z
+- Last verified UTC: 2026-08-26T18:48:02Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Verified deployed artifact Git SHA: `ae9c5c913e4a3250dd978ce2bf682e52590e82ef`
 - Current Production version/build/artifact when known: `0.10.0-beta.48`; `sf-0.10.0-beta.48-ae9c5c913e4a-20260826T181306Z`; runtime SHA256 `F7856E1EFEEEC6CDACECA48DB4851FFEA9F59CE31F90BEFE6BCAD6ABF6787ED6`
@@ -21,8 +21,8 @@
 | Canary | accepted, ready, deployment `dep_a5abb0353395450889ff3d1013dc9050` |
 | Production | same immutable artifact, live/ready, deployment `dep_e955efac5b1a4d189ba3b6b521aa8bd4` |
 | Release parity | same release directory `0.10.0-beta.48-ae9c5c913e4a`; previous/rollback beta.47 |
-| LIVE Connector | existing installation online; challenge, signed hello, market-data ingest and repeated heartbeat sequence `24 → 34 → 38` PASS |
-| Production refusals | `0` after beta.48 live |
+| LIVE Connector | existing installation online; challenge, signed hello, market-data ingest, heartbeat through sequence `114` and two automatic session TTL rollovers PASS |
+| Production refusals | expected `session_expired` at each TTL recovered by challenge/hello; `storage_constraint` and other unexpected refusals `0` |
 | Tests | full `2033 passed, 32 skipped, 0 failed`; targeted `131 passed, 19 skipped, 0 failed`; CI `5/5` |
 | Market-data baseline | preserved; no TopstepX/SignalR/session/history/cache/failover/rendering change |
 | Secret rotation | explicitly deferred; Google/Resend secrets unchanged |
@@ -43,7 +43,9 @@
 7. The already enrolled NinjaTrader device recovered automatically. No DLL
    reinstall, device reset or enrollment replacement was needed.
 8. Production audit and normalized rows proved challenge → signed hello →
-   repeated heartbeat and accepted market-data ingest with no new refusal.
+   repeated heartbeat and accepted market-data ingest. Two normal session TTL
+   expiries were each followed within three seconds by automatic challenge/
+   hello; no new storage constraint or other unexpected refusal occurred.
 
 ## Remaining boundaries, not blockers for this closeout
 
@@ -70,4 +72,5 @@ acceptance → exact same artifact Production cycle.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-26T18:22:14Z | GPT-5.5 через Codex по запросу owner | Closed the beta.48 Production LIVE Connector task with exact release, CI, root-cause and live recovery evidence; only explicit external/security boundaries remain.
+2026-08-26T18:48:02Z | GPT-5.5 через Codex по запросу owner | Added two verified automatic session rollovers and narrowed the refusal claim to zero storage or unexpected refusals.
 -->

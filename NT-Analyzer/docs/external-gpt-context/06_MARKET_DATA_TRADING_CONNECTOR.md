@@ -1,7 +1,7 @@
 # 06. Market Data, Trading and Connector
 
 - Context Pack document: 06_MARKET_DATA_TRADING_CONNECTOR.md
-- Last verified UTC: 2026-08-26T18:22:14Z
+- Last verified UTC: 2026-08-26T18:48:02Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Verified deployed artifact Git SHA: `ae9c5c913e4a3250dd978ce2bf682e52590e82ef`
 - Scope: NinjaTrader authority, Connector protocol, market-data gateway and trading safety gates
@@ -69,7 +69,12 @@ non-terminal orphan still denies the write fail-closed.
 
 Installation and normalized mirror stayed `online`; Connector version is
 `0.4.2-dev.6`, NinjaTrader version `8.1.8.2`, environment binding
-`production`. New Connector refusals after beta.48 became live: `0`.
+`production`. The first session reached sequence `114`. At each normal
+15-minute TTL boundary the server returned expected `session_expired`, then the
+Connector automatically completed a fresh challenge/hello within three
+seconds. The next session reached sequence `113`; a third was active with
+sequence `5` and fresh heartbeat at `18:48:01Z`. New `storage_constraint` or
+other unexpected refusals after beta.48 became live: `0`.
 
 The accepted batch produced an MES 09-26 1m snapshot. Its underlying source
 timestamp was old, so the snapshot correctly remained stale; no false live
@@ -102,4 +107,5 @@ realtime or rendering only after a reproduced defect with targeted evidence.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-26T18:22:14Z | GPT-5.5 через Codex по запросу owner | Replaced the old Development-only Connector checkpoint with the verified beta.48 Production online challenge/hello/heartbeat/ingest state and protected the accepted TopstepX baseline.
+2026-08-26T18:48:02Z | GPT-5.5 через Codex по запросу owner | Recorded two successful automatic session TTL rollovers and distinguished expected session_expired from absent storage or unexpected refusals.
 -->
