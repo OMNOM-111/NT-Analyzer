@@ -2974,7 +2974,7 @@ class Handler(BaseHTTPRequestHandler):
             # that never called at all.
             connector_protocol.audit_refusal(
                 path, getattr(exc, "code", "") or "", exc.status,
-                str(body.get("installation_id") or ""),
+                str(body.get("installation_id") or ""), str(exc),
             )
             self._err(exc.status, str(exc), code=exc.code)
 

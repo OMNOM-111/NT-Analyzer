@@ -1209,3 +1209,43 @@ def test_connector_audit_endpoint_is_wired_and_owner_gated() -> None:
     assert "connector_protocol.recent_audit(" in block
     # Bounded, so a caller cannot ask for the whole table.
     assert "min(200" in block
+
+
+def test_storage_refusal_detail_survives_to_the_audit(connector_store) -> None:
+    """A storage constraint names what it denied; the code alone is unactionable."""
+    connector_protocol.audit_refusal(
+        "/api/connector/v1/challenge", "storage_constraint", 503,
+        installation_id="inst_probe",
+        detail="Production Connector repository write denied (storage_constraint): "
+               "Storage isolation or integrity constraint denied the operation "
+               "(sf_documents_scope_key).",
+    )
+    rows = [r for r in connector_protocol.recent_audit(20)
+            if r.get("code") == "storage_constraint"]
+    assert rows, "the refusal was not recorded"
+    assert "sf_documents_scope_key" in rows[-1]["detail"]
+
+
+def test_storage_errors_keep_their_message(connector_store, monkeypatch) -> None:
+    """_write_doc used to reduce a storage failure to its bare code."""
+    from app import storage_router
+    from app.production_storage import StorageConstraintError
+
+    monkeypatch.setattr(connector_protocol.runtime_env, "is_server_environment", lambda: True)
+    monkeypatch.setattr(connector_protocol.runtime_env, "environment_explicit", lambda: True)
+
+    def boom(*_a, **_k):
+        raise StorageConstraintError(
+            "Storage isolation or integrity constraint denied the operation "
+            "(some_named_constraint).")
+
+    monkeypatch.setattr(storage_router, "write_document", boom)
+
+    with pytest.raises(connector_protocol.ConnectorProtocolError) as exc:
+        connector_protocol._write_doc({
+            "version": 1, "installations": [], "enrollments": [],
+            "sessions": [], "commands": [],
+        })
+    assert exc.value.code == "storage_constraint"
+    # The constraint name is the whole point: without it the code is unactionable.
+    assert "some_named_constraint" in str(exc.value)
