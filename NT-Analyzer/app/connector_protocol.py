@@ -292,7 +292,7 @@ def _read_doc() -> Dict[str, Any]:
             doc = storage_router.read_document("connectors", _default_doc())
         except StorageError as exc:
             raise ConnectorProtocolError(
-                f"Production Connector repository unavailable ({exc.code}).",
+                f"Production Connector repository unavailable ({exc.code}): {exc}",
                 503, exc.code,
             ) from None
         if not isinstance(doc, dict):
@@ -350,7 +350,7 @@ def _write_doc(doc: Dict[str, Any]) -> None:
             return
         except StorageError as exc:
             raise ConnectorProtocolError(
-                f"Production Connector repository write denied ({exc.code}).",
+                f"Production Connector repository write denied ({exc.code}): {exc}",
                 503, exc.code,
             ) from None
     if not secure_store.available():
@@ -403,7 +403,7 @@ def _audit(event: str, **values: Any) -> None:
             return
         except StorageError as exc:
             raise ConnectorProtocolError(
-                f"Production Connector audit unavailable ({exc.code}).",
+                f"Production Connector audit unavailable ({exc.code}): {exc}",
                 503, exc.code,
             ) from None
     row = {
@@ -422,7 +422,7 @@ def _audit(event: str, **values: Any) -> None:
 
 
 def audit_refusal(route: str, code: str, status: int,
-                  installation_id: str = "") -> None:
+                  installation_id: str = "", detail: str = "") -> None:
     """Record a refused connector request.
 
     Only successful steps were ever audited, so a connector that reached the
@@ -439,6 +439,9 @@ def audit_refusal(route: str, code: str, status: int,
             code=str(code or "")[:80],
             status=int(status or 0),
             installation_id=str(installation_id or "")[:64],
+            # The operator-facing message, which for a storage refusal names
+            # the constraint that denied the write. Bounded, and never a body.
+            detail=str(detail or "")[:300],
         )
     except Exception:
         # Observability must never turn a refusal into a server error.
@@ -451,7 +454,7 @@ def recent_audit(limit: int = 50) -> list:
         "event", "event_type", "occurred_at", "timestamp_utc", "route", "code",
         "status", "installation_id", "workspace_id", "session_id",
         "enrollment_id", "connector_version", "update_state", "update_reason",
-        "public_key_fingerprint", "source",
+        "public_key_fingerprint", "source", "detail",
     }
     rows: list = []
     if runtime_env.is_production() and runtime_env.environment_explicit():
