@@ -1196,3 +1196,16 @@ def test_audit_refusal_never_raises(connector_store, monkeypatch) -> None:
 
     monkeypatch.setattr(connector_protocol, "_audit", boom)
     connector_protocol.audit_refusal("/api/connector/v1/hello", "x", 400)
+
+
+def test_connector_audit_endpoint_is_wired_and_owner_gated() -> None:
+    """The route 500'd on a NameError because context was never defined here."""
+    source = (Path(__file__).resolve().parent.parent / "app" / "server.py").read_text(encoding="utf-8")
+    block = source.split('if path == "/api/admin/connector-audit":', 1)[1]
+    block = block.split('if path == "/api/admin/development-sync":', 1)[0]
+    # Every name the block uses must be bound inside it or by the route.
+    assert 'context = getattr(self, "_remote_context", None) or {}' in block
+    assert "_require_release_capability(context" in block
+    assert "connector_protocol.recent_audit(" in block
+    # Bounded, so a caller cannot ask for the whole table.
+    assert "min(200" in block
