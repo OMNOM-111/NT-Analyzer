@@ -1148,3 +1148,51 @@ def test_installation_exposes_its_environment_and_flags_a_mismatch(connector_sto
     public = connector_protocol._public_installation(row)
     assert public["environment_mismatch"] is True
     assert public["deployment_environment"] in {"canary", "production"}
+
+
+# --------------------------------------------------------------------------- #
+# "Not calling" and "calling and being refused" must be distinguishable. Only
+# successes were audited, so a turned-away connector left no trace at all.
+# --------------------------------------------------------------------------- #
+def test_a_refused_request_is_recorded(connector_store) -> None:
+    connector_protocol.audit_refusal(
+        "/api/connector/v1/hello", "connector_environment_mismatch", 403,
+        installation_id="inst_probe",
+    )
+    rows = connector_protocol.recent_audit(20)
+    refusals = [r for r in rows if r.get("event") == "request_refused"]
+    assert refusals, rows
+    last = refusals[-1]
+    assert last["route"] == "/api/connector/v1/hello"
+    assert last["code"] == "connector_environment_mismatch"
+    assert last["status"] == 403
+    assert last["installation_id"] == "inst_probe"
+
+
+def test_audit_read_is_redacted_to_status_fields(connector_store) -> None:
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    connector_protocol.signed_hello(_hello(private, pending))
+
+    allowed = {
+        "event", "event_type", "occurred_at", "timestamp_utc", "route", "code",
+        "status", "installation_id", "workspace_id", "session_id",
+        "enrollment_id", "connector_version", "update_state", "update_reason",
+        "public_key_fingerprint", "source",
+    }
+    rows = connector_protocol.recent_audit(50)
+    assert rows, "the successful hello should be visible too"
+    for row in rows:
+        assert set(row).issubset(allowed), set(row) - allowed
+    # A token or signature must never appear.
+    blob = json.dumps(rows)
+    assert "session_token" not in blob and "signature" not in blob
+
+
+def test_audit_refusal_never_raises(connector_store, monkeypatch) -> None:
+    """Observability must not turn a refusal into a server error."""
+    def boom(*_a, **_k):
+        raise RuntimeError("audit sink down")
+
+    monkeypatch.setattr(connector_protocol, "_audit", boom)
+    connector_protocol.audit_refusal("/api/connector/v1/hello", "x", 400)

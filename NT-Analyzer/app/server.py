@@ -2969,6 +2969,13 @@ class Handler(BaseHTTPRequestHandler):
                 )
             self._json(HTTPStatus.OK, out)
         except connector_protocol.ConnectorProtocolError as exc:
+            # A refused connector left no trace before this, so a device that
+            # was calling and being turned away was indistinguishable from one
+            # that never called at all.
+            connector_protocol.audit_refusal(
+                path, getattr(exc, "code", "") or "", exc.status,
+                str(body.get("installation_id") or ""),
+            )
             self._err(exc.status, str(exc), code=exc.code)
 
     def _check_public_auth_origin(self) -> bool:
@@ -5247,6 +5254,20 @@ class Handler(BaseHTTPRequestHandler):
                 control=control,
                 registry_is_authoritative=authoritative,
             ))
+            return
+
+        if path == "/api/admin/connector-audit":
+            if not self._require_release_capability(context, "operations.view"):
+                return
+            try:
+                limit = int((qs.get("limit") or ["50"])[0])
+            except ValueError:
+                limit = 50
+            self._json(HTTPStatus.OK, {
+                "ok": True,
+                "environment": runtime_env.deployment_environment(),
+                "events": connector_protocol.recent_audit(max(1, min(200, limit))),
+            })
             return
 
         if path == "/api/admin/development-sync":
