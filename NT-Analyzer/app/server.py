@@ -5257,6 +5257,7 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/admin/connector-audit":
+            context = getattr(self, "_remote_context", None) or {}
             if not self._require_release_capability(context, "operations.view"):
                 return
             try:
