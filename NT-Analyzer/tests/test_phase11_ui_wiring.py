@@ -481,3 +481,15 @@ def test_a_real_login_releases_the_local_logout_hold():
     block = server.split('elif path == "/api/auth/login/status":', 1)[1]
     block = block.split('elif path ==', 1)[0]
     assert "_clear_dev_preview_mode_cookie()" in block
+
+
+def test_connector_panel_states_the_action_instead_of_burying_it():
+    """A staged update and a wrong-environment device are both actionable."""
+    block = UI_JS.split("const onlineCount = conns.filter", 1)[1]
+    block = block.split("inner += `<ol class=\"nt-steps\">", 1)[0]
+    assert "restart_required" in block
+    assert "Перезапустите NinjaTrader" in block
+    assert "environment_mismatch" in block
+    assert "зарегистрирован в другом окружении" in block
+    theme = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
+    assert ".nt-notice-action" in theme and ".nt-notice-warn" in theme

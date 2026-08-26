@@ -2472,6 +2472,9 @@ html.auth-locked .content { padding: 0 !important; min-height: 100vh; }
 .auth-main-action { width: 100%; min-height: 46px; justify-content: center; }
 .auth-form { display: grid; gap: 12px; }
 .auth-wait { display: flex; justify-content: center; align-items: center; gap: 10px; min-height: 58px; color: var(--tx-2); font-size: 13px; }
+.nt-notice { margin: 10px 0; padding: 11px 13px; border-radius: var(--r-sm); font-size: 12.5px; line-height: 1.45; }
+.nt-notice-action { background: var(--brand-soft); border: 1px solid var(--brand-line); color: var(--tx); }
+.nt-notice-warn { background: color-mix(in srgb, #ff6b81 12%, transparent); border: 1px solid color-mix(in srgb, #ff6b81 38%, transparent); color: var(--tx); }
 .auth-qr { display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 4px 0 14px; }
 .auth-qr-frame { box-sizing: border-box; padding: 10px; border-radius: var(--r-md); background: #ffffff; border: 1px solid var(--brand-line); line-height: 0; width: min(228px, 100%); }
 /* A fixed pixel width gets squeezed by the login card and renders a
