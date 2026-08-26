@@ -1,220 +1,73 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-08-24T16:33:38Z
+- Last verified UTC: 2026-08-26T18:22:14Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Repository baseline: PR #146 and PR #147 are merged cleanly into `main` at `8e83d4ccbad9`; beta.31 Canary was not accepted and Production remains beta.29
-- Candidate: `0.10.0-beta.32` minimal chart-batch rate-class and remote Admin diagnostics correction over beta.31
-- Scope: authenticated entry, one seven-day full trial, owner extension history, per-user market-data source admission and real Connector acceptance
-- Status: IN DEVELOPMENT
-- Acceptance note: beta.31 completed a 13m26s two-client 36-chart soak with exact live markers and 20/20 readiness. Acceptance was withheld when an added MNQ 15m load returned 429: the read-only consolidated chart POST was counted in the 120/min write bucket. Beta.32 changes only that classification and makes the externally denied local Diagnostics control honestly disabled on Canary/Production.
-- Current Production version/build/artifact when known: `0.10.0-beta.29`; build `sf-0.10.0-beta.29-4d15f1d2250e-20260823T020155Z`; runtime SHA256 `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379`
+- Verified deployed artifact Git SHA: `ae9c5c913e4a3250dd978ce2bf682e52590e82ef`
+- Current Production version/build/artifact when known: `0.10.0-beta.48`; `sf-0.10.0-beta.48-ae9c5c913e4a-20260826T181306Z`; runtime SHA256 `F7856E1EFEEEC6CDACECA48DB4851FFEA9F59CE31F90BEFE6BCAD6ABF6787ED6`
+- Scope: Production LIVE Connector storage/schema closeout
+- Status: DONE
 
 ## Current checkpoint
 
 | Field | Value |
 | --- | --- |
-| Current Git SHA | `7ebda6faf2e7c64d4a707a41062b29857882181a` remains the pack-wide verification baseline |
-| Development implementation SHA | clean base `8e83d4ccbad9d9fadf10109f0afdd6b3ce9fe6eb`; beta.32 changes only chart-batch rate classification, remote diagnostics presentation, regressions and factual documents |
-| Development branch base | clean `main` at `8e83d4ccbad9d9fadf10109f0afdd6b3ce9fe6eb`; branch `codex/beta32-batch-read-rate-class` |
-| Deployed implementation SHA | Canary non-accepted `8e83d4ccbad9d9fadf10109f0afdd6b3ce9fe6eb`; Production accepted `4d15f1d2250e2c52bde02b902d88ec7aad043543` |
-| LOCAL | beta.32 full regression `1947 passed, 32 skipped, 0 failed`; expanded market-data/chart `167 passed`; targeted `70 passed`; custom runner `13/13`; Connector Debug build and static/context/diff gates PASS |
-| Canary | beta.31 `8e83d4cc` deployed but non-accepted after 15m history smoke exposed HTTP 429; candidate remains pre-acceptance and must be replaced by a fresh beta.32 artifact |
-| Production | same beta.29 merge/build/runtime manifest; authenticated owner, two-client MES/MNQ, MNQ 15m and responsive smoke PASS |
-| Release parity | accepted beta.29 Production baseline remains intact; beta.31 is not eligible for promotion; beta.32 requires a new one-artifact cycle |
-| Market-data baseline | protected; beta.32 changes only admission classification of the existing read-only batch endpoint; TopstepX/SignalR/cache/failover/rollover/realtime/rendering unchanged |
-| Secret rotation | explicitly deferred; no Google/Resend or provider secret was exposed or rotated |
+| Current Git SHA | `7ebda6faf2e7c64d4a707a41062b29857882181a` pack-wide verification baseline; deployed artifact `ae9c5c913e4a3250dd978ce2bf682e52590e82ef` |
+| Root-cause fix | PR #182, merge `51bf8705ea213940f046b888be371fb476cc0229` |
+| Release identity | PR #183, merge/artifact SHA `ae9c5c913e4a3250dd978ce2bf682e52590e82ef` |
+| Release | `0.10.0-beta.48`, candidate `rc_f4554de031954dca87bff3b2c54cfa0e`, artifact `art_dba8625e0b3b427896f8d1ead2382fa2` |
+| Build | `sf-0.10.0-beta.48-ae9c5c913e4a-20260826T181306Z` |
+| Archive / runtime hashes | `B9C56184…4E97` / `F7856E1E…7ED6` |
+| Canary | accepted, ready, deployment `dep_a5abb0353395450889ff3d1013dc9050` |
+| Production | same immutable artifact, live/ready, deployment `dep_e955efac5b1a4d189ba3b6b521aa8bd4` |
+| Release parity | same release directory `0.10.0-beta.48-ae9c5c913e4a`; previous/rollback beta.47 |
+| LIVE Connector | existing installation online; challenge, signed hello, market-data ingest and repeated heartbeat sequence `24 → 34 → 38` PASS |
+| Production refusals | `0` after beta.48 live |
+| Tests | full `2033 passed, 32 skipped, 0 failed`; targeted `131 passed, 19 skipped, 0 failed`; CI `5/5` |
+| Market-data baseline | preserved; no TopstepX/SignalR/session/history/cache/failover/rendering change |
+| Secret rotation | explicitly deferred; Google/Resend secrets unchanged |
 
-## Implemented in the new Development candidate
+## Completed actions
 
-1. Anonymous visitors no longer enter a blurred or preview application shell.
-2. Verified Telegram Mini App/contact, Google and e-mail registrations activate
-   one idempotent seven-day `trial_full` grant; returning identities/devices do
-   not restart it.
-3. Trial expiry leaves the account active. The authenticated baseline keeps
-   Cabinet, Documents, practice and personal TopstepX/NinjaTrader setup.
-4. Admin user cards expose trial state, dates, extension by days or exact UTC
-   date, reason and actor-aware before/after history.
-5. HTTP and same-origin WebSocket market data share one fail-closed admission
-   decision. Private-provider and personal-Connector scopes cannot fall through
-   to the owner feed or another user's cache/events.
-6. A shared product trial reaches the owner gateway only when both explicit
-   remote-server and redistribution authority flags are true. Current policy is
-   false, so this path remains honestly denied instead of silently sharing the
-   owner's entitlement.
+1. beta.47 refusal audit identified exact PostgreSQL constraint
+   `sf_connector_installations_workspace_id_fkey`.
+2. Production migrations were verified current through migration 18; no schema
+   deployment gap existed.
+3. The actual write path was traced to whole-document Connector mirror
+   projection and its retained terminal orphan history.
+4. A bounded fail-closed reconciliation was implemented with a regression that
+   reproduces the real Production data shape.
+5. Mandatory CI passed; the scoped fix and beta.48 identity merged cleanly.
+6. One signed immutable artifact was built, deployed to Canary, accepted and
+   promoted unchanged to Production.
+7. The already enrolled NinjaTrader device recovered automatically. No DLL
+   reinstall, device reset or enrollment replacement was needed.
+8. Production audit and normalized rows proved challenge → signed hello →
+   repeated heartbeat and accepted market-data ingest with no new refusal.
 
-## Beta.31 corrective evidence
+## Remaining boundaries, not blockers for this closeout
 
-1. Beta.30 Canary reproduction: two 36-chart clients kept live WebSockets, but
-   deep-history prefetch repeated the latest range until all 24 bounded HTTP
-   slots were occupied; readiness/Admin returned 503.
-2. First divergence: consumer `history_range()` omitted viewport
-   `start_time/end_time`. The hub endpoint, provider session and browser realtime
-   were healthy.
-3. Beta.31 forwards existing `from_ts/to_ts` and propagates the hub's existing
-   history exhaustion/cache metadata. Focused gateway/admission regression:
-   `81 passed`.
-4. Same-limit LOCAL proof: two simultaneous 36-chart clients, `36/36 external_live`,
-   `10.26 min`, readiness `20/20`, peak handlers `8/24`, rejected `0`, one
-   shared upstream SignalR and zero consumer direct provider/auth/loginKey
-   sessions. Both clients exactly matched MNQ/MES WebSocket price, last close
-   and colored rendered marker at the final sample.
-5. Final clean gates: full regression `1946 passed`, `32 skipped`, `0 failed`;
-   custom runner `13/13`; combined market-data/gateway + governance/docs
-   `121 passed`; bridge build, Python/JavaScript/static/context/diff checks PASS.
-
-## Beta.32 corrective evidence
-
-1. Real beta.31 Canary: two authenticated 36-chart clients stayed `36/36 live`
-   for `13m26s`; readiness `20/20`; exact MNQ/MES TopstepX payload, last close
-   and colored marker matched in both clients.
-2. Additional timeframe smoke changed MNQ 5m → 1m → 15m. The 15m load returned
-   429 while WebSocket live state remained healthy.
-3. Authoritative PostgreSQL buckets showed `api.write=145–183/min` against the
-   120/min mutation limit. First divergence: read-only consolidated
-   `POST /api/ops/runtime/bars/batch` was classified only by its method.
-4. Beta.32 maps that exact endpoint to `read` and pins it with a regression. It
-   does not alter TopstepX, gateway fan-out, session ownership or chart data.
-5. Cloudflare intentionally denies `/api/diagnostics` externally. Remote Admin
-   now disables this Development-only control with an explanation instead of
-   opening a guaranteed empty 404; safe operational summaries remain visible.
-6. Clean local gates: full regression `1947 passed`, `32 skipped`, `0 failed`;
-   expanded market-data/chart `167 passed`; targeted `70 passed`; custom runner
-   `13/13`; Connector Debug build `0 warnings / 0 errors`; Python, JavaScript,
-   CSP/secrets/Markdown, context validation and diff checks PASS.
-
-## Previous candidate LOCAL acceptance evidence
-
-1. Two simultaneous browser clients observed MNQ 5m and MES 5m for `10m56s`.
-   The final exact sample matched WebSocket `lastPrice`, last-bar close and the
-   colored rendered price marker in both clients; live-state never degraded to
-   grey/`OFF` while the shared feed was fresh.
-2. Peak fan-out was two browser WebSockets, four logical subscriptions, two
-   wire subscriptions and one shared upstream SignalR connection. Consumer
-   direct provider/auth/loginKey counts stayed zero. Closing both tabs returned
-   browser/logical/wire counts to zero.
-3. The four loaded chart assets matched local disk bytes under cache-bust
-   `dev-0.10.0-beta.29-653f2b5bcfae`; there is no service-worker registration.
-4. Final clean regression: `1945 passed`, `32 skipped`, `0 failed`; custom
-   runner `13/13`; Debug Connector build `0 warnings / 0 errors`; Python/JS,
-   CSP, secrets, Markdown/link, context and diff gates PASS.
-
-## Physical Development Connector acceptance
-
-1. Owner saved and closed NinjaTrader `8.1.7.2`; installer probe passed 17/17,
-   Connector `0.4.1-dev.14` was repaired in place and its installed DLL matched
-   the verified payload byte-for-byte.
-2. Enrollment/device key survived repair. Signed hello and heartbeat were
-   accepted; Admin showed one installation online in Development. Exact
-   configured streams were `MNQ SEP26 5m` and `MES SEP26 5m`.
-3. The late-feed lifecycle resubscribed both BarsRequests after the saved price
-   connection became ready. History and live batches reached the server.
-4. A reproduced one-batch-per-15-second-long-poll queue defect was fixed with a
-   bounded burst drain. Post-fix 3m02s evidence advanced source sequence
-   `110 -> 375`, `drops=0`, `transport_errors=0`; a second browser still saw
-   MNQ/MES `LIVE` through the unchanged TopstepX gateway baseline.
-5. Safe demo-backtest report `#18781` completed `done`: 28 explicitly synthetic
-   trades, zero real orders. The enrolled device exposes only `telemetry` and
-   `accounts_read` capabilities.
-
-## Current blockers before release
-
-| Gate | State | Required evidence |
+| Area | State | Boundary |
 | --- | --- | --- |
-| Cross-user shared trial feed | `EXTERNAL BLOCKED` | written provider/exchange authority and explicit per-user entitlement policy; owner request alone cannot change third-party rights |
-| Physical Connector | `PASS` | Development dev.14 install, retained enrollment, heartbeat, MNQ/MES history/live ingestion, queue-drain soak and safe no-order demo-backtest are evidenced above |
-| Production Connector package | `EXTERNAL BLOCKED` | Authenticode signing tool and release signing material available to the authorized release environment |
-| PR #145 / beta.30 CI | `PASS` | owner-authorized merge `27184197`; all five mandatory checks green |
-| beta.32 correction release | `PENDING` | scoped clean commit/PR, mandatory CI, new signed immutable artifact, Canary acceptance, then same artifact Production |
-
-The four Google/Resend secrets remain outside this task and must not be changed.
-
-## Released in beta.29
-
-- Responsive shell breakpoints keep environment/System controls reachable on
-  large desktop, tablet and phone without whole-page horizontal overflow.
-- Chart windows keep saved free-position geometry on desktop and reflow to a
-  vertical compact stack at 1100 px and below.
-- Mobile Admin tabs no longer sit under the active module; Connector content,
-  notices and strategy Kanban reflow inside their own surfaces.
-- Operations serializes live Telegram lease timestamps and bounds independent
-  Worker/Telegram/Connector probes so one slow source cannot blank the panel.
-- Normal browser TCP reset releases WebSocket leases quietly; a late history
-  bootstrap cannot outlive an existing consumer; successful reconnect clears
-  historical transport error state.
-
-## Completed Development evidence
-
-1. 84/84 page/viewport matrix checks passed; mobile Add Chart, Cabinet, Users,
-   Connectors, Operations and Environments pointer-click journeys had zero
-   document overflow, console errors or failed same-origin requests.
-2. 12-page/24-chart load across three browser profiles held one gateway
-   SignalR connection and two wire subscriptions. Browser traffic stayed
-   same-origin and provider credentials were never exposed.
-3. MES 5m and MNQ 15m rendered identical closes and colored live markers on
-   desktop/tablet/mobile DPI profiles with NinjaTrader OFF.
-4. Closing the test profiles returned browser WebSockets `14 -> 2` and logical
-   refs `22 -> 4`, exactly matching pre-load baseline; direct/loginKey remained
-   zero and reconnect error remained empty.
-5. Targeted market/chart/Operations/responsive suite: `251 passed`; full suite:
-   `1924 passed`, `32 skipped`, `0 failed`; py_compile/compileall, 32 JavaScript
-   syntax checks, CSP, secret, Markdown/link, Context Pack and diff checks passed.
-
-Detailed evidence:
-[2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md).
-
-## Completed release sequence
-
-1. [PR #142](https://github.com/OMNOM-111/NT-Analyzer/pull/142): five mandatory
-   checks green; merge `4d15f1d2250e`.
-2. Candidate `rc_a7c6c0afb95d410f92474614efeb1b35`, artifact
-   `art_ccaadc3a536e4272809d32073f072918`, archive
-   `882FF352...195B`, runtime manifest `CBA4FA70...2379`.
-3. Canary deployment `dep_de061542f96641e1a10b7bb4456c2df0` and acceptance
-   `2026-08-23T02:08:54Z`: PASS.
-4. Production deployment `dep_8716b7cf463f4cf8af092ba6a4e5bdae`, same artifact,
-   no rebuild, `production_live` at `2026-08-23T02:16:30Z`: PASS.
-
-## Explicitly deferred / external
-
-- Public Production Connector package remains `EXTERNAL BLOCKED` until the
-  authorized Authenticode tool/material is available; Development dev.14
-  physical enrollment/runtime acceptance is already complete.
-- Google OAuth and transactional e-mail remain `EXTERNAL BLOCKED` until their
-  separate provider/security closeout.
-- Legal package publication remains `IN DEVELOPMENT` / DRAFT.
+| Cross-user shared owner feed | `EXTERNAL BLOCKED` | written provider/exchange distribution authority and per-user entitlement policy |
+| Public Connector installer | `EXTERNAL BLOCKED` | authorized Authenticode signing tool/material |
+| Google / Resend rotation | deferred | separate final security closeout; two Google Client Secrets and two Resend keys untouched |
+| Legal publication | `IN DEVELOPMENT` | DRAFT until owner/legal decisions and counsel review |
 
 ## Next development boundary
 
-Commit/push the beta.32 corrective branch and complete mandatory CI. Under the
-owner's standing automation rule, merge automatically only when 5/5 checks,
-branch protection, reviews/security and mergeability are clean. Then build one immutable server artifact,
-accept it in Canary and promote that same artifact to Production.
-Any code change after Canary acceptance starts a new artifact cycle; beta.29
-must not be hotfixed in place.
+No LIVE Connector release work remains from this checkpoint. Future product or
+Connector changes must start from current `main`, preserve the accepted
+market-data baseline and repeat the normal clean CI → one artifact → Canary
+acceptance → exact same artifact Production cycle.
 
 ## Canonical evidence
 
-- [LOCAL_BASELINE_CHECKPOINT.md](../current/LOCAL_BASELINE_CHECKPOINT.md)
-- [2026-08-20-final-product-acceptance-beta28.md](../changelog/2026-08-20-final-product-acceptance-beta28.md)
-- [2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md)
-- [04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md](04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md)
-- [06_MARKET_DATA_TRADING_CONNECTOR.md](06_MARKET_DATA_TRADING_CONNECTOR.md)
-- `app/owner_market_data_gateway.py`
-- `app/market_data_ws_http.py`
+- [beta.48 LIVE Connector closeout](../changelog/2026-08-26-beta48-live-connector-storage-reconciliation.md)
+- [current clean closeout](../current/CLEAN_CLOSEOUT_HANDOFF.md)
+- [environments and release](04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md)
+- [market data and Connector](06_MARKET_DATA_TRADING_CONNECTOR.md)
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Replaced obsolete beta.1 handoff with executable beta.28 final-acceptance checkpoint and explicit stop/deferred boundaries.
-2026-08-21T00:53:04Z | GPT-5.5 через Codex по запросу owner | Recorded first beta.28 Canary as not accepted, the live archive/runtime digest diagnosis and mandatory corrected rebuild; Production stayed beta.26.
-2026-08-21T02:03:00Z | GPT-5.5 через Codex по запросу owner | Recorded the non-accepted 8865fad0 Canary artifact and the isolated governance-ledger parity correction required before final acceptance; Production stayed beta.26.
-2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Recorded 2790fb43 Canary visual acceptance, the real authoritative promotion state blocker and mandatory new release cycle; Production stayed beta.26.
-2026-08-21T03:50:00Z | GPT-5.5 через Codex по запросу owner | Closed the immutable beta.28 release sequence through accepted Canary and same-artifact Production; retained the physical Production Telegram login as the sole explicit interaction.
-2026-08-23T01:29:45Z | GPT-5.5 через Codex по запросу owner | Opened beta.29 release handoff with completed Development fan-out/responsive evidence and the exact remaining PR/CI/Canary/same-artifact Production sequence.
-2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Closed beta.29 handoff after PR #142, exact immutable Canary acceptance and same-artifact Production live promotion; remaining items are explicit external/product boundaries, not release blockers.
-2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Opened the unified trial/access and real Connector closeout, recorded implemented Development scope plus exact redistribution, Authenticode and physical NinjaTrader blockers; beta.29 live environments remain untouched.
-2026-08-23T22:20:31Z | GPT-5.5 через Codex по запросу owner | Recorded clean LOCAL 1943/32/0 and 10m56s two-client chart acceptance, asset parity and fan-out release; retained all external and physical gates.
-2026-08-24T01:52:25Z | GPT-5.5 через Codex по запросу owner | Closed physical Development Connector acceptance with exact dev.14 package, retained enrollment/heartbeat, two-stream live ingestion, bounded transport drain and safe demo-backtest; next gate is PR #144 CI.
-2026-08-24T02:41:31Z | GPT-5.5 через Codex по запросу owner | Recorded PR #144 green merge fb7d7f9b, repeated clean-merge Connector heartbeat/history/live and safe UI demo-backtest #18782, and opened the minimal beta.30 versioned release preparation.
-2026-08-24T04:22:21Z | GPT-5.5 через Codex по запросу owner | Recorded beta.30 Canary as non-accepted, Production beta.29 unchanged, reproduced the first viewport-range divergence and opened the bounded beta.31 corrective PR/CI/release cycle.
-2026-08-24T16:33:38Z | GPT-5.5 через Codex по запросу owner | Recorded beta.31 Canary as non-accepted after chart-batch read traffic exhausted the write bucket, kept Production beta.29 and opened the bounded beta.32 corrective cycle.
+2026-08-26T18:22:14Z | GPT-5.5 через Codex по запросу owner | Closed the beta.48 Production LIVE Connector task with exact release, CI, root-cause and live recovery evidence; only explicit external/security boundaries remain.
 -->
