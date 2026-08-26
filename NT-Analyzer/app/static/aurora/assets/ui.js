@@ -1932,6 +1932,16 @@
         const stateLabel = { online: 'онлайн', pending: 'ожидает подписи', offline: 'офлайн', revoked: 'отозван' };
         const stateBadge = { online: 'live', pending: 'pending', offline: 'archived', revoked: 'failed' };
         inner += `<div class="cab-kv"><span class="k">Ваш NinjaTrader</span><span class="v">${onlineCount ? `<span class="badge live">онлайн · ${onlineCount}</span>` : (conns.length ? '<span class="badge pending">нет активной сессии</span>' : '<span class="badge pending">не подключён</span>')}</span></div>`;
+        // Two things an operator can act on, said once and prominently instead
+        // of being buried as a detail line on one connection row.
+        const needRestart = conns.filter(c => c.restart_required && c.status !== 'revoked');
+        if (needRestart.length) {
+          inner += `<div class="nt-notice nt-notice-action" role="status">Доступно обновление StratForge Connector. Перезапустите NinjaTrader, чтобы завершить обновление и восстановить подключение.${needRestart.length > 1 ? ` <span class="cab-sub">Устройств: ${needRestart.length}</span>` : ''}</div>`;
+        }
+        const wrongEnv = conns.filter(c => c.environment_mismatch && c.status !== 'revoked');
+        if (wrongEnv.length) {
+          inner += `<div class="nt-notice nt-notice-warn" role="status">Этот Connector зарегистрирован в другом окружении (${wrongEnv.map(c => esc(String(c.deployment_environment || '—'))).join(', ')}) и здесь отклоняется. Подключение восстановится только в своём окружении или после повторной регистрации.</div>`;
+        }
         if (connectorMode) {
           inner += conns.length ? `<div class="nt-connections">${conns.map(c => {
             const status = String(c.status || 'offline');

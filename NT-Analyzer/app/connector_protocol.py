@@ -682,7 +682,7 @@ def _assert_environment(installation: Mapping[str, Any]) -> None:
 
 
 def _public_installation(row: Mapping[str, Any]) -> Dict[str, Any]:
-    return {name: copy.deepcopy(row.get(name)) for name in (
+    public = {name: copy.deepcopy(row.get(name)) for name in (
         "installation_id",
         "connection_id",
         "workspace_id",
@@ -702,7 +702,25 @@ def _public_installation(row: Mapping[str, Any]) -> Dict[str, Any]:
         "update_reason",
         "release_channel",
         "account_labels",
+        # An installation belongs to exactly one environment and is refused
+        # anywhere else. Without this the panel can only say "offline", which
+        # is what made a Canary connector pointed at Production look like a
+        # dead device rather than a rejected one.
+        "deployment_environment",
+        "update_policy",
     )}
+    # A staged update that only needs NinjaTrader restarted is a distinct
+    # state from "an update exists": it is the one the operator can act on.
+    public["restart_required"] = bool(
+        str(row.get("update_state") or "") == "update_available"
+        and str(row.get("update_policy") or "") == "safe_restart"
+    )
+    public["environment_mismatch"] = bool(
+        str(row.get("deployment_environment") or "")
+        and str(row.get("deployment_environment") or "")
+        != runtime_env.deployment_environment()
+    )
+    return public
 
 
 def _apply_release_policy(installation: Dict[str, Any]) -> Dict[str, Any]:
@@ -712,6 +730,9 @@ def _apply_release_policy(installation: Dict[str, Any]) -> Dict[str, Any]:
         decision.get("reason") or "release_policy_error"
     )
     installation["release_channel"] = str(decision.get("channel") or "")
+    installation["update_policy"] = str(
+        (decision.get("offer") or {}).get("apply_policy") or ""
+    )
     return decision
 
 

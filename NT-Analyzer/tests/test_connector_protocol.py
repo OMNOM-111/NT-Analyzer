@@ -1104,3 +1104,47 @@ def test_background_refresh_runs_one_worker_per_workspace(connector_store, monke
         for _ in range(5):
             connector_protocol.health_summary(42, workspace_id=workspace["workspace_id"])
         assert len(started) == 1, started
+
+
+# --------------------------------------------------------------------------- #
+# An operator must be able to tell "waiting for a restart" and "registered in
+# another environment" apart from a plain dead device.
+# --------------------------------------------------------------------------- #
+def test_installation_reports_restart_required_for_a_safe_restart_update(connector_store) -> None:
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    connector_protocol.signed_hello(_hello(private, pending))
+
+    doc = connector_protocol._read_doc()
+    row = doc["installations"][0]
+    row["update_state"] = "update_available"
+    row["update_policy"] = "safe_restart"
+    public = connector_protocol._public_installation(row)
+    assert public["restart_required"] is True
+    assert public["update_policy"] == "safe_restart"
+
+    # A major update needing a real reinstall is not a restart prompt.
+    row["update_policy"] = "manual"
+    assert connector_protocol._public_installation(row)["restart_required"] is False
+    # And an up-to-date connector never asks for one.
+    row["update_state"] = "compatible"
+    row["update_policy"] = "safe_restart"
+    assert connector_protocol._public_installation(row)["restart_required"] is False
+
+
+def test_installation_exposes_its_environment_and_flags_a_mismatch(connector_store) -> None:
+    """A connector refused for belonging elsewhere must not read as 'offline'."""
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    connector_protocol.signed_hello(_hello(private, pending))
+
+    doc = connector_protocol._read_doc()
+    row = doc["installations"][0]
+    here = connector_protocol.runtime_env.deployment_environment()
+    assert connector_protocol._public_installation(row)["deployment_environment"] == here
+    assert connector_protocol._public_installation(row)["environment_mismatch"] is False
+
+    row["deployment_environment"] = "canary" if here != "canary" else "production"
+    public = connector_protocol._public_installation(row)
+    assert public["environment_mismatch"] is True
+    assert public["deployment_environment"] in {"canary", "production"}
