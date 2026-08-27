@@ -11,6 +11,7 @@ import hashlib
 import json
 import math
 import os
+import random
 import re
 import secrets
 import signal
@@ -66,6 +67,17 @@ _SAFE_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/+-]{7,159}$")
 _SAFE_OPERATION = re.compile(r"^[a-z][a-z0-9_.:-]{1,99}$")
 _QUEUE: Optional["ProductionQueue"] = None
 _QUEUE_LOCK = threading.RLock()
+
+# Polling stays bounded and responsive without turning an empty queue into a
+# permanent database workload.  The 1.9 second cap keeps worst-case pickup
+# below two seconds even after applying the requested +/-10 percent jitter.
+FIRST_IDLE_POLL_SEC = 0.5
+SECOND_IDLE_POLL_SEC = 1.0
+SUSTAINED_IDLE_POLL_SEC = 2.0
+MAX_JITTERED_IDLE_POLL_SEC = 1.9
+POLL_JITTER_FRACTION = 0.10
+STORAGE_RETRY_MIN_SEC = 1.0
+STALE_SWEEP_INTERVAL_SEC = 30.0
 
 
 class ProductionQueueError(StorageError):
@@ -974,7 +986,6 @@ def run_once(worker_class: str, *, worker_id: str = "") -> Optional[Dict[str, An
 
     active_worker = str(worker_id or f"worker-{os.getpid()}-{threading.get_ident()}")[:160]
     queue = get_queue()
-    queue.sweep_stale(limit=100)
     job = queue.claim(worker_class, worker_id=active_worker)
     if not job:
         return None
@@ -1202,19 +1213,64 @@ class WorkerService:
         self.poll_sec = max(0.05, min(10.0, int(poll_ms or 250) / 1000.0))
         self.stop_event = threading.Event()
         self.threads: list[threading.Thread] = []
+        self.sweeper_thread: Optional[threading.Thread] = None
         self.background_coordinator: Optional[BackgroundAICoordinator] = None
+
+    @staticmethod
+    def _jittered_delay(base_sec: float, *, maximum: Optional[float] = None) -> float:
+        spread = max(0.0, float(base_sec)) * POLL_JITTER_FRACTION
+        delay = random.uniform(
+            max(0.0, float(base_sec) - spread), float(base_sec) + spread,
+        )
+        if maximum is not None:
+            delay = min(float(maximum), delay)
+        return max(0.0, delay)
+
+    def _next_poll_delay(self, empty_count: int) -> float:
+        if empty_count <= 0:
+            return self._jittered_delay(self.poll_sec)
+        if empty_count == 1:
+            base = max(self.poll_sec, FIRST_IDLE_POLL_SEC)
+        elif empty_count == 2:
+            base = max(self.poll_sec, SECOND_IDLE_POLL_SEC)
+        else:
+            base = max(self.poll_sec, SUSTAINED_IDLE_POLL_SEC)
+        return self._jittered_delay(base, maximum=MAX_JITTERED_IDLE_POLL_SEC)
+
+    def _sweep_loop(self) -> None:
+        # Sweep once on startup so an expired lease is not forced to wait for
+        # the first interval, then let this one coordinator own maintenance.
+        while not self.stop_event.is_set():
+            try:
+                get_queue().sweep_stale(limit=100)
+            except StorageError:
+                # A failed sweep is retried on the normal cadence. It neither
+                # kills queue workers nor creates a storage-outage tight loop.
+                pass
+            if self.stop_event.wait(STALE_SWEEP_INTERVAL_SEC):
+                return
 
     def _loop(self, worker_class: str, slot: int) -> None:
         worker_id = f"{os.uname().nodename if hasattr(os, 'uname') else 'host'}:{os.getpid()}:{worker_class}:{slot}"
+        empty_count = 0
         while not self.stop_event.is_set():
             try:
                 row = run_once(worker_class, worker_id=worker_id)
                 if row is None:
-                    self.stop_event.wait(self.poll_sec)
+                    empty_count += 1
+                else:
+                    empty_count = 0
+                self.stop_event.wait(self._next_poll_delay(empty_count))
             except StorageUnavailableError:
-                self.stop_event.wait(max(1.0, self.poll_sec))
+                empty_count = max(2, empty_count + 1)
+                self.stop_event.wait(max(
+                    STORAGE_RETRY_MIN_SEC, self._next_poll_delay(empty_count),
+                ))
             except StorageError:
-                self.stop_event.wait(self.poll_sec)
+                empty_count = max(2, empty_count + 1)
+                self.stop_event.wait(max(
+                    STORAGE_RETRY_MIN_SEC, self._next_poll_delay(empty_count),
+                ))
 
     def start(self) -> int:
         configs = get_queue().class_configs()
@@ -1234,6 +1290,11 @@ class WorkerService:
                 get_queue().client,
             )
             self.background_coordinator.start()
+        self.sweeper_thread = threading.Thread(
+            target=self._sweep_loop,
+            name="sf-worker-sweeper", daemon=True,
+        )
+        self.sweeper_thread.start()
         for worker_class in self.classes:
             config = configs[worker_class]
             requested_name = "STRATFORGE_WORKER_CONCURRENCY_" + worker_class.upper()
@@ -1253,9 +1314,14 @@ class WorkerService:
         if self.background_coordinator:
             self.background_coordinator.stop()
         deadline = time.monotonic() + max(1, min(600, int(grace_sec or 60)))
+        if self.sweeper_thread:
+            self.sweeper_thread.join(timeout=max(0.0, deadline - time.monotonic()))
         for thread in self.threads:
             thread.join(timeout=max(0.0, deadline - time.monotonic()))
-        return not any(thread.is_alive() for thread in self.threads)
+        return (
+            not any(thread.is_alive() for thread in self.threads)
+            and not bool(self.sweeper_thread and self.sweeper_thread.is_alive())
+        )
 
 
 def _required_heartbeat_roles() -> tuple[str, ...]:
