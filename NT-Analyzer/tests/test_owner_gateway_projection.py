@@ -159,3 +159,63 @@ def test_the_owner_runtime_flag_is_not_a_global_bypass():
     body = body[: body.index("\ndef ", 1)]
     assert "owner_fallback = bool(is_owner and uses_owner_runtime)" in body
     assert "same_user or same_uuid" in body
+
+
+# --------------------------------------------------------------------------- #
+# Who may see the mirror.
+# --------------------------------------------------------------------------- #
+from app import server as server_mod  # noqa: E402
+
+
+def test_a_tenant_on_a_consumer_environment_sees_nothing_projected():
+    """Being on Canary entitles nobody to the owner's balances.
+
+    The projection carries one person's cash and NetLiq. Serving it to whoever
+    reaches the route on a consumer environment would hand a tenant the owner's
+    account data -- a leak the hub itself would never permit.
+    """
+    assert server_mod._entitled_to_owner_runtime({
+        "user_id": 42, "is_owner": False,
+        "workspace_context": {"active_workspace": {
+            "workspace_id": "ws_personal_tenant", "uses_owner_runtime": False}},
+    }) is False
+
+
+def test_an_anonymous_request_is_not_entitled():
+    assert server_mod._entitled_to_owner_runtime({}) is False
+
+
+def test_the_owner_outside_an_owner_runtime_workspace_is_not_entitled():
+    """Owner is necessary, not sufficient: the workspace decides the runtime."""
+    assert server_mod._entitled_to_owner_runtime({
+        "is_owner": True,
+        "workspace_context": {"active_workspace": {
+            "workspace_id": "ws_personal_other", "uses_owner_runtime": False}},
+    }) is False
+
+
+def test_the_owner_in_an_owner_runtime_workspace_is_entitled():
+    assert server_mod._entitled_to_owner_runtime({
+        "is_owner": True,
+        "workspace_context": {"active_workspace": {
+            "workspace_id": "ws_owner_training_x", "uses_owner_runtime": True}},
+    }) is True
+
+
+def test_the_flat_active_workspace_shape_is_accepted_too():
+    """Two context shapes exist in the codebase; both must be judged the same,
+    or the gate passes on one path and silently fails open on the other."""
+    assert server_mod._entitled_to_owner_runtime({
+        "is_owner": True,
+        "active_workspace": {"uses_owner_runtime": True},
+    }) is True
+
+
+def test_the_projection_is_gated_before_it_is_fetched():
+    """The check has to precede the hub call, not filter its answer."""
+    from pathlib import Path
+
+    text = Path(server_mod.__file__).read_text(encoding="utf-8")
+    block = text[text.index("owner_market_data_gateway.should_consume()"):]
+    block = block[: block.index("projected_runtime(path)")]
+    assert "_entitled_to_owner_runtime(context)" in block
