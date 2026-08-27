@@ -32,7 +32,6 @@ def provider():
     instance._wire_subscribed_contract_ids = set()
     instance._pending_signal_invocations = {}
     instance._connected_at = ""
-    instance._connect_requested = False
     return instance
 
 
@@ -42,15 +41,18 @@ def test_a_configured_provider_with_no_subscribers_is_idle(provider):
     assert provider.reported_runtime_state() == "IDLE"
 
 
-def test_an_asked_for_connection_is_connecting_even_with_no_subscribers(provider):
-    """connect() is an attempt in flight, which is what CONNECTING is for.
+def test_asking_to_connect_with_nothing_subscribed_is_still_idle(provider):
+    """Demand decides this, not the fact that connect() was called.
 
-    The resting state the server actually showed had never had one asked for:
-    connected_at_utc was empty, which is the difference between the two.
+    A connect with nothing subscribed does nothing useful, and the live server
+    proved why the alternative fails: a flag meaning "connecting now" has to be
+    cleared everywhere an attempt can end, and one missed place leaves the
+    provider claiming forever that it is connecting -- the exact bug, restored
+    by its own fix.
     """
     provider._runtime_state = "CONNECTING"
-    provider._connect_requested = True
-    assert provider.reported_runtime_state() == "CONNECTING"
+    provider._connected_at = "2026-08-27T05:00:00Z"
+    assert provider.reported_runtime_state() == "IDLE"
 
 
 def test_a_provider_with_a_wire_subscription_is_connecting(provider):
