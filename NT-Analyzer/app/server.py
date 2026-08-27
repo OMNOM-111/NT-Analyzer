@@ -500,6 +500,25 @@ def _connector_is_the_runtime_transport(qs: Optional[Dict[str, Any]] = None) -> 
     return requested == "production_connector"
 
 
+def _environment_has_no_local_ninjatrader() -> bool:
+    """Whether this environment must get runtime data from somewhere else.
+
+    A server has no NinjaTrader beside it and nothing to read locally.
+    Development does, which is the whole reason it exists, and consuming a
+    remote environment's device there would replace a working local contour
+    with a mirror of somebody else's machine -- the same substitution that
+    already had to be undone once.
+
+    Development consumes owner market data from the hub so that a developer
+    copy does not open a second market session on the owner's credential.
+    That is bars, and it does not make Development a place to be told what its
+    own NinjaTrader is doing.
+    """
+    return runtime_env.deployment_environment() in {
+        runtime_env.CANARY, runtime_env.PRODUCTION,
+    }
+
+
 def _entitled_to_owner_runtime(context: Dict[str, Any]) -> bool:
     """Whether this caller may see the owner's NinjaTrader at all.
 
@@ -6549,7 +6568,8 @@ class Handler(BaseHTTPRequestHandler):
             # them to. Being on a consumer environment entitles nobody to
             # anything: a tenant asking here still gets their own answer, which
             # for a workspace with no bridge is the "not connected" stub below.
-            if (owner_market_data_gateway.should_consume()
+            if (_environment_has_no_local_ninjatrader()
+                    and owner_market_data_gateway.should_consume()
                     and _entitled_to_owner_runtime(context)):
                 try:
                     self._json(HTTPStatus.OK,
