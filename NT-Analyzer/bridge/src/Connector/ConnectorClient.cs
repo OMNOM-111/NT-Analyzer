@@ -763,7 +763,20 @@ namespace NTAnalyzerBridge.Connector
                     BridgeLog.Warn("ConnectorClient: accounts.json exceeds the bounded snapshot size");
                     return null;
                 }
-                JObject root = JObject.Parse(File.ReadAllText(path, Encoding.UTF8));
+                // Json.NET turns an ISO timestamp into a Date token by
+                // default, and casting that back to string yields the current
+                // culture's format -- "8/27/2026 2:49:31 AM" instead of the
+                // ISO the exporter wrote. The server then could not read its
+                // own timestamp. Read the document verbatim: this is a
+                // pass-through of what the AddOn already wrote, not a place to
+                // reinterpret it.
+                JObject root;
+                using (JsonTextReader reader = new JsonTextReader(
+                    new StringReader(File.ReadAllText(path, Encoding.UTF8))))
+                {
+                    reader.DateParseHandling = DateParseHandling.None;
+                    root = JObject.Load(reader);
+                }
                 JArray source = root["accounts"] as JArray;
                 if (source == null || source.Count > 20) return null;
                 JObject snapshot = new JObject
