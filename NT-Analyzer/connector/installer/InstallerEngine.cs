@@ -24,6 +24,7 @@ namespace StratForge.Connector.Setup
         public string UpdatePolicy { get; set; } = "safe_restart";
         public string StateRoot { get; set; } = "";
         public bool MigrateLocal { get; set; }
+        public string RuntimeDataDir { get; set; } = "";
         public bool SkipUriRegistration { get; set; }
     }
 
@@ -217,12 +218,69 @@ namespace StratForge.Connector.Setup
                 ["schema_version"] = (int?)release.Manifest["config_schema_version"] ?? 3,
                 ["mode"] = "production_connector",
                 ["ninjatrader_user_dir"] = ninjaDir,
-                ["runtime_data_dir"] = Path.Combine(stateDir, "spool"),
+                ["runtime_data_dir"] = ResolveRuntimeDataDir(
+                    connector, existing, options, stateDir),
                 ["production_connector"] = connector,
             };
             if (existing?["extensions"] is JObject extensions)
                 config["extensions"] = extensions.DeepClone();
             return config;
+        }
+
+        private static bool IsLocalBackend(JToken origin)
+        {
+            string value = ((string)origin ?? "").Trim();
+            if (value.Length == 0) return false;
+            Uri parsed;
+            if (!Uri.TryCreate(value, UriKind.Absolute, out parsed)) return false;
+            string host = parsed.Host;
+            return string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(host, "127.0.0.1", StringComparison.Ordinal)
+                || string.Equals(host, "::1", StringComparison.Ordinal);
+        }
+
+        private static string ResolveRuntimeDataDir(
+            JObject connector, JObject existing, InstallOptions options, string stateDir)
+        {
+            // Two transports, two runtime directories, and the origin says
+            // which one this installation is.
+            //
+            // Against a real server the AddOn has no other way to be heard, so
+            // it writes the installation spool and the signed Connector carries
+            // it. Against a backend on this machine there is no transport to
+            // speak of: both sides share one owner runtime directory, and they
+            // have to share the same one or neither can see the other.
+            //
+            // Ignoring that is what a reinstall did to Development. It pointed
+            // an already-working local AddOn at the spool, and the backend --
+            // still reading the owner runtime -- reported NinjaTrader inactive
+            // with no accounts, on a machine where NinjaTrader was running and
+            // the accounts were on disk.
+            string spool = Path.Combine(stateDir, "spool");
+            if (!IsLocalBackend(connector["server_origin"]))
+                return spool;
+            if (!string.IsNullOrWhiteSpace(options.RuntimeDataDir))
+                return Path.GetFullPath(options.RuntimeDataDir);
+            string previous = ((string)existing?["runtime_data_dir"] ?? "").Trim();
+            if (previous.Length > 0 && !IsInside(previous, stateDir))
+                return previous;
+            return spool;
+        }
+
+        private static bool IsInside(string candidate, string root)
+        {
+            try
+            {
+                string one = Path.GetFullPath(candidate)
+                    .TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                string two = Path.GetFullPath(root)
+                    .TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                return one.StartsWith(two, StringComparison.OrdinalIgnoreCase);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
         private static void ValidateExistingProductionConfig(JObject config)
