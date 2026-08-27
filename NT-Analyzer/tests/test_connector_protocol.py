@@ -15,6 +15,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from app import account_auth, connector_protocol
 from app import secure_store
 from app import server as server_mod
+from app import runtime as ops_runtime
 from app import subscriptions
 from app import workspaces
 
@@ -100,6 +101,8 @@ def connector_store(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(workspaces, "_root", lambda: tmp_path)
     monkeypatch.setattr(subscriptions, "_root", lambda: tmp_path)
     monkeypatch.setattr(connector_protocol, "_root", lambda: tmp_path)
+    with connector_protocol._RUNTIME_ACCOUNT_CACHE_LOCK:
+        connector_protocol._RUNTIME_ACCOUNT_CACHE.clear()
     monkeypatch.setattr(secure_store, "available", lambda: True)
     monkeypatch.setattr(secure_store, "backend_name", lambda: "test encrypted store")
     monkeypatch.setattr(secure_store, "_protect", lambda value: value[::-1])
@@ -432,6 +435,9 @@ def test_csharp_connector_exposes_bounded_market_data_upload_hook() -> None:
     assert "MaxMarketDataFlushBurst = MaxQueuedMarketDataBatches * 2" in client
     assert "for (int sent = 0; sent < MaxMarketDataFlushBurst; sent++)" in client
     assert "if (!FlushOneMarketDataBatch()) return;" in client
+    assert 'heartbeat["account_snapshot"] = accountSnapshot' in client
+    assert "ReadAccountSnapshot()" in client
+    assert "48 * 1024" in client
     assert "market_data_source_sequence" in state
     assert "QueueProductionMarketData" in addon
     assert "new ProductionMarketDataExporter" in addon
@@ -603,6 +609,128 @@ def test_heartbeat_masks_accounts_and_rejects_instance_change(connector_store) -
             "ninja_instance_id": "nt_other_instance_99",
         })
     assert mismatch.value.code == "instance_mismatch"
+
+
+def test_signed_heartbeat_carries_a_bounded_functional_account_snapshot(connector_store) -> None:
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    welcome = connector_protocol.signed_hello(_hello(private, pending))
+    snapshot = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "exporter_version": "0.4.2-dev.7",
+        "accounts": [{
+            "account_name": "DEMO3369390", "account_mode": "paper",
+            "cash_value": 11017.42, "buying_power": 22034.84,
+            "net_liquidation": 11017.42, "realized_pnl": 0,
+            "unrealized_pnl": 0, "currency": "USD",
+            "connection_status": "Connected", "availability_notes": [],
+        }],
+        "summary": {"total": 1, "paper": 1, "live": 0, "playback": 0, "unknown": 0},
+    }
+    connector_protocol.heartbeat(welcome["session_token"], {
+        "connector_sequence": 1,
+        "ninja_instance_id": "nt_test_instance_01",
+        "account_labels": ["DEMO3369390"],
+        "account_snapshot": snapshot,
+    })
+
+    status = connector_protocol.runtime_account_status(
+        42, workspace_id=workspace["workspace_id"],
+    )
+    assert status["functional_live"] is True
+    assert status["account_count"] == 1
+    assert status["accounts"][0]["net_liquidation"] == 11017.42
+    assert status["source_workspace_id"] == workspace["workspace_id"]
+    ui_payload = ops_runtime.accounts_from_connector_status(status)
+    assert ui_payload["source"] == "production_connector"
+    assert ui_payload["bridge_online"] is True
+    assert ui_payload["functional_live"] is True
+    assert ui_payload["accounts"][0]["is_selectable_for_online"] is True
+
+    other = connector_protocol.runtime_account_status(
+        7, workspace_id=connector_store[7]["workspace_id"],
+    )
+    assert other["functional_live"] is False
+    assert other["accounts"] == []
+
+
+def test_development_runtime_accounts_prefer_signed_connector_snapshot(monkeypatch) -> None:
+    handler = object.__new__(server_mod.Handler)
+    handler._remote_context = {"user_id": 42}
+    replies = []
+    handler._json = lambda status, payload: replies.append((status, payload))
+    monkeypatch.setattr(server_mod, "_connector_runtime_status", lambda _context: {
+        "present": True,
+        "fresh": True,
+        "functional_live": True,
+        "installation_id": "inst_local_functional",
+        "source_workspace_id": "ws_owner_training_test",
+        "account_snapshot_at_utc": "2026-08-26T23:30:00Z",
+        "account_count": 1,
+        "accounts": [{
+            "account_name": "DEMO3369390",
+            "cash_value": 11017.42,
+            "net_liquidation": 11017.42,
+            "realized_pnl": 0.0,
+            "unrealized_pnl": 0.0,
+        }],
+    })
+    monkeypatch.setattr(
+        server_mod.ops_runtime,
+        "read_accounts_with_source",
+        lambda: pytest.fail("legacy local runtime must not shadow a signed Connector snapshot"),
+    )
+
+    assert handler._ops_get("/api/ops/runtime/accounts", {}) is True
+    assert replies[0][1]["source"] == "production_connector"
+    assert replies[0][1]["accounts"][0]["account_name"] == "DEMO3369390"
+    assert replies[0][1]["accounts"][0]["net_liquidation"] == 11017.42
+
+
+def test_owner_runtime_resolves_only_the_same_owners_connector(connector_store) -> None:
+    personal = connector_store[42]
+    private, _, _, pending = _enroll(personal["workspace_id"])
+    welcome = connector_protocol.signed_hello(_hello(private, pending))
+    connector_protocol.heartbeat(welcome["session_token"], {
+        "connector_sequence": 1,
+        "ninja_instance_id": "nt_test_instance_01",
+        "account_snapshot": {
+            "generated_at_utc": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "exporter_version": "test",
+            "accounts": [{"account_name": "DEMO3369390", "account_mode": "paper"}],
+        },
+    })
+    owner_workspace = workspaces.ensure_owner_workspace(42)
+    status = connector_protocol.runtime_account_status(
+        42, workspace_id=owner_workspace["workspace_id"],
+        uses_owner_runtime=True, is_owner=True,
+    )
+    assert status["functional_live"] is True
+    assert status["resolved_via_owner_runtime"] is True
+    assert status["requested_workspace_id"] == owner_workspace["workspace_id"]
+    assert status["source_workspace_id"] == personal["workspace_id"]
+    setup = connector_protocol.setup_payload(
+        42, workspace_id=owner_workspace["workspace_id"],
+        uses_owner_runtime=True, is_owner=True,
+    )
+    assert setup["owner_runtime"] is True
+    assert setup["connections"][0]["functional_online"] is True
+    assert setup["connections"][0]["account_snapshot_accounts"] == 1
+
+
+def test_account_snapshot_rejects_unbounded_or_unknown_data(connector_store) -> None:
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    welcome = connector_protocol.signed_hello(_hello(private, pending))
+    with pytest.raises(connector_protocol.ConnectorProtocolError) as invalid:
+        connector_protocol.heartbeat(welcome["session_token"], {
+            "connector_sequence": 1,
+            "ninja_instance_id": "nt_test_instance_01",
+            "account_snapshot": {
+                "accounts": [{"account_name": "DEMO3369390", "secret": "must-not-pass"}],
+            },
+        })
+    assert invalid.value.code == "invalid_account_snapshot"
 
 
 def test_market_data_is_session_bound_idempotent_and_persists_bars(connector_store) -> None:

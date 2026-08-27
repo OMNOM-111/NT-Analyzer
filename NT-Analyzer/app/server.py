@@ -481,6 +481,19 @@ def _connector_probe(label: str, fn: Any,
     return row
 
 
+def _connector_runtime_status(context: Dict[str, Any]) -> Dict[str, Any]:
+    workspace_context = context.get("workspace_context") \
+        if isinstance(context.get("workspace_context"), dict) else {}
+    active = workspace_context.get("active_workspace") \
+        if isinstance(workspace_context.get("active_workspace"), dict) else {}
+    return connector_protocol.runtime_account_status(
+        context.get("user_id"),
+        workspace_id=str(active.get("workspace_id") or context.get("workspace_id") or ""),
+        uses_owner_runtime=bool(active.get("uses_owner_runtime")),
+        is_owner=bool(context.get("is_owner")),
+    )
+
+
 def _connectors_dashboard_payload(context: Dict[str, Any]) -> Dict[str, Any]:
     """Aggregated connector/integration status for the Admin panel.
 
@@ -558,14 +571,9 @@ def _connectors_dashboard_payload(context: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     def connector_installations() -> Dict[str, Any]:
-        # A status panel asks a status question, so it must not run the
-        # maintenance sweep that list_installations performs: that turns a read
-        # into a write under the connector lock, contending with the heartbeats
-        # of the device being asked about.
-        out = connector_protocol.health_summary(
-            context.get("user_id"),
-            workspace_id=str(context.get("workspace_id") or ""),
-        )
+        # Heartbeat alone is transport health, not functional NinjaTrader
+        # health. The panel is green only after a fresh account snapshot too.
+        out = _connector_runtime_status(context)
         if not out.get("status_known", True):
             # The store was busy. That is a fact about the diagnostics query,
             # not about the connector, and it must not render as "offline".
@@ -575,19 +583,27 @@ def _connectors_dashboard_payload(context: Dict[str, Any]) -> Dict[str, Any]:
                 "diagnostics": "busy",
                 "detail": "хранилище коннекторов занято; состояние не измерено",
             }
-        total = int(out.get("installations") or 0)
-        online = int(out.get("online") or 0)
+        total = 1 if out.get("present") else 0
+        heartbeat_online = 1 if out.get("fresh") else 0
+        functional_online = 1 if out.get("functional_live") else 0
         # "Enrolled but nothing online" is a normal operational state -- the
         # machine running NinjaTrader can simply be down for maintenance -- so
         # it is reported as offline rather than as a fault.
         return {
             "label": "Windows Connector / NinjaTrader",
-            "state": "healthy" if online else ("offline" if total else "not_configured"),
+            "state": ("healthy" if functional_online else
+                      ("degraded" if heartbeat_online else
+                       ("offline" if total else "not_configured"))),
             "status_known": True,
             "installations": total,
-            "online": online,
-            "last_heartbeat_utc": str(out.get("last_heartbeat_utc") or ""),
-            "stale_sec": float(out.get("stale_sec") or 0.0),
+            "online": heartbeat_online,
+            "functional_online": functional_online,
+            "account_count": int(out.get("account_count") or 0),
+            "last_heartbeat_utc": str(out.get("heartbeat_at_utc") or ""),
+            "stale_sec": float(out.get("age_sec") or 0.0),
+            "detail": ("account snapshot live" if functional_online else
+                       ("heartbeat live; account snapshot unavailable"
+                        if heartbeat_online else "Connector offline")),
         }
 
     # Concurrently, so the page is bounded by the slowest single source rather
@@ -5403,11 +5419,24 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/health":
+            context = getattr(self, "_remote_context", None) or {}
+            connector_runtime: Dict[str, Any] = {}
+            if context.get("user_id"):
+                try:
+                    connector_runtime = _connector_runtime_status(context)
+                except Exception:
+                    connector_runtime = {}
+            ninja_running = (
+                bool(connector_runtime.get("functional_live"))
+                if connector_runtime.get("present")
+                else jobqueue.ninjatrader_running()
+            )
             payload = {
                 "ok": True,
                 "host": str(self.server.server_address[0]),
                 "deployment": runtime_env.public_status(),
-                "ninjatrader_running": jobqueue.ninjatrader_running(),
+                "ninjatrader_running": ninja_running,
+                "connector_functional": bool(connector_runtime.get("functional_live")),
                 "worker": local_worker.status(),
                 "admission": (
                     self.server.admission_metrics()
@@ -6115,10 +6144,18 @@ class Handler(BaseHTTPRequestHandler):
                 use_connector = (
                     runtime_env.environment_explicit() and runtime_env.is_production()
                 ) or str((qs.get("transport") or [""])[0]) == "production_connector"
+                active = context.get("active_workspace") \
+                    if isinstance(context.get("active_workspace"), dict) else {}
+                requested_workspace = str(
+                    (qs.get("workspace_id") or [""])[0]
+                    or active.get("workspace_id") or ""
+                )
                 out = (
                     connector_protocol.setup_payload(
                         context.get("user_id"),
-                        workspace_id=str((qs.get("workspace_id") or [""])[0]),
+                        workspace_id=requested_workspace,
+                        uses_owner_runtime=bool(active.get("uses_owner_runtime")),
+                        is_owner=bool(context.get("is_owner")),
                     )
                     if use_connector
                     else workspaces.bridge_setup(context.get("user_id"))
@@ -6392,6 +6429,22 @@ class Handler(BaseHTTPRequestHandler):
         if len(parts) < 3:
             return False
         sub = parts[2]
+
+        if path in {
+            "/api/ops/runtime/heartbeat", "/api/ops/runtime/accounts",
+        }:
+            context = getattr(self, "_remote_context", None) or {}
+            if context.get("user_id"):
+                status = _connector_runtime_status(context)
+                if status.get("present"):
+                    if path == "/api/ops/runtime/heartbeat":
+                        self._json(HTTPStatus.OK, status)
+                    else:
+                        self._json(
+                            HTTPStatus.OK,
+                            ops_runtime.accounts_from_connector_status(status),
+                        )
+                    return True
 
         if path.startswith("/api/ops/runtime/") and self._workspace_runtime_stubbed(path, qs):
             return True

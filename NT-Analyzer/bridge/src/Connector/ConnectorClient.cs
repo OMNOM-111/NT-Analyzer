@@ -386,6 +386,9 @@ namespace NTAnalyzerBridge.Connector
                 ["connector_time"] = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
                 ["account_labels"] = ReadMaskedAccountLabels(),
             };
+            JObject accountSnapshot = ReadAccountSnapshot();
+            if (accountSnapshot != null && _allowedCapabilities.Contains("accounts_read"))
+                heartbeat["account_snapshot"] = accountSnapshot;
             JObject response = PostJson(
                 "api/connector/v1/heartbeat", heartbeat, _sessionToken);
             _updateState = (string)response["update_state"] ?? _updateState;
@@ -746,6 +749,55 @@ namespace NTAnalyzerBridge.Connector
             }
             catch { }
             return labels;
+        }
+
+        private JObject ReadAccountSnapshot()
+        {
+            string path = Path.Combine(_runtimeDir, "accounts.json");
+            if (!File.Exists(path)) return null;
+            try
+            {
+                FileInfo info = new FileInfo(path);
+                if (info.Length <= 0 || info.Length > 48 * 1024)
+                {
+                    BridgeLog.Warn("ConnectorClient: accounts.json exceeds the bounded snapshot size");
+                    return null;
+                }
+                JObject root = JObject.Parse(File.ReadAllText(path, Encoding.UTF8));
+                JArray source = root["accounts"] as JArray;
+                if (source == null || source.Count > 20) return null;
+                JObject snapshot = new JObject
+                {
+                    ["generated_at_utc"] = (string)root["generated_at_utc"] ?? "",
+                    ["exporter_version"] = (string)root["exporter_version"] ?? "",
+                    ["accounts"] = new JArray(),
+                };
+                JArray accounts = (JArray)snapshot["accounts"];
+                string[] fields = new[]
+                {
+                    "account_name", "account_mode", "cash_value", "buying_power",
+                    "net_liquidation", "realized_pnl", "unrealized_pnl", "currency",
+                    "connection_status", "availability_notes",
+                };
+                foreach (JObject account in source.OfType<JObject>().Take(20))
+                {
+                    JObject clean = new JObject();
+                    foreach (string field in fields)
+                    {
+                        JToken value = account[field];
+                        if (value != null) clean[field] = value.DeepClone();
+                    }
+                    accounts.Add(clean);
+                }
+                if (root["summary"] is JObject summary)
+                    snapshot["summary"] = summary.DeepClone();
+                return snapshot;
+            }
+            catch (Exception ex)
+            {
+                BridgeLog.Warn("ConnectorClient: account snapshot unavailable: " + ex.GetType().Name);
+                return null;
+            }
         }
 
         private static string BuildNinjaInstanceId(string ninjaTraderUserDir)

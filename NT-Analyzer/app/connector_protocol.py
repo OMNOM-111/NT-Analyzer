@@ -48,6 +48,9 @@ MAX_ACTIVE_ENROLLMENTS_PER_USER = 5
 MAX_MARKET_DATA_BARS = 64
 MAX_MARKET_DATA_BYTES = 128 * 1024
 MAX_SOURCE_SEQUENCE = (1 << 63) - 1
+MAX_ACCOUNT_SNAPSHOT_ACCOUNTS = 20
+MAX_ACCOUNT_SNAPSHOT_BYTES = 48 * 1024
+ACCOUNT_SNAPSHOT_FRESH_SEC = 60
 
 CAPABILITIES = frozenset({
     "telemetry",
@@ -89,6 +92,8 @@ HEALTH_SNAPSHOT_TTL_SEC = 15.0
 _HEALTH_SNAPSHOT: Dict[str, Any] = {}
 _HEALTH_SNAPSHOT_LOCK = threading.Lock()
 _HEALTH_REFRESHING: set = set()
+_RUNTIME_ACCOUNT_CACHE: Dict[str, Dict[str, Any]] = {}
+_RUNTIME_ACCOUNT_CACHE_LOCK = threading.Lock()
 _LOCK = threading.RLock()
 _COMMANDS_CHANGED = threading.Condition(_LOCK)
 
@@ -784,6 +789,29 @@ def _public_installation(row: Mapping[str, Any]) -> Dict[str, Any]:
         and str(row.get("deployment_environment") or "")
         != runtime_env.deployment_environment()
     )
+    now = time.time()
+    try:
+        heartbeat_at = float(row.get("last_heartbeat_at") or 0)
+    except (TypeError, ValueError):
+        heartbeat_at = 0
+    snapshot = row.get("account_snapshot")
+    if not isinstance(snapshot, Mapping):
+        snapshot = {}
+    try:
+        snapshot_at = float(snapshot.get("received_at") or 0)
+    except (TypeError, ValueError):
+        snapshot_at = 0
+    public["heartbeat_online"] = bool(
+        heartbeat_at and -5 <= now - heartbeat_at <= OFFLINE_AFTER_SEC
+        and str(row.get("status") or "") == "online"
+    )
+    public["account_snapshot_at_utc"] = str(snapshot.get("received_at_utc") or "")
+    public["account_snapshot_accounts"] = len(snapshot.get("accounts") or [])
+    public["functional_online"] = bool(
+        public["heartbeat_online"] and snapshot_at
+        and -5 <= now - snapshot_at <= ACCOUNT_SNAPSHOT_FRESH_SEC
+        and public["account_snapshot_accounts"]
+    )
     return public
 
 
@@ -1320,10 +1348,177 @@ def _mask_account_label(value: Any) -> str:
     return "***" + text[-4:]
 
 
+_ACCOUNT_SNAPSHOT_ROOT_FIELDS = frozenset({
+    "generated_at_utc", "timestamp_utc", "exporter_version", "accounts", "summary",
+})
+_ACCOUNT_SNAPSHOT_ROW_FIELDS = frozenset({
+    "account_name", "account_mode", "cash_value", "buying_power",
+    "net_liquidation", "realized_pnl", "unrealized_pnl", "currency",
+    "connection_status", "availability_notes",
+})
+
+
+def _snapshot_text(value: Any, *, maximum: int, field: str,
+                   required: bool = False) -> str:
+    text = str(value or "").strip()
+    if required and not text:
+        raise ConnectorProtocolError(
+            f"Account snapshot: {field} обязателен.", 400, "invalid_account_snapshot",
+        )
+    if len(text) > maximum:
+        raise ConnectorProtocolError(
+            f"Account snapshot: {field} превышает лимит.",
+            400, "invalid_account_snapshot",
+        )
+    return text
+
+
+def _snapshot_number(value: Any, *, field: str) -> Optional[float]:
+    if value in (None, ""):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ConnectorProtocolError(
+            f"Account snapshot: {field} должен быть числом.",
+            400, "invalid_account_snapshot",
+        ) from None
+    if not math.isfinite(number) or abs(number) > 1_000_000_000_000_000:
+        raise ConnectorProtocolError(
+            f"Account snapshot: {field} вне допустимого диапазона.",
+            400, "invalid_account_snapshot",
+        )
+    return number
+
+
+def _normalise_account_snapshot(value: Any, now: float) -> Dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ConnectorProtocolError(
+            "Account snapshot должен быть объектом.", 400, "invalid_account_snapshot",
+        )
+    try:
+        encoded = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    except (TypeError, ValueError):
+        raise ConnectorProtocolError(
+            "Account snapshot не сериализуется.", 400, "invalid_account_snapshot",
+        ) from None
+    if len(encoded) > MAX_ACCOUNT_SNAPSHOT_BYTES:
+        raise ConnectorProtocolError(
+            "Account snapshot превышает допустимый размер.",
+            413, "account_snapshot_too_large",
+        )
+    if set(value) - _ACCOUNT_SNAPSHOT_ROOT_FIELDS:
+        raise ConnectorProtocolError(
+            "Account snapshot содержит неизвестные поля.",
+            400, "invalid_account_snapshot",
+        )
+    raw_accounts = value.get("accounts")
+    if not isinstance(raw_accounts, list) or len(raw_accounts) > MAX_ACCOUNT_SNAPSHOT_ACCOUNTS:
+        raise ConnectorProtocolError(
+            "Account snapshot содержит недопустимый список счетов.",
+            400, "invalid_account_snapshot",
+        )
+
+    generated = _snapshot_text(
+        value.get("generated_at_utc") or value.get("timestamp_utc"),
+        maximum=40, field="generated_at_utc",
+    )
+    if generated:
+        try:
+            parsed = datetime.fromisoformat(generated.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                raise ValueError("timezone required")
+        except ValueError:
+            raise ConnectorProtocolError(
+                "Account snapshot: generated_at_utc некорректен.",
+                400, "invalid_account_snapshot",
+            ) from None
+
+    accounts = []
+    names = set()
+    for raw in raw_accounts:
+        if not isinstance(raw, Mapping) or set(raw) - _ACCOUNT_SNAPSHOT_ROW_FIELDS:
+            raise ConnectorProtocolError(
+                "Account snapshot содержит некорректную запись счёта.",
+                400, "invalid_account_snapshot",
+            )
+        name = _snapshot_text(
+            raw.get("account_name"), maximum=128, field="account_name", required=True,
+        )
+        if name in names:
+            continue
+        names.add(name)
+        notes_raw = raw.get("availability_notes") or []
+        if not isinstance(notes_raw, list) or len(notes_raw) > 20:
+            raise ConnectorProtocolError(
+                "Account snapshot: availability_notes некорректен.",
+                400, "invalid_account_snapshot",
+            )
+        accounts.append({
+            "account_name": name,
+            "account_mode": _snapshot_text(
+                raw.get("account_mode"), maximum=24, field="account_mode"),
+            "cash_value": _snapshot_number(raw.get("cash_value"), field="cash_value"),
+            "buying_power": _snapshot_number(raw.get("buying_power"), field="buying_power"),
+            "net_liquidation": _snapshot_number(
+                raw.get("net_liquidation"), field="net_liquidation"),
+            "realized_pnl": _snapshot_number(raw.get("realized_pnl"), field="realized_pnl"),
+            "unrealized_pnl": _snapshot_number(
+                raw.get("unrealized_pnl"), field="unrealized_pnl"),
+            "currency": _snapshot_text(raw.get("currency"), maximum=16, field="currency"),
+            "connection_status": _snapshot_text(
+                raw.get("connection_status"), maximum=64, field="connection_status"),
+            "availability_notes": [
+                _snapshot_text(item, maximum=64, field="availability_notes")
+                for item in notes_raw
+            ],
+        })
+
+    summary = value.get("summary") if isinstance(value.get("summary"), Mapping) else {}
+
+    def count(name: str) -> int:
+        try:
+            return max(0, min(int(summary.get(name) or 0), len(accounts)))
+        except (TypeError, ValueError):
+            raise ConnectorProtocolError(
+                f"Account snapshot: summary.{name} некорректен.",
+                400, "invalid_account_snapshot",
+            ) from None
+
+    return {
+        "generated_at_utc": generated,
+        "received_at_utc": _now_iso(now),
+        "received_at": now,
+        "exporter_version": _snapshot_text(
+            value.get("exporter_version"), maximum=32, field="exporter_version"),
+        "accounts": accounts,
+        "summary": {
+            "total": len(accounts),
+            "live": count("live"),
+            "paper": count("paper"),
+            "playback": count("playback"),
+            "unknown": count("unknown"),
+        },
+    }
+
+
+def _cache_runtime_installation(row: Mapping[str, Any]) -> None:
+    installation_id = str(row.get("installation_id") or "")
+    if not installation_id:
+        return
+    cached = {key: copy.deepcopy(row.get(key)) for key in (
+        "installation_id", "connection_id", "workspace_id", "user_id", "user_uuid",
+        "status", "last_hello_utc", "last_heartbeat_utc", "last_heartbeat_at",
+        "account_snapshot", "revoked_at_utc", "deployment_environment",
+    )}
+    with _RUNTIME_ACCOUNT_CACHE_LOCK:
+        _RUNTIME_ACCOUNT_CACHE[installation_id] = cached
+
+
 def heartbeat(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
     allowed = {
         "connector_sequence", "ninja_instance_id", "connector_time",
-        "account_labels", "extensions",
+        "account_labels", "account_snapshot", "extensions",
     }
     if not isinstance(payload, Mapping) or set(payload) - allowed:
         raise ConnectorProtocolError(
@@ -1347,12 +1542,22 @@ def heartbeat(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
                 labels.append(masked)
             if len(labels) >= 20:
                 break
+        snapshot = None
+        if "account_snapshot" in payload:
+            if "accounts_read" not in set(installation.get("capabilities") or []):
+                raise ConnectorProtocolError(
+                    "Account snapshot не разрешён capabilities installation.",
+                    403, "capability_denied",
+                )
+            snapshot = _normalise_account_snapshot(payload.get("account_snapshot"), now)
         installation.update({
             "status": "online",
             "last_heartbeat_utc": _now_iso(now),
             "last_heartbeat_at": now,
             "account_labels": labels,
         })
+        if snapshot is not None:
+            installation["account_snapshot"] = snapshot
         previous_release = (
             installation.get("update_state"),
             installation.get("update_reason"),
@@ -1360,6 +1565,7 @@ def heartbeat(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
         )
         release_decision = _apply_release_policy(installation)
         _write_doc(doc)
+        _cache_runtime_installation(installation)
     current_release = (
         release_decision["state"],
         release_decision["reason"],
@@ -2190,6 +2396,125 @@ def health_summary(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
     return _snapshot_reply(snapshot, now)
 
 
+def _refresh_runtime_account_cache() -> None:
+    if not _LOCK.acquire(timeout=HEALTH_SUMMARY_LOCK_WAIT_SEC):
+        return
+    try:
+        doc = _read_doc()
+        rows = [row for row in (doc.get("installations") or []) if isinstance(row, dict)]
+        for row in rows:
+            _cache_runtime_installation(row)
+    finally:
+        _LOCK.release()
+
+
+def _runtime_account_rows() -> list[Dict[str, Any]]:
+    with _RUNTIME_ACCOUNT_CACHE_LOCK:
+        cached = [copy.deepcopy(row) for row in _RUNTIME_ACCOUNT_CACHE.values()]
+    if cached:
+        return cached
+    # A fresh process may receive a UI read before the next 15-second heartbeat.
+    # Bound that one fallback read rather than bringing the old 12-30 second
+    # Connector document latency back into every status poll.
+    _refresh_runtime_account_cache()
+    with _RUNTIME_ACCOUNT_CACHE_LOCK:
+        return [copy.deepcopy(row) for row in _RUNTIME_ACCOUNT_CACHE.values()]
+
+
+def runtime_account_status(user_id: Any, *, workspace_id: str = "",
+                           uses_owner_runtime: bool = False,
+                           is_owner: bool = False) -> Dict[str, Any]:
+    """Latest signed heartbeat plus account data for one authenticated context.
+
+    A normal workspace is exact-scope. The special owner-training workspace may
+    resolve the same owner's Connector from another one of that owner's own
+    workspaces because it is explicitly defined as ``uses_owner_runtime``. This
+    is not a global-owner bypass: another user's installation never qualifies.
+    """
+    user = int(user_id or 0)
+    workspace = workspaces.require_workspace_access(user, workspace_id=workspace_id)
+    requested_workspace = str(workspace.get("workspace_id") or "")
+    owner_fallback = bool(is_owner and uses_owner_runtime)
+    user_uuid = ""
+    if owner_fallback:
+        user_uuid = _user_uuid_for_legacy_id(user)
+
+    def select(rows: Iterable[Mapping[str, Any]]) -> list[Dict[str, Any]]:
+        found = []
+        for row in rows:
+            if str(row.get("deployment_environment") or "") not in {
+                "", runtime_env.deployment_environment(),
+            }:
+                continue
+            if row.get("revoked_at_utc") or str(row.get("status") or "") == "revoked":
+                continue
+            row_workspace = str(row.get("workspace_id") or "")
+            if owner_fallback:
+                same_user = _legacy_user_id(row.get("user_id")) == user
+                same_uuid = bool(user_uuid) and str(row.get("user_uuid") or "") == user_uuid
+                if not (same_user or same_uuid):
+                    continue
+            elif row_workspace != requested_workspace:
+                continue
+            found.append(dict(row))
+        return found
+
+    eligible = select(_runtime_account_rows())
+    if not eligible:
+        # The cache may currently contain only a different user's heartbeat.
+        _refresh_runtime_account_cache()
+        eligible = select(_runtime_account_rows())
+
+    now = time.time()
+    eligible.sort(key=lambda row: float(row.get("last_heartbeat_at") or 0), reverse=True)
+    selected = eligible[0] if eligible else {}
+    heartbeat_at = float(selected.get("last_heartbeat_at") or 0)
+    heartbeat_age = max(0.0, now - heartbeat_at) if heartbeat_at else None
+    heartbeat_fresh = bool(
+        heartbeat_at and -5 <= now - heartbeat_at <= OFFLINE_AFTER_SEC
+        and str(selected.get("status") or "") == "online"
+    )
+    snapshot = selected.get("account_snapshot")
+    if not isinstance(snapshot, Mapping):
+        snapshot = {}
+    snapshot_at = float(snapshot.get("received_at") or 0)
+    snapshot_age = max(0.0, now - snapshot_at) if snapshot_at else None
+    snapshot_fresh = bool(
+        snapshot_at and -5 <= now - snapshot_at <= ACCOUNT_SNAPSHOT_FRESH_SEC
+    )
+    accounts = copy.deepcopy(snapshot.get("accounts") or []) if snapshot else []
+    functional_live = bool(heartbeat_fresh and snapshot_fresh and accounts)
+    source_workspace = str(selected.get("workspace_id") or "")
+    return {
+        "ok": True,
+        "source": "production_connector",
+        "requested_workspace_id": requested_workspace,
+        "source_workspace_id": source_workspace,
+        "resolved_via_owner_runtime": bool(
+            owner_fallback and source_workspace and source_workspace != requested_workspace),
+        "installation_id": str(selected.get("installation_id") or ""),
+        "connection_id": str(selected.get("connection_id") or ""),
+        "present": bool(selected),
+        "fresh": heartbeat_fresh,
+        "functional_live": functional_live,
+        "state": ("functional" if functional_live else
+                  ("heartbeat_only" if heartbeat_fresh else "offline")),
+        "heartbeat_at_utc": str(selected.get("last_heartbeat_utc") or ""),
+        "age_sec": round(heartbeat_age, 1) if heartbeat_age is not None else None,
+        "account_snapshot_present": bool(snapshot),
+        "account_snapshot_fresh": snapshot_fresh,
+        "account_snapshot_at_utc": str(snapshot.get("received_at_utc") or ""),
+        "account_snapshot_generated_at_utc": str(snapshot.get("generated_at_utc") or ""),
+        "account_snapshot_age_sec": (
+            round(snapshot_age, 1) if snapshot_age is not None else None),
+        "account_count": len(accounts),
+        "accounts": accounts,
+        "summary": copy.deepcopy(snapshot.get("summary") or {}),
+        "exporter_version": str(snapshot.get("exporter_version") or ""),
+        "last_hello_utc": str(selected.get("last_hello_utc") or ""),
+    }
+
+
 
 def installer_status() -> Dict[str, Any]:
     """Whether there is a signed package to hand someone, and why not.
@@ -2211,11 +2536,31 @@ def installer_status() -> Dict[str, Any]:
     }
 
 
-def setup_payload(user_id: Any, *, workspace_id: str = "") -> Dict[str, Any]:
-    listed = list_installations(user_id, workspace_id=workspace_id)
+def setup_payload(user_id: Any, *, workspace_id: str = "",
+                  uses_owner_runtime: bool = False,
+                  is_owner: bool = False) -> Dict[str, Any]:
+    user = int(user_id or 0)
+    if uses_owner_runtime and is_owner:
+        workspace = workspaces.require_workspace_access(user, workspace_id=workspace_id)
+        user_uuid = _user_uuid_for_legacy_id(user)
+        now = time.time()
+        with _LOCK:
+            doc = _read_doc()
+            changed = _refresh_states(doc, now)
+            if changed:
+                _write_doc(doc)
+            rows = [
+                _public_installation(row)
+                for row in doc["installations"]
+                if (_legacy_user_id(row.get("user_id")) == user
+                    or (user_uuid and str(row.get("user_uuid") or "") == user_uuid))
+            ]
+        listed = {"ok": True, "workspace": workspace, "connections": rows}
+    else:
+        listed = list_installations(user, workspace_id=workspace_id)
     return {
         **listed,
-        "owner_runtime": False,
+        "owner_runtime": bool(uses_owner_runtime and is_owner),
         "transport": "production_connector",
         "protocol_version": PROTOCOL_VERSION,
         "server_origin": runtime_env.deployment_config().public_origin,

@@ -18,6 +18,7 @@ reasons are stated in words rather than left to be inferred from a state name.
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Optional
 
 from . import runtime_env
@@ -108,7 +109,7 @@ def promotion_gates(candidate: Dict[str, Any],
     missing decision is a refusal rather than an omission.
     """
     state = str(candidate.get("state") or "")
-    artifact = str(candidate.get("artifact_sha256") or "")
+    artifact = _runtime_artifact_sha(candidate)
 
     registry_rows = {}
     for row in ((registry or {}).get("environments") or []):
@@ -197,8 +198,26 @@ def promotion_gates(candidate: Dict[str, Any],
     }
 
 
+def _version_order(value: Any) -> tuple[int, ...]:
+    numbers = [int(part) for part in re.findall(r"\d+", str(value or ""))]
+    return tuple(numbers[:4])
+
+
+def _runtime_artifact_sha(release: Dict[str, Any]) -> str:
+    """Identity reported by a running extracted artifact.
+
+    ``artifact_sha256`` is the transport archive hash. Once extracted, Canary
+    and Production intentionally report the signed manifest/runtime hash. They
+    prove two different things and must not be compared to each other.
+    """
+    return str(release.get("manifest_sha256")
+               or release.get("runtime_artifact_sha256")
+               or release.get("artifact_sha256") or "")
+
+
 def development_card(sync: Dict[str, Any],
-                     registry_row: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                     registry_row: Optional[Dict[str, Any]] = None,
+                     accepted_release: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """What LOCAL is, including whether it is running the current code.
 
     The stale/dirty state belongs on this card rather than in a separate
@@ -207,27 +226,62 @@ def development_card(sync: Dict[str, Any],
     """
     row = registry_row or {}
     deployment = runtime_env.public_status()
+    version = str(row.get("app_version") or sync.get("running_version")
+                  or deployment.get("app_version") or "")
+    commit = str(row.get("git_commit_sha") or sync.get("running_commit") or "")
+    sync_state = str(sync.get("state") or "unknown")
+    sync_message = str(sync.get("message") or "")
+    target = accepted_release or {}
+    target_version = str(target.get("app_version") or "")
+    target_commit = str(target.get("git_commit_sha") or "")
+    same_release = bool(
+        target_version and target_commit and version == target_version
+        and commit and target_commit.startswith(commit[:12])
+    )
+    if same_release and row and sync_state in {"not_applicable", "unknown"}:
+        sync_state = "current"
+        sync_message = "Development сообщает version/commit принятого релиза."
+    elif target_version and target_commit and not same_release:
+        current_order = _version_order(version)
+        target_order = _version_order(target_version)
+        if current_order and target_order and current_order > target_order:
+            sync_state = "ahead"
+            relation = "опережает принятый релиз"
+        elif version == target_version:
+            sync_state = "diverged"
+            relation = "имеет другую ревизию той же версии"
+        else:
+            sync_state = "behind"
+            relation = "отстаёт от принятого релиза"
+        sync_message = (
+            f"Development {relation}: выполняется {version or 'неизвестная версия'} "
+            f"({commit[:12] or 'commit неизвестен'}), принят {target_version} "
+            f"({target_commit[:12]}). ALL ENVIRONMENTS PASS запрещён до сверки."
+        )
     return {
         "environment": runtime_env.DEVELOPMENT,
         "online": str(row.get("state") or "") in {"live", "stale"},
         "presence": str(row.get("state") or "never_seen"),
         "last_seen_at_utc": row.get("last_seen_at_utc") or "",
-        "sync_state": str(sync.get("state") or "unknown"),
-        "sync_message": str(sync.get("message") or ""),
-        "version": str(sync.get("running_version")
-                       or deployment.get("app_version") or ""),
-        "running_commit": str(sync.get("running_commit_short") or ""),
+        "sync_state": sync_state,
+        "sync_message": sync_message,
+        "release_consistent": same_release,
+        "accepted_version": target_version,
+        "accepted_commit": target_commit[:12],
+        "version": version,
+        "running_commit": commit[:12],
         "head_commit": str(sync.get("head_commit_short") or ""),
         "head_branch": str(sync.get("head_branch") or ""),
         "dirty_count": int(sync.get("dirty_count") or 0),
-        "commit": str(sync.get("running_commit_short") or ""),
-        "build_id": str(deployment.get("build_id") or ""),
+        "commit": commit[:12],
+        "build_id": str(row.get("build_id") or deployment.get("build_id") or ""),
         "artifact_sha256": "",
         "schema_version": int(row.get("schema_version") or 0),
         "readiness": str(row.get("readiness") or ""),
         "market_data": str(row.get("market_data") or ""),
         "connector": str(row.get("connector") or ""),
-        "release_channel": str(deployment.get("release_channel") or ""),
+        "release_channel": str(row.get("release_channel")
+                               or deployment.get("release_channel") or ""),
     }
 
 
@@ -281,6 +335,49 @@ def compare(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"environments": [c["environment"] for c in known], "fields": rows}
 
 
+def overall_status(cards: List[Dict[str, Any]],
+                   accepted_release: Dict[str, Any]) -> Dict[str, Any]:
+    target_version = str(accepted_release.get("app_version") or "")
+    target_commit = str(accepted_release.get("git_commit_sha") or "")
+    target_artifact = _runtime_artifact_sha(accepted_release)
+    by_env = {str(card.get("environment") or ""): card for card in cards}
+    gates = []
+    for environment in (runtime_env.DEVELOPMENT, runtime_env.CANARY, runtime_env.PRODUCTION):
+        card = by_env.get(environment) or {}
+        card_commit = str(card.get("commit") or "")
+        identity_ok = bool(
+            target_version and target_commit
+            and str(card.get("version") or "") == target_version
+            and card_commit and target_commit.startswith(card_commit)
+        )
+        gates.append({
+            "id": f"{environment}_identity",
+            "label": f"{environment}: текущие version/commit совпадают с принятым релизом",
+            "ok": identity_ok,
+        })
+    canary_artifact = str((by_env.get(runtime_env.CANARY) or {}).get("artifact_sha256") or "")
+    production_artifact = str((by_env.get(runtime_env.PRODUCTION) or {}).get("artifact_sha256") or "")
+    gates.append({
+        "id": "immutable_server_artifact",
+        "label": "Canary и Production выполняют один принятый immutable artifact",
+        "ok": bool(target_artifact and canary_artifact and production_artifact
+                   and canary_artifact.lower() == target_artifact.lower()
+                   and production_artifact.lower() == target_artifact.lower()),
+    })
+    blocked = [gate for gate in gates if not gate["ok"]]
+    return {
+        "ok": bool(accepted_release) and not blocked,
+        "state": "pass" if accepted_release and not blocked else "fail",
+        "target_version": target_version,
+        "target_commit": target_commit[:12],
+        "target_artifact_sha256": target_artifact,
+        "gates": gates,
+        "blocking": [gate["id"] for gate in blocked],
+        "message": ("ALL ENVIRONMENTS PASS" if accepted_release and not blocked else
+                    "ALL ENVIRONMENTS PASS запрещён: окружения не согласованы."),
+    }
+
+
 def development_access(is_local_request: bool) -> Dict[str, Any]:
     """Whether this browser may open LOCAL directly.
 
@@ -322,13 +419,17 @@ def assemble(*, registry: Optional[Dict[str, Any]], releases: Optional[Dict[str,
     # The release centre publishes its candidate summaries under "releases".
     candidates = (releases or {}).get("releases") or []
     candidate = candidates[0] if candidates else {}
+    accepted = next((row for row in candidates
+                     if str(row.get("state") or "") == "production_live"), {})
     deploys = deployments or {}
 
-    development = development_card(sync or {}, rows.get(runtime_env.DEVELOPMENT))
+    development = development_card(
+        sync or {}, rows.get(runtime_env.DEVELOPMENT), accepted)
     canary = server_card(runtime_env.CANARY, rows.get(runtime_env.CANARY),
                          deploys.get(runtime_env.CANARY))
     production = server_card(runtime_env.PRODUCTION, rows.get(runtime_env.PRODUCTION),
                              deploys.get(runtime_env.PRODUCTION))
+    cards = [development, canary, production]
     return {
         "ok": True,
         "environments": {
@@ -346,6 +447,7 @@ def assemble(*, registry: Optional[Dict[str, Any]], releases: Optional[Dict[str,
         "promotion": promotion_gates(
             candidate, registry, control=control,
             registry_is_authoritative=registry_is_authoritative),
-        "compare": compare([development, canary, production]),
+        "compare": compare(cards),
+        "overall": overall_status(cards, accepted),
         "development_access": development_access(is_local_request),
     }

@@ -23,6 +23,7 @@ returns `runtime_detected=False`. Nothing crashes.
 """
 from __future__ import annotations
 
+import copy
 import csv
 import hashlib
 import json
@@ -3209,6 +3210,51 @@ def read_accounts_with_source() -> Dict[str, Any]:
                                 if heartbeat_age_sec is not None else None)
     out["bridge_online"] = bridge_online
     return out
+
+
+def accounts_from_connector_status(status: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize a validated signed-Connector snapshot for the existing UI."""
+    raw_accounts = status.get("accounts") if isinstance(status, dict) else []
+    items = [
+        _normalize_account(row) for row in (raw_accounts or [])
+        if isinstance(row, dict)
+    ]
+    online_accounts = [row for row in items if row.get("is_selectable_for_online")]
+    functional = bool(status.get("functional_live"))
+    warnings: List[str] = []
+    next_action: Optional[str] = None
+    if status.get("fresh") and not status.get("account_snapshot_present"):
+        warnings.append(
+            "Connector heartbeat активен, но AddOn ещё не передал account snapshot."
+        )
+        next_action = "Установить текущую версию Connector и перезапустить NinjaTrader."
+    elif status.get("fresh") and not status.get("account_snapshot_fresh"):
+        warnings.append("Account snapshot устарел при свежем Connector heartbeat.")
+    elif status.get("fresh") and not items:
+        warnings.append("NinjaTrader не передал ни одного доступного счёта.")
+    elif not status.get("fresh"):
+        warnings.append("Production Connector offline или heartbeat устарел.")
+    return {
+        "ok": True,
+        "accounts": items,
+        "online_accounts": online_accounts,
+        "source": "production_connector",
+        "warnings": warnings,
+        "next_action": next_action,
+        "summary": copy.deepcopy(status.get("summary") or {}),
+        "exporter_version": str(status.get("exporter_version") or ""),
+        "accounts_generated_at_utc": str(
+            status.get("account_snapshot_generated_at_utc") or ""),
+        "heartbeat_at_utc": str(status.get("heartbeat_at_utc") or ""),
+        "accounts_age_sec": status.get("account_snapshot_age_sec"),
+        "heartbeat_age_sec": status.get("age_sec"),
+        "bridge_online": bool(status.get("fresh")),
+        "functional_live": functional,
+        "installation_id": str(status.get("installation_id") or ""),
+        "requested_workspace_id": str(status.get("requested_workspace_id") or ""),
+        "source_workspace_id": str(status.get("source_workspace_id") or ""),
+        "resolved_via_owner_runtime": bool(status.get("resolved_via_owner_runtime")),
+    }
 
 
 # ---------------------------------------------------------------------------

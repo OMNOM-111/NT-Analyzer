@@ -1928,10 +1928,11 @@
           : `<div class="cab-sub">Свой NinjaTrader доступен на тарифах «Стандарт» и выше.</div>`;
       } else {
         const conns = setup.connections || [];
-        const onlineCount = conns.filter(c => c.status === 'online').length;
-        const stateLabel = { online: 'онлайн', pending: 'ожидает подписи', offline: 'офлайн', revoked: 'отозван' };
-        const stateBadge = { online: 'live', pending: 'pending', offline: 'archived', revoked: 'failed' };
-        inner += `<div class="cab-kv"><span class="k">Ваш NinjaTrader</span><span class="v">${onlineCount ? `<span class="badge live">онлайн · ${onlineCount}</span>` : (conns.length ? '<span class="badge pending">нет активной сессии</span>' : '<span class="badge pending">не подключён</span>')}</span></div>`;
+        const onlineCount = conns.filter(c => c.functional_online).length;
+        const heartbeatOnlyCount = conns.filter(c => c.heartbeat_online && !c.functional_online).length;
+        const stateLabel = { online: 'онлайн', degraded: 'heartbeat без данных', pending: 'ожидает подписи', offline: 'офлайн', revoked: 'отозван' };
+        const stateBadge = { online: 'live', degraded: 'pending', pending: 'pending', offline: 'archived', revoked: 'failed' };
+        inner += `<div class="cab-kv"><span class="k">Ваш NinjaTrader</span><span class="v">${onlineCount ? `<span class="badge live">функционально онлайн · ${onlineCount}</span>` : (heartbeatOnlyCount ? '<span class="badge pending">heartbeat есть, account snapshot отсутствует</span>' : (conns.length ? '<span class="badge pending">нет активной сессии</span>' : '<span class="badge pending">не подключён</span>'))}</span></div>`;
         // Two things an operator can act on, said once and prominently instead
         // of being buried as a detail line on one connection row.
         const needRestart = conns.filter(c => c.restart_required && c.status !== 'revoked');
@@ -1944,7 +1945,8 @@
         }
         if (connectorMode) {
           inner += conns.length ? `<div class="nt-connections">${conns.map(c => {
-            const status = String(c.status || 'offline');
+            const rawStatus = String(c.status || 'offline');
+            const status = rawStatus === 'online' ? (c.functional_online ? 'online' : 'degraded') : rawStatus;
             const fingerprint = String(c.public_key_fingerprint || '');
             const version = [c.connector_version, c.nt_version && ('NT ' + c.nt_version)].filter(Boolean).join(' · ');
             const updateLabel = {
@@ -1957,6 +1959,7 @@
               c.release_channel ? ('канал ' + c.release_channel) : '',
               updateLabel,
               c.last_heartbeat_utc ? ('heartbeat ' + c.last_heartbeat_utc) : '',
+              c.account_snapshot_at_utc ? (`account snapshot ${c.account_snapshot_at_utc} · счетов ${c.account_snapshot_accounts || 0}`) : '',
               (c.account_labels || []).join(', '),
             ].filter(Boolean).map(v => esc(v)).join(' · ');
             return `<div class="cab-kv nt-connection"><span class="k"><strong>${esc(c.machine_label || 'NinjaTrader')}</strong><br><span class="mono" title="${esc(fingerprint)}">${esc(fingerprint ? fingerprint.slice(0, 22) + '…' : '')}</span></span><span class="v"><span class="badge ${stateBadge[status] || 'archived'}">${esc(stateLabel[status] || status)}</span>${details ? `<div class="cab-sub">${details}</div>` : ''}${status !== 'revoked' ? `<button class="btn sm danger" data-nt-revoke="${esc(c.connection_id || '')}">Отозвать</button>` : ''}</span></div>`;
@@ -4354,8 +4357,14 @@
         setChip(ntC, h.ninjatrader_running ? 'ok' : 'bad', 'NinjaTrader', h.ninjatrader_running ? 'NinjaTrader запущен' : 'NinjaTrader не запущен');
       }).catch(() => setChip(ntC, 'off', 'NinjaTrader', 'статус недоступен'));
       const bridgeTask = API.http.runtimeHeartbeat().then(hb => {
-        const ok = hb.present && hb.fresh;
-        setChip(brC, ok ? 'ok' : (hb.present ? 'warn' : 'bad'), 'Bridge', ok ? `мост активен · ${Math.round(hb.age_sec || 0)}с · v${hb.exporter_version || '?'}` : (hb.present ? `данные устарели (${Math.round(hb.age_sec || 0)}с)` : 'мост не отвечает'));
+        const ok = hb.present && hb.fresh && hb.functional_live;
+        const heartbeatOnly = hb.present && hb.fresh && !hb.functional_live;
+        const title = ok
+          ? `мост и account snapshot активны · ${Math.round(hb.age_sec || 0)}с · v${hb.exporter_version || '?'}`
+          : (heartbeatOnly
+            ? 'heartbeat активен, но свежий account snapshot отсутствует'
+            : (hb.present ? `данные устарели (${Math.round(hb.age_sec || 0)}с)` : 'мост не отвечает'));
+        setChip(brC, ok ? 'ok' : (hb.present ? 'warn' : 'bad'), 'Bridge', title);
       }).catch(() => setChip(brC, 'off', 'Bridge', 'статус недоступен'));
       const lmTask = API.http.aiLmStudioHealth().then(lm => {
         const st = lm.ready ? 'ok' : (lm.available ? 'warn' : 'off');
@@ -4939,6 +4948,9 @@
     current: ['live', 'соответствует checkout'],
     stale: ['failed', 'запущен НЕ тот код'],
     dirty: ['pending', 'есть незакоммиченные правки'],
+    behind: ['failed', 'отстаёт от релиза'],
+    ahead: ['pending', 'новее принятого релиза'],
+    diverged: ['failed', 'другая ревизия версии'],
     unknown: ['archived', 'состояние неизвестно'],
     not_applicable: ['archived', 'релизный артефакт'],
   };
@@ -4993,7 +5005,7 @@
     // The sync state sits on the card rather than in a separate banner: a
     // release cut from a checkout LOCAL is not actually running is exactly the
     // failure this pipeline exists to prevent.
-    const off = card.sync_state === 'stale' || card.sync_state === 'dirty';
+    const off = ['stale', 'dirty', 'behind', 'ahead', 'diverged'].indexOf(card.sync_state) >= 0;
     const open = !!(access && access.allowed);
     return `<section class="cab-card pipe-card${off ? ' pipe-card-warn' : ''}">
       <div class="pipe-card-head"><b>Development</b>
@@ -5245,11 +5257,13 @@
     catch (e) { return renderError(node, e, () => renderPipelineInto(node)); }
 
     const envs = doc.environments || {};
+    const overall = doc.overall || {};
     const again = () => renderPipelineInto(node);
     node.innerHTML = `
       <div class="finance-note"><strong>Один путь:</strong> Development → релиз-кандидат →
         Canary → приёмка → тот же артефакт в Production. Между Canary и Production
         артефакт не пересобирается. ${releaseAdapterSummary(doc.adapter || {})}</div>
+      <div class="${overall.ok ? 'finance-note' : 'admin-env-warnings'}"><div><strong>${esc(overall.message || 'Состояние окружений не определено')}</strong>${overall.target_version ? ` · ${esc(overall.target_version)} · <span class="mono">${esc(overall.target_commit || '')}</span>` : ''}</div></div>
       <div class="pipe-grid">
         ${pipeDevelopmentCard(envs.development || {}, doc.development_access)}
         ${pipeServerCard('Canary', envs.canary || {})}
