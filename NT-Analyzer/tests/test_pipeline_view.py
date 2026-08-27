@@ -411,3 +411,98 @@ def test_a_pending_candidate_is_not_marked_complete():
     out = pipeline_view.promotion_gates(_candidate("canary_passed"), _registry())
     assert out["complete"] is False
     assert out["allowed"] is True
+
+
+def _accepted():
+    return {
+        "candidate_id": "rc_49", "state": "production_live",
+        "app_version": "0.10.0-beta.49", "git_commit_sha": "c" * 40,
+        "artifact_sha256": OTHER, "manifest_sha256": ARTIFACT,
+    }
+
+
+def _agreeing_rows():
+    server = {"state": "live", "app_version": "0.10.0-beta.49",
+              "git_commit_sha": "c" * 40, "artifact_sha256": ARTIFACT}
+    return [
+        {"environment": runtime_env.DEVELOPMENT, "state": "live",
+         "app_version": "0.10.0-beta.49", "git_commit_sha": "c" * 40},
+        dict(server, environment=runtime_env.CANARY),
+        dict(server, environment=runtime_env.PRODUCTION),
+    ]
+
+
+def test_an_unread_registry_is_unknown_rather_than_a_reported_mismatch():
+    """LOCAL could not read the peer, so it has no basis to accuse it.
+
+    Reporting fail here was the bug: Development sat behind a permanently red
+    banner naming environments it had never actually observed, which trains an
+    owner to ignore the one gate that is supposed to stop a bad promotion.
+    """
+    out = pipeline_view.assemble(
+        registry={"environments": []}, releases={"releases": [_accepted()]},
+        sync={"state": "not_applicable"},
+        registry_known=False,
+        registry_source={"source": "peer", "origin": "", "ok": False},
+    )
+    overall = out["overall"]
+    assert overall["state"] == "unknown"
+    assert overall["ok"] is False
+    assert overall["failing"] == []
+    assert "canary_identity" in overall["unknown"]
+    assert "immutable_server_artifact" in overall["unknown"]
+
+
+def test_an_unknown_gate_never_reads_as_a_pass():
+    out = pipeline_view.assemble(
+        registry={"environments": _agreeing_rows()[:1]},
+        releases={"releases": [_accepted()]},
+        sync={"state": "not_applicable"},
+    )
+    overall = out["overall"]
+    assert overall["ok"] is False
+    assert overall["state"] == "unknown"
+
+
+def test_a_read_back_peer_registry_proves_the_pass_from_development():
+    """The rows came from the peer, and that is enough to decide.
+
+    They arrived over the channel this environment signs its own heartbeats
+    with, so they are not weaker evidence than a local row -- and the whole
+    point of reading them is that Development can now prove the pass instead
+    of an operator checking two servers by hand.
+    """
+    out = pipeline_view.assemble(
+        registry={"environments": _agreeing_rows()},
+        releases={"releases": [_accepted()]},
+        sync={"state": "not_applicable"},
+        registry_is_authoritative=False,
+        registry_known=True,
+        registry_source={"source": "peer", "ok": True,
+                         "origin": "https://app.stratforges.com"},
+    )
+    overall = out["overall"]
+    assert overall["state"] == "pass"
+    assert overall["ok"] is True
+    assert overall["registry_source"] == "peer"
+    assert overall["registry_origin"] == "https://app.stratforges.com"
+
+
+def test_a_genuine_artifact_split_is_a_failure_not_an_unknown():
+    rows = _agreeing_rows()
+    rows[2]["artifact_sha256"] = OTHER
+    overall = pipeline_view.assemble(
+        registry={"environments": rows}, releases={"releases": [_accepted()]},
+        sync={"state": "not_applicable"},
+    )["overall"]
+    assert overall["state"] == "fail"
+    assert overall["failing"] == ["immutable_server_artifact"]
+
+
+def test_without_an_accepted_release_no_environment_is_accused():
+    overall = pipeline_view.assemble(
+        registry={"environments": _agreeing_rows()}, releases={"releases": []},
+        sync={"state": "not_applicable"},
+    )["overall"]
+    assert overall["state"] == "unknown"
+    assert overall["failing"] == []

@@ -784,6 +784,106 @@ def publish_to(origin: str, *, force: bool = False,
         return {"ok": False, "code": type(exc).__name__}
 
 
+REGISTRY_READ_PATH = "/api/environments/registry"
+_READ_TIMEOUT_SEC = 5.0
+
+
+def fetch_peer_snapshot(origin: str) -> Dict[str, Any]:
+    """Read one peer's registry over the same signed channel we publish on.
+
+    Development publishes its identity to the authoritative server but keeps
+    only its own row locally, so it cannot see what Canary and Production are
+    actually running. Asking the peer closes that gap without inventing a
+    second trust path: the request is signed with this environment's own
+    publishing key, carries its own nonce, and names the environment making it,
+    so the receiver authenticates a read exactly as it authenticates a write.
+
+    A peer that is down, silent or unconfigured returns a code rather than
+    raising. "We could not ask" must stay distinguishable from "we asked and
+    the answer disagrees" -- one is unknown, the other is a failure.
+    """
+    import urllib.error
+    import urllib.request
+
+    target = str(origin or "").strip().rstrip("/")
+    if not target:
+        return {"ok": False, "code": "origin_missing"}
+    if not token_configured():
+        return {"ok": False, "code": "token_not_configured"}
+
+    payload = {
+        "environment": runtime_env.deployment_environment(),
+        "nonce": secrets.token_hex(16),
+    }
+    body = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    timestamp = int(_now())
+    request = urllib.request.Request(
+        target + REGISTRY_READ_PATH,
+        data=body,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            TIMESTAMP_HEADER: str(timestamp),
+            SIGNATURE_HEADER: SIGNATURE_VERSION + "=" + sign(
+                token(), timestamp=timestamp, body=body,
+            ),
+            "User-Agent": "StratForge-Environment-Registry-Read/1",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_READ_TIMEOUT_SEC) as response:
+            raw = response.read(256 * 1024)
+    except urllib.error.HTTPError as exc:
+        return {"ok": False, "code": "http_%d" % int(exc.code)}
+    except Exception as exc:
+        return {"ok": False, "code": type(exc).__name__}
+
+    try:
+        document = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return {"ok": False, "code": "response_unreadable"}
+    rows = document.get("environments") if isinstance(document, dict) else None
+    if not isinstance(rows, list):
+        return {"ok": False, "code": "response_unreadable"}
+    return {
+        "ok": True,
+        "code": "read",
+        "origin": target,
+        "environments": [row for row in rows if isinstance(row, dict)],
+    }
+
+
+def authoritative_rows() -> Dict[str, Any]:
+    """Registry rows this environment is entitled to reason about.
+
+    On the authoritative server that is simply its own registry. Elsewhere the
+    peers are asked in configuration order and the first that answers wins;
+    when none does, the caller is told the source is unavailable rather than
+    handed an empty registry that would read as "nothing is running".
+    """
+    if _authoritative():
+        return {
+            "ok": True, "source": "local", "origin": "",
+            "environments": (snapshot() or {}).get("environments") or [],
+        }
+    attempts = {}
+    for origin in peer_origins():
+        result = fetch_peer_snapshot(origin)
+        attempts[origin] = str(result.get("code") or "")
+        if result.get("ok"):
+            return {
+                "ok": True, "source": "peer", "origin": origin,
+                "environments": result.get("environments") or [],
+                "attempts": attempts,
+            }
+    return {
+        "ok": False, "source": "peer", "origin": "",
+        "environments": [], "attempts": attempts,
+        "code": "no_peer_answered" if attempts else "no_peer_configured",
+    }
+
+
 def peer_origins() -> List[str]:
     """Where this environment publishes, from configuration only.
 

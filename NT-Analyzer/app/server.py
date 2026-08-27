@@ -4027,6 +4027,59 @@ class Handler(BaseHTTPRequestHandler):
         )
         self._json(HTTPStatus.OK, decision)
 
+    def _environment_registry_read_post(self) -> None:
+        """Answer a peer environment's signed read of this registry.
+
+        Development publishes here but keeps only its own row, so it cannot
+        otherwise see what Canary and Production are running -- and a promotion
+        gate that cannot see them can only guess. This is the same channel as
+        the heartbeat, verified the same way: the signature names the caller,
+        the nonce stops a capture being replayed, and a request that fails any
+        of it gets the one generic 401 that tells a prober nothing.
+
+        It is a POST because it is authenticated the way a write is; the body
+        carries only the caller's identity claim and its nonce, and nothing in
+        it is trusted beyond what the signature already proved.
+        """
+        if not self._check_json_content_type():
+            return
+        raw = self._read_raw_body()
+        if raw is None:
+            return
+        try:
+            body = json.loads(raw.decode("utf-8"))
+            if not isinstance(body, dict):
+                raise ValueError("body must be an object")
+        except Exception:
+            self._err(HTTPStatus.BAD_REQUEST, "invalid json", code="invalid_body")
+            return
+
+        try:
+            environment_registry.verify_publisher(
+                body=raw,
+                timestamp=self.headers.get(environment_registry.TIMESTAMP_HEADER),
+                signature=self.headers.get(environment_registry.SIGNATURE_HEADER),
+                claimed_environment=body.get("environment"),
+                nonce=body.get("nonce"),
+            )
+        except environment_registry.EnvironmentRegistryError as exc:
+            if exc.status == HTTPStatus.UNAUTHORIZED:
+                observability.event(
+                    "environment_registry", "read_rejected", severity="warning",
+                    payload={"reason": exc.code,
+                             "claimed": str(body.get("environment") or "")[:32]},
+                )
+                self._err(HTTPStatus.UNAUTHORIZED, "Не авторизовано.",
+                          code="registry_unauthorized")
+            else:
+                self._err(exc.status, str(exc), code=exc.code)
+            return
+
+        try:
+            self._json(HTTPStatus.OK, environment_registry.snapshot())
+        except environment_registry.EnvironmentRegistryError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+
     def _environment_heartbeat_post(self) -> None:
         """Accept one environment's self-reported runtime identity.
 
@@ -5228,10 +5281,19 @@ class Handler(BaseHTTPRequestHandler):
             # Environments and releases answered together. The owner should not
             # have to hold "which candidate is on Canary, and is it the same
             # artifact Production would get" in their head across two screens.
+            # Development keeps only its own row, so its own registry cannot
+            # answer what Canary and Production are running. It asks the
+            # authoritative peer over the signed channel it already publishes
+            # on, and a peer that does not answer leaves the rows unknown
+            # rather than empty.
             try:
-                registry = environment_registry.snapshot()
-            except environment_registry.EnvironmentRegistryError:
-                registry = {"environments": []}
+                registry_source = environment_registry.authoritative_rows()
+            except environment_registry.EnvironmentRegistryError as exc:
+                registry_source = {
+                    "ok": False, "source": "local", "environments": [],
+                    "code": exc.code,
+                }
+            registry = {"environments": registry_source.get("environments") or []}
             try:
                 releases = release_center.list_releases()
             except release_center.ReleaseCenterError:
@@ -5255,6 +5317,10 @@ class Handler(BaseHTTPRequestHandler):
             # it -- the authoritative server is asked instead, and its decision
             # is what the promotion gate reflects. No answer means no promotion.
             authoritative = release_control.authoritative()
+            # Rows read back from the authoritative peer are as good as local
+            # ones for judging identity: the same key signed the request that
+            # fetched them.
+            registry_known = bool(registry_source.get("ok"))
             control = None
             if not authoritative and rows and str(rows[0].get("state") or "") == "canary_passed":
                 control = release_control.request_decision(
@@ -5269,6 +5335,8 @@ class Handler(BaseHTTPRequestHandler):
                 is_local_request=self._is_loopback_ip(forwarded_ip or tunnel_ip),
                 control=control,
                 registry_is_authoritative=authoritative,
+                registry_source=registry_source,
+                registry_known=registry_known,
             ))
             return
 
@@ -8845,6 +8913,10 @@ class Handler(BaseHTTPRequestHandler):
         # process, which has no session and must never be given one. It is
         # placed ahead of _authorize_api for that reason, and authenticates
         # itself immediately below.
+        if path == environment_registry.REGISTRY_READ_PATH:
+            self._environment_registry_read_post()
+            return
+
         if path == environment_registry.HEARTBEAT_PATH:
             self._environment_heartbeat_post()
             return
