@@ -1419,20 +1419,31 @@ def _normalise_account_snapshot(value: Any, now: float) -> Dict[str, Any]:
             400, "invalid_account_snapshot",
         )
 
+    # When the AddOn stamped the snapshot is provenance, not evidence. What
+    # makes it fresh is that it arrived inside this heartbeat, which is signed,
+    # nonce-bound and rejected outside a two-minute window -- so the receive
+    # time is already a sound bound and is recorded below regardless.
+    #
+    # Refusing the whole heartbeat over this field was a mistake with a real
+    # cost: a Connector sending genuine accounts was answered 400 on every
+    # beat, which took it offline entirely and reported no NinjaTrader at all.
+    # An unreadable optional field is dropped and said out loud instead.
     generated = _snapshot_text(
         value.get("generated_at_utc") or value.get("timestamp_utc"),
         maximum=40, field="generated_at_utc",
     )
+    generated_warning = ""
     if generated:
         try:
             parsed = datetime.fromisoformat(generated.replace("Z", "+00:00"))
             if parsed.tzinfo is None:
                 raise ValueError("timezone required")
         except ValueError:
-            raise ConnectorProtocolError(
-                "Account snapshot: generated_at_utc некорректен.",
-                400, "invalid_account_snapshot",
-            ) from None
+            generated_warning = (
+                "generated_at_utc не разобран; свежесть считается по времени "
+                f"приёма heartbeat (получено: {generated[:40]!r})"
+            )
+            generated = ""
 
     accounts = []
     names = set()
@@ -1487,6 +1498,7 @@ def _normalise_account_snapshot(value: Any, now: float) -> Dict[str, Any]:
 
     return {
         "generated_at_utc": generated,
+        "generated_at_warning": generated_warning,
         "received_at_utc": _now_iso(now),
         "received_at": now,
         "exporter_version": _snapshot_text(
@@ -2505,6 +2517,7 @@ def runtime_account_status(user_id: Any, *, workspace_id: str = "",
         "account_snapshot_fresh": snapshot_fresh,
         "account_snapshot_at_utc": str(snapshot.get("received_at_utc") or ""),
         "account_snapshot_generated_at_utc": str(snapshot.get("generated_at_utc") or ""),
+        "account_snapshot_warning": str(snapshot.get("generated_at_warning") or ""),
         "account_snapshot_age_sec": (
             round(snapshot_age, 1) if snapshot_age is not None else None),
         "account_count": len(accounts),

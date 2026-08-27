@@ -1385,3 +1385,59 @@ def test_storage_errors_keep_their_message(connector_store, monkeypatch) -> None
     assert exc.value.code == "storage_constraint"
     # The constraint name is the whole point: without it the code is unactionable.
     assert "some_named_constraint" in str(exc.value)
+
+
+def test_an_unreadable_snapshot_timestamp_does_not_refuse_the_heartbeat() -> None:
+    """A real Connector was answered 400 on every beat over this one field.
+
+    Json.NET parses an ISO string into a Date token, and casting it back to
+    string yields the current culture's format. The AddOn sent
+    "8/27/2026 2:49:31 AM", the server could not read it, and refused the whole
+    heartbeat -- so a machine sending genuine accounts reported as offline with
+    no NinjaTrader at all. The field is provenance; the heartbeat is evidence.
+    """
+    snapshot = connector_protocol._normalise_account_snapshot({
+        "generated_at_utc": "8/27/2026 2:49:31 AM",
+        "exporter_version": "1.3.0",
+        "accounts": [{
+            "account_name": "DEMO3369390", "account_mode": "paper",
+            "cash_value": 11017.42, "net_liquidation": 11017.42,
+            "connection_status": "Connected",
+        }],
+    }, 1_800_000_000.0)
+    assert snapshot["accounts"][0]["account_name"] == "DEMO3369390"
+    assert snapshot["accounts"][0]["net_liquidation"] == 11017.42
+    # Dropped, not invented, and not silently.
+    assert snapshot["generated_at_utc"] == ""
+    assert "generated_at_utc" in snapshot["generated_at_warning"]
+    # Freshness never depended on it: arrival inside a signed heartbeat does.
+    assert snapshot["received_at"] == 1_800_000_000.0
+
+
+def test_a_readable_snapshot_timestamp_is_kept_verbatim() -> None:
+    snapshot = connector_protocol._normalise_account_snapshot({
+        "generated_at_utc": "2026-08-27T02:49:31Z",
+        "accounts": [{"account_name": "Sim101"}],
+    }, 1_800_000_000.0)
+    assert snapshot["generated_at_utc"] == "2026-08-27T02:49:31Z"
+    assert snapshot["generated_at_warning"] == ""
+
+
+def test_a_snapshot_with_no_accounts_is_still_not_functional() -> None:
+    """Tolerating a bad timestamp must not tolerate an empty payload."""
+    snapshot = connector_protocol._normalise_account_snapshot({
+        "generated_at_utc": "not a date at all", "accounts": [],
+    }, 1_800_000_000.0)
+    assert snapshot["accounts"] == []
+
+
+def test_the_connector_reads_the_snapshot_without_reinterpreting_dates() -> None:
+    """The fix at source: the AddOn must not let Json.NET rewrite the stamp."""
+    root = Path(__file__).resolve().parent.parent
+    client = (root / "bridge" / "src" / "Connector" / "ConnectorClient.cs").read_text(
+        encoding="utf-8",
+    )
+    reader = client[client.index("private JObject ReadAccountSnapshot"):]
+    reader = reader[: reader.index("catch (Exception ex)")]
+    assert "DateParseHandling.None" in reader
+    assert "JObject.Parse(" not in reader
