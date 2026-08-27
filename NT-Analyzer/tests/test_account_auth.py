@@ -316,12 +316,13 @@ def test_server_requires_session_and_csrf_even_on_localhost(auth_store, monkeypa
         "challenges": [],
         "sessions": [{"user_id": 999, "token_hash": hashlib.sha256(token.encode()).hexdigest(), "csrf_hash": hashlib.sha256(csrf.encode()).hexdigest(), "csrf_token": csrf, "expires_at": time.time() + 3600, "revoked": False}],
     })
-    # Development must prefer the authenticated signed Connector state when it
-    # is present. A local NinjaTrader process alone is not functional evidence.
+    # Development answers for the NinjaTrader on this machine. An enrolled
+    # Connector installation is not evidence about that process, and letting it
+    # answer here is what once reported a running local NinjaTrader as absent.
     monkeypatch.setattr(server_mod, "_connector_runtime_status", lambda _context: {
-        "present": True, "fresh": True, "functional_live": True,
+        "present": True, "fresh": True, "functional_live": False,
     })
-    monkeypatch.setattr(server_mod.jobqueue, "ninjatrader_running", lambda: False)
+    monkeypatch.setattr(server_mod.jobqueue, "ninjatrader_running", lambda: True)
     srv = ThreadingHTTPServer((server_mod.HOST, 0), server_mod.Handler)
     thread = threading.Thread(target=srv.serve_forever, daemon=True); thread.start()
     base = f"http://{srv.server_address[0]}:{srv.server_address[1]}"
@@ -335,7 +336,7 @@ def test_server_requires_session_and_csrf_even_on_localhost(auth_store, monkeypa
             assert response.status == 200
             health = json.loads(response.read().decode("utf-8"))
         assert health["ninjatrader_running"] is True
-        assert health["connector_functional"] is True
+        assert health["connector_functional"] is False
 
         no_csrf = urllib.request.Request(base + "/api/auth/logout", data=b"{}", method="POST", headers={
             "Content-Type": "application/json", "Cookie": f"{account_auth.SESSION_COOKIE}={token}",

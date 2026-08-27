@@ -115,3 +115,54 @@ def test_setup_payload_reports_real_release_gate(monkeypatch, tmp_path: Path) ->
     assert '"state": "blocked_release_gate"' in source
     assert '"download_url": ""' in source
     assert "Authenticode" in source
+
+
+def test_installing_against_a_local_backend_keeps_the_owner_runtime_directory() -> None:
+    """A reinstall on a Development machine must not repoint the AddOn.
+
+    LOCAL has no Connector transport to itself: the backend and the AddOn share
+    one owner runtime directory, and they must share the same one or neither
+    sees the other. A reinstall that hardcoded the installation spool pointed a
+    working local AddOn away from the directory the backend reads, and LOCAL
+    then showed NinjaTrader inactive with no accounts -- on a machine where
+    NinjaTrader was running and the accounts were still on disk.
+    """
+    root = Path(__file__).resolve().parent.parent
+    engine = (root / "connector" / "installer" / "InstallerEngine.cs").read_text(
+        encoding="utf-8",
+    )
+    # The runtime directory is decided, not assumed.
+    assert '["runtime_data_dir"] = ResolveRuntimeDataDir(' in engine
+    assert '["runtime_data_dir"] = Path.Combine(stateDir, "spool")' not in engine
+    # And it is decided by which backend this installation talks to.
+    assert "private static bool IsLocalBackend(" in engine
+    assert '"127.0.0.1"' in engine and '"localhost"' in engine
+    assert "if (!IsLocalBackend(connector[\"server_origin\"]))" in engine
+    assert "return spool;" in engine
+    # An operator can state the directory outright.
+    assert "options.RuntimeDataDir" in engine
+    program = (root / "connector" / "installer" / "Program.cs").read_text(encoding="utf-8")
+    assert '"--runtime-data-dir"' in program
+
+
+def test_a_local_install_never_inherits_a_runtime_directory_inside_the_state_dir() -> None:
+    """Carrying the previous value forward is right, unless the previous value
+    is the spool a wrong install left behind -- which would make the fix
+    inherit the bug."""
+    root = Path(__file__).resolve().parent.parent
+    engine = (root / "connector" / "installer" / "InstallerEngine.cs").read_text(
+        encoding="utf-8",
+    )
+    assert "!IsInside(previous, stateDir)" in engine
+
+
+def test_a_server_installation_still_uses_the_signed_spool_transport() -> None:
+    """The Development rule must not reach the machines the protocol exists for."""
+    root = Path(__file__).resolve().parent.parent
+    engine = (root / "connector" / "installer" / "InstallerEngine.cs").read_text(
+        encoding="utf-8",
+    )
+    resolver = engine[engine.index("private static string ResolveRuntimeDataDir"):]
+    resolver = resolver[: resolver.index("private static bool IsInside")]
+    assert 'string spool = Path.Combine(stateDir, "spool");' in resolver
+    assert resolver.index("if (!IsLocalBackend") < resolver.index("options.RuntimeDataDir")

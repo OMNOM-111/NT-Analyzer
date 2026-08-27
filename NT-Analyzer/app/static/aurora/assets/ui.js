@@ -4357,8 +4357,12 @@
         setChip(ntC, h.ninjatrader_running ? 'ok' : 'bad', 'NinjaTrader', h.ninjatrader_running ? 'NinjaTrader запущен' : 'NinjaTrader не запущен');
       }).catch(() => setChip(ntC, 'off', 'NinjaTrader', 'статус недоступен'));
       const bridgeTask = API.http.runtimeHeartbeat().then(hb => {
-        const ok = hb.present && hb.fresh && hb.functional_live;
-        const heartbeatOnly = hb.present && hb.fresh && !hb.functional_live;
+        // functional_live is the Connector transport's word. A local runtime
+        // heartbeat does not carry it and must not be judged by its absence:
+        // where the field is missing the old, correct local rule applies.
+        const graded = Object.prototype.hasOwnProperty.call(hb, 'functional_live');
+        const ok = hb.present && hb.fresh && (!graded || hb.functional_live);
+        const heartbeatOnly = hb.present && hb.fresh && graded && !hb.functional_live;
         const title = ok
           ? `мост и account snapshot активны · ${Math.round(hb.age_sec || 0)}с · v${hb.exporter_version || '?'}`
           : (heartbeatOnly
