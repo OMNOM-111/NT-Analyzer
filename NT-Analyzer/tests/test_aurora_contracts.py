@@ -1006,3 +1006,20 @@ def test_victor_ui_exposes_durable_progress_workflow_and_selective_cleanup():
     assert "vitekTaskProgress" in api
     assert ".btn:disabled" in theme
     assert "cursor: not-allowed" in theme
+
+
+def test_backtesting_uses_template_commission_and_submits_without_browser_confirm():
+    html = (AURORA / "backtesting.html").read_text(encoding="utf-8")
+    js = (AURORA / "assets" / "pages" / "backtesting.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'id="f-commission-template"' in html
+    assert 'id="f-commission"' not in html
+    assert "renderCommissionTemplates();" in js
+    assert "commission: 0" in js
+    assert "commission_template: UI.qs('#f-commission-template').value || 'None'" in js
+    assert "parseFloat(UI.qs('#f-commission').value)" not in js
+    assert "confirm(`Запустить бэктест" not in js
+    assert "confirm(`Запустить пакетный прогон" not in js
+    assert "confirm('Повторить прогон" not in js

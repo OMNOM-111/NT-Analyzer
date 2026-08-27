@@ -977,6 +977,38 @@ class DocumentRepository:
         sessions = [row for row in doc.get("sessions", []) if isinstance(row, dict)]
         commands = [row for row in doc.get("commands", []) if isinstance(row, dict)]
 
+        # The authoritative document intentionally retains terminal Connector
+        # history. Re-projecting every historical row on every live request is
+        # unnecessary: one Production installation with 1,144 retained
+        # sessions produced exactly 1,144 physical session UPDATEs per real
+        # heartbeat, poll, or market-data request. Compare the current mirror
+        # once and only UPSERT rows whose projected value actually changed.
+        # Protocol sequence, expiry, command, and freshness semantics remain in
+        # the authoritative document and are not relaxed here.
+        existing_installations = {
+            str(row["installation_id"]): row for row in conn.execute(
+                """
+                SELECT installation_id,workspace_id,user_id,status,
+                       public_key_fingerprint,document
+                FROM sf_connector_installations
+                """
+            ).fetchall() or []
+        }
+        existing_sessions = {
+            str(row["session_id"]): row for row in conn.execute(
+                """
+                SELECT session_id,installation_id,workspace_id,token_hash,
+                       expires_at,revoked_at,document
+                FROM sf_connector_sessions
+                """
+            ).fetchall() or []
+        }
+        existing_commands = {
+            str(row["command_id"]): row for row in conn.execute(
+                "SELECT command_id,status,document FROM sf_commands"
+            ).fetchall() or []
+        }
+
         workspace_candidates = {
             str(row.get("workspace_id") or "")
             for row in (*installations, *commands)
@@ -1019,6 +1051,22 @@ class DocumentRepository:
                 )
             install_ids.append(key)
             install_workspaces[key] = workspace_id
+            fingerprint = str(
+                row.get("public_key_fingerprint")
+                or row.get("fingerprint")
+                or "missing-fingerprint"
+            )
+            current = existing_installations.get(key)
+            unchanged = bool(
+                current
+                and str(current.get("workspace_id") or "") == workspace_id
+                and _int(current.get("user_id")) == user_id
+                and str(current.get("status") or "") == status
+                and str(current.get("public_key_fingerprint") or "") == fingerprint
+                and dict(current.get("document") or {}) == row
+            )
+            if unchanged:
+                continue
             conn.execute(
                 """
                 INSERT INTO sf_connector_installations(installation_id,workspace_id,user_id,status,
@@ -1029,8 +1077,7 @@ class DocumentRepository:
                   public_key_fingerprint=EXCLUDED.public_key_fingerprint,
                   document=EXCLUDED.document,updated_at=clock_timestamp()
                 """,
-                (key, workspace_id, user_id, status,
-                 str(row.get("public_key_fingerprint") or row.get("fingerprint") or "missing-fingerprint"),
+                (key, workspace_id, user_id, status, fingerprint,
                  _jsonb(row), _timestamp(row.get("created_at_utc"))),
             )
         session_ids: list[str] = []
@@ -1054,6 +1101,23 @@ class DocumentRepository:
                 raise StorageConstraintError("Connector session token hash is invalid.")
             key = key or f"csess_{token_hash[:32]}"
             session_ids.append(key)
+            expires_at = (
+                _timestamp(row.get("expires_at_utc") or row.get("expires_at"))
+                or datetime.now(timezone.utc)
+            )
+            revoked_at = _timestamp(row.get("revoked_at_utc"))
+            current = existing_sessions.get(key)
+            unchanged = bool(
+                current
+                and str(current.get("installation_id") or "") == installation_id
+                and str(current.get("workspace_id") or "") == workspace_id
+                and str(current.get("token_hash") or "") == token_hash
+                and current.get("expires_at") == expires_at
+                and current.get("revoked_at") == revoked_at
+                and dict(current.get("document") or {}) == row
+            )
+            if unchanged:
+                continue
             conn.execute(
                 """
                 INSERT INTO sf_connector_sessions(session_id,installation_id,workspace_id,token_hash,
@@ -1064,9 +1128,8 @@ class DocumentRepository:
                   expires_at=EXCLUDED.expires_at,revoked_at=EXCLUDED.revoked_at,
                   document=EXCLUDED.document,updated_at=clock_timestamp()
                 """,
-                (key, installation_id, workspace_id,
-                 token_hash, _timestamp(row.get("expires_at_utc") or row.get("expires_at")) or datetime.now(timezone.utc),
-                 _timestamp(row.get("revoked_at_utc")), _jsonb(row), _timestamp(row.get("created_at_utc"))),
+                (key, installation_id, workspace_id, token_hash, expires_at,
+                 revoked_at, _jsonb(row), _timestamp(row.get("created_at_utc"))),
             )
         command_ids: list[str] = []
         status_map = {"pending":"queued", "delivered":"leased"}
@@ -1098,6 +1161,13 @@ class DocumentRepository:
                     f"Connector command {key} has non-terminal orphan references."
                 )
             command_ids.append(key)
+            current = existing_commands.get(key)
+            if (
+                current
+                and str(current.get("status") or "") == status
+                and dict(current.get("document") or {}) == row
+            ):
+                continue
             conn.execute(
                 """
                 INSERT INTO sf_commands(command_id,workspace_id,installation_id,user_id,command_type,
@@ -1116,9 +1186,24 @@ class DocumentRepository:
                  str(row.get("idempotency_key") or f"legacy:{key}")[:160], _jsonb(row),
                  _timestamp(row.get("created_at_utc"))),
             )
-        self._delete_missing(conn, "sf_commands", "command_id", command_ids)
-        self._delete_missing(conn, "sf_connector_sessions", "session_id", session_ids)
-        self._delete_missing(conn, "sf_connector_installations", "installation_id", install_ids)
+        missing_commands = sorted(set(existing_commands) - set(command_ids))
+        missing_sessions = sorted(set(existing_sessions) - set(session_ids))
+        missing_installations = sorted(set(existing_installations) - set(install_ids))
+        if missing_commands:
+            conn.execute(
+                "DELETE FROM sf_commands WHERE command_id = ANY(%s)",
+                (missing_commands,),
+            )
+        if missing_sessions:
+            conn.execute(
+                "DELETE FROM sf_connector_sessions WHERE session_id = ANY(%s)",
+                (missing_sessions,),
+            )
+        if missing_installations:
+            conn.execute(
+                "DELETE FROM sf_connector_installations WHERE installation_id = ANY(%s)",
+                (missing_installations,),
+            )
 
 
 class AuthRepository:
