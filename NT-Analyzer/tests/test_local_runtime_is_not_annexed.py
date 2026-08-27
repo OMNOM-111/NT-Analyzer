@@ -171,3 +171,39 @@ def test_an_owner_workspace_is_never_answered_with_a_not_connected_stub():
         "active_workspace": {"workspace_id": "ws_owner_training_x",
                              "uses_owner_runtime": True},
     }) is None
+
+
+# --------------------------------------------------------------------------- #
+# The Canary projection must not reach Development either.
+# --------------------------------------------------------------------------- #
+def test_development_is_never_told_what_its_own_ninjatrader_is_doing(monkeypatch):
+    """LOCAL consumes owner market data from the hub -- bars, so that a
+    developer copy does not open a second market session on the owner's
+    credential. That must not turn into consuming the hub's *device*.
+
+    It did: LOCAL began answering /api/ops/runtime/accounts with
+    source=production_connector, showing the server VM's accounts in place of
+    the NinjaTrader running on this machine. Same substitution as before,
+    arriving down a different road.
+    """
+    monkeypatch.setattr(runtime_env, "deployment_environment",
+                        lambda: runtime_env.DEVELOPMENT)
+    assert server_mod._environment_has_no_local_ninjatrader() is False
+
+
+@pytest.mark.parametrize("environment", ["canary", "production"])
+def test_a_server_has_nothing_local_to_read(environment, monkeypatch):
+    monkeypatch.setattr(runtime_env, "deployment_environment", lambda: environment)
+    assert server_mod._environment_has_no_local_ninjatrader() is True
+
+
+def test_the_environment_check_gates_the_projection_first():
+    """Ordering matters: the check must precede should_consume, or a consuming
+    Development copy reaches the hub before anyone asks whether it should."""
+    from pathlib import Path
+
+    text = Path(server_mod.__file__).read_text(encoding="utf-8")
+    block = text[text.index("_environment_has_no_local_ninjatrader()"):]
+    block = block[: block.index("projected_runtime(path)")]
+    assert "owner_market_data_gateway.should_consume()" in block
+    assert "_entitled_to_owner_runtime(context)" in block
