@@ -335,46 +335,103 @@ def compare(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"environments": [c["environment"] for c in known], "fields": rows}
 
 
+def _identity_gate(environment: str, card: Dict[str, Any],
+                   target_version: str, target_commit: str,
+                   registry_known: bool) -> Dict[str, Any]:
+    """One environment's runtime identity against the accepted release.
+
+    Three answers, not two. "We have not been able to read this environment"
+    is not the same claim as "this environment is running the wrong code", and
+    collapsing them either blocks a good promotion for no stated reason or --
+    worse, in the other direction -- lets an unread environment pass.
+    """
+    label = f"{environment}: текущие version/commit совпадают с принятым релизом"
+    version = str(card.get("version") or "")
+    commit = str(card.get("commit") or "")
+    if not (target_version and target_commit):
+        return {"id": f"{environment}_identity", "label": label,
+                "state": "unknown", "ok": False,
+                "detail": "Принятый релиз неизвестен этому процессу."}
+    if not registry_known or not version or not commit:
+        return {"id": f"{environment}_identity", "label": label,
+                "state": "unknown", "ok": False,
+                "detail": f"Реестр не сообщил, что выполняет {environment}."}
+    if version == target_version and target_commit.startswith(commit):
+        return {"id": f"{environment}_identity", "label": label,
+                "state": "pass", "ok": True, "detail": ""}
+    return {
+        "id": f"{environment}_identity", "label": label,
+        "state": "fail", "ok": False,
+        "detail": (f"{environment} выполняет {version} ({commit}), "
+                   f"принят {target_version} ({target_commit[:12]})."),
+    }
+
+
 def overall_status(cards: List[Dict[str, Any]],
-                   accepted_release: Dict[str, Any]) -> Dict[str, Any]:
+                   accepted_release: Dict[str, Any],
+                   *, registry_known: bool = True,
+                   registry_source: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Whether all three environments are provably on the accepted release.
+
+    PASS requires proof, and unknown is its own answer: a gate nobody could
+    read blocks the pass without claiming a mismatch that was never observed.
+    """
+    source = registry_source or {}
     target_version = str(accepted_release.get("app_version") or "")
     target_commit = str(accepted_release.get("git_commit_sha") or "")
     target_artifact = _runtime_artifact_sha(accepted_release)
     by_env = {str(card.get("environment") or ""): card for card in cards}
-    gates = []
-    for environment in (runtime_env.DEVELOPMENT, runtime_env.CANARY, runtime_env.PRODUCTION):
-        card = by_env.get(environment) or {}
-        card_commit = str(card.get("commit") or "")
-        identity_ok = bool(
-            target_version and target_commit
-            and str(card.get("version") or "") == target_version
-            and card_commit and target_commit.startswith(card_commit)
-        )
-        gates.append({
-            "id": f"{environment}_identity",
-            "label": f"{environment}: текущие version/commit совпадают с принятым релизом",
-            "ok": identity_ok,
-        })
+    gates = [
+        _identity_gate(environment, by_env.get(environment) or {},
+                       target_version, target_commit, registry_known)
+        for environment in (runtime_env.DEVELOPMENT, runtime_env.CANARY,
+                            runtime_env.PRODUCTION)
+    ]
+
     canary_artifact = str((by_env.get(runtime_env.CANARY) or {}).get("artifact_sha256") or "")
     production_artifact = str((by_env.get(runtime_env.PRODUCTION) or {}).get("artifact_sha256") or "")
-    gates.append({
-        "id": "immutable_server_artifact",
-        "label": "Canary и Production выполняют один принятый immutable artifact",
-        "ok": bool(target_artifact and canary_artifact and production_artifact
-                   and canary_artifact.lower() == target_artifact.lower()
-                   and production_artifact.lower() == target_artifact.lower()),
-    })
-    blocked = [gate for gate in gates if not gate["ok"]]
+    artifact_label = "Canary и Production выполняют один принятый immutable artifact"
+    if (not registry_known or not canary_artifact
+            or not production_artifact or not target_artifact):
+        artifact_gate = {
+            "state": "unknown", "ok": False,
+            "detail": "Артефакт Canary или Production не прочитан.",
+        }
+    elif (canary_artifact.lower() == target_artifact.lower()
+            and production_artifact.lower() == target_artifact.lower()):
+        artifact_gate = {"state": "pass", "ok": True, "detail": ""}
+    else:
+        artifact_gate = {
+            "state": "fail", "ok": False,
+            "detail": (f"Canary {canary_artifact[:16]}, "
+                       f"Production {production_artifact[:16]}, "
+                       f"принят {target_artifact[:16]}."),
+        }
+    artifact_gate.update({"id": "immutable_server_artifact", "label": artifact_label})
+    gates.append(artifact_gate)
+
+    failed = [gate["id"] for gate in gates if gate["state"] == "fail"]
+    unknown = [gate["id"] for gate in gates if gate["state"] == "unknown"]
+    if failed:
+        state, message = "fail", "ALL ENVIRONMENTS PASS запрещён: окружения не согласованы."
+    elif unknown:
+        state, message = "unknown", "ALL ENVIRONMENTS PASS не доказан: часть окружений не прочитана."
+    else:
+        state, message = "pass", "ALL ENVIRONMENTS PASS"
     return {
-        "ok": bool(accepted_release) and not blocked,
-        "state": "pass" if accepted_release and not blocked else "fail",
+        "ok": state == "pass",
+        "state": state,
         "target_version": target_version,
         "target_commit": target_commit[:12],
         "target_artifact_sha256": target_artifact,
         "gates": gates,
-        "blocking": [gate["id"] for gate in blocked],
-        "message": ("ALL ENVIRONMENTS PASS" if accepted_release and not blocked else
-                    "ALL ENVIRONMENTS PASS запрещён: окружения не согласованы."),
+        "blocking": failed + unknown,
+        "failing": failed,
+        "unknown": unknown,
+        "registry_known": bool(registry_known),
+        "registry_source": str(source.get("source") or ""),
+        "registry_origin": str(source.get("origin") or ""),
+        "message": message,
     }
 
 
@@ -404,7 +461,9 @@ def assemble(*, registry: Optional[Dict[str, Any]], releases: Optional[Dict[str,
              sync: Optional[Dict[str, Any]], deployments: Optional[Dict[str, Any]] = None,
              is_local_request: bool = False,
              control: Optional[Dict[str, Any]] = None,
-             registry_is_authoritative: bool = True) -> Dict[str, Any]:
+             registry_is_authoritative: bool = True,
+             registry_source: Optional[Dict[str, Any]] = None,
+             registry_known: bool = True) -> Dict[str, Any]:
     """The whole answer, from payloads the caller already fetched.
 
     This lives here rather than in the request handler because the joining is
@@ -448,6 +507,8 @@ def assemble(*, registry: Optional[Dict[str, Any]], releases: Optional[Dict[str,
             candidate, registry, control=control,
             registry_is_authoritative=registry_is_authoritative),
         "compare": compare(cards),
-        "overall": overall_status(cards, accepted),
+        "overall": overall_status(cards, accepted,
+                                  registry_known=registry_known,
+                                  registry_source=registry_source),
         "development_access": development_access(is_local_request),
     }

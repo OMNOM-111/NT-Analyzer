@@ -5263,7 +5263,17 @@
       <div class="finance-note"><strong>Один путь:</strong> Development → релиз-кандидат →
         Canary → приёмка → тот же артефакт в Production. Между Canary и Production
         артефакт не пересобирается. ${releaseAdapterSummary(doc.adapter || {})}</div>
-      <div class="${overall.ok ? 'finance-note' : 'admin-env-warnings'}"><div><strong>${esc(overall.message || 'Состояние окружений не определено')}</strong>${overall.target_version ? ` · ${esc(overall.target_version)} · <span class="mono">${esc(overall.target_commit || '')}</span>` : ''}</div></div>
+      ${(() => {
+        // Unknown is its own answer: an environment nobody could read must not
+        // be drawn as a mismatch, and must not be drawn as a pass either.
+        const st = String(overall.state || 'unknown');
+        const cls = st === 'pass' ? 'finance-note' : 'admin-env-warnings';
+        const detail = (overall.gates || []).filter(g => g.state !== 'pass' && g.detail)
+          .map(g => `<div class="cab-sub">${esc(g.label)} — ${esc(g.detail)}</div>`).join('');
+        const src = overall.registry_source === 'peer' && overall.registry_origin
+          ? `<div class="cab-sub">реестр прочитан у ${esc(overall.registry_origin)}</div>` : '';
+        return `<div class="${cls}"><div><strong>${esc(overall.message || 'Состояние окружений не определено')}</strong>${overall.target_version ? ` · ${esc(overall.target_version)} · <span class="mono">${esc(overall.target_commit || '')}</span>` : ''}</div>${src}${detail}</div>`;
+      })()}
       <div class="pipe-grid">
         ${pipeDevelopmentCard(envs.development || {}, doc.development_access)}
         ${pipeServerCard('Canary', envs.canary || {})}

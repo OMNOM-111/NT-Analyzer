@@ -754,3 +754,106 @@ def test_the_publisher_uses_the_readiness_supplier_it_was_given(monkeypatch):
     publisher._loop()
     assert seen["readiness"] is not None
     assert seen["readiness"]() == {"status": "ready"}
+
+
+# --------------------------------------------------------------------------- #
+# Reading the registry back.
+#
+# Development publishes here but keeps only its own row, so before this it had
+# no way to see what Canary and Production were running and its promotion gate
+# had to report every server as unreadable. The read reuses the publishing
+# channel rather than adding a second trust path, so the same forgery,
+# impersonation and replay tests that guard the write guard the read.
+# --------------------------------------------------------------------------- #
+def _read(base, raw, timestamp, signature):
+    headers = {"Content-Type": "application/json", "Origin": base}
+    if timestamp is not None:
+        headers[registry.TIMESTAMP_HEADER] = str(timestamp)
+    if signature is not None:
+        headers[registry.SIGNATURE_HEADER] = signature
+    request = urllib.request.Request(
+        base + registry.REGISTRY_READ_PATH, data=raw, method="POST", headers=headers,
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+
+def test_a_signed_read_returns_every_environment_the_registry_knows(http_server, keys):
+    raw, ts, sig = signed(beat("canary"), KEY_CANARY)
+    _post(http_server, raw, ts, sig)
+
+    raw, ts, sig = signed({"environment": "development"}, KEY_DEVELOPMENT)
+    out = _read(http_server, raw, ts, sig)
+    canary = next(row for row in out["environments"]
+                  if row["environment"] == "canary")
+    assert canary["app_version"] == "0.10.0-beta.16"
+    assert canary["state"] == "live"
+
+
+@pytest.mark.parametrize("mutate", [
+    "no_signature", "wrong_key", "stale_timestamp", "impersonation",
+])
+def test_an_unauthenticated_read_is_refused_like_an_unauthenticated_write(
+        http_server, keys, mutate):
+    """The registry says what every environment is running. Reading it is not
+    a lesser act than writing to it, so it is not a lesser check."""
+    payload = {"environment": "development"}
+    key, ts = KEY_DEVELOPMENT, None
+    if mutate == "wrong_key":
+        key = "z" * 48
+    if mutate == "stale_timestamp":
+        ts = int(registry._now()) - (registry.MAX_CLOCK_SKEW_SEC + 60)
+    raw, stamp, sig = signed(payload, key, timestamp=ts)
+    if mutate == "impersonation":
+        raw, stamp, sig = signed({"environment": "production"}, KEY_DEVELOPMENT)
+    if mutate == "no_signature":
+        sig = None
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        _read(http_server, raw, stamp, sig)
+    assert caught.value.code == 401
+
+
+def test_a_read_is_not_replayable(http_server, keys):
+    raw, ts, sig = signed({"environment": "development"}, KEY_DEVELOPMENT)
+    _read(http_server, raw, ts, sig)
+    with pytest.raises(urllib.error.HTTPError) as caught:
+        _read(http_server, raw, ts, sig)
+    assert caught.value.code == 401
+
+
+def test_a_peer_that_cannot_be_reached_is_unknown_not_empty(monkeypatch):
+    """"We could not ask" and "nothing is running" must not be the same answer."""
+    monkeypatch.setattr(registry, "_authoritative", lambda: False)
+    monkeypatch.setattr(registry, "peer_origins",
+                        lambda: ["https://app.stratforges.test"])
+    monkeypatch.setattr(registry, "fetch_peer_snapshot",
+                        lambda origin: {"ok": False, "code": "URLError"})
+    out = registry.authoritative_rows()
+    assert out["ok"] is False
+    assert out["environments"] == []
+    assert out["code"] == "no_peer_answered"
+
+
+def test_the_first_peer_that_answers_is_the_source(monkeypatch):
+    monkeypatch.setattr(registry, "_authoritative", lambda: False)
+    monkeypatch.setattr(registry, "peer_origins",
+                        lambda: ["https://down.test", "https://up.test"])
+
+    def fetch(origin):
+        if origin == "https://up.test":
+            return {"ok": True, "code": "read", "origin": origin,
+                    "environments": [{"environment": "production"}]}
+        return {"ok": False, "code": "URLError"}
+
+    monkeypatch.setattr(registry, "fetch_peer_snapshot", fetch)
+    out = registry.authoritative_rows()
+    assert out["ok"] is True
+    assert out["origin"] == "https://up.test"
+    assert out["source"] == "peer"
+
+
+def test_a_read_without_a_publishing_key_is_refused_before_the_network(monkeypatch):
+    monkeypatch.delenv("STRATFORGE_ENVIRONMENT_REGISTRY_TOKEN", raising=False)
+    out = registry.fetch_peer_snapshot("https://app.stratforges.test")
+    assert out["ok"] is False
+    assert out["code"] == "token_not_configured"
