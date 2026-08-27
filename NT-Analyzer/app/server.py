@@ -500,6 +500,23 @@ def _connector_is_the_runtime_transport(qs: Optional[Dict[str, Any]] = None) -> 
     return requested == "production_connector"
 
 
+def _entitled_to_owner_runtime(context: Dict[str, Any]) -> bool:
+    """Whether this caller may see the owner's NinjaTrader at all.
+
+    The same test the owner's own environment applies: the request is the
+    owner's, and the workspace it is made in is one that runs on the owner's
+    runtime. A consumer environment mirrors what the hub would have answered --
+    it does not widen who may ask.
+    """
+    if not context.get("is_owner"):
+        return False
+    workspace_context = context.get("workspace_context")         if isinstance(context.get("workspace_context"), dict) else {}
+    active = workspace_context.get("active_workspace")         if isinstance(workspace_context.get("active_workspace"), dict) else {}
+    if not active and isinstance(context.get("active_workspace"), dict):
+        active = context["active_workspace"]
+    return bool(active.get("uses_owner_runtime"))
+
+
 def _connector_runtime_status(context: Dict[str, Any]) -> Dict[str, Any]:
     workspace_context = context.get("workspace_context") \
         if isinstance(context.get("workspace_context"), dict) else {}
@@ -6526,7 +6543,14 @@ class Handler(BaseHTTPRequestHandler):
             # Production already accepted, over the gateway that already
             # carries owner market data, so acceptance can be run against the
             # same live device without a second enrollment competing for it.
-            if owner_market_data_gateway.should_consume():
+            context = getattr(self, "_remote_context", None) or {}
+            # The projection carries one specific person's account balances, so
+            # it is served to exactly the people the hub itself would serve
+            # them to. Being on a consumer environment entitles nobody to
+            # anything: a tenant asking here still gets their own answer, which
+            # for a workspace with no bridge is the "not connected" stub below.
+            if (owner_market_data_gateway.should_consume()
+                    and _entitled_to_owner_runtime(context)):
                 try:
                     self._json(HTTPStatus.OK,
                                owner_market_data_gateway.projected_runtime(path))
@@ -6536,7 +6560,6 @@ class Handler(BaseHTTPRequestHandler):
                     # through and answer locally rather than invent a state.
                     pass
 
-            context = getattr(self, "_remote_context", None) or {}
             # A consumer asking the hub for these reads is the owner's gateway
             # acting for the owner. Without that, the hub answered from its own
             # runtime directory -- empty on a Linux server -- and the consumer
