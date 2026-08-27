@@ -481,6 +481,14 @@ def _connector_probe(label: str, fn: Any,
     return row
 
 
+# States that mean a live-eligible provider is actually in trouble, as opposed
+# to simply having nothing to do. IDLE, DISABLED and CONNECTING are none of
+# these: the first two are resting states and the third is work in progress.
+_PROVIDER_FAULT_STATES = frozenset({
+    "ERROR", "AUTH_FAILED", "ENTITLEMENT_MISSING", "OFFLINE", "DEGRADED",
+})
+
+
 def _connector_is_the_runtime_transport(qs: Optional[Dict[str, Any]] = None) -> bool:
     """Whether runtime data must come from the signed Connector protocol.
 
@@ -617,11 +625,35 @@ def _connectors_dashboard_payload(context: Dict[str, Any]) -> Dict[str, Any]:
                 "blocking_reasons": list(row.get("blocking_reasons") or [])[:4],
             })
         live = [r["name"] for r in rows if r.get("runtime_state") == "LIVE"]
+        # Health is about faults, not about traffic. A failover provider with
+        # no subscribers is idle, and reading that as degraded painted market
+        # data red on a server whose primary was serving bars the whole time --
+        # which teaches an operator to ignore the panel.
+        eligible = [
+            row for row in rows
+            if row.get("configured") and row.get("live_eligible")
+        ]
+        faulted = [
+            row["name"] for row in eligible
+            if row.get("blocking_reasons")
+            or str(row.get("runtime_state") or "").upper() in _PROVIDER_FAULT_STATES
+        ]
+        if faulted:
+            state = "degraded"
+        elif eligible:
+            state = "healthy"
+        else:
+            state = "not_configured"
         return {
             "label": "Market data providers",
-            "state": "healthy" if live else "degraded",
+            "state": state,
             "providers": rows,
             "live": live,
+            "idle": [
+                row["name"] for row in eligible
+                if str(row.get("runtime_state") or "").upper() == "IDLE"
+            ],
+            "faulted": faulted,
             "preferred_primary": (snapshot or {}).get("preferred_primary"),
         }
 

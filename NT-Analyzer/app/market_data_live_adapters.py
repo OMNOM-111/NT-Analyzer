@@ -638,6 +638,9 @@ class LiveMarketDataAdapter(ABC):
         self._subs: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.RLock()
         self._runtime_state = "DISABLED"
+        # Whether anyone has actually asked this provider to connect. Without
+        # it, "connecting" and "nobody has started anything" look identical.
+        self._connect_requested = False
         self._last_error = ""
         self._last_event_utc = ""
         self._connected_at = ""
@@ -669,11 +672,41 @@ class LiveMarketDataAdapter(ABC):
         self._sink = sink
         self._mode = "authoritative" if mode == "authoritative" else "shadow"
 
+    def _has_subscribers(self) -> bool:
+        """Whether anything is currently asking this provider for data."""
+        with self._lock:
+            return bool(self._subs)
+
+    def reported_runtime_state(self) -> str:
+        """The state to show, which is not always the state of the socket.
+
+        A provider nobody has subscribed to is idle, and saying CONNECTING
+        instead described a connection attempt that was never started. Read as
+        a fault it is not: the dashboard called market data degraded because a
+        failover source had no subscribers, on a server whose primary was
+        healthy and serving bars the whole time.
+
+        CONNECTING now means what it says -- a connect was asked for, or
+        something is subscribed and the socket is being brought up. Anything
+        genuinely wrong keeps its own state: an error, a failed authentication,
+        a missing entitlement and a dropped socket are all untouched by this.
+        """
+        state = self._runtime_state
+        if state != "CONNECTING":
+            return state
+        # ``_connected_at`` is stamped when a connection is first asked for, so
+        # an empty one means nothing ever started -- which is the difference
+        # between "idle" and "connecting" and is exactly what the live server
+        # reported: no attempt, no subscriber, no error.
+        if self._last_error or self._connect_requested or self._has_subscribers():
+            return state
+        return "IDLE"
+
     def capabilities(self) -> Dict[str, Any]:
         return {
             "name": self.name,
             "implementation_state": self.implementation_state(),
-            "runtime_state": self._runtime_state,
+            "runtime_state": self.reported_runtime_state(),
             "credentials_present": self.credentials_present(),
             "production_failover_eligible": self.production_failover_eligible,
             "channels": ["trades", "bid_ask"],
@@ -717,7 +750,7 @@ class LiveMarketDataAdapter(ABC):
             }
         return {
             "name": self.name,
-            "runtime_state": self._runtime_state,
+            "runtime_state": self.reported_runtime_state(),
             "implementation_state": self.implementation_state(),
             "credentials_present": self.credentials_present(),
             "connected_at_utc": self._connected_at,
@@ -738,6 +771,7 @@ class LiveMarketDataAdapter(ABC):
         }
 
     def connect(self) -> Dict[str, Any]:
+        self._connect_requested = True
         self._runtime_state = "CONNECTING"
         self._connected_at = _iso()
         return self.health()
@@ -753,6 +787,7 @@ class LiveMarketDataAdapter(ABC):
             pass
         with self._lock:
             self._subs.clear()
+        self._connect_requested = False
         self._runtime_state = "DISABLED"
 
     @abstractmethod
@@ -921,6 +956,7 @@ class DatabentoLiveAdapter(LiveMarketDataAdapter):
         return h
 
     def connect(self) -> Dict[str, Any]:
+        self._connect_requested = True
         if not self.credentials_present():
             self._runtime_state = "ENTITLEMENT_MISSING"
             self._last_error = "NTA_DATABENTO_API_KEY not configured or is a mock key"
@@ -1313,6 +1349,12 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
             "last_trade_at_utc": trade_at,
         }
 
+    def _has_subscribers(self) -> bool:
+        with self._lock:
+            if self._wire_subscribed_contract_ids or self._subs:
+                return True
+            return bool(self._pending_signal_invocations)
+
     def health(self) -> Dict[str, Any]:
         out = super().health()
         out["market_feed"] = self.market_feed_freshness()
@@ -1692,6 +1734,7 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
         return list(bars[:-1]) + [merged]
 
     def connect(self) -> Dict[str, Any]:
+        self._connect_requested = True
         if not self._authenticate():
             return self.health()
         # A large browser layout acquires many contracts from independent HTTP
