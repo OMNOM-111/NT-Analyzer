@@ -34,6 +34,18 @@ CHART_PATHS = (
     "/api/ops/runtime/bars/status",
     "/ws/market-data",
 )
+# There is one NinjaTrader beside the Linux server, and it is enrolled to
+# Production. Canary needs to show the same status to be acceptance-tested,
+# and the honest way to give it that is a projection of what Production
+# already accepted -- not a second enrollment competing for the same device.
+#
+# Strictly these two reads, and strictly reads. Nothing that queues a command
+# is on this list, so a consumer can display the Production NinjaTrader and
+# can never act on it. Production stays the only authority that commands it.
+PROJECTION_PATHS = (
+    "/api/ops/runtime/heartbeat",
+    "/api/ops/runtime/accounts",
+)
 _ALLOWED_PUBLIC_HOSTS = {"app.stratforges.com", "canary.stratforges.com"}
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 _MIN_TOKEN_LEN = 16
@@ -264,8 +276,17 @@ def is_chart_path(path: str) -> bool:
     return clean in CHART_PATHS
 
 
+def is_projection_path(path: str) -> bool:
+    """A read-only runtime status a consumer may mirror from the hub."""
+    return str(path or "").split("?", 1)[0] in PROJECTION_PATHS
+
+
+def is_gateway_path(path: str) -> bool:
+    return is_chart_path(path) or is_projection_path(path)
+
+
 def request_is_chart_endpoint(handler: Any, authorized_path: str = "") -> bool:
-    return is_chart_path(authorized_path) or is_chart_path(getattr(handler, "path", "") or "")
+    return is_gateway_path(authorized_path) or is_gateway_path(getattr(handler, "path", "") or "")
 
 
 def loop_consume_rejected(handler: Any) -> bool:
@@ -274,7 +295,7 @@ def loop_consume_rejected(handler: Any) -> bool:
 
 
 def authorize_gateway_request(handler: Any, authorized_path: str = "") -> bool:
-    """Authenticate an internal consumer on chart endpoints only."""
+    """Authenticate an internal consumer on the allow-listed reads only."""
     if not request_is_chart_endpoint(handler, authorized_path):
         return False
     if not token_matches(handler.headers.get(TOKEN_HEADER)):
@@ -717,6 +738,32 @@ def consumer_headers() -> Dict[str, str]:
         headers["X-Forwarded-Proto"] = "https"
         headers["X-Forwarded-For"] = "127.0.0.1"
     return headers
+
+
+def projected_runtime(path: str) -> Dict[str, Any]:
+    """Mirror one allow-listed runtime read from the hub, marked as a mirror.
+
+    The payload says where it came from and that it cannot be acted on, so a
+    consumer environment can never be mistaken -- by a person or by a gate --
+    for the environment that owns the device.
+    """
+    if not is_projection_path(path):
+        raise RuntimeError("path is not projectable")
+    payload = fetch_gateway_json(path)
+    if isinstance(payload, dict):
+        payload["projected_from"] = _hub_environment()
+        payload["projection_read_only"] = True
+        payload["projected_at_utc"] = _iso_now()
+    return payload
+
+
+def _hub_environment() -> str:
+    host = urllib.parse.urlsplit(gateway_url() or "").hostname or ""
+    if host == "canary.stratforges.com":
+        return runtime_env.CANARY
+    if host == "app.stratforges.com":
+        return runtime_env.PRODUCTION
+    return "hub"
 
 
 def fetch_gateway_json(path: str, query: Optional[Dict[str, Any]] = None, *, timeout: float = 20.0) -> Dict[str, Any]:

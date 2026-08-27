@@ -25,6 +25,7 @@ namespace StratForge.Connector.Setup
         public string StateRoot { get; set; } = "";
         public bool MigrateLocal { get; set; }
         public string RuntimeDataDir { get; set; } = "";
+        public bool AllowLocalBackend { get; set; }
         public bool SkipUriRegistration { get; set; }
     }
 
@@ -205,6 +206,23 @@ namespace StratForge.Connector.Setup
                 ? options.ServerOrigin
                 : (string)connector["server_origin"] ?? options.ServerOrigin;
             connector["server_origin"] = NormalizeOrigin(serverOrigin);
+            // A loopback origin is a Development backend on this very machine,
+            // where there is no transport to speak of: the AddOn and the server
+            // share one runtime directory, and the AddOn runs the job queue,
+            // the catalog and the telemetry exporters that only local mode
+            // starts. Installing a Connector over that silently traded a
+            // working development contour for a protocol talking to itself --
+            // NinjaTrader read as inactive, accounts vanished from a directory
+            // they were still in, and backtests stopped being picked up at all.
+            //
+            // Testing the Connector against a local server is still a real
+            // thing to want, so it is available by saying so rather than by
+            // accident.
+            if (IsLocalBackend(connector["server_origin"]) && !options.AllowLocalBackend)
+                throw new InvalidOperationException(
+                    "Server origin is loopback: this is a local Development backend, "
+                    + "which runs in local_development mode. Pass --allow-local-backend "
+                    + "to install a Connector against it anyway.");
             connector["protocol_version"] = (string)release.Manifest["protocol_version"] ?? "1.0";
             connector["connector_version"] = release.Version;
             connector["enrollment_credential_ref"] = "dpapi:bootstrap-v1";

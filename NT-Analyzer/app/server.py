@@ -6521,6 +6521,21 @@ class Handler(BaseHTTPRequestHandler):
         if path in {
             "/api/ops/runtime/heartbeat", "/api/ops/runtime/accounts",
         }:
+            # A consumer environment has no NinjaTrader of its own and no
+            # right to command the one Production owns. It mirrors what
+            # Production already accepted, over the gateway that already
+            # carries owner market data, so acceptance can be run against the
+            # same live device without a second enrollment competing for it.
+            if owner_market_data_gateway.should_consume():
+                try:
+                    self._json(HTTPStatus.OK,
+                               owner_market_data_gateway.projected_runtime(path))
+                    return True
+                except Exception:
+                    # A silent hub is not a claim about NinjaTrader. Fall
+                    # through and answer locally rather than invent a state.
+                    pass
+
             context = getattr(self, "_remote_context", None) or {}
             if context.get("user_id") and _connector_is_the_runtime_transport(qs):
                 status = _connector_runtime_status(context)
