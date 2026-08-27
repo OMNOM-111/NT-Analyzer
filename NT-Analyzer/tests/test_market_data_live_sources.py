@@ -256,7 +256,12 @@ def test_databento_live_adapter_client_mocked_connection(monkeypatch) -> None:
 
     # Connect
     health = adapter.connect()
-    assert health["runtime_state"] == "CONNECTING"
+    # A connect with nothing subscribed reports IDLE: the socket is up and
+    # nothing is asking it for data. The raw state is still CONNECTING;
+    # IDLE is what the dashboard is told, so a resting failover source
+    # stops being painted as a fault.
+    assert health["runtime_state"] == "IDLE"
+    assert adapter._runtime_state == "CONNECTING"
 
     # Subscribe and verify mock callbacks are invoked
     sub_id = adapter.subscribe("MNQ 09-26", "trades")
@@ -343,7 +348,12 @@ def test_databento_disconnect_reconnect_resubscribe(monkeypatch) -> None:
     # 2. Connect again
     adapter.connect()
     assert adapter._client.started is True
-    assert adapter.health()["runtime_state"] == "CONNECTING"
+    # A connect with nothing subscribed reports IDLE: the socket is up and
+    # nothing is asking it for data. The raw state is still CONNECTING;
+    # IDLE is what the dashboard is told, so a resting failover source
+    # stops being painted as a fault.
+    assert adapter.health()["runtime_state"] == "IDLE"
+    assert adapter._runtime_state == "CONNECTING"
 
     # 3. Re-subscribe
     sub_id2 = adapter.subscribe("MNQ 09-26", "trades")
@@ -791,7 +801,12 @@ def test_topstepx_projectx_connector(monkeypatch) -> None:
     assert adapter.credentials_present() is True
 
     health = adapter.connect()
-    assert health["runtime_state"] == "CONNECTING"
+    # A connect with nothing subscribed reports IDLE: the socket is up and
+    # nothing is asking it for data. The raw state is still CONNECTING;
+    # IDLE is what the dashboard is told, so a resting failover source
+    # stops being painted as a fault.
+    assert health["runtime_state"] == "IDLE"
+    assert adapter._runtime_state == "CONNECTING"
     assert adapter._token == "mocked_jwt_token_xyz"
 
     # Wait for websocket thread loop to initialize and authenticate

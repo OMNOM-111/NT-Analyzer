@@ -638,9 +638,6 @@ class LiveMarketDataAdapter(ABC):
         self._subs: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.RLock()
         self._runtime_state = "DISABLED"
-        # Whether anyone has actually asked this provider to connect. Without
-        # it, "connecting" and "nobody has started anything" look identical.
-        self._connect_requested = False
         self._last_error = ""
         self._last_event_utc = ""
         self._connected_at = ""
@@ -686,19 +683,20 @@ class LiveMarketDataAdapter(ABC):
         failover source had no subscribers, on a server whose primary was
         healthy and serving bars the whole time.
 
-        CONNECTING now means what it says -- a connect was asked for, or
-        something is subscribed and the socket is being brought up. Anything
-        genuinely wrong keeps its own state: an error, a failed authentication,
-        a missing entitlement and a dropped socket are all untouched by this.
+        CONNECTING now means what it says -- something is subscribed and the
+        socket is being brought up for it. Anything genuinely wrong keeps its
+        own state: an error, a failed authentication, a missing entitlement and
+        a dropped socket are all untouched by this.
+
+        Deliberately decided from demand rather than from a "connecting now"
+        flag. Such a flag has to be cleared at every place an attempt can end,
+        and one missed place puts the provider back to claiming forever that it
+        is connecting -- which is the bug being fixed, reintroduced by the fix.
         """
         state = self._runtime_state
         if state != "CONNECTING":
             return state
-        # ``_connected_at`` is stamped when a connection is first asked for, so
-        # an empty one means nothing ever started -- which is the difference
-        # between "idle" and "connecting" and is exactly what the live server
-        # reported: no attempt, no subscriber, no error.
-        if self._last_error or self._connect_requested or self._has_subscribers():
+        if self._last_error or self._has_subscribers():
             return state
         return "IDLE"
 
@@ -771,7 +769,6 @@ class LiveMarketDataAdapter(ABC):
         }
 
     def connect(self) -> Dict[str, Any]:
-        self._connect_requested = True
         self._runtime_state = "CONNECTING"
         self._connected_at = _iso()
         return self.health()
@@ -787,7 +784,6 @@ class LiveMarketDataAdapter(ABC):
             pass
         with self._lock:
             self._subs.clear()
-        self._connect_requested = False
         self._runtime_state = "DISABLED"
 
     @abstractmethod
@@ -956,7 +952,6 @@ class DatabentoLiveAdapter(LiveMarketDataAdapter):
         return h
 
     def connect(self) -> Dict[str, Any]:
-        self._connect_requested = True
         if not self.credentials_present():
             self._runtime_state = "ENTITLEMENT_MISSING"
             self._last_error = "NTA_DATABENTO_API_KEY not configured or is a mock key"
@@ -1734,7 +1729,6 @@ class TopstepXProjectXAdapter(LiveMarketDataAdapter):
         return list(bars[:-1]) + [merged]
 
     def connect(self) -> Dict[str, Any]:
-        self._connect_requested = True
         if not self._authenticate():
             return self.health()
         # A large browser layout acquires many contracts from independent HTTP
