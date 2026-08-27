@@ -1,7 +1,8 @@
 # StratForge Connector Protocol v1
 
-Статус: реализован локально; Production acceptance требует реального Windows VM
-и опубликованного server endpoint.
+Статус: `BETA`. Signed transport подтверждён в Production; полный функциональный
+статус требует одновременно свежих hello/heartbeat и account snapshot от
+реального NinjaTrader.
 
 ## Граница доверия
 
@@ -43,7 +44,7 @@ stream и проверку C# signatures на Python.
 | Состояние | Условие | Команды |
 |---|---|---|
 | `pending` | code принят, signed hello ещё нет | запрещены |
-| `online` | активная session и heartbeat не старше 45 секунд | только выданные capabilities |
+| `online` | активная session и heartbeat не старше 45 секунд; это transport health, не доказательство account data | только выданные capabilities |
 | `offline` | heartbeat/session истекли | новые команды могут ждать только до TTL |
 | `revoked` | пользователь отозвал installation | session и queued commands отменяются |
 
@@ -58,7 +59,7 @@ release gate; default — telemetry/accounts read, paper добавляется 
 | `/api/connector/v1/enroll` | одноразовый code + public key | pending installation |
 | `/api/connector/v1/challenge` | device signature | новый one-time server nonce |
 | `/api/connector/v1/hello` | device signature + nonce | short-lived session |
-| `/api/connector/v1/heartbeat` | bearer + sequence | last-seen и masked account labels |
+| `/api/connector/v1/heartbeat` | bearer + sequence | last-seen, masked account labels и bounded account snapshot при `accounts_read` |
 | `/api/connector/v1/market-data` | bearer + telemetry capability + sequence | bounded OHLCV batch, связанный с authenticated installation/workspace |
 | `/api/connector/v1/commands/poll` | bearer + sequence | bounded HTTPS long-poll |
 | `/api/connector/v1/commands/result` | bearer + sequence | idempotent ack/result |
@@ -79,6 +80,21 @@ installation или account identity из payload. Сервер получает
 Повтор того же source sequence с тем же batch является idempotent; с другим
 body отклоняется. Snapshot хранит только этот ограниченный batch и fan-out
 идёт лишь в активные subscriptions той же workspace.
+
+## Функциональное состояние NinjaTrader
+
+Heartbeat может передать не более 20 счетов и 48 KiB account data. Сервер
+принимает только известные поля баланса/P&L/status, отклоняет неизвестные или
+нечисловые значения и никогда не принимает credentials. Snapshot наследует
+installation, user и workspace только из подписанной Connector session.
+
+UI получает account data для точного active workspace. Для специального
+owner-training workspace допускается только installation того же
+authenticated owner; Connector другого пользователя не подходит. Состояние
+`functional_online` истинно только при свежем heartbeat, свежем непустом
+snapshot и корректном workspace/owner binding. Heartbeat без snapshot
+показывается как degraded, а не как полный PASS. То же правило применяется в
+Development: наличие локального процесса NinjaTrader не подменяет signed data.
 
 ## Production bar source
 
@@ -110,3 +126,7 @@ Production source of truth: Stage 6 переводит тот же repository co
 PostgreSQL. Откат Stage 3 — выключить Production connector commands и сохранить
 `local_development`; private key/config не удаляются, installation можно
 отозвать. Ни rollback, ни repair не должны включать live commands.
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-26T23:46:20Z | GPT-5.5 через Codex по запросу owner | Added bounded signed account snapshots, exact workspace/owner projection and the rule that transport heartbeat alone is not functional Connector PASS.
+-->

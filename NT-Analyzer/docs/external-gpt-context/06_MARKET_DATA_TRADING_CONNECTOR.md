@@ -1,7 +1,7 @@
 # 06. Market Data, Trading and Connector
 
 - Context Pack document: 06_MARKET_DATA_TRADING_CONNECTOR.md
-- Last verified UTC: 2026-08-26T18:48:02Z
+- Last verified UTC: 2026-08-26T23:46:20Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Verified deployed artifact Git SHA: `ae9c5c913e4a3250dd978ce2bf682e52590e82ef`
 - Scope: NinjaTrader authority, Connector protocol, market-data gateway and trading safety gates
@@ -30,6 +30,7 @@
 | --- | --- | --- |
 | Connector protocol v1 | `BETA` | Pair/enroll/challenge/hello/heartbeat/market-data/commands use device-owned P-256 keys, bounded sessions and capabilities |
 | Production LIVE Connector | `BETA` | Existing installation `inst_9rVbadz0rNu0xlbbfsVSnkvY` is `online`; no reenrollment was required |
+| Functional NinjaTrader account data | `IN DEVELOPMENT` | beta.49 candidate requires a fresh signed account snapshot in addition to heartbeat; deployment and real AddOn restart acceptance are still pending |
 | Read-only charts | `BETA` | Accepted TopstepX history/realtime, freshness, fan-out and marker baseline remains unchanged by beta.48 |
 | Owner market-data gateway | `AVAILABLE` | One designated upstream fans out only to authorized scoped application consumers; browser delivery remains same-origin |
 | Connector fallback | `BETA` | Fresh personal Connector bars are a separate chart fallback when the device is connected |
@@ -82,6 +83,15 @@ price claim is made. This closeout changed no TopstepX auth/session, SignalR,
 history/realtime, rollover, cache/failover, WebSocket fan-out or chart rendering
 file.
 
+Transport `online` is no longer sufficient for a functional claim. The beta.49
+candidate carries a bounded account snapshot in the existing signed heartbeat,
+projects it only to the correct workspace (or the same owner's explicit
+owner-training workspace), and reports heartbeat-without-data as degraded.
+Development uses this signed path when a Connector installation is present,
+instead of allowing an old local runtime directory or a Windows process check
+to produce a false green state. This remains `IN DEVELOPMENT` until the server
+artifact and Connector DLL pass real LOCAL/Canary/Production acceptance.
+
 ## Read-only versus execution boundaries
 
 | Boundary | Can do | Cannot do |
@@ -108,4 +118,5 @@ realtime or rendering only after a reproduced defect with targeted evidence.
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-26T18:22:14Z | GPT-5.5 через Codex по запросу owner | Replaced the old Development-only Connector checkpoint with the verified beta.48 Production online challenge/hello/heartbeat/ingest state and protected the accepted TopstepX baseline.
 2026-08-26T18:48:02Z | GPT-5.5 через Codex по запросу owner | Recorded two successful automatic session TTL rollovers and distinguished expected session_expired from absent storage or unexpected refusals.
+2026-08-26T23:46:20Z | GPT-5.5 через Codex по запросу owner | Recorded the beta.49 functional-account candidate: signed bounded snapshot, exact owner/workspace projection and truthful degraded status until real deployment acceptance.
 -->

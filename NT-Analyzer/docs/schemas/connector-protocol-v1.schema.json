@@ -102,6 +102,36 @@
         "ninja_instance_id": { "$ref": "#/$defs/safeId" },
         "connector_time": { "type": "string", "format": "date-time" },
         "account_labels": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 128 } },
+        "account_snapshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["accounts"],
+          "properties": {
+            "generated_at_utc": { "type": "string", "format": "date-time" },
+            "timestamp_utc": { "type": "string", "format": "date-time" },
+            "exporter_version": { "type": "string", "maxLength": 32 },
+            "accounts": {
+              "type": "array", "maxItems": 20,
+              "items": {
+                "type": "object", "additionalProperties": false,
+                "required": ["account_name"],
+                "properties": {
+                  "account_name": { "type": "string", "minLength": 1, "maxLength": 128 },
+                  "account_mode": { "type": "string", "maxLength": 24 },
+                  "cash_value": { "type": ["number", "null"] },
+                  "buying_power": { "type": ["number", "null"] },
+                  "net_liquidation": { "type": ["number", "null"] },
+                  "realized_pnl": { "type": ["number", "null"] },
+                  "unrealized_pnl": { "type": ["number", "null"] },
+                  "currency": { "type": "string", "maxLength": 16 },
+                  "connection_status": { "type": "string", "maxLength": 64 },
+                  "availability_notes": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 64 } }
+                }
+              }
+            },
+            "summary": { "type": "object" }
+          }
+        },
         "extensions": { "$ref": "#/$defs/extensions" }
       }
     },

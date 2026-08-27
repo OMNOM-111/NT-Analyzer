@@ -100,17 +100,18 @@ def test_a_timeout_lands_on_the_panel_s_existing_retry():
         assert "renderError" in body or "conn-refresh" in body, name
 
 
-def test_connector_summary_asks_for_status_without_doing_maintenance():
-    """The panel reads a status summary, not the managing listing.
+def test_connector_summary_asks_for_functional_status_without_doing_maintenance():
+    """The panel reads bounded runtime data, not the managing listing.
 
     list_installations sweeps expired enrollments, sessions and commands and
     persists the result, so using it here made a diagnostics read a write under
     the connector lock -- contending with the heartbeats of the device being
-    reported on, which is what pushed the Production probe past its budget.
+    reported on. The functional summary adds the cached signed account snapshot
+    without bringing that maintenance path back.
     """
     section = SERVER[SERVER.index("def connector_installations()") :]
     section = section[: section.index("# Concurrently")]
-    assert "connector_protocol.health_summary(" in section
+    assert "_connector_runtime_status(context)" in section
     assert "connector_protocol.list_installations(" not in section
-    assert 'out.get("installations")' in section
-    assert 'out.get("online")' in section
+    assert 'out.get("fresh")' in section
+    assert 'out.get("functional_live")' in section

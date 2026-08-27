@@ -81,6 +81,14 @@ def test_promotion_is_allowed_only_when_every_gate_holds():
     assert out["blocking"] == []
 
 
+def test_promotion_compares_runtime_manifest_not_transport_archive():
+    candidate = _candidate("canary_passed", artifact=OTHER)
+    candidate["manifest_sha256"] = ARTIFACT
+    out = pipeline_view.promotion_gates(candidate, _registry(canary_artifact=ARTIFACT))
+    assert out["allowed"] is True
+    assert out["blocking"] == []
+
+
 def test_a_candidate_that_never_reached_canary_cannot_be_promoted():
     out = pipeline_view.promotion_gates(_candidate("signed"), _registry())
     assert out["allowed"] is False
@@ -152,6 +160,24 @@ def test_the_development_card_carries_the_sync_state():
     assert card["running_commit"] != card["head_commit"]
     assert card["sync_message"]
     assert card["online"] is True
+
+
+def test_accepted_release_marks_a_registry_reported_old_development_as_behind():
+    accepted = {
+        "state": "production_live", "app_version": "0.10.0-beta.48",
+        "git_commit_sha": "a" * 40, "artifact_sha256": ARTIFACT,
+    }
+    card = pipeline_view.development_card(
+        {"state": "not_applicable"},
+        {"state": "live", "app_version": "0.10.0-beta.47",
+         "git_commit_sha": "b" * 40, "build_id": "dev-beta47"},
+        accepted,
+    )
+    assert card["version"] == "0.10.0-beta.47"
+    assert card["running_commit"] == "b" * 12
+    assert card["sync_state"] == "behind"
+    assert card["release_consistent"] is False
+    assert "ALL ENVIRONMENTS PASS" in card["sync_message"]
 
 
 def test_a_never_seen_environment_is_not_reported_as_online():
@@ -315,6 +341,40 @@ def test_assemble_never_hands_a_remote_browser_a_development_origin():
                                  is_local_request=False)
     assert out["development_access"]["allowed"] is False
     assert not out["development_access"]["origin"]
+
+
+def test_overall_pass_is_blocked_until_development_matches_the_accepted_release():
+    accepted = {
+        "candidate_id": "rc_48", "state": "production_live",
+        "app_version": "0.10.0-beta.48", "git_commit_sha": "a" * 40,
+        "artifact_sha256": OTHER, "manifest_sha256": ARTIFACT,
+    }
+    rows = [
+        {"environment": runtime_env.DEVELOPMENT, "state": "live",
+         "app_version": "0.10.0-beta.47", "git_commit_sha": "b" * 40},
+        {"environment": runtime_env.CANARY, "state": "live",
+         "app_version": "0.10.0-beta.48", "git_commit_sha": "a" * 40,
+         "artifact_sha256": ARTIFACT},
+        {"environment": runtime_env.PRODUCTION, "state": "live",
+         "app_version": "0.10.0-beta.48", "git_commit_sha": "a" * 40,
+         "artifact_sha256": ARTIFACT},
+    ]
+    blocked = pipeline_view.assemble(
+        registry={"environments": rows}, releases={"releases": [accepted]},
+        sync={"state": "not_applicable"},
+    )
+    assert blocked["overall"]["ok"] is False
+    assert "development_identity" in blocked["overall"]["blocking"]
+
+    rows[0].update({
+        "app_version": "0.10.0-beta.48", "git_commit_sha": "a" * 40,
+    })
+    reconciled = pipeline_view.assemble(
+        registry={"environments": rows}, releases={"releases": [accepted]},
+        sync={"state": "not_applicable"},
+    )
+    assert reconciled["overall"]["ok"] is True
+    assert reconciled["overall"]["state"] == "pass"
 
 
 def test_the_adapter_status_travels_with_the_buttons_it_qualifies():
