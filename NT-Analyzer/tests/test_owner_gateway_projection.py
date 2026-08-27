@@ -125,3 +125,37 @@ def test_no_owner_configured_leaves_the_context_unchanged(monkeypatch):
     monkeypatch.setattr(account_auth, "primary_owner_id", lambda: 0)
     context = gateway.service_context()
     assert gateway.owner_scoped_context(context) == context
+
+
+def test_a_gateway_read_resolves_the_owners_own_connector(monkeypatch):
+    """Exact-scope is why the first projection came back empty.
+
+    The device enrols under a personal workspace while the owner's default
+    scope is the owner-training one, so a read that does not say "this is the
+    owner's own runtime" matches no row and reports the device as absent --
+    from the very environment that has it.
+    """
+    from app import account_auth
+
+    monkeypatch.setattr(account_auth, "primary_owner_id", lambda: 1647145559)
+    out = gateway.owner_scoped_context(gateway.service_context())
+    active = out["workspace_context"]["active_workspace"]
+    assert active["uses_owner_runtime"] is True
+    assert out["is_owner"] is True
+
+
+def test_the_owner_runtime_flag_is_not_a_global_bypass():
+    """It is the same flag the owner's own session carries.
+
+    runtime_account_status still requires the installation to belong to that
+    same owner by legacy id or uuid; another user's device never qualifies.
+    """
+    from pathlib import Path
+
+    from app import connector_protocol
+
+    source = Path(connector_protocol.__file__).read_text(encoding="utf-8")
+    body = source[source.index("def runtime_account_status("):]
+    body = body[: body.index("\ndef ", 1)]
+    assert "owner_fallback = bool(is_owner and uses_owner_runtime)" in body
+    assert "same_user or same_uuid" in body

@@ -360,7 +360,29 @@ def owner_scoped_context(context: Dict[str, Any]) -> Dict[str, Any]:
         owner_id = 0
     if not owner_id:
         return context
-    return {**context, "user_id": owner_id, "is_owner": True}
+    # The owner's own workspaces are one estate as far as their Connector is
+    # concerned: the device enrols under a personal workspace while the default
+    # scope is the owner-training one. A request that does not say so is
+    # exact-scope, finds nothing, and reports the device as absent -- which is
+    # how the projection came back empty from an environment that had it.
+    #
+    # This is the same flag the owner's own browser session carries, not a
+    # wider one: another user's installation still never qualifies.
+    workspace_context = context.get("workspace_context")
+    if not isinstance(workspace_context, dict):
+        workspace_context = {}
+    active = workspace_context.get("active_workspace")
+    if not isinstance(active, dict):
+        active = {}
+    return {
+        **context,
+        "user_id": owner_id,
+        "is_owner": True,
+        "workspace_context": {
+            **workspace_context,
+            "active_workspace": {**active, "uses_owner_runtime": True},
+        },
+    }
 
 
 def owner_identity() -> Dict[str, Any]:
