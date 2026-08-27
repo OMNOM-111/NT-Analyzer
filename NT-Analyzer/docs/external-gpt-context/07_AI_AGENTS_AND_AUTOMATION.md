@@ -1,7 +1,7 @@
 # 07. AI Agents and Automation
 
 - Context Pack document: 07_AI_AGENTS_AND_AUTOMATION.md
-- Last verified UTC: 2026-08-13T09:49:37Z
+- Last verified UTC: 2026-08-27T22:33:11Z
 - Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
 - Scope: Agent hierarchy, AI Lab, queues, workspace boundaries and model-usage rules
 - Status: DONE
@@ -38,6 +38,13 @@ above Vitek.
 - Local-first job history still exists in repository-visible runtime paths.
 - Server-side queueing and leases exist in `app/production_workers.py` and the
   production schema.
+- Production worker concurrency is fixed at four interactive-AI, four chart,
+  two telemetry and one maintenance slot.
+- An empty slot backs off through 500 ms, 1 s and approximately 2 s with
+  jitter; real work resets pickup polling to 250 ms. Storage outage retries
+  wait at least 1 s.
+- One stoppable `WorkerService` coordinator sweeps stale leases every 30 s;
+  individual workers do not sweep on every empty claim.
 - Shared NinjaTrader contention is intended to be expressed as a lease problem,
   not solved by silent parallel access.
 
@@ -67,7 +74,12 @@ above Vitek.
 - [../agents/AGENTS.md](../agents/AGENTS.md)
 - [../agents/AI_LAB_CLOUD_AGENTS.md](../agents/AI_LAB_CLOUD_AGENTS.md)
 - [../architecture/UI_API_MAP.md](../architecture/UI_API_MAP.md)
+- [beta.61 worker idle performance closeout](../changelog/2026-08-27-beta61-worker-idle-performance.md)
 - `app/ai_lab/chief_agent.py`
 - `app/ai_lab/domain_agents.py`
 - `app/ai_lab/agent_tts.py`
 - `app/vitek.py`
+
+<!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-27T22:33:11Z | GPT-5.5 через Codex по запросу owner | Recorded the accepted beta.61 adaptive queue polling, unchanged 4/4/2/1 concurrency, single stale sweeper and storage-outage backoff contract.
+-->
