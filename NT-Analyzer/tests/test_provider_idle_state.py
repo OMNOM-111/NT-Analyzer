@@ -165,3 +165,52 @@ def test_idle_is_not_a_live_state_so_routing_is_unchanged():
 
     assert "IDLE" not in market_data_access._LIVE_STATES
     assert "CONNECTING" not in market_data_access._LIVE_STATES
+
+
+# --------------------------------------------------------------------------- #
+# The case the live server was actually in.
+# --------------------------------------------------------------------------- #
+def test_a_provider_with_no_adapter_instance_reports_idle():
+    """This is what Production reported for hours, and why.
+
+    public_status falls back to a literal when no adapter object exists yet.
+    That literal was CONNECTING -- describing an attempt that had not merely
+    finished but had never begun, since the object that would begin it did not
+    exist. Every neighbouring field said so: no connected_at, no session audit,
+    no events, no subscriptions.
+    """
+    from pathlib import Path
+
+    from app import market_data_failover
+
+    text = Path(market_data_failover.__file__).read_text(encoding="utf-8")
+    # Anchored on the adapter-backed status block, which is the only one that
+    # falls back to a literal when no adapter object exists.
+    body = text[text.index("        runtime_health = adapter.health() if adapter is not None else {}"):]
+    body = body[: body.index('"name": self.name,')]
+    assert 'runtime_state = "IDLE" if configured else (' in body
+    assert 'runtime_state = "CONNECTING" if configured' not in body
+
+
+def test_the_databento_placeholder_status_is_idle_not_connecting():
+    """The same literal, in the other provider's status block."""
+    from pathlib import Path
+
+    from app import market_data_failover
+
+    text = Path(market_data_failover.__file__).read_text(encoding="utf-8")
+    assert '"runtime_state": "DISABLED" if not configured else "IDLE",' in text
+    assert '"runtime_state": "DISABLED" if not configured else "CONNECTING",' not in text
+
+
+def test_an_unconfigured_provider_is_still_disabled():
+    """Idle is for a provider that could work and has nothing to do, never for
+    one that is not set up."""
+    from pathlib import Path
+
+    from app import market_data_failover
+
+    text = Path(market_data_failover.__file__).read_text(encoding="utf-8")
+    body = text[text.index("        runtime_health = adapter.health() if adapter is not None else {}"):]
+    body = body[: body.index('"name": self.name,')]
+    assert '"POLICY_BLOCKED" if not cfg["policy_allowed"] else "DISABLED"' in body

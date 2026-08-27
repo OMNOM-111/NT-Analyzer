@@ -401,7 +401,7 @@ class DatabentoProvider(MarketDataProvider):
             "name": self.name, "configured": configured,
             "independent": self.independent, "tier": self.tier,
             "implementation_state": "ADAPTER_READY" if configured else "ADAPTER_READY",
-            "runtime_state": "DISABLED" if not configured else "CONNECTING",
+            "runtime_state": "DISABLED" if not configured else "IDLE",
             "capability": "REALTIME_PRODUCTION" if configured else "ENTITLEMENT_MISSING",
             "live_eligible": configured,
             "production_failover_eligible": configured,
@@ -529,7 +529,13 @@ class TopstepXProvider(MarketDataProvider):
         runtime_health = adapter.health() if adapter is not None else {}
         runtime_state = str(runtime_health.get("runtime_state") or "")
         if not runtime_state:
-            runtime_state = "CONNECTING" if configured else (
+            # No adapter instance exists at all: this provider is configured
+            # and allowed, and nothing has asked it for anything. That is idle.
+            # Calling it CONNECTING described a connection attempt that had not
+            # merely finished -- it had never been started, since the object
+            # that would make it does not exist. The live server sat here, and
+            # the panel read it as a fault while the primary served bars.
+            runtime_state = "IDLE" if configured else (
                 "POLICY_BLOCKED" if not cfg["policy_allowed"] else "DISABLED"
             )
         return {
