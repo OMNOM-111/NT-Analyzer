@@ -481,6 +481,25 @@ def _connector_probe(label: str, fn: Any,
     return row
 
 
+def _connector_is_the_runtime_transport(qs: Optional[Dict[str, Any]] = None) -> bool:
+    """Whether runtime data must come from the signed Connector protocol.
+
+    Only where there is no local NinjaTrader to read: a server. Development
+    runs beside NinjaTrader and reads its runtime directory directly, which is
+    the arrangement that has always worked and is not improved by routing it
+    through a network protocol to the same machine.
+
+    Deciding this in one place is the point. When the answer lived at each
+    call site, the Connector contract silently annexed LOCAL's data path --
+    NinjaTrader read as inactive and every account disappeared from a machine
+    where NinjaTrader was running and its accounts were on disk.
+    """
+    if runtime_env.environment_explicit() and runtime_env.is_production():
+        return True
+    requested = str(((qs or {}).get("transport") or [""])[0])
+    return requested == "production_connector"
+
+
 def _connector_runtime_status(context: Dict[str, Any]) -> Dict[str, Any]:
     workspace_context = context.get("workspace_context") \
         if isinstance(context.get("workspace_context"), dict) else {}
@@ -5489,14 +5508,17 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/health":
             context = getattr(self, "_remote_context", None) or {}
             connector_runtime: Dict[str, Any] = {}
-            if context.get("user_id"):
+            if context.get("user_id") and _connector_is_the_runtime_transport():
                 try:
                     connector_runtime = _connector_runtime_status(context)
                 except Exception:
                     connector_runtime = {}
+            # A Connector installation being enrolled says nothing about the
+            # NinjaTrader running on this machine. Where there is a local one,
+            # the local check is the answer.
             ninja_running = (
                 bool(connector_runtime.get("functional_live"))
-                if connector_runtime.get("present")
+                if connector_runtime.get("present") and _connector_is_the_runtime_transport()
                 else jobqueue.ninjatrader_running()
             )
             payload = {
@@ -6209,9 +6231,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/bridge/setup":
             context = getattr(self, "_remote_context", None) or {}
             try:
-                use_connector = (
-                    runtime_env.environment_explicit() and runtime_env.is_production()
-                ) or str((qs.get("transport") or [""])[0]) == "production_connector"
+                use_connector = _connector_is_the_runtime_transport(qs)
                 active = context.get("active_workspace") \
                     if isinstance(context.get("active_workspace"), dict) else {}
                 requested_workspace = str(
@@ -6502,7 +6522,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/ops/runtime/heartbeat", "/api/ops/runtime/accounts",
         }:
             context = getattr(self, "_remote_context", None) or {}
-            if context.get("user_id"):
+            if context.get("user_id") and _connector_is_the_runtime_transport(qs):
                 status = _connector_runtime_status(context)
                 if status.get("present"):
                     if path == "/api/ops/runtime/heartbeat":

@@ -654,7 +654,15 @@ def test_signed_heartbeat_carries_a_bounded_functional_account_snapshot(connecto
     assert other["accounts"] == []
 
 
-def test_development_runtime_accounts_prefer_signed_connector_snapshot(monkeypatch) -> None:
+def test_connector_transport_runtime_accounts_use_the_signed_snapshot(monkeypatch) -> None:
+    """Where the Connector is the transport, its snapshot is the answer.
+
+    Development is not such a place -- it reads the NinjaTrader beside it --
+    so the transport is requested explicitly here, the same way the Connector
+    view is reachable from LOCAL without taking LOCAL's own data path away.
+    """
+    monkeypatch.setattr(server_mod.runtime_env, "environment_explicit", lambda: True)
+    monkeypatch.setattr(server_mod.runtime_env, "is_production", lambda: True)
     handler = object.__new__(server_mod.Handler)
     handler._remote_context = {"user_id": 42}
     replies = []
@@ -678,7 +686,7 @@ def test_development_runtime_accounts_prefer_signed_connector_snapshot(monkeypat
     monkeypatch.setattr(
         server_mod.ops_runtime,
         "read_accounts_with_source",
-        lambda: pytest.fail("legacy local runtime must not shadow a signed Connector snapshot"),
+        lambda: pytest.fail("a server has no local runtime directory to read"),
     )
 
     assert handler._ops_get("/api/ops/runtime/accounts", {}) is True
