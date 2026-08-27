@@ -101,19 +101,45 @@ UI.ready(async function () {
     }).join('') : '<span class="muted">У стратегии нет экспортированных параметров.</span>';
   }
 
+  // The bridge applies commission only through a NinjaTrader template; a
+  // numeric commission is rejected outright, which is why the request always
+  // carries 0. That makes the template the single thing standing between a
+  // backtest and honest costs, so a run must never fall back to "no
+  // commission" quietly -- the metrics would look better than the strategy is.
+  function defaultCommissionTemplate() {
+    return (catalog && catalog.execution_defaults
+            && catalog.execution_defaults.commission_template) || 'None';
+  }
+
+  function commissionTemplateOrDefault(name) {
+    const wanted = String(name || '').trim();
+    const supported = ((catalog && catalog.commission_templates) || [])
+      .filter(item => item && item.supported !== false && item.name)
+      .map(item => item.name);
+    if (wanted && (wanted === 'None' || supported.indexOf(wanted) >= 0)) return wanted;
+    return defaultCommissionTemplate();
+  }
+
   function renderCommissionTemplates() {
     const select = UI.qs('#f-commission-template');
     if (!select) return;
     const templates = ((catalog && catalog.commission_templates) || [])
       .filter(item => item && item.supported !== false && item.name);
     if (!templates.some(item => item.name === 'None')) {
-      templates.push({ name: 'None', display: 'None / 0 commission', supported: true });
+      templates.push({ name: 'None', display: 'Без комиссии · 0 (не реальные издержки)', supported: true });
     }
-    select.innerHTML = templates.map(item =>
-      `<option value="${UI.esc(item.name)}">${UI.esc(item.display || item.name)}</option>`
-    ).join('');
-    const preferred = (catalog && catalog.execution_defaults && catalog.execution_defaults.commission_template) || 'None';
+    select.innerHTML = templates.map(item => {
+      const label = item.name === 'None'
+        ? 'Без комиссии · 0 (не реальные издержки)'
+        : (item.display || item.name);
+      return `<option value="${UI.esc(item.name)}">${UI.esc(label)}</option>`;
+    }).join('');
+    const preferred = defaultCommissionTemplate();
     select.value = templates.some(item => item.name === preferred) ? preferred : 'None';
+    const warn = UI.qs('#f-commission-zero-note');
+    const sync = () => { if (warn) warn.hidden = select.value !== 'None'; };
+    select.onchange = sync;
+    sync();
   }
 
   function collectStrategyParams() {
@@ -327,7 +353,7 @@ UI.ready(async function () {
         risk_profile: risk, order_fill_resolution: execution.order_fill_resolution || 'High',
         slippage_ticks: execution.slippage_ticks != null ? execution.slippage_ticks : 1,
         commission: 0,
-        commission_template: execution.commission_template || 'None', session_template: execution.session_template || '',
+        commission_template: commissionTemplateOrDefault(execution.commission_template), session_template: execution.session_template || '',
         is_tick_replay: !!execution.is_tick_replay, role: execution.role || 'research',
       };
       try { const r = await API.http.createJob(reqBody); UI.toast('Прогон поставлен в очередь · ' + (r.job_id || '')); UI.closeDrawer(); loadReports(true); pollQueue(); }
@@ -365,7 +391,7 @@ UI.ready(async function () {
       order_fill_resolution: UI.qs('#f-fill').value,
       slippage_ticks: parseInt(UI.qs('#f-slippage').value, 10),
       commission: 0,
-      commission_template: UI.qs('#f-commission-template').value || 'None',
+      commission_template: commissionTemplateOrDefault(UI.qs('#f-commission-template').value),
       is_tick_replay: UI.qs('#f-tickreplay').checked,
       risk_profile: { StartingCapital: parseFloat(UI.qs('#f-capital').value) },
       parameters: collectStrategyParams(),
