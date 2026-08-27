@@ -81,3 +81,47 @@ def test_the_consumer_answers_locally_when_the_hub_is_silent():
     block = block[: block.index("_connector_is_the_runtime_transport(qs)")]
     assert "except Exception:" in block
     assert "pass" in block
+
+
+# --------------------------------------------------------------------------- #
+# The hub has to know whose Connector it is answering about.
+# --------------------------------------------------------------------------- #
+def test_a_gateway_request_is_scoped_to_the_owner(monkeypatch):
+    """Otherwise the hub answers from its own runtime directory.
+
+    On a Linux server that directory is empty, so the consumer faithfully
+    mirrored "no NinjaTrader" from the environment that had one -- the exact
+    failure the projection exists to remove.
+    """
+    from app import account_auth
+
+    monkeypatch.setattr(account_auth, "primary_owner_id", lambda: 1647145559)
+    out = gateway.owner_scoped_context(gateway.service_context())
+    assert out["user_id"] == 1647145559
+    assert out["is_owner"] is True
+
+
+def test_a_request_that_already_names_a_user_is_left_alone(monkeypatch):
+    """A real session must never be re-pointed at the owner's data."""
+    from app import account_auth
+
+    monkeypatch.setattr(account_auth, "primary_owner_id", lambda: 1647145559)
+    context = {"owner_market_gateway": True, "user_id": 42}
+    assert gateway.owner_scoped_context(context)["user_id"] == 42
+
+
+def test_an_ordinary_request_is_not_promoted_to_the_owner(monkeypatch):
+    """Only the gateway's own authenticated context gets this."""
+    from app import account_auth
+
+    monkeypatch.setattr(account_auth, "primary_owner_id", lambda: 1647145559)
+    assert gateway.owner_scoped_context({}) == {}
+    assert gateway.owner_scoped_context({"is_owner": True}) == {"is_owner": True}
+
+
+def test_no_owner_configured_leaves_the_context_unchanged(monkeypatch):
+    from app import account_auth
+
+    monkeypatch.setattr(account_auth, "primary_owner_id", lambda: 0)
+    context = gateway.service_context()
+    assert gateway.owner_scoped_context(context) == context

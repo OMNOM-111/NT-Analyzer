@@ -6537,6 +6537,11 @@ class Handler(BaseHTTPRequestHandler):
                     pass
 
             context = getattr(self, "_remote_context", None) or {}
+            # A consumer asking the hub for these reads is the owner's gateway
+            # acting for the owner. Without that, the hub answered from its own
+            # runtime directory -- empty on a Linux server -- and the consumer
+            # mirrored "no NinjaTrader" from the environment that had one.
+            context = owner_market_data_gateway.owner_scoped_context(context)
             if context.get("user_id") and _connector_is_the_runtime_transport(qs):
                 status = _connector_runtime_status(context)
                 if status.get("present"):

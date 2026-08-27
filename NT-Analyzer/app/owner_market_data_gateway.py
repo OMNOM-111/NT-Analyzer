@@ -336,6 +336,33 @@ def service_context() -> Dict[str, Any]:
     }
 
 
+def owner_scoped_context(context: Dict[str, Any]) -> Dict[str, Any]:
+    """Give a gateway request the owner it is acting for.
+
+    ``service_context`` says the caller is the owner's gateway but names no
+    account, which is enough for a chart and not enough for anything scoped to
+    a person. The projected runtime reads are: they answer from the Connector
+    enrolled to the owner, and with no owner in the context the hub fell back
+    to its own runtime directory -- which on a Linux server is empty. Canary
+    then faithfully mirrored "no NinjaTrader" from the environment that had one.
+
+    This is the gateway the owner runs, so the owner is who it acts for. It is
+    resolved here rather than trusted from the request: nothing the caller
+    sends decides whose data it receives.
+    """
+    if not context.get("owner_market_gateway") or context.get("user_id"):
+        return context
+    try:
+        from . import account_auth
+
+        owner_id = int(account_auth.primary_owner_id() or 0)
+    except Exception:
+        owner_id = 0
+    if not owner_id:
+        return context
+    return {**context, "user_id": owner_id, "is_owner": True}
+
+
 def owner_identity() -> Dict[str, Any]:
     deployment = _deployment()
     instance_id = str(getattr(deployment, "instance_id", "") or os.environ.get("STRATFORGE_INSTANCE_ID") or "")
