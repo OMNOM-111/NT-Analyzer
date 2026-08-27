@@ -166,3 +166,43 @@ def test_a_server_installation_still_uses_the_signed_spool_transport() -> None:
     resolver = resolver[: resolver.index("private static bool IsInside")]
     assert 'string spool = Path.Combine(stateDir, "spool");' in resolver
     assert resolver.index("if (!IsLocalBackend") < resolver.index("options.RuntimeDataDir")
+
+
+def test_installing_against_a_local_backend_is_refused_unless_asked_for() -> None:
+    """Development is not a Connector site, and must not become one by accident.
+
+    A loopback origin means the backend is on this machine: the AddOn and the
+    server share one runtime directory, and only local_development mode starts
+    the job queue, the catalog and the telemetry exporters. An install that
+    quietly rewrote such a machine into production_connector traded a working
+    development contour for a protocol talking to itself -- NinjaTrader read as
+    inactive, its accounts disappeared from a directory they were still in, and
+    submitted backtests were never picked up.
+
+    Wanting a Connector against a local server is still legitimate, so it is
+    available by asking rather than by default.
+    """
+    root = Path(__file__).resolve().parent.parent
+    engine = (root / "connector" / "installer" / "InstallerEngine.cs").read_text(
+        encoding="utf-8",
+    )
+    assert "if (IsLocalBackend(connector[\"server_origin\"]) && !options.AllowLocalBackend)" in engine
+    assert "local_development mode" in engine
+    program = (root / "connector" / "installer" / "Program.cs").read_text(encoding="utf-8")
+    assert '"--allow-local-backend"' in program
+
+
+def test_the_local_development_contour_starts_the_job_queue() -> None:
+    """The job queue only exists in local mode, which is why the mode matters.
+
+    This is the whole cost of the boundary being wrong: in connector mode the
+    AddOn returns before any of it starts, so a backtest submitted from the UI
+    sits in pending forever with nothing to say why.
+    """
+    root = Path(__file__).resolve().parent.parent
+    addon = (root / "bridge" / "src" / "BridgeAddOn.cs").read_text(encoding="utf-8")
+    assert "if (_cfg.IsProductionConnector)" in addon
+    local = addon[addon.index("if (_cfg.IsProductionConnector)"):]
+    assert "JobQueueWatcher" in local
+    assert "RuntimeTelemetryExporter" in local
+    assert "RuntimeCommandProcessor" in local

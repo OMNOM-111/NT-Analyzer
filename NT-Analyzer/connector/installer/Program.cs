@@ -151,6 +151,8 @@ namespace StratForge.Connector.Setup
                     else if (arg == "--state-root") parsed.Options.StateRoot = Value(args, ref index, arg);
                     else if (arg == "--pairing-uri") parsed.PairingUri = Value(args, ref index, arg);
                     else if (arg == "--migrate-local") parsed.Options.MigrateLocal = true;
+                    else if (arg == "--allow-local-backend")
+                        parsed.Options.AllowLocalBackend = true;
                     else if (arg == "--runtime-data-dir")
                         parsed.Options.RuntimeDataDir = Value(args, ref index, arg);
                     else if (arg == "--skip-uri-registration") parsed.Options.SkipUriRegistration = true;
