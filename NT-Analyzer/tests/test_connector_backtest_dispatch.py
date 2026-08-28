@@ -67,7 +67,7 @@ def test_the_payload_is_a_projection_not_a_pass_through():
                    portfolio={"cell_id": "CELL-012"})
     payload = connector_backtest.command_payload(doc)
     assert payload["command"] == "run_backtest"
-    assert set(payload["job"]) <= set(connector_backtest.JOB_FIELDS) | {"strategy"}
+    assert set(payload["job"]) <= set(connector_backtest.JOB_FIELDS) | {"strategy", "risk_profile"}
     assert "origin" not in payload["job"]
     assert "portfolio" not in payload["job"]
     assert payload["job"]["instrument"] == "MNQ SEP26"
@@ -443,3 +443,91 @@ def test_the_payload_is_bounded_before_it_is_sent():
     # transferred, never that fewer happened.
     assert '["trades_total"] = total' in source
     assert '["trades_truncated"] = total > transferred.Count' in source
+
+
+def test_no_projected_field_can_trip_the_command_validator():
+    """The transport refuses a payload containing certain names anywhere.
+
+    The stored job nests risk_profile.margin_source.source, and a projection
+    that copied the block wholesale was rejected on arrival -- a dispatch that
+    failed for a reason nothing in the job itself made visible. The projection
+    flattens it instead, and this walks the result so the next field with an
+    awkward nested name is caught here rather than in Production.
+    """
+    from app import connector_protocol
+
+    forbidden = {"password", "broker_password", "token", "secret",
+                 "api_key", "source", "code"}
+    doc = _job_doc(risk_profile={
+        "schema_version": "0.1", "mode": "informational", "currency": "USD",
+        "starting_capital": 5000.0, "intraday_only": True, "status": "ok",
+        "margin_source": {"broker": "", "source": "", "fetched_at_utc": ""},
+        "instrument_margins": {},
+    })
+    payload = connector_backtest.command_payload(doc)
+
+    def walk(value, path=""):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                assert str(key).lower() not in forbidden, f"{path}.{key}"
+                walk(item, f"{path}.{key}")
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                walk(item, f"{path}[{index}]")
+
+    walk(payload)
+    # And the run still knows its capital.
+    assert payload["job"]["risk_profile"]["starting_capital"] == 5000.0
+    assert "margin_source" not in payload["job"]["risk_profile"]
+
+    # The real validator accepts it.
+    connector_protocol._safe_payload(payload)
+
+
+# --------------------------------------------------------------------------- #
+# A pending job means something.
+# --------------------------------------------------------------------------- #
+def test_a_dispatched_job_carries_proof_of_its_command(tmp_path):
+    """Otherwise a pending job is ambiguous: waiting for a device that has it,
+    or waiting for nothing at all."""
+    job_dir = tmp_path / "ui_1"
+    job_dir.mkdir()
+    connector_backtest.record_dispatch(
+        job_dir, command_id="cmd_abc", connection_id="conn_x",
+        idempotency_key="backtest:ui_1", queued_at_utc="2026-08-28T03:00:00Z")
+    record = connector_backtest.dispatch_record(job_dir)
+    assert record["command_id"] == "cmd_abc"
+    assert record["transport"] == "production_connector"
+
+
+def test_a_job_queued_before_dispatch_existed_is_closed_with_its_reason(tmp_path):
+    """It will never run -- nothing was told about it and nothing will be.
+    Leaving it pending shows a queue that cannot explain why it is not moving,
+    and deleting it would erase that the operator ever asked."""
+    jobs_root = tmp_path / "jobs"
+    legacy = jobs_root / "pending" / "ui_legacy"
+    legacy.mkdir(parents=True)
+    (legacy / "job.json").write_text(json.dumps(_job_doc(job_id="ui_legacy")),
+                                     encoding="utf-8")
+
+    recovered = connector_backtest.recover_undispatched(jobs_root)
+    assert recovered == ["ui_legacy"]
+    assert connector_backtest.locate(jobs_root, "ui_legacy")[0] == "cancelled"
+    result = json.loads(
+        (jobs_root / "cancelled" / "ui_legacy" / "result.json").read_text(encoding="utf-8"))
+    assert "legacy pre-dispatch job" in result["error"]
+
+
+def test_a_dispatched_job_is_never_swept(tmp_path):
+    """A job the device is holding is not stale, however long it takes."""
+    jobs_root = tmp_path / "jobs"
+    live = jobs_root / "pending" / "ui_live"
+    live.mkdir(parents=True)
+    (live / "job.json").write_text(json.dumps(_job_doc(job_id="ui_live")),
+                                   encoding="utf-8")
+    connector_backtest.record_dispatch(
+        live, command_id="cmd_live", connection_id="conn_x",
+        idempotency_key="backtest:ui_live", queued_at_utc="2026-08-28T03:00:00Z")
+
+    assert connector_backtest.recover_undispatched(jobs_root) == []
+    assert connector_backtest.locate(jobs_root, "ui_live")[0] == "pending"
