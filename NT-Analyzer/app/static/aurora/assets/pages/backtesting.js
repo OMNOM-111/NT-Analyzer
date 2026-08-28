@@ -325,6 +325,15 @@ UI.ready(async function () {
     const model = AuroraDomain.normalizeJobDetail(detail, summary);
     const { execution, risk, metrics: m, instrument, timeframe, period, origin,
       className, status, favorite, parameters: params, warnings } = model;
+    // The device runs the whole backtest but sends a bounded number of trade
+    // rows. Showing "37" beside metrics computed over 269 trades would read as
+    // a disagreement in the data rather than as what it is: a sample.
+    const transfer = (detail && detail.trade_transfer) || (model && model.trade_transfer) || null;
+    const truncated = !!(transfer && (transfer.trades_truncated
+      || (transfer.trades_total || 0) > (transfer.trades_transferred || 0)));
+    const tradesCountLabel = truncated
+      ? `Показано ${trades.length} из ${transfer.trades_total} сделок`
+      : String(trades.length);
     const linkedProfile = profiles.find(profile => [profile.strategy_class, profile.deploy_strategy_class, profile.class_name, profile.name].includes(className)) || {};
     const strategyMeta = ((catalog && catalog.strategies) || []).find(item => item.class_name === className) || {};
     const description = linkedProfile.description || linkedProfile.notes || linkedProfile.hypothesis || strategyMeta.description || strategyMeta.summary || '';
@@ -363,7 +372,7 @@ UI.ready(async function () {
         <button class="btn danger" id="dw-delete">${UI.icon('trash')}Удалить</button>
       </div>
       <section class="panel" id="dw-price-panel" style="margin-top:12px"><div class="panel-h"><h2>Цена и артефакты</h2><span class="sub" id="dw-price-sub">загрузка...</span></div><div class="panel-b"><div class="chart-box" id="dw-price-box"><div class="state-loading"><span class="spinner"></span>Загрузка bars…</div></div></div></section>
-      <section class="panel" style="margin-top:12px"><div class="panel-h"><h2>Сделки</h2><span class="sub">${trades.length}</span></div>
+      <section class="panel" style="margin-top:12px"><div class="panel-h"><h2>Сделки</h2><span class="sub">${UI.esc(tradesCountLabel)}</span></div>
         <div class="panel-b tight"><div class="tbl-wrap" style="max-height:320px"><table class="tbl"><thead><tr><th>#</th><th>Сторона</th><th>Вход</th><th>Выход</th><th class="num">Кол.</th><th class="num">Цена входа</th><th class="num">Цена выхода</th><th class="num">Тики</th><th class="num">Комис.</th><th class="num">P&L</th></tr></thead>
         <tbody>${trades.length ? trades.slice(0, 200).map((t, i) => { const pnl = tradePnl(t); return `<tr><td class="muted">${t.trade_no || i + 1}</td><td>${UI.esc(t.side || t.market_position || t.direction || '')}</td><td class="mono muted">${UI.esc(tradeTime(t, 'entry').toString().slice(0, 16).replace('T', ' '))}</td><td class="mono muted">${UI.esc(tradeTime(t, 'exit').toString().slice(0, 16).replace('T', ' '))}</td><td class="num">${t.quantity != null ? t.quantity : '—'}</td><td class="num">${t.entry_price != null ? t.entry_price : (t.price != null ? t.price : '—')}</td><td class="num">${t.exit_price != null ? t.exit_price : '—'}</td><td class="num">${t.pnl_ticks != null ? t.pnl_ticks : '—'}</td><td class="num muted">${t.commission != null ? UI.money(t.commission) : '—'}</td><td class="num ${UI.pnlClass(pnl)}">${UI.money(pnl, { sign: true })}</td></tr>`; }).join('') : '<tr><td colspan="10"><div class="empty-state">Сделок нет.</div></td></tr>'}</tbody></table></div></div></section>`;
     if (eq.length) requestAnimationFrame(() => {
@@ -510,7 +519,12 @@ UI.ready(async function () {
     panel.hidden = false;
     UI.qs('#queue-sub').textContent = `${c.running || 0} в работе · ${c.pending || 0} в очереди`;
     UI.qs('#queue-list').innerHTML = active.map(j => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(j.class_name || j.job_id)}</div><div class="row-sub">${UI.esc(j.instrument || '')} · ${UI.esc(j.status)}</div></div><div class="row-val"><button class="btn sm danger" data-cancel="${UI.esc(j.job_id)}">Отмена</button></div></div>`).join('');
-    UI.qsa('#queue-list button[data-cancel]').forEach(b => b.onclick = async () => { if (!confirm('Отменить задание ' + b.dataset.cancel + '?')) return; try { await API.http.cancelJob(b.dataset.cancel); UI.toast('Отмена запрошена'); pollQueue(); loadReports(true); } catch (e) { UI.reportError(e); } });
+    // No native confirm(): it blocks the page, cannot be styled, and stands
+    // between an operator and stopping a run that is burning time right now.
+    // Cancelling is reversible -- the backtest can simply be started again --
+    // so it acts immediately and says so. Deleting a report keeps its
+    // confirmation, because that one cannot be undone.
+    UI.qsa('#queue-list button[data-cancel]').forEach(b => b.onclick = async () => { b.disabled = true; try { await API.http.cancelJob(b.dataset.cancel); UI.toast('Отмена запрошена'); pollQueue(); loadReports(true); } catch (e) { b.disabled = false; UI.reportError(e); } });
   }
 
   // ---------- init ----------

@@ -4218,11 +4218,17 @@ def _read_result_summary_fast(path: Path) -> Dict[str, Any]:
             "finished_at_utc": full.get("finished_at_utc"),
             "duration_ms": full.get("duration_ms"),
             "metrics": full.get("metrics") if isinstance(full.get("metrics"), dict) else {},
+            "trade_transfer": full.get("trade_transfer")
+            if isinstance(full.get("trade_transfer"), dict) else None,
         }
+    transfer = _json_value_after_key(text, "trade_transfer")
     return {
         "finished_at_utc": _json_value_after_key(text, "finished_at_utc"),
         "duration_ms": _json_value_after_key(text, "duration_ms"),
         "metrics": metrics,
+        # Says whether the rows on disk are the whole run or a sample. Without
+        # it the list view cannot tell a real trade count from a partial one.
+        "trade_transfer": transfer if isinstance(transfer, dict) else None,
     }
 
 
@@ -4365,6 +4371,31 @@ def _compute_adjusted_metrics(trades: Optional[List[Any]],
     return out
 
 
+def _result_is_truncated(res: Optional[Dict[str, Any]]) -> bool:
+    """Whether the trades on disk are a sample rather than the whole run.
+
+    A backtest executed on a remote NinjaTrader returns its aggregate metrics
+    in full but only a bounded number of trade rows, because the result channel
+    is 16 KiB. Recomputing profit factor, net P&L, win rate or drawdown from
+    those rows produces numbers that look exactly as authoritative as the real
+    ones and are not: one report showed PF 1.22 from 37 rows beside a trade
+    count of 269 that came from the device. The aggregates are the run; the
+    rows are detail.
+    """
+    if not isinstance(res, dict):
+        return False
+    transfer = res.get("trade_transfer")
+    if not isinstance(transfer, dict):
+        return False
+    if transfer.get("trades_truncated"):
+        return True
+    try:
+        return int(transfer.get("trades_total") or 0) > int(
+            transfer.get("trades_transferred") or 0)
+    except (TypeError, ValueError):
+        return False
+
+
 def _compute_fast_adjusted_metrics(metrics: Dict[str, Any],
                                    parameters: Optional[Dict[str, Any]],
                                    round_turn_commission: Optional[Any] = None
@@ -4447,7 +4478,12 @@ def read_job_summary(job_id: str, include_adjusted: bool = True) -> Optional[Dic
         try:
             params = ((job.get("strategy") or {}).get("parameters") or {})
             execution = (job.get("execution") or {})
-            if include_adjusted:
+            # A sample cannot stand in for the run. When the device sent fewer
+            # rows than it executed, its aggregates are shown as they arrived.
+            if _result_is_truncated(res):
+                adj = None
+                summary["trade_transfer"] = dict(res.get("trade_transfer") or {})
+            elif include_adjusted:
                 trades_doc = _read_json_array_cached(jdir / "trades.json")
                 adj = _compute_adjusted_metrics(
                     trades_doc,

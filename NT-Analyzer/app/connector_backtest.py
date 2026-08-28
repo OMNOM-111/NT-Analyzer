@@ -439,6 +439,17 @@ def move_job(job_dir: Path, jobs_root: Path, status: str) -> Path:
     """
     if status not in {"pending", "running", "done", "failed", "cancelled"}:
         raise BacktestDispatchError(f"Недопустимый статус задачи: {status}")
+    if status in {"done", "failed", "cancelled"}:
+        # cancel.flag is how a *local* AddOn is asked to stop; it means nothing
+        # once the job is over. Leaving it behind makes a finished report look
+        # like it is still being cancelled, and a recovered directory carry a
+        # request nobody will ever read.
+        try:
+            (job_dir / "cancel.flag").unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
     target_parent = jobs_root / status
     target_parent.mkdir(parents=True, exist_ok=True)
     destination = target_parent / job_dir.name

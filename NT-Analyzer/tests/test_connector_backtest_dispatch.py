@@ -748,3 +748,136 @@ def test_server_job_validation_uses_device_strategy_and_commission_whitelists(
     with pytest.raises(jobqueue.JobValidationError) as rejected:
         jobqueue._validate(request)
     assert "not whitelisted" in str(rejected.value)
+
+
+# --------------------------------------------------------------------------- #
+# A sample is not the run.
+# --------------------------------------------------------------------------- #
+def test_truncated_results_keep_the_devices_aggregates(tmp_path, monkeypatch):
+    """The device runs every trade and sends a bounded sample of the rows.
+
+    Recomputing profit factor and net P&L from that sample produced numbers
+    that looked exactly as authoritative as the real ones: a report showed
+    PF 1.22 and +$873 from 37 rows, beside a trade count of 269 that came from
+    NinjaTrader, whose own answer was PF 1.049 and +$724.90.
+    """
+    from app import jobqueue
+
+    res = {
+        "metrics": {"trade_count": 269, "net_profit": 724.9, "profit_factor": 1.0492},
+        "trade_transfer": {"trades_total": 269, "trades_transferred": 37,
+                           "trades_truncated": True},
+    }
+    assert jobqueue._result_is_truncated(res) is True
+
+    # Inferred even when the device forgets the flag.
+    assert jobqueue._result_is_truncated({
+        "trade_transfer": {"trades_total": 269, "trades_transferred": 37},
+    }) is True
+
+    # A complete run is not truncated, and a local run has no transfer block.
+    assert jobqueue._result_is_truncated({
+        "trade_transfer": {"trades_total": 2, "trades_transferred": 2,
+                           "trades_truncated": False},
+    }) is False
+    assert jobqueue._result_is_truncated({"metrics": {"trade_count": 2}}) is False
+    assert jobqueue._result_is_truncated(None) is False
+
+
+def test_the_summary_does_not_recompute_metrics_for_a_truncated_run():
+    """Pins the gate itself: the adjusted-metrics branch must not run when the
+    rows on disk are a sample."""
+    from pathlib import Path
+
+    from app import jobqueue
+
+    text = Path(jobqueue.__file__).read_text(encoding="utf-8")
+    block = text[text.index("# --- Commission-adjusted metrics ---"):]
+    block = block[: block.index("assessment = report_assessment.assess_report")]
+    assert "if _result_is_truncated(res):" in block
+    assert "adj = None" in block
+    assert 'summary["trade_transfer"]' in block
+
+
+def test_the_trades_table_says_it_is_showing_a_sample():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    js = (root / "app" / "static" / "aurora" / "assets" / "pages"
+          / "backtesting.js").read_text(encoding="utf-8")
+    assert "Показано ${trades.length} из ${transfer.trades_total} сделок" in js
+    assert "trades_truncated" in js
+
+
+# --------------------------------------------------------------------------- #
+# A finished job carries no request to stop.
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("status", ["done", "failed", "cancelled"])
+def test_a_terminal_job_does_not_keep_a_cancel_flag(tmp_path, status):
+    """Left behind, it makes a finished report look like it is still being
+    cancelled, and a recovered directory carry a request nobody will read."""
+    jobs_root = tmp_path / "jobs"
+    job_dir = jobs_root / "running" / "ui_1"
+    job_dir.mkdir(parents=True)
+    (job_dir / "job.json").write_text(json.dumps(_job_doc(job_id="ui_1")), encoding="utf-8")
+    (job_dir / "cancel.flag").write_text("", encoding="utf-8")
+
+    moved = connector_backtest.move_job(job_dir, jobs_root, status)
+    assert not (moved / "cancel.flag").exists()
+    assert (moved / "job.json").exists()
+
+
+def test_a_job_still_running_keeps_its_cancel_flag(tmp_path):
+    """It is a live request while the run is live."""
+    jobs_root = tmp_path / "jobs"
+    job_dir = jobs_root / "pending" / "ui_1"
+    job_dir.mkdir(parents=True)
+    (job_dir / "cancel.flag").write_text("", encoding="utf-8")
+    moved = connector_backtest.move_job(job_dir, jobs_root, "running")
+    assert (moved / "cancel.flag").exists()
+
+
+def test_recovery_also_clears_the_flag(tmp_path):
+    jobs_root = tmp_path / "jobs"
+    legacy = jobs_root / "pending" / "ui_legacy"
+    legacy.mkdir(parents=True)
+    (legacy / "job.json").write_text(json.dumps(_job_doc(job_id="ui_legacy")), encoding="utf-8")
+    (legacy / "cancel.flag").write_text("", encoding="utf-8")
+    connector_backtest.recover_undispatched(jobs_root)
+    assert not (jobs_root / "cancelled" / "ui_legacy" / "cancel.flag").exists()
+
+
+# --------------------------------------------------------------------------- #
+# Cancel is already woken, not polled for.
+# --------------------------------------------------------------------------- #
+def test_queueing_a_command_wakes_a_waiting_long_poll():
+    """A faster poll would be the wrong fix. Queueing already notifies the
+    condition the long-poll waits on, so a cancel reaches the device on the
+    next wake rather than on the next tick -- measured at about one second on
+    Production. Adding a busy control-poll would reintroduce the idle load that
+    was removed earlier for exactly this reason."""
+    from pathlib import Path
+
+    from app import connector_protocol
+
+    text = Path(connector_protocol.__file__).read_text(encoding="utf-8")
+    queue = text[text.index("def queue_command("):]
+    queue = queue[: queue.index("def _public_command")]
+    assert "_COMMANDS_CHANGED.notify_all()" in queue
+
+    poll = text[text.index("def poll_commands("):]
+    poll = poll[: poll.index("def _safe_result(")]
+    assert "_COMMANDS_CHANGED.wait(" in poll
+
+
+def test_cancelling_from_the_ui_has_no_blocking_dialog():
+    """A native confirm() blocks the page and stands between an operator and
+    stopping a run that is burning time. Deleting a report keeps its
+    confirmation, because that one cannot be undone."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    js = (root / "app" / "static" / "aurora" / "assets" / "pages"
+          / "backtesting.js").read_text(encoding="utf-8")
+    assert "confirm('Отменить задание" not in js
+    assert "confirm('Удалить отчёт" in js
