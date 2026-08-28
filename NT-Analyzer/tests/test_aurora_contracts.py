@@ -1049,3 +1049,19 @@ def test_backtesting_never_falls_back_to_zero_commission_silently():
     assert "commission_template: commissionTemplateOrDefault(" in js
     assert "commission_template: execution.commission_template || 'None'" not in js
     assert "UI.qs('#f-commission-template').value || 'None'" not in js
+
+
+def test_backtesting_strategy_dropdown_uses_authoritative_device_catalog():
+    html = (AURORA / "backtesting.html").read_text(encoding="utf-8")
+    js = (AURORA / "assets" / "pages" / "backtesting.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'id="f-strategy-source-note"' in html
+    assert "function renderStrategyCatalog()" in js
+    assert "catalog && catalog.strategies" in js
+    assert "catalog && catalog.device_catalog" in js
+    assert "Каталог VMNINJA актуален" in js
+    assert "device-стратегии не подтверждены" in js
+    assert "API.http.strategies()" not in js
+    assert "strategies = (strat && strat.strategies) || []" not in js
