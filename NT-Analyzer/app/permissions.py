@@ -382,6 +382,11 @@ def resolve(user: Optional[Dict[str, Any]],
 
 def resolve_for_user_id(user_id: Any, user: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Resolve permissions, fetching the active entitlement for ``user_id``."""
+    # Owner access is unconditional and resolve() returns before consulting a
+    # plan.  Avoid loading the complete entitlement repository on every owner
+    # health/job/notification poll merely to discard the result immediately.
+    if isinstance(user, dict) and user.get("is_owner"):
+        return resolve(user, {})
     try:
         entitlement = subscriptions.active_entitlement(user_id)
     except subscriptions.SubscriptionError:

@@ -3290,11 +3290,107 @@ def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str,
     return {"status": "authenticated", "session_token": token, "csrf_token": csrf, "user": _public_user(user, include_contact=True)}
 
 
+def _session_context(user: Dict[str, Any], session: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the public request context from one already-validated session."""
+    ctx = {
+        "source": str(session.get("source") or "desktop_session"),
+        "user_id": int(user["user_id"]),
+        "user_uuid": _user_uuid(user),
+        "role": str(user.get("role") or "read_only"),
+        "is_owner": bool(user.get("is_owner")),
+        "username": str(user.get("username") or ""),
+        "session_id": _session_id(session),
+        "device_id": str(session.get("device_id") or ""),
+        "csrf_hash": str(session.get("csrf_hash") or ""),
+        "csrf_token": str(session.get("csrf_token") or ""),
+        "user": _public_user(user, include_contact=True),
+        "needs_google": user_needs_google(user),
+        "dual_auth_complete": True,
+        "nt_elevated_until": float(session.get("nt_elevated_until") or 0),
+    }
+    ctx["nt_access"] = nt_action_gate(user, session=session, context=ctx)
+    if session.get("impersonator_owner_id"):
+        ctx["impersonating"] = True
+        ctx["impersonator_owner_id"] = int(session.get("impersonator_owner_id") or 0)
+        ctx["impersonation_started_at_utc"] = str(session.get("impersonation_started_at_utc") or "")
+        ctx["impersonation_preset"] = str(session.get("impersonation_preset") or "")
+    return ctx
+
+
+def _authenticate_authoritative_session(digest: str) -> Optional[Dict[str, Any]]:
+    """Authenticate against the normalized PostgreSQL mirrors in one read.
+
+    The old request path loaded and deep-copied the complete auth repository for
+    every browser poll, then reconciled every user UUID before looking up one
+    token.  The normalized mirrors are written in the same transaction as that
+    document.  Reading the one session and user row therefore preserves the
+    authoritative revoke, expiry and account-status checks without caching any
+    security decision between requests.
+    """
+    from .production_storage import Scope, StorageError, get_client
+
+    try:
+        with get_client(production=True).transaction(
+            Scope.global_service_scope(), read_only=True,
+        ) as conn:
+            row = conn.execute(
+                """
+                SELECT s.session_id, s.user_id, s.user_uuid,
+                       EXTRACT(EPOCH FROM s.expires_at) AS expires_at_epoch,
+                       s.document AS session_document,
+                       u.user_uuid AS canonical_user_uuid,
+                       u.status AS user_status, u.is_owner,
+                       u.document AS user_document
+                FROM sf_auth_sessions AS s
+                JOIN sf_users AS u ON u.user_id=s.user_id
+                WHERE s.token_hash=%s
+                  AND s.revoked=FALSE
+                  AND s.expires_at > clock_timestamp()
+                  AND u.status='active'
+                LIMIT 1
+                """,
+                (digest,),
+            ).fetchone()
+    except StorageError as exc:
+        raise AccountAuthError(
+            f"Production account repository unavailable ({exc.code}).",
+            503, code=exc.code,
+        ) from None
+    if not row:
+        return None
+    raw_session = row.get("session_document")
+    raw_user = row.get("user_document")
+    if not isinstance(raw_session, dict) or not isinstance(raw_user, dict):
+        raise AccountAuthError(
+            "Production account session mirror returned invalid data.", 500,
+            code="storage_constraint",
+        )
+    session = copy.deepcopy(raw_session)
+    user = copy.deepcopy(raw_user)
+    session.update({
+        "session_id": str(row.get("session_id") or ""),
+        "user_id": int(row.get("user_id") or 0),
+        "user_uuid": str(row.get("user_uuid") or ""),
+        "expires_at": float(row.get("expires_at_epoch") or 0),
+        "revoked": False,
+    })
+    user.update({
+        "user_id": int(row.get("user_id") or 0),
+        "legacy_user_id": int(row.get("user_id") or 0),
+        "user_uuid": str(row.get("canonical_user_uuid") or ""),
+        "status": str(row.get("user_status") or ""),
+        "is_owner": bool(row.get("is_owner")),
+    })
+    return _session_context(user, session)
+
+
 def authenticate_session(token: str) -> Optional[Dict[str, Any]]:
     raw = str(token or "")
     if len(raw) < 40:
         return None
     digest = hashlib.sha256(raw.encode()).hexdigest()
+    if _authoritative_storage():
+        return _authenticate_authoritative_session(digest)
     with _LOCK:
         doc = _read_doc()
         now = time.time()
@@ -3304,29 +3400,7 @@ def authenticate_session(token: str) -> Optional[Dict[str, Any]]:
         user = _user(doc, int(session.get("user_id") or 0))
         if not user or user.get("status") != "active":
             return None
-        ctx = {
-            "source": str(session.get("source") or "desktop_session"),
-            "user_id": int(user["user_id"]),
-            "user_uuid": _user_uuid(user),
-            "role": str(user.get("role") or "read_only"),
-            "is_owner": bool(user.get("is_owner")),
-            "username": str(user.get("username") or ""),
-            "session_id": _session_id(session),
-            "device_id": str(session.get("device_id") or ""),
-            "csrf_hash": str(session.get("csrf_hash") or ""),
-            "csrf_token": str(session.get("csrf_token") or ""),
-            "user": _public_user(user, include_contact=True),
-            "needs_google": user_needs_google(user),
-            "dual_auth_complete": True,
-            "nt_elevated_until": float(session.get("nt_elevated_until") or 0),
-        }
-        ctx["nt_access"] = nt_action_gate(user, session=session, context=ctx)
-        if session.get("impersonator_owner_id"):
-            ctx["impersonating"] = True
-            ctx["impersonator_owner_id"] = int(session.get("impersonator_owner_id") or 0)
-            ctx["impersonation_started_at_utc"] = str(session.get("impersonation_started_at_utc") or "")
-            ctx["impersonation_preset"] = str(session.get("impersonation_preset") or "")
-        return ctx
+        return _session_context(user, session)
 
 
 def start_nt_telegram_confirm(
