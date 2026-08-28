@@ -9,6 +9,9 @@ using System.Threading;
 
 using NinjaTrader.Cbi;
 using NinjaTrader.NinjaScript;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+
 using NTAnalyzerBridge.Config;
 using NTAnalyzerBridge.Util;
 
@@ -49,6 +52,9 @@ namespace NTAnalyzerBridge.Runtime
         private readonly Timer  _timer;
         private readonly HashSet<string> _seen = new HashSet<string>(StringComparer.Ordinal);
         private readonly object _lock = new object();
+        // Server-dispatched backtests run off this loop, so cancel, health
+        // and control commands stay readable while one is in flight.
+        private readonly ConnectorBacktestExecutor _backtests;
         private int _running;
 
         // Classes the bridge must refuse for enable_strategy, per Phase 18 spec.
@@ -89,6 +95,10 @@ namespace NTAnalyzerBridge.Runtime
             _resultsPath  = Path.Combine(_runtimeDir, "command_results.jsonl");
             Directory.CreateDirectory(_runtimeDir);
             _timer = new Timer(OnTick, null, Timeout.Infinite, Timeout.Infinite);
+            _backtests = new ConnectorBacktestExecutor(
+                cfg,
+                (commandId, status, message, safeResult) =>
+                    WriteResult(commandId, status, message, "", safeResult));
         }
 
         public void Start()
@@ -117,6 +127,10 @@ namespace NTAnalyzerBridge.Runtime
         {
             try { _timer.Change(Timeout.Infinite, Timeout.Infinite); } catch { }
             try { _timer.Dispose(); } catch { }
+            // Cancel anything still running and let it unwind, so NinjaTrader
+            // is never left closing under an active Strategy Analyzer session.
+            try { _backtests.Stop(); }
+            catch (Exception ex) { BridgeLog.Warn("backtest executor stop: " + ex.GetType().Name); }
             BridgeLog.Info("RuntimeCommandProcessor: stopped");
         }
 
@@ -163,6 +177,18 @@ namespace NTAnalyzerBridge.Runtime
 
             try
             {
+                if (command == "run_backtest")
+                {
+                    // Returns as soon as the run is started or refused. The
+                    // outcome arrives later on its own result rows.
+                    _backtests.Start(cid, ExtractJobObject(rawJson));
+                    return true;
+                }
+                if (command == "cancel_backtest")
+                {
+                    _backtests.Cancel(cid, ExtractJobObject(rawJson));
+                    return true;
+                }
                 if (command == "resubscribe_market_data")
                 {
                     try
@@ -929,7 +955,27 @@ namespace NTAnalyzerBridge.Runtime
         // ------------------------------------------------------------------
         // Result file write & primitive JSON helpers
 
+        private static JObject ExtractJobObject(string rawJson)
+        {
+            try
+            {
+                using (JsonTextReader reader = new JsonTextReader(new StringReader(rawJson)))
+                {
+                    reader.DateParseHandling = DateParseHandling.None;
+                    JObject envelope = JObject.Load(reader);
+                    return envelope["job"] as JObject;
+                }
+            }
+            catch { return null; }
+        }
+
         private bool WriteResult(string commandId, string status, string message, string runtimeStrategyId)
+        {
+            return WriteResult(commandId, status, message, runtimeStrategyId, null);
+        }
+
+        private bool WriteResult(string commandId, string status, string message,
+                                 string runtimeStrategyId, string safeResultJson)
         {
             var sb = new StringBuilder(256);
             sb.Append("{");
@@ -938,6 +984,10 @@ namespace NTAnalyzerBridge.Runtime
             JsField(sb, "status", status);                   sb.Append(",");
             JsField(sb, "message", message);                 sb.Append(",");
             JsField(sb, "runtime_strategy_id", runtimeStrategyId); sb.Append(",");
+            if (!string.IsNullOrEmpty(safeResultJson))
+            {
+                sb.Append("\"safe_result\":").Append(safeResultJson).Append(",");
+            }
             JsField(sb, "processor_version", ProcessorVersion);
             sb.Append("}\n");
             try

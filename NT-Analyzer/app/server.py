@@ -44,7 +44,7 @@ from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 # Allow `python app/server.py` to import sibling module.
 if __package__ is None or __package__ == "":
@@ -136,6 +136,7 @@ if __package__ is None or __package__ == "":
     from app import audit_events  # type: ignore[no-redef]
     from app import market_data_ingestion  # type: ignore[no-redef]
     from app import connector_protocol  # type: ignore[no-redef]
+    from app import connector_backtest  # type: ignore[no-redef]
     from app import connector_releases  # type: ignore[no-redef]
     from app import google_auth  # type: ignore[no-redef]
     from app import test_auth  # type: ignore[no-redef]
@@ -232,6 +233,7 @@ else:
     from . import audit_events
     from . import market_data_ingestion
     from . import connector_protocol
+    from . import connector_backtest
     from . import connector_releases
     from . import google_auth
     from . import test_auth
@@ -487,6 +489,130 @@ def _connector_probe(label: str, fn: Any,
 _PROVIDER_FAULT_STATES = frozenset({
     "ERROR", "AUTH_FAILED", "ENTITLEMENT_MISSING", "OFFLINE", "DEGRADED",
 })
+
+
+def _settle_connector_backtest(body: Mapping[str, Any]) -> None:
+    """Apply one device-reported status to the canonical job.
+
+    The Connector's command lifecycle stops here. The browser only ever sees
+    pending/running/done/failed, and only the device saying it has *started*
+    moves a job to running -- "accepted" means it has the work, and treating
+    that as progress would show a run in flight for a Connector that has since
+    gone silent.
+
+    Never raises: a Connector that reported correctly must not be answered with
+    an error because this server could not file the report.
+    """
+    try:
+        idempotency_key = str(body.get("idempotency_key") or "")
+        if not idempotency_key.startswith("backtest:"):
+            return
+        job_id = idempotency_key.split(":", 1)[1]
+        status = str(body.get("status") or "").strip().lower()
+        jobs_root = jobqueue.jobs_dir()
+        safe_result = body.get("safe_result")
+        safe_result = dict(safe_result) if isinstance(safe_result, Mapping) else {}
+        safe_result.setdefault("command_id", str(body.get("command_id") or ""))
+        if not safe_result.get("message") and body.get("error_class"):
+            safe_result["message"] = str(body.get("error_class"))
+        try:
+            outcome = connector_backtest.settle(
+                jobs_root, job_id, status, safe_result,
+            )
+        except connector_backtest.ConflictingResultError as exc:
+            # Two different outcomes for one run is not something to settle by
+            # picking one. What was already reported to a person stands, and
+            # the disagreement is recorded instead of overwritten.
+            observability.event(
+                "connector_backtest", "conflicting_result", severity="warning",
+                payload={"job_id": job_id[:64], "detail": str(exc)[:200]},
+            )
+            return
+        if outcome.get("action") in {"started", "completed", "failed"}:
+            observability.event(
+                "connector_backtest", str(outcome.get("action")), severity="info",
+                payload={"job_id": job_id[:64],
+                         "status": str(outcome.get("status") or "")},
+            )
+    except Exception:
+        observability.event(
+            "connector_backtest", "settle_failed", severity="warning",
+            payload={"idempotency_key": str(body.get("idempotency_key") or "")[:80]},
+        )
+
+
+def _cancel_backtest_on_connector(
+    context: Dict[str, Any], job_id: str, outcome: Mapping[str, Any],
+) -> None:
+    """Ask the device to stop a run it was given.
+
+    Best effort by design: the job is already cancelled locally, and a device
+    that cannot be reached must not turn a cancel into an error the operator
+    has to interpret. Sending the same cancel twice is harmless -- the command
+    is keyed by job id, so a repeat is the same command, and the runner treats
+    an unknown or finished job as nothing to do.
+    """
+    if outcome.get("action") in {"not_found", "noop_terminal"}:
+        return
+    try:
+        status = _connector_runtime_status(context)
+        connection_id = str(status.get("connection_id") or "")
+        if not connection_id:
+            return
+        active = context.get("active_workspace")             if isinstance(context.get("active_workspace"), dict) else {}
+        connector_protocol.queue_command(
+            context.get("user_id"),
+            workspace_id=str(status.get("source_workspace_id")
+                             or active.get("workspace_id") or ""),
+            connection_id=connection_id,
+            capability=connector_backtest.CAPABILITY,
+            idempotency_key=f"cancel-backtest:{job_id}",
+            payload=connector_backtest.cancel_payload(job_id),
+            expires_in_sec=300,
+        )
+    except Exception:
+        observability.event(
+            "connector_backtest", "cancel_not_delivered", severity="warning",
+            payload={"job_id": str(job_id)[:64]},
+        )
+
+
+def _dispatch_backtest_to_connector(
+    context: Dict[str, Any], job_id: str, pending_dir: Any,
+) -> Dict[str, Any]:
+    """Hand one validated job to the enrolled Connector and mark it running.
+
+    Queued through the ordinary paper-command path, so workspace scope,
+    capability, idempotency, sequence and expiry are the same checks every
+    other command passes. The job id is the idempotency key: a retry of the
+    same backtest cannot become a second run on the device.
+    """
+    job_dir = Path(str(pending_dir))
+    job_doc = connector_backtest.read_job_document(job_dir)
+    payload = connector_backtest.command_payload(job_doc)
+
+    active = context.get("active_workspace")         if isinstance(context.get("active_workspace"), dict) else {}
+    status = _connector_runtime_status(context)
+    connection_id = str(status.get("connection_id") or "")
+    if not status.get("present") or not connection_id:
+        raise connector_backtest.BacktestDispatchError(
+            "NinjaTrader Connector не подключён: backtest некуда отправить.",
+        )
+
+    connector_protocol.queue_command(
+        context.get("user_id"),
+        workspace_id=str(status.get("source_workspace_id")
+                         or active.get("workspace_id") or ""),
+        connection_id=connection_id,
+        capability=connector_backtest.CAPABILITY,
+        idempotency_key=f"backtest:{job_id}",
+        payload=payload,
+        expires_in_sec=900,
+    )
+    # The job stays pending. "Accepted" means the device has the work, not
+    # that it has begun it, and a Connector that goes silent after accepting
+    # must not leave an operator watching a run that never started.
+    return {"path": job_dir, "connection_id": connection_id}
 
 
 def _connector_is_the_runtime_transport(qs: Optional[Dict[str, Any]] = None) -> bool:
@@ -3070,6 +3196,10 @@ class Handler(BaseHTTPRequestHandler):
                 out = connector_protocol.submit_result(
                     self._connector_bearer_token(), body,
                 )
+                # A backtest that ran on the device comes home as an ordinary
+                # report. The Connector's command lifecycle stops here: the
+                # browser only ever sees pending/running/done/failed.
+                _settle_connector_backtest(body)
             self._json(HTTPStatus.OK, out)
         except connector_protocol.ConnectorProtocolError as exc:
             # A refused connector left no trace before this, so a device that
@@ -10611,6 +10741,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 out = jobqueue.cancel_job(parts[2])
+                # One cancel button, wherever the run is. A job already handed
+                # to the device is stopped there too; the local move above has
+                # already made the job terminal, so a late result cannot
+                # resurrect it as done.
+                if connector_backtest.routes_through_connector():
+                    _cancel_backtest_on_connector(
+                        getattr(self, "_remote_context", None) or {}, parts[2], out,
+                    )
             except jobqueue.JobValidationError as e:
                 self._err(HTTPStatus.BAD_REQUEST, str(e))
                 return
@@ -10785,6 +10923,29 @@ class Handler(BaseHTTPRequestHandler):
             job_id, path = jobqueue.create_job(req)
         except jobqueue.JobValidationError as e:
             self._err(HTTPStatus.BAD_REQUEST, str(e))
+            return
+
+        # One contract for the browser: it posted a backtest and gets a job id
+        # back, wherever NinjaTrader happens to be. Development leaves the job
+        # in the local queue for the AddOn beside it; a server has no
+        # NinjaTrader of its own and hands the same canonical job to the
+        # enrolled Connector. The transport differs here and nowhere else.
+        if connector_backtest.routes_through_connector():
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                dispatch = _dispatch_backtest_to_connector(context, job_id, path)
+            except (connector_backtest.BacktestDispatchError,
+                    connector_protocol.ConnectorProtocolError,
+                    workspaces.WorkspaceError) as exc:
+                # The job exists and is honestly failed rather than left
+                # pending forever against a NinjaTrader that will never see it.
+                connector_backtest.fail_job(jobqueue.jobs_dir(), job_id, str(exc))
+                self._err(getattr(exc, "status", HTTPStatus.BAD_GATEWAY), str(exc),
+                          code=getattr(exc, "code", "") or "backtest_dispatch_failed")
+                return
+            self._json(HTTPStatus.CREATED, {
+                "job_id": job_id, "path": str(dispatch["path"]),
+            })
             return
 
         self._json(HTTPStatus.CREATED, {"job_id": job_id, "path": str(path)})
