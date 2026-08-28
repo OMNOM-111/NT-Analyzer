@@ -290,10 +290,10 @@ namespace NTAnalyzerBridge.Runtime
                 foreach (JToken row in trades.Take(MaxTransferredTrades))
                     transferred.Add(row.DeepClone());
 
-            JObject source = result?["source"] as JObject ?? new JObject();
-            source["execution_source"] = "ninjatrader";
-            source["machine"] = Environment.MachineName;
-            if (bars != null) source["bar_count"] = bars.Count;
+            JObject executionDetails = result?["source"] as JObject ?? new JObject();
+            executionDetails["execution_source"] = "ninjatrader";
+            executionDetails["machine"] = Environment.MachineName;
+            if (bars != null) executionDetails["bar_count"] = bars.Count;
 
             JObject payload = new JObject
             {
@@ -301,7 +301,10 @@ namespace NTAnalyzerBridge.Runtime
                 ["started_at_utc"] = record.StartedUtc.ToString("o", CultureInfo.InvariantCulture),
                 ["finished_at_utc"] = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
                 ["duration_ms"] = result?["duration_ms"] ?? JValue.CreateNull(),
-                ["source"] = source,
+                // `source` is a deliberately forbidden wire-field name. The
+                // server maps this bounded transport projection back to the
+                // canonical report's `source` block after validation.
+                ["execution_details"] = executionDetails,
                 ["metrics"] = result?["metrics"]?.DeepClone() ?? new JObject(),
                 ["trades"] = transferred,
                 ["trades_total"] = total,

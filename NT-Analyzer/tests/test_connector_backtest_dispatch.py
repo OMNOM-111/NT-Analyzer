@@ -20,6 +20,7 @@ import time
 import pytest
 
 from app import connector_backtest
+from app import jobqueue
 from app import runtime_env
 
 
@@ -121,9 +122,9 @@ def _safe_result():
         "started_at_utc": "2026-08-28T00:00:10Z",
         "finished_at_utc": "2026-08-28T00:00:24Z",
         "duration_ms": 14000,
-        "source": {"execution_source": "ninjatrader",
-                   "ninjatrader_version": "8.1.8.2",
-                   "machine": "VMNINJA"},
+        "execution_details": {"execution_source": "ninjatrader",
+                              "ninjatrader_version": "8.1.8.2",
+                              "machine": "VMNINJA"},
         "metrics": {"trade_count": 2, "net_profit": 1.0, "profit_factor": 1.18},
         "trades": [{"trade_no": 1, "direction": "short", "pnl_currency": -5.5},
                    {"trade_no": 2, "direction": "short", "pnl_currency": 6.5}],
@@ -143,6 +144,17 @@ def test_the_result_is_the_canonical_report_schema(tmp_path):
     written = json.loads((tmp_path / "result.json").read_text(encoding="utf-8"))
     assert written["metrics"] == doc["metrics"]
     assert json.loads((tmp_path / "trades.json").read_text(encoding="utf-8")) == doc["trades"]
+
+
+def test_the_real_device_result_passes_the_wire_validator():
+    """The first Production result completed on NinjaTrader but the transport
+    rejected its canonical `source` field before the server could materialize
+    the report. Exercise the same validator the endpoint uses."""
+    from app import connector_protocol
+
+    clean = connector_protocol._safe_result(_safe_result())
+    assert "source" not in clean
+    assert clean["execution_details"]["machine"] == "VMNINJA"
 
 
 def test_the_missing_price_series_is_declared_not_faked():
@@ -447,6 +459,50 @@ def test_the_payload_is_bounded_before_it_is_sent():
     assert '["trades_truncated"] = total > transferred.Count' in source
 
 
+def test_device_result_uses_a_wire_safe_name_for_canonical_source():
+    source = _executor_source()
+    assert '["execution_details"] = executionDetails' in source
+    assert '["source"] = source' not in source
+
+
+def test_spool_read_and_write_share_one_boundary_and_retry():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    spool = (root / "bridge" / "src" / "Runtime"
+             / "RuntimeCommandSpool.cs").read_text(encoding="utf-8")
+    client = (root / "bridge" / "src" / "Connector"
+              / "ConnectorClient.cs").read_text(encoding="utf-8")
+    processor = _processor_source()
+    assert "FileShare.ReadWrite | FileShare.Delete" in spool
+    assert "AppendAttempts = 8" in spool
+    assert "RuntimeCommandSpool.AppendLine" in client
+    assert "RuntimeCommandSpool.ReadAllLines" in client
+    assert "RuntimeCommandSpool.AppendLine" in processor
+    assert "RuntimeCommandSpool.ReadAllLines" in processor
+
+
+def test_one_permanent_old_result_cannot_poison_connector_heartbeat():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    client = (root / "bridge" / "src" / "Connector"
+              / "ConnectorClient.cs").read_text(encoding="utf-8")
+    assert "IsPermanentResultRejection" in client
+    assert 'ex.ErrorCode == "command_expired"' in client
+    assert 'ex.ErrorCode == "forbidden_command_field"' in client
+    assert "RememberReported(terminal ? id : progressKey)" in client
+
+
+def test_running_progress_is_persisted_instead_of_posted_each_poll():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    client = (root / "bridge" / "src" / "Connector"
+              / "ConnectorClient.cs").read_text(encoding="utf-8")
+    assert "RememberReported(progressKey);" in client
+
+
 def test_no_projected_field_can_trip_the_command_validator():
     """The transport refuses a payload containing certain names anywhere.
 
@@ -571,3 +627,124 @@ def test_dispatch_uses_a_delivery_ttl_the_protocol_accepts():
     assert "expires_in_sec=connector_protocol.MAX_COMMAND_TTL_SEC," in block
     assert "expires_in_sec=900" not in block
     assert connector_protocol.MAX_COMMAND_TTL_SEC >= 60
+
+
+def _device_catalog_status(*, fresh=True, state="fresh"):
+    return {
+        "present": True,
+        "fresh": fresh,
+        "stale": not fresh,
+        "state": state,
+        "age_sec": 12.0,
+        "received_at_utc": "2026-08-28T05:00:01Z",
+        "generated_at_utc": "2026-08-28T05:00:00Z",
+        "installation_id": "inst_production",
+        "connection_id": "conn_production",
+        "workspace_id": "ws_owner",
+        "connector_version": "0.4.2-dev.17",
+        "nt_version": "8.1.8.2",
+        "catalog": {
+            "schema_version": 1,
+            "generated_at_utc": "2026-08-28T05:00:00Z",
+            "strategies": [{
+                "class_name": "DeviceOnlyStrategy",
+                "display_name": "Device-only strategy",
+                "stable_id": "strategy-device-only",
+                "parameters": [],
+            }],
+            "commission_templates": [{
+                "name": "NinjaTrader Custom",
+                "display": "NinjaTrader Custom",
+                "supported": True,
+            }],
+            "strategy_count": 1,
+            "commission_template_count": 1,
+            "parameter_schemas_included": False,
+            "truncated": False,
+        },
+    }
+
+
+def _isolate_catalog_sources(monkeypatch):
+    monkeypatch.setattr(jobqueue.marginrefresh, "maybe_daily_refresh", lambda: None)
+    monkeypatch.setattr(jobqueue.marginrefresh, "last_status", lambda: {})
+    monkeypatch.setattr(jobqueue, "read_strategies_catalog", lambda: None)
+    monkeypatch.setattr(jobqueue, "read_instruments_catalog", lambda: {
+        "instruments": [], "generated_at_utc": None,
+    })
+    monkeypatch.setattr(jobqueue, "read_templates_catalog", lambda: {
+        "commission_templates": [{
+            "name": "None", "display": "None / 0 commission", "supported": True,
+        }],
+        "trading_hours_templates": [],
+        "generated_at_utc": None,
+    })
+    monkeypatch.setattr(jobqueue, "read_instrument_groups_catalog", lambda: None)
+    monkeypatch.setattr(jobqueue, "read_margins_catalog", lambda: None)
+    monkeypatch.setattr(jobqueue, "catalog_staleness", lambda: {
+        "stale": False, "reason": "",
+    })
+
+
+def test_server_catalog_uses_the_signed_device_projection_without_fake_parameters(
+    monkeypatch,
+):
+    _isolate_catalog_sources(monkeypatch)
+    out = jobqueue.build_catalog_response(_device_catalog_status())
+    assert [row["class_name"] for row in out["strategies"]] == [
+        "DeviceOnlyStrategy",
+    ]
+    assert out["strategies"][0]["parameters"] == []
+    assert out["strategies"][0]["parameter_schema_available"] is False
+    assert [row["name"] for row in out["commission_templates"]] == [
+        "NinjaTrader Custom",
+    ]
+    assert out["device_catalog"]["state"] == "fresh"
+    assert any("Схемы параметров" in warning for warning in out["warnings"])
+    assert all(not row.get("fallback") for row in out["strategies"])
+
+
+def test_server_catalog_keeps_stale_device_data_visible_and_labels_missing_fallback(
+    monkeypatch,
+):
+    _isolate_catalog_sources(monkeypatch)
+    stale = jobqueue.build_catalog_response(
+        _device_catalog_status(fresh=False, state="offline"),
+    )
+    assert stale["strategies"][0]["class_name"] == "DeviceOnlyStrategy"
+    assert stale["device_catalog"]["state"] == "offline"
+    assert any("offline" in warning for warning in stale["warnings"])
+
+    missing = jobqueue.build_catalog_response({
+        "present": False, "fresh": False, "stale": False,
+        "state": "missing", "catalog": {},
+    })
+    assert missing["strategies"][0]["class_name"] in jobqueue._FALLBACK_STRATEGIES
+    assert missing["device_catalog"]["state"] == "missing"
+    assert any("не считается каталогом VMNINJA" in warning
+               for warning in missing["warnings"])
+
+
+def test_server_job_validation_uses_device_strategy_and_commission_whitelists(
+    monkeypatch,
+):
+    _isolate_catalog_sources(monkeypatch)
+    runtime_catalog = _device_catalog_status()["catalog"]
+    request = jobqueue.CreateJobRequest(
+        class_name="DeviceOnlyStrategy",
+        instrument="MNQ SEP26",
+        bars_period_type="Minute",
+        bars_period_value=5,
+        from_utc="2026-08-20T00:00:00Z",
+        to_utc="2026-08-22T00:00:00Z",
+        parameters={},
+        role="smoke",
+        commission_template="NinjaTrader Custom",
+        runtime_catalog=runtime_catalog,
+    )
+    jobqueue._validate(request)
+
+    request.class_name = jobqueue._FALLBACK_STRATEGIES[0]
+    with pytest.raises(jobqueue.JobValidationError) as rejected:
+        jobqueue._validate(request)
+    assert "not whitelisted" in str(rejected.value)

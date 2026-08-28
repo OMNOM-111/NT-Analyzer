@@ -15,6 +15,7 @@ This module is read-mostly: the only mutating operation is `create_job`.
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import os
 import re
@@ -26,7 +27,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from . import governance
 from . import durable
@@ -2767,7 +2768,9 @@ def whitelisted_strategies() -> List[str]:
     return names
 
 
-def build_catalog_response() -> Dict[str, Any]:
+def build_catalog_response(
+    device_catalog: Optional[Mapping[str, Any]] = None,
+) -> Dict[str, Any]:
     """Aggregate response for GET /api/catalog. Combines strategies.json and
     instruments.json (bridge-written) with backend-side defaults and the
     explicit list of current bridge limitations so the UI does not have to
@@ -2842,6 +2845,70 @@ def build_catalog_response() -> Dict[str, Any]:
                 ", ".join(unsupported_names)
             )
 
+    # On a server the actual StrategyLoader and NinjaTrader templates live on
+    # the enrolled Windows device. A signed snapshot is authoritative for that
+    # installation; local server files are only a visibly labelled fallback.
+    device_status = dict(device_catalog) if isinstance(device_catalog, Mapping) else None
+    device_doc = (
+        device_status.get("catalog")
+        if isinstance(device_status, Mapping)
+        and isinstance(device_status.get("catalog"), Mapping)
+        else {}
+    )
+    if device_doc:
+        remote_strategies = []
+        for raw in device_doc.get("strategies") or []:
+            if not isinstance(raw, Mapping) or not str(raw.get("class_name") or "").strip():
+                continue
+            remote_strategies.append({
+                "class_name": str(raw.get("class_name") or ""),
+                "display_name": str(raw.get("display_name") or raw.get("class_name") or ""),
+                "stable_id": str(raw.get("stable_id") or ""),
+                "source_file": None,
+                "parameters": [],
+                "device_backed": True,
+                "parameter_schema_available": False,
+            })
+        remote_templates = [
+            {
+                "name": str(raw.get("name") or ""),
+                "display": str(raw.get("display") or raw.get("name") or ""),
+                "supported": bool(raw.get("supported")),
+                "device_backed": True,
+            }
+            for raw in (device_doc.get("commission_templates") or [])
+            if isinstance(raw, Mapping) and str(raw.get("name") or "").strip()
+        ]
+        strategies = remote_strategies
+        commission_templates = remote_templates
+        strategies_generated_at = str(device_doc.get("generated_at_utc") or "") or None
+        templates_generated_at = strategies_generated_at
+        if not device_status.get("fresh"):
+            warnings.append(
+                "Каталог NinjaTrader показан из последнего device snapshot; "
+                f"текущее состояние: {device_status.get('state') or 'stale'}."
+            )
+        if device_doc.get("truncated"):
+            warnings.append("Device catalog ограничен 16 KiB; список был усечён.")
+        if not device_doc.get("parameter_schemas_included"):
+            warnings.append(
+                "Схемы параметров стратегий не переданы в bounded catalog; "
+                "доступны реальные strategy IDs без вымышленных полей."
+            )
+    elif device_status is not None:
+        warnings.append(
+            "Device catalog ещё не получен; резервный список помечен явно и "
+            "не считается каталогом VMNINJA."
+        )
+
+    preferred_commission = "NinjaTrader Brokerage Free"
+    supported_commissions = {
+        str(item.get("name") or "") for item in commission_templates
+        if isinstance(item, Mapping) and item.get("supported") is not False
+    }
+    if preferred_commission not in supported_commissions:
+        preferred_commission = "None"
+
     return {
         "strategies": strategies,
         "instruments": instruments,
@@ -2862,7 +2929,7 @@ def build_catalog_response() -> Dict[str, Any]:
             "order_fill_resolution": "High",
             "slippage_ticks":        1,
             "commission":            0.0,
-            "commission_template":   "NinjaTrader Brokerage Free",
+            "commission_template":   preferred_commission,
             "session_template":      "CME US Index Futures RTH",
             "timezone":              "UTC",
         },
@@ -2891,6 +2958,14 @@ def build_catalog_response() -> Dict[str, Any]:
         "margin_catalog": _build_margin_catalog_block(marg_doc, warnings),
         "staleness": stale_info,
         "warnings": warnings,
+        "device_catalog": ({
+            key: copy.deepcopy(device_status.get(key))
+            for key in (
+                "present", "fresh", "stale", "state", "age_sec",
+                "received_at_utc", "generated_at_utc", "installation_id",
+                "connection_id", "workspace_id", "connector_version", "nt_version",
+            )
+        } if device_status is not None else None),
     }
 
 
@@ -3065,6 +3140,9 @@ class CreateJobRequest:
     # Optional provenance metadata, written atomically into job.json before
     # pending publication. This avoids post-publish races with the bridge.
     origin: Optional[Dict[str, Any]] = None
+    # Server-only device snapshot selected in the authenticated workspace.
+    # LOCAL leaves this unset and continues to use its local bridge catalog.
+    runtime_catalog: Optional[Dict[str, Any]] = None
 
 
 class JobValidationError(ValueError):
@@ -3265,16 +3343,22 @@ LOCKED_B1_SHORTONLY_PARAMS: Dict[str, Any] = {
 }
 
 
-def _strategy_parameter_names(class_name: str) -> set[str]:
+def _strategy_parameter_names(
+    class_name: str,
+    runtime_catalog: Optional[Mapping[str, Any]] = None,
+) -> set[str]:
     """Return tunable NinjaScriptProperty names for class_name from catalog.
 
     The bridge rejects unknown strategy.parameters. Backend-side injections
     therefore must only add fields the concrete strategy actually exposes.
     """
-    try:
-        cat = read_strategies_catalog() or {}
-    except Exception:
-        cat = {}
+    if isinstance(runtime_catalog, Mapping):
+        cat = runtime_catalog
+    else:
+        try:
+            cat = read_strategies_catalog() or {}
+        except Exception:
+            cat = {}
     for s in cat.get("strategies") or []:
         if not isinstance(s, dict) or s.get("class_name") != class_name:
             continue
@@ -3305,7 +3389,9 @@ def _inject_research_accounting_parameters(req: "CreateJobRequest") -> None:
     """
     if not isinstance(req.parameters, dict):
         req.parameters = {}
-    exposed = _strategy_parameter_names(req.class_name)
+    exposed = _strategy_parameter_names(
+        req.class_name, getattr(req, "runtime_catalog", None),
+    )
     if "RoundTurnCommission" in exposed:
         try:
             cur = float(req.parameters.get("RoundTurnCommission", 0.0) or 0.0)
@@ -3423,7 +3509,9 @@ def _inject_risk_profile_parameters(req: "CreateJobRequest") -> None:
     }
     if not isinstance(req.parameters, dict):
         req.parameters = {}
-    exposed = _strategy_parameter_names(req.class_name)
+    exposed = _strategy_parameter_names(
+        req.class_name, getattr(req, "runtime_catalog", None),
+    )
     for k in RISK_PROFILE_PARAM_KEYS:
         if k not in exposed:
             continue
@@ -3455,7 +3543,15 @@ def _risk_profile_param_is_placeholder(key: str, value: Any) -> bool:
 
 
 def _validate(req: CreateJobRequest) -> None:
-    allowed = whitelisted_strategies()
+    runtime_catalog = getattr(req, "runtime_catalog", None)
+    if isinstance(runtime_catalog, Mapping):
+        allowed = [
+            str(item.get("class_name") or "").strip()
+            for item in (runtime_catalog.get("strategies") or [])
+            if isinstance(item, Mapping) and str(item.get("class_name") or "").strip()
+        ]
+    else:
+        allowed = whitelisted_strategies()
     if req.class_name not in allowed:
         raise JobValidationError(
             f"strategy '{req.class_name}' is not whitelisted. "
@@ -3489,10 +3585,13 @@ def _validate(req: CreateJobRequest) -> None:
     # 'None' is always allowed (synthetic 0-commission). Real templates are
     # marked supported=true once bridge can apply them.
     if req.commission_template != "None":
-        try:
-            tmpl_doc = read_templates_catalog() or {}
-        except Exception:
-            tmpl_doc = {}
+        if isinstance(runtime_catalog, Mapping):
+            tmpl_doc = runtime_catalog
+        else:
+            try:
+                tmpl_doc = read_templates_catalog() or {}
+            except Exception:
+                tmpl_doc = {}
         templates = {t.get("name"): t
                      for t in (tmpl_doc.get("commission_templates") or [])}
         tmpl = templates.get(req.commission_template)
@@ -3573,7 +3672,7 @@ def _validate(req: CreateJobRequest) -> None:
     req.role = role
     if role == "research":
         errs: List[str] = []
-        exposed_params = _strategy_parameter_names(req.class_name)
+        exposed_params = _strategy_parameter_names(req.class_name, runtime_catalog)
         required_fill = _research_fill_resolution()
         if req.order_fill_resolution != required_fill:
             errs.append(

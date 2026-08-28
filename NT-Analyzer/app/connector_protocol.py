@@ -43,6 +43,9 @@ HEARTBEAT_INTERVAL_SEC = 15
 OFFLINE_AFTER_SEC = 45
 COMMAND_DELIVERY_LEASE_SEC = 30
 MAX_COMMAND_TTL_SEC = 5 * 60
+RUNTIME_CATALOG_FRESH_SEC = 24 * 60 * 60
+MAX_RUNTIME_CATALOG_STRATEGIES = 160
+MAX_RUNTIME_CATALOG_TEMPLATES = 160
 MAX_ACTIVE_INSTALLATIONS_PER_WORKSPACE = 10
 MAX_ACTIVE_ENROLLMENTS_PER_USER = 5
 MAX_MARKET_DATA_BARS = 64
@@ -1147,6 +1150,69 @@ def issue_challenge(payload: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _queue_runtime_catalog_snapshot(
+    doc: Dict[str, Any],
+    installation: Mapping[str, Any],
+    session: Mapping[str, Any],
+    now: float,
+) -> Dict[str, Any]:
+    """Queue one bounded catalog snapshot for this signed session.
+
+    The device already has a telemetry command channel and the server already
+    has a signed command/result lifecycle. Reusing it keeps Production as the
+    sole execution authority and avoids a second catalog transport. A new
+    signed hello gets one request; ordinary heartbeats do not create churn.
+    """
+    payload = {"command": "snapshot_runtime"}
+    installation_id = str(installation.get("installation_id") or "")
+    workspace_id = str(installation.get("workspace_id") or "")
+    connection_id = str(installation.get("connection_id") or "")
+    session_id = str(session.get("session_id") or "")
+    key = f"runtime-catalog:{installation_id}:{session_id}"
+    clean_payload = _safe_payload(payload)
+    _validate_command_capability("telemetry", clean_payload)
+    envelope_hash = hashlib.sha256(_canonical_json({
+        "workspace_id": workspace_id,
+        "connection_id": connection_id,
+        "capability": "telemetry",
+        "payload": clean_payload,
+    })).hexdigest()
+    command = {
+        "command_id": "cmd_" + secrets.token_urlsafe(18),
+        "workspace_id": workspace_id,
+        "connection_id": connection_id,
+        "installation_id": installation_id,
+        "capability": "telemetry",
+        "idempotency_key": key,
+        "issued_by_user_id": _legacy_user_id(installation.get("user_id")),
+        "issued_at": now,
+        "issued_at_utc": _now_iso(now),
+        "expires_at": now + MAX_COMMAND_TTL_SEC,
+        "expires_at_utc": _now_iso(now + MAX_COMMAND_TTL_SEC),
+        "payload": clean_payload,
+        "envelope_hash": envelope_hash,
+        "status": "queued",
+        "delivery_attempts": 0,
+        "delivery_lease_until": 0,
+        "finished_at_utc": "",
+    }
+    doc["commands"].append(command)
+    return command
+
+
+def _connector_supports_runtime_catalog(version: Any) -> bool:
+    text = str(version or "").strip().lower()
+    dev = re.search(r"-dev\.(\d+)$", text)
+    if dev:
+        return int(dev.group(1)) >= 17
+    base = text.split("-", 1)[0]
+    try:
+        parts = tuple(int(item) for item in base.split("."))
+    except (TypeError, ValueError):
+        return False
+    return parts >= (0, 4, 3)
+
+
 def signed_hello(payload: Mapping[str, Any]) -> Dict[str, Any]:
     allowed = {
         "protocol_version", "connector_version", "nt_version",
@@ -1177,7 +1243,8 @@ def signed_hello(payload: Mapping[str, Any]) -> Dict[str, Any]:
     nonce = str(payload.get("nonce") or "").strip()
     _b64url_decode(nonce, expected=32)
     now = time.time()
-    with _LOCK:
+    catalog_command: Optional[Dict[str, Any]] = None
+    with _COMMANDS_CHANGED:
         doc = _read_doc()
         _refresh_states(doc, now)
         installation = _find_installation(doc, installation_id)
@@ -1251,7 +1318,16 @@ def signed_hello(payload: Mapping[str, Any]) -> Dict[str, Any]:
             "challenge_used_at_utc": _now_iso(now),
         })
         release_decision = _apply_release_policy(installation)
+        if (
+            "telemetry" in set(installation.get("capabilities") or [])
+            and _connector_supports_runtime_catalog(connector_version)
+        ):
+            catalog_command = _queue_runtime_catalog_snapshot(
+                doc, installation, session, now,
+            )
         _write_doc(doc)
+        if catalog_command:
+            _COMMANDS_CHANGED.notify_all()
     _audit(
         "signed_hello_accepted",
         workspace_id=installation["workspace_id"],
@@ -1267,6 +1343,15 @@ def signed_hello(payload: Mapping[str, Any]) -> Dict[str, Any]:
         update_reason=release_decision["reason"],
         release_channel=release_decision["channel"],
     )
+    if catalog_command:
+        _audit(
+            "command_queued",
+            user_id=installation.get("user_id"),
+            workspace_id=installation["workspace_id"],
+            installation_id=installation_id,
+            command_id=catalog_command["command_id"],
+            capability="telemetry",
+        )
     return {
         "ok": True,
         "state": "online",
@@ -1514,6 +1599,144 @@ def _normalise_account_snapshot(value: Any, now: float) -> Dict[str, Any]:
     }
 
 
+_RUNTIME_CATALOG_ROOT_FIELDS = frozenset({
+    "schema_version", "generated_at_utc", "strategies", "commission_templates",
+    "strategy_count", "commission_template_count", "parameter_schemas_included",
+    "truncated",
+})
+_RUNTIME_CATALOG_STRATEGY_FIELDS = frozenset({
+    "class_name", "display_name", "stable_id",
+})
+_RUNTIME_CATALOG_TEMPLATE_FIELDS = frozenset({
+    "name", "display", "supported",
+})
+
+
+def _catalog_text(value: Any, *, maximum: int, field: str,
+                  required: bool = False) -> str:
+    text = " ".join(str(value or "").strip().split())
+    if required and not text:
+        raise ConnectorProtocolError(
+            f"Runtime catalog: {field} обязателен.", 400, "invalid_runtime_catalog",
+        )
+    if len(text) > maximum or any(ord(char) < 32 for char in text):
+        raise ConnectorProtocolError(
+            f"Runtime catalog: {field} некорректен.", 400, "invalid_runtime_catalog",
+        )
+    return text
+
+
+def _normalise_runtime_catalog(value: Any, now: float) -> Dict[str, Any]:
+    if not isinstance(value, Mapping) or set(value) - _RUNTIME_CATALOG_ROOT_FIELDS:
+        raise ConnectorProtocolError(
+            "Runtime catalog имеет некорректный контракт.",
+            400, "invalid_runtime_catalog",
+        )
+    strategies_raw = value.get("strategies")
+    templates_raw = value.get("commission_templates")
+    if not isinstance(strategies_raw, list) or len(strategies_raw) > MAX_RUNTIME_CATALOG_STRATEGIES:
+        raise ConnectorProtocolError(
+            "Runtime catalog содержит недопустимый список стратегий.",
+            400, "invalid_runtime_catalog",
+        )
+    if not isinstance(templates_raw, list) or len(templates_raw) > MAX_RUNTIME_CATALOG_TEMPLATES:
+        raise ConnectorProtocolError(
+            "Runtime catalog содержит недопустимый список комиссий.",
+            400, "invalid_runtime_catalog",
+        )
+    if bool(value.get("parameter_schemas_included")):
+        raise ConnectorProtocolError(
+            "Runtime catalog объявил schemas, которых нет в bounded контракте.",
+            400, "invalid_runtime_catalog",
+        )
+
+    strategies = []
+    seen_strategies = set()
+    for raw in strategies_raw:
+        if not isinstance(raw, Mapping) or set(raw) - _RUNTIME_CATALOG_STRATEGY_FIELDS:
+            raise ConnectorProtocolError(
+                "Runtime catalog содержит некорректную стратегию.",
+                400, "invalid_runtime_catalog",
+            )
+        class_name = _catalog_text(
+            raw.get("class_name"), maximum=80, field="class_name", required=True,
+        )
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{2,79}", class_name):
+            raise ConnectorProtocolError(
+                "Runtime catalog: class_name не является безопасным identifier.",
+                400, "invalid_runtime_catalog",
+            )
+        if class_name in seen_strategies:
+            continue
+        seen_strategies.add(class_name)
+        strategies.append({
+            "class_name": class_name,
+            "display_name": _catalog_text(
+                raw.get("display_name") or class_name,
+                maximum=160, field="display_name", required=True,
+            ),
+            "stable_id": _catalog_text(
+                raw.get("stable_id"), maximum=128, field="stable_id",
+            ),
+            # Absence is explicit, not an empty schema advertised as complete.
+            "parameters": [],
+        })
+
+    templates = []
+    seen_templates = set()
+    for raw in templates_raw:
+        if not isinstance(raw, Mapping) or set(raw) - _RUNTIME_CATALOG_TEMPLATE_FIELDS:
+            raise ConnectorProtocolError(
+                "Runtime catalog содержит некорректный шаблон комиссии.",
+                400, "invalid_runtime_catalog",
+            )
+        name = _catalog_text(raw.get("name"), maximum=160, field="template.name", required=True)
+        if name in seen_templates:
+            continue
+        seen_templates.add(name)
+        templates.append({
+            "name": name,
+            "display": _catalog_text(
+                raw.get("display") or name, maximum=200,
+                field="template.display", required=True,
+            ),
+            "supported": bool(raw.get("supported")),
+        })
+
+    generated = _catalog_text(
+        value.get("generated_at_utc"), maximum=40, field="generated_at_utc",
+    )
+
+    def declared_count(field: str, observed: int) -> int:
+        try:
+            value_count = int(value.get(field) or 0)
+        except (TypeError, ValueError):
+            raise ConnectorProtocolError(
+                f"Runtime catalog: {field} некорректен.",
+                400, "invalid_runtime_catalog",
+            ) from None
+        if value_count < 0 or value_count > 10000:
+            raise ConnectorProtocolError(
+                f"Runtime catalog: {field} вне допустимого диапазона.",
+                400, "invalid_runtime_catalog",
+            )
+        return max(observed, value_count)
+
+    return {
+        "schema_version": 1,
+        "generated_at_utc": generated,
+        "received_at_utc": _now_iso(now),
+        "received_at": now,
+        "strategies": strategies,
+        "commission_templates": templates,
+        "strategy_count": declared_count("strategy_count", len(strategies)),
+        "commission_template_count": declared_count(
+            "commission_template_count", len(templates)),
+        "parameter_schemas_included": False,
+        "truncated": bool(value.get("truncated")),
+    }
+
+
 def _cache_runtime_installation(row: Mapping[str, Any]) -> None:
     installation_id = str(row.get("installation_id") or "")
     if not installation_id:
@@ -1521,7 +1744,7 @@ def _cache_runtime_installation(row: Mapping[str, Any]) -> None:
     cached = {key: copy.deepcopy(row.get(key)) for key in (
         "installation_id", "connection_id", "workspace_id", "user_id", "user_uuid",
         "status", "last_hello_utc", "last_heartbeat_utc", "last_heartbeat_at",
-        "account_snapshot", "revoked_at_utc", "deployment_environment",
+        "account_snapshot", "runtime_catalog", "revoked_at_utc", "deployment_environment",
     )}
     with _RUNTIME_ACCOUNT_CACHE_LOCK:
         _RUNTIME_ACCOUNT_CACHE[installation_id] = cached
@@ -2181,6 +2404,7 @@ def submit_result(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
     result = _safe_result(payload.get("safe_result"))
     error_class = str(payload.get("error_class") or "").strip()[:80]
     now = time.time()
+    catalog_stored = False
     with _COMMANDS_CHANGED:
         doc = _read_doc()
         _refresh_states(doc, now)
@@ -2247,6 +2471,23 @@ def submit_result(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
         command["status"] = status
         if terminal:
             command["finished_at_utc"] = _now_iso(now)
+        command_payload = command.get("payload") \
+            if isinstance(command.get("payload"), Mapping) else {}
+        if (
+            status == "completed"
+            and str(command_payload.get("command") or "") == "snapshot_runtime"
+            and isinstance(result.get("catalog"), Mapping)
+        ):
+            catalog = _normalise_runtime_catalog(result["catalog"], now)
+            catalog.update({
+                "installation_id": str(installation.get("installation_id") or ""),
+                "connection_id": str(installation.get("connection_id") or ""),
+                "workspace_id": str(installation.get("workspace_id") or ""),
+                "connector_version": str(installation.get("connector_version") or ""),
+                "nt_version": str(installation.get("nt_version") or ""),
+            })
+            installation["runtime_catalog"] = catalog
+            catalog_stored = True
         doc["results"].append({
             "command_id": command_id,
             "workspace_id": command["workspace_id"],
@@ -2260,6 +2501,8 @@ def submit_result(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
             "received_at_utc": _now_iso(now),
         })
         _write_doc(doc)
+        if catalog_stored:
+            _cache_runtime_installation(installation)
         _COMMANDS_CHANGED.notify_all()
     _audit(
         "command_result",
@@ -2269,6 +2512,16 @@ def submit_result(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
         status=status,
         error_class=error_class,
     )
+    if catalog_stored:
+        _audit(
+            "runtime_catalog_received",
+            workspace_id=command["workspace_id"],
+            installation_id=command["installation_id"],
+            command_id=command_id,
+            strategies=len(installation["runtime_catalog"].get("strategies") or []),
+            commission_templates=len(
+                installation["runtime_catalog"].get("commission_templates") or []),
+        )
     return {
         "ok": True,
         "command": _public_command(command, include_payload=False),
@@ -2502,6 +2755,28 @@ def runtime_account_status(user_id: Any, *, workspace_id: str = "",
     )
     accounts = copy.deepcopy(snapshot.get("accounts") or []) if snapshot else []
     functional_live = bool(heartbeat_fresh and snapshot_fresh and accounts)
+    runtime_catalog = selected.get("runtime_catalog")
+    if not isinstance(runtime_catalog, Mapping):
+        runtime_catalog = {}
+    catalog_at = float(runtime_catalog.get("received_at") or 0)
+    catalog_age = max(0.0, now - catalog_at) if catalog_at else None
+    catalog_time_fresh = bool(
+        catalog_at and -5 <= now - catalog_at <= RUNTIME_CATALOG_FRESH_SEC
+    )
+    catalog_present = bool(
+        runtime_catalog
+        and isinstance(runtime_catalog.get("strategies"), list)
+        and isinstance(runtime_catalog.get("commission_templates"), list)
+    )
+    catalog_fresh = bool(catalog_present and catalog_time_fresh and heartbeat_fresh)
+    if not catalog_present:
+        catalog_state = "missing"
+    elif not heartbeat_fresh:
+        catalog_state = "offline"
+    elif not catalog_time_fresh:
+        catalog_state = "stale"
+    else:
+        catalog_state = "fresh"
     source_workspace = str(selected.get("workspace_id") or "")
     return {
         "ok": True,
@@ -2531,6 +2806,21 @@ def runtime_account_status(user_id: Any, *, workspace_id: str = "",
         "summary": copy.deepcopy(snapshot.get("summary") or {}),
         "exporter_version": str(snapshot.get("exporter_version") or ""),
         "last_hello_utc": str(selected.get("last_hello_utc") or ""),
+        "runtime_catalog": {
+            "present": catalog_present,
+            "fresh": catalog_fresh,
+            "stale": bool(catalog_present and not catalog_fresh),
+            "state": catalog_state,
+            "age_sec": round(catalog_age, 1) if catalog_age is not None else None,
+            "received_at_utc": str(runtime_catalog.get("received_at_utc") or ""),
+            "generated_at_utc": str(runtime_catalog.get("generated_at_utc") or ""),
+            "installation_id": str(selected.get("installation_id") or ""),
+            "connection_id": str(selected.get("connection_id") or ""),
+            "workspace_id": source_workspace,
+            "connector_version": str(runtime_catalog.get("connector_version") or ""),
+            "nt_version": str(runtime_catalog.get("nt_version") or ""),
+            "catalog": copy.deepcopy(runtime_catalog) if catalog_present else {},
+        },
     }
 
 

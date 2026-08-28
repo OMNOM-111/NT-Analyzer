@@ -109,7 +109,7 @@ namespace NTAnalyzerBridge.Runtime
             {
                 if (File.Exists(_resultsPath))
                 {
-                    foreach (var line in File.ReadAllLines(_resultsPath, Encoding.UTF8))
+                    foreach (var line in RuntimeCommandSpool.ReadAllLines(_resultsPath))
                     {
                         string id = ExtractJsonString(line, "command_id");
                         if (!string.IsNullOrEmpty(id)) _seen.Add(id);
@@ -143,7 +143,7 @@ namespace NTAnalyzerBridge.Runtime
             {
                 if (!File.Exists(_commandsPath)) return;
                 List<string> lines;
-                try { lines = File.ReadAllLines(_commandsPath, Encoding.UTF8).ToList(); }
+                try { lines = RuntimeCommandSpool.ReadAllLines(_commandsPath).ToList(); }
                 catch { return; }
 
                 foreach (var raw in lines)
@@ -992,7 +992,7 @@ namespace NTAnalyzerBridge.Runtime
             sb.Append("}\n");
             try
             {
-                File.AppendAllText(_resultsPath, sb.ToString(), new UTF8Encoding(false));
+                RuntimeCommandSpool.AppendLine(_resultsPath, sb.ToString().TrimEnd('\r', '\n'));
                 BridgeLog.Info("RuntimeCommandProcessor: " + commandId + " " + status + " " + message);
                 return true;
             }
