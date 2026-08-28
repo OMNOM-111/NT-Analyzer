@@ -101,6 +101,47 @@ UI.ready(async function () {
     }).join('') : '<span class="muted">У стратегии нет экспортированных параметров.</span>';
   }
 
+  // The bridge applies commission only through a NinjaTrader template; a
+  // numeric commission is rejected outright, which is why the request always
+  // carries 0. That makes the template the single thing standing between a
+  // backtest and honest costs, so a run must never fall back to "no
+  // commission" quietly -- the metrics would look better than the strategy is.
+  function defaultCommissionTemplate() {
+    return (catalog && catalog.execution_defaults
+            && catalog.execution_defaults.commission_template) || 'None';
+  }
+
+  function commissionTemplateOrDefault(name) {
+    const wanted = String(name || '').trim();
+    const supported = ((catalog && catalog.commission_templates) || [])
+      .filter(item => item && item.supported !== false && item.name)
+      .map(item => item.name);
+    if (wanted && (wanted === 'None' || supported.indexOf(wanted) >= 0)) return wanted;
+    return defaultCommissionTemplate();
+  }
+
+  function renderCommissionTemplates() {
+    const select = UI.qs('#f-commission-template');
+    if (!select) return;
+    const templates = ((catalog && catalog.commission_templates) || [])
+      .filter(item => item && item.supported !== false && item.name);
+    if (!templates.some(item => item.name === 'None')) {
+      templates.push({ name: 'None', display: 'Без комиссии · 0 (не реальные издержки)', supported: true });
+    }
+    select.innerHTML = templates.map(item => {
+      const label = item.name === 'None'
+        ? 'Без комиссии · 0 (не реальные издержки)'
+        : (item.display || item.name);
+      return `<option value="${UI.esc(item.name)}">${UI.esc(label)}</option>`;
+    }).join('');
+    const preferred = defaultCommissionTemplate();
+    select.value = templates.some(item => item.name === preferred) ? preferred : 'None';
+    const warn = UI.qs('#f-commission-zero-note');
+    const sync = () => { if (warn) warn.hidden = select.value !== 'None'; };
+    select.onchange = sync;
+    sync();
+  }
+
   function collectStrategyParams() {
     const values = {};
     UI.qsa('#strategy-params [data-param]').forEach(input => {
@@ -305,15 +346,14 @@ UI.ready(async function () {
     }
     UI.qs('#dw-repeat').onclick = async () => {
       if (isDemo) { UI.toast('В демо повторите сценарий кнопкой «Демо-бэктест»'); return; }
-      if (!confirm('Повторить прогон с теми же параметрами?')) return;
       const reqBody = {
         class_name: className, instrument,
         bars_period_type: timeframe.bars_period_type || 'Minute', bars_period_value: timeframe.value || timeframe.bars_period_value || 1,
         from_utc: period.from_utc || '', to_utc: period.to_utc || '', parameters: params,
         risk_profile: risk, order_fill_resolution: execution.order_fill_resolution || 'High',
         slippage_ticks: execution.slippage_ticks != null ? execution.slippage_ticks : 1,
-        commission: execution.commission != null ? execution.commission : 0,
-        commission_template: execution.commission_template || 'None', session_template: execution.session_template || '',
+        commission: 0,
+        commission_template: commissionTemplateOrDefault(execution.commission_template), session_template: execution.session_template || '',
         is_tick_replay: !!execution.is_tick_replay, role: execution.role || 'research',
       };
       try { const r = await API.http.createJob(reqBody); UI.toast('Прогон поставлен в очередь · ' + (r.job_id || '')); UI.closeDrawer(); loadReports(true); pollQueue(); }
@@ -350,8 +390,8 @@ UI.ready(async function () {
       from_utc: from, to_utc: to,
       order_fill_resolution: UI.qs('#f-fill').value,
       slippage_ticks: parseInt(UI.qs('#f-slippage').value, 10),
-      commission: parseFloat(UI.qs('#f-commission').value),
-      commission_template: 'None',
+      commission: 0,
+      commission_template: commissionTemplateOrDefault(UI.qs('#f-commission-template').value),
       is_tick_replay: UI.qs('#f-tickreplay').checked,
       risk_profile: { StartingCapital: parseFloat(UI.qs('#f-capital').value) },
       parameters: collectStrategyParams(),
@@ -364,13 +404,11 @@ UI.ready(async function () {
     if (!body.instrument) { UI.toast('Укажите инструмент'); return; }
     if (!body.from_utc || !body.to_utc) { UI.toast('Укажите период (даты)'); return; }
     if (basket.length > 1) {
-      if (!confirm(`Запустить пакетный прогон ${body.class_name} по ${basket.length} инструментам?`)) return;
       const btn = UI.qs('#run-btn'); btn.disabled = true;
       try { const instruments = basket.map(root => { const fm = (roots.find(r => r.root === root) || {}).front_month; return (fm && fm.instrument) || root; }); const out = await API.http.createBatch(Object.assign({}, body, { instruments, name: `${body.class_name} ×${instruments.length}` })); UI.toast(`Пакет ${out.batch_id || ''}: ${instruments.length} прогонов`); loadReports(true); pollQueue(); }
       catch (e) { UI.reportError(e); } finally { btn.disabled = false; }
       return;
     }
-    if (!confirm(`Запустить бэктест ${body.class_name} на ${body.instrument} (${body.from_utc.slice(0, 10)} … ${body.to_utc.slice(0, 10)})?`)) return;
     const btn = UI.qs('#run-btn'); btn.disabled = true;
     try { const r = await API.http.createJob(body); UI.toast('Бэктест поставлен в очередь · ' + (r.job_id || '')); loadReports(true); pollQueue(); }
     catch (e) { UI.reportError(e); } finally { btn.disabled = false; }
@@ -473,6 +511,7 @@ UI.ready(async function () {
   roots = (instr && instr.roots) || [];
   strategies = (strat && strat.strategies) || [];
   profiles = (prof && prof.profiles) || []; coverage = cov; catalog = cat;
+  renderCommissionTemplates();
   const groups = Array.from(new Set(roots.map(rootGroup))).sort((a, b) => a.localeCompare(b, 'ru'));
   UI.qs('#inst-group').innerHTML = '<option value="all">Все группы</option>' + groups.map(group => `<option>${UI.esc(group)}</option>`).join('');
   UI.qs('#f-strategy').innerHTML = strategies.map(s => `<option value="${UI.esc(s)}">${UI.esc(s)}</option>`).join('') || '<option value="">нет стратегий</option>';

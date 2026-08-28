@@ -1006,3 +1006,46 @@ def test_victor_ui_exposes_durable_progress_workflow_and_selective_cleanup():
     assert "vitekTaskProgress" in api
     assert ".btn:disabled" in theme
     assert "cursor: not-allowed" in theme
+
+
+def test_backtesting_uses_template_commission_and_submits_without_browser_confirm():
+    html = (AURORA / "backtesting.html").read_text(encoding="utf-8")
+    js = (AURORA / "assets" / "pages" / "backtesting.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'id="f-commission-template"' in html
+    assert 'id="f-commission"' not in html
+    assert "renderCommissionTemplates();" in js
+    assert "commission: 0" in js
+    # Resolved through the guard rather than a bare || 'None', so a missing or
+    # unsupported template cannot become "no commission" on the way out.
+    assert "commission_template: commissionTemplateOrDefault(" in js
+    assert "parseFloat(UI.qs('#f-commission').value)" not in js
+    assert "confirm(`Запустить бэктест" not in js
+    assert "confirm(`Запустить пакетный прогон" not in js
+    assert "confirm('Повторить прогон" not in js
+
+
+def test_backtesting_never_falls_back_to_zero_commission_silently():
+    """The bridge applies commission only through a NinjaTrader template and
+    rejects a numeric one, so the request always carries commission=0. That
+    makes the template the only thing between a backtest and honest costs.
+
+    A run that quietly defaulted to "None" would report a strategy as cheaper
+    than it is, which is worse than refusing to run: the number looks real.
+    """
+    html = (AURORA / "backtesting.html").read_text(encoding="utf-8")
+    js = (AURORA / "assets" / "pages" / "backtesting.js").read_text(encoding="utf-8")
+
+    # The catalog default is a real template; None is only ever an explicit
+    # choice, and it says out loud that the costs are not real.
+    assert "function defaultCommissionTemplate()" in js
+    assert "catalog.execution_defaults.commission_template" in js
+    assert "Без комиссии" in js and "Без комиссии" in html
+    assert 'id="f-commission-zero-note"' in html
+
+    # Both submit paths resolve through the same guard rather than || 'None'.
+    assert "commission_template: commissionTemplateOrDefault(" in js
+    assert "commission_template: execution.commission_template || 'None'" not in js
+    assert "UI.qs('#f-commission-template').value || 'None'" not in js
