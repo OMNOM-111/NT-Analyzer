@@ -13,6 +13,9 @@ using System.Threading;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NTAnalyzerBridge.Config;
+using NTAnalyzerBridge.Execution;
+using NTAnalyzerBridge.Reporting;
+using NTAnalyzerBridge.Runtime;
 using NTAnalyzerBridge.Util;
 
 namespace NTAnalyzerBridge.Connector
@@ -39,7 +42,6 @@ namespace NTAnalyzerBridge.Connector
     internal sealed class ConnectorClient
     {
         public const string ClientVersion = "0.2.0";
-        private static readonly object AppendLock = new object();
         private const int MaxQueuedMarketDataBatches = 32;
         private const int MaxMarketDataFlushBurst = MaxQueuedMarketDataBatches * 2;
         private const int MaxMarketDataBarsPerBatch = 64;
@@ -532,7 +534,7 @@ namespace NTAnalyzerBridge.Connector
             if (capability == "telemetry" && commandName == "snapshot_runtime")
             {
                 ReportResult(commandId, idempotencyKey, "completed",
-                    "runtime snapshot available", "");
+                    "runtime snapshot available", "", BuildRuntimeCatalogResult());
                 return;
             }
             if (capability == "accounts_read" && commandName == "snapshot_accounts")
@@ -556,14 +558,8 @@ namespace NTAnalyzerBridge.Connector
             local["connection_id"] = connectionId;
             local["expires_at_utc"] = expires.ToString("o", CultureInfo.InvariantCulture);
             string commandsPath = Path.Combine(_runtimeDir, "commands.jsonl");
-            lock (AppendLock)
-            {
-                Directory.CreateDirectory(_runtimeDir);
-                File.AppendAllText(
-                    commandsPath,
-                    local.ToString(Formatting.None) + Environment.NewLine,
-                    new UTF8Encoding(false));
-            }
+            RuntimeCommandSpool.AppendLine(
+                commandsPath, local.ToString(Formatting.None));
             _queuedCommandIds.Add(commandId);
             ReportResult(commandId, idempotencyKey, "accepted",
                 "queued for NinjaTrader paper command processor", "");
@@ -575,7 +571,7 @@ namespace NTAnalyzerBridge.Connector
             if (!File.Exists(path) || _queuedCommandIds.Count == 0) return;
             HashSet<string> reported = new HashSet<string>(
                 _state.ReportedCommandIds ?? new List<string>(), StringComparer.Ordinal);
-            foreach (string line in File.ReadLines(path, Encoding.UTF8))
+            foreach (string line in RuntimeCommandSpool.ReadAllLines(path))
             {
                 JObject row;
                 try { row = JObject.Parse(line); }
@@ -605,18 +601,78 @@ namespace NTAnalyzerBridge.Connector
                 string idempotencyKey = FindLocalIdempotencyKey(id);
                 if (string.IsNullOrWhiteSpace(idempotencyKey)) continue;
                 string message = (string)row["message"] ?? (string)row["error"] ?? status;
-                ReportResult(id, idempotencyKey, status, Truncate(message, 1000),
-                    status == "failed" ? "ninjatrader_command_failed" : "",
-                    row["safe_result"] as JObject);
+                try
+                {
+                    ReportResult(id, idempotencyKey, status, Truncate(message, 1000),
+                        status == "failed" ? "ninjatrader_command_failed" : "",
+                        NormalizeRuntimeSafeResult(row["safe_result"] as JObject));
+                }
+                catch (ConnectorHttpException ex)
+                {
+                    if (!IsPermanentResultRejection(ex)) throw;
+                    // A malformed/expired row can never become acceptable by
+                    // retrying. Remember it so one old terminal result cannot
+                    // abort heartbeat + command polling forever.
+                    BridgeLog.Warn("ConnectorClient: terminal result ignored by server (" +
+                        ex.ErrorCode + ") command=" + id);
+                    RememberReported(terminal ? id : progressKey);
+                    reported.Add(terminal ? id : progressKey);
+                    continue;
+                }
                 if (!terminal)
                 {
                     reported.Add(progressKey);
+                    RememberReported(progressKey);
                     continue;
                 }
                 reported.Add(id);
-                _state.ReportedCommandIds.Add(id);
-                ConnectorStateStore.Save(_stateDir, _state);
+                RememberReported(id);
             }
+        }
+
+        private void RememberReported(string key)
+        {
+            if (string.IsNullOrWhiteSpace(key)) return;
+            if (!_state.ReportedCommandIds.Contains(key))
+                _state.ReportedCommandIds.Add(key);
+            ConnectorStateStore.Save(_stateDir, _state);
+        }
+
+        private static bool IsPermanentResultRejection(ConnectorHttpException ex)
+        {
+            if (ex == null) return false;
+            return ex.ErrorCode == "forbidden_command_field"
+                || ex.ErrorCode == "invalid_result"
+                || ex.ErrorCode == "invalid_result_status"
+                || ex.ErrorCode == "result_too_large"
+                || ex.ErrorCode == "command_not_found"
+                || ex.ErrorCode == "command_expired"
+                || ex.ErrorCode == "result_conflict"
+                || ex.ErrorCode == "command_scope_mismatch"
+                || ex.ErrorCode == "idempotency_conflict";
+        }
+
+        private static JObject NormalizeRuntimeSafeResult(JObject value)
+        {
+            if (value == null) return null;
+            JObject normalized = (JObject)value.DeepClone();
+            // dev.16 wrote the canonical report field name into the wire
+            // projection. The protocol deliberately forbids `source` anywhere.
+            // Translate old spool rows once; new executors emit the safe name.
+            JToken legacy = normalized["source"];
+            if (legacy != null && normalized["execution_details"] == null)
+                normalized["execution_details"] = legacy;
+            normalized.Remove("source");
+            return normalized;
+        }
+
+        private JObject BuildRuntimeCatalogResult()
+        {
+            StrategyLoader loader = new StrategyLoader(_cfg.NinjaTraderUserDir);
+            loader.Refresh();
+            JObject catalog = CatalogWriter.BuildConnectorCatalog(
+                _cfg.NinjaTraderUserDir, loader.WhitelistedTypes());
+            return new JObject { ["catalog"] = catalog };
         }
 
         private void ReportResult(
@@ -738,7 +794,7 @@ namespace NTAnalyzerBridge.Connector
         {
             string path = Path.Combine(_runtimeDir, "commands.jsonl");
             if (!File.Exists(path)) return;
-            foreach (string line in File.ReadLines(path, Encoding.UTF8))
+            foreach (string line in RuntimeCommandSpool.ReadAllLines(path))
             {
                 try
                 {
@@ -755,7 +811,7 @@ namespace NTAnalyzerBridge.Connector
         {
             string path = Path.Combine(_runtimeDir, "commands.jsonl");
             if (!File.Exists(path)) return "";
-            foreach (string line in File.ReadLines(path, Encoding.UTF8))
+            foreach (string line in RuntimeCommandSpool.ReadAllLines(path))
             {
                 try
                 {

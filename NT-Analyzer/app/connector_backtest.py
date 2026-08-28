@@ -197,7 +197,14 @@ def result_document(job_doc: Mapping[str, Any],
     the series was not transferred.
     """
     metrics = safe_result.get("metrics")
-    source = safe_result.get("source")
+    # The Connector protocol forbids the generic field name `source` anywhere
+    # on the wire. The device therefore sends `execution_details`; only after
+    # the strict result validator accepts it do we restore the canonical report
+    # field expected by the existing report UI. Keep the fallback for local
+    # materialization/tests that never crossed the protocol boundary.
+    source = safe_result.get("execution_details")
+    if not isinstance(source, Mapping):
+        source = safe_result.get("source")
     document: Dict[str, Any] = {
         "schema_version": "0.1",
         "job_id": str(job_doc.get("job_id") or ""),

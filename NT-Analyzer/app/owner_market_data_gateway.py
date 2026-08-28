@@ -39,12 +39,13 @@ CHART_PATHS = (
 # and the honest way to give it that is a projection of what Production
 # already accepted -- not a second enrollment competing for the same device.
 #
-# Strictly these two reads, and strictly reads. Nothing that queues a command
+# Strictly these runtime/catalog reads, and strictly reads. Nothing that queues a command
 # is on this list, so a consumer can display the Production NinjaTrader and
 # can never act on it. Production stays the only authority that commands it.
 PROJECTION_PATHS = (
     "/api/ops/runtime/heartbeat",
     "/api/ops/runtime/accounts",
+    "/api/catalog",
 )
 _ALLOWED_PUBLIC_HOSTS = {"app.stratforges.com", "canary.stratforges.com"}
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}

@@ -295,6 +295,41 @@ def test_only_changed_active_session_is_reprojected():
     assert conn.inserts("sf_commands") == []
 
 
+def test_device_runtime_catalog_round_trips_in_existing_installation_jsonb():
+    """The bounded catalog is installation metadata, not a new relational
+    authority. Production can persist it in the existing JSONB document
+    without a schema migration or weakening any workspace/user constraint.
+    """
+    catalog = {
+        "schema_version": 1,
+        "received_at": 1787893201.0,
+        "received_at_utc": "2026-08-28T05:00:01Z",
+        "strategies": [{
+            "class_name": "DeviceOnlyStrategy",
+            "display_name": "Device-only strategy",
+            "stable_id": "strategy-device-only",
+            "parameters": [],
+        }],
+        "commission_templates": [{
+            "name": "NinjaTrader Custom",
+            "display": "NinjaTrader Custom",
+            "supported": True,
+        }],
+        "parameter_schemas_included": False,
+        "truncated": False,
+    }
+    installation = _installation(runtime_catalog=catalog)
+    conn = _sync({
+        "installations": [installation], "sessions": [], "commands": [],
+    })
+
+    inserted = conn.inserts("sf_connector_installations")
+    assert len(inserted) == 1
+    assert inserted[0][5]["runtime_catalog"] == catalog
+    assert inserted[0][1] == VALID_WORKSPACE
+    assert inserted[0][2] == VALID_USER
+
+
 def test_production_sized_session_history_updates_only_live_rows():
     old_installation = _installation(
         status="online",

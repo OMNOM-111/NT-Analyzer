@@ -369,6 +369,22 @@ def test_gateway_token_authorizes_chart_path_only(monkeypatch) -> None:
     assert admin_errors and admin_errors[-1][0] == 401
 
 
+def test_device_catalog_projection_is_read_only_and_narrow(monkeypatch) -> None:
+    assert gw.is_projection_path("/api/catalog") is True
+    assert gw.is_projection_path("/api/jobs") is False
+    assert gw.is_projection_path("/api/connector/v1/commands") is False
+
+    monkeypatch.setattr(gw, "fetch_gateway_json", lambda path: {
+        "strategies": [{"class_name": "DeviceOnlyStrategy"}],
+        "requested_path": path,
+    })
+    monkeypatch.setattr(gw, "_hub_environment", lambda: "production")
+    projected = gw.projected_runtime("/api/catalog")
+    assert projected["requested_path"] == "/api/catalog"
+    assert projected["projected_from"] == "production"
+    assert projected["projection_read_only"] is True
+
+
 def test_gateway_token_mismatch_is_unauthorized(monkeypatch) -> None:
     _hub_env(monkeypatch)
     request, errors = _auth_request({gw.TOKEN_HEADER: "wrong-token-value-16"})

@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using NTAnalyzerBridge.Util;
 
 namespace NTAnalyzerBridge.Reporting
@@ -41,6 +43,70 @@ namespace NTAnalyzerBridge.Reporting
             {
                 BridgeLog.Error("CatalogWriter.WriteAll failed", ex);
             }
+        }
+
+        /// <summary>
+        /// Compact device-backed catalog for the existing Connector
+        /// snapshot_runtime command. Parameter schemas stay local in this first
+        /// bounded projection: pretending an omitted schema was an empty schema
+        /// would make the server accept inputs the device never advertised.
+        /// </summary>
+        public static JObject BuildConnectorCatalog(
+            string ntUserDir, IReadOnlyList<Type> strategyTypes)
+        {
+            JArray strategies = new JArray();
+            foreach (Type type in (strategyTypes ?? new List<Type>()).OrderBy(t => t.Name))
+            {
+                try
+                {
+                    Dictionary<string, object> full = BuildStrategyEntry(type, ntUserDir);
+                    strategies.Add(new JObject
+                    {
+                        ["class_name"] = Convert.ToString(full["class_name"]),
+                        ["display_name"] = Convert.ToString(full["display_name"]),
+                        ["stable_id"] = Convert.ToString(full["stable_id"]),
+                    });
+                }
+                catch (Exception ex)
+                {
+                    BridgeLog.Warn("Connector catalog skipped " + type.FullName + ": " + ex.Message);
+                }
+            }
+
+            List<string> notes = new List<string>();
+            JArray commission = JArray.FromObject(
+                ScanCommissionTemplates(ntUserDir, notes, false));
+            int strategyCount = strategies.Count;
+            int templateCount = commission.Count;
+            JObject doc = new JObject
+            {
+                ["schema_version"] = 1,
+                ["generated_at_utc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                ["strategies"] = strategies,
+                ["commission_templates"] = commission,
+                ["strategy_count"] = strategyCount,
+                ["commission_template_count"] = templateCount,
+                ["parameter_schemas_included"] = false,
+                ["truncated"] = false,
+            };
+
+            // The command result channel is 16 KiB including its envelope and
+            // message. Leave headroom and remove tail rows deterministically;
+            // counts and the truncation bit keep the projection honest.
+            const int maxCatalogBytes = 14 * 1024;
+            while (Encoding.UTF8.GetByteCount(doc.ToString(Formatting.None)) > maxCatalogBytes
+                   && strategies.Count > 0)
+            {
+                strategies.RemoveAt(strategies.Count - 1);
+                doc["truncated"] = true;
+            }
+            while (Encoding.UTF8.GetByteCount(doc.ToString(Formatting.None)) > maxCatalogBytes
+                   && commission.Count > 1)
+            {
+                commission.RemoveAt(commission.Count - 1);
+                doc["truncated"] = true;
+            }
+            return doc;
         }
 
         // ----- strategies.json --------------------------------------------
@@ -520,46 +586,9 @@ namespace NTAnalyzerBridge.Reporting
 
         private static void WriteTemplates(string path, string ntUserDir)
         {
-            var commission = new List<Dictionary<string, object>>();
             var thours     = new List<Dictionary<string, object>>();
             var notes      = new List<string>();
-
-            // Always include the synthetic "None / 0 commission" template
-            // because the bridge currently applies *no* commission regardless
-            // of NT settings. UI shows it as the only enabled option.
-            commission.Add(new Dictionary<string, object>
-            {
-                ["name"]      = "None",
-                ["display"]   = "None / 0 commission",
-                ["supported"] = true,
-                ["source"]    = "synthetic",
-            });
-
-            try
-            {
-                string commDir = Path.Combine(ntUserDir, "templates", "Commission");
-                if (Directory.Exists(commDir))
-                {
-                    foreach (var f in Directory.GetFiles(commDir, "*.xml"))
-                    {
-                        commission.Add(new Dictionary<string, object>
-                        {
-                            ["name"]      = Path.GetFileNameWithoutExtension(f),
-                            ["display"]   = Path.GetFileNameWithoutExtension(f),
-                            ["supported"] = true,
-                            ["source"]    = "ntuser:templates/Commission",
-                        });
-                    }
-                }
-                else
-                {
-                    notes.Add("commission template dir not found: " + commDir);
-                }
-            }
-            catch (Exception ex)
-            {
-                notes.Add("scan templates/Commission failed: " + ex.Message);
-            }
+            var commission = ScanCommissionTemplates(ntUserDir, notes, true);
 
             try
             {
@@ -600,6 +629,48 @@ namespace NTAnalyzerBridge.Reporting
                 ["notes"]                 = notes,
             };
             AtomicFile.WriteAllText(path, JsonConvert.SerializeObject(doc, Formatting.Indented));
+        }
+
+        private static List<Dictionary<string, object>> ScanCommissionTemplates(
+            string ntUserDir, List<string> notes, bool includeSource)
+        {
+            var commission = new List<Dictionary<string, object>>();
+            var none = new Dictionary<string, object>
+            {
+                ["name"]      = "None",
+                ["display"]   = "None / 0 commission",
+                ["supported"] = true,
+            };
+            if (includeSource) none["source"] = "synthetic";
+            commission.Add(none);
+            try
+            {
+                string commDir = Path.Combine(ntUserDir, "templates", "Commission");
+                if (Directory.Exists(commDir))
+                {
+                    foreach (string file in Directory.GetFiles(commDir, "*.xml"))
+                    {
+                        string name = Path.GetFileNameWithoutExtension(file);
+                        var row = new Dictionary<string, object>
+                        {
+                            ["name"] = name,
+                            ["display"] = name,
+                            ["supported"] = true,
+                        };
+                        if (includeSource) row["source"] = "ntuser:templates/Commission";
+                        commission.Add(row);
+                    }
+                }
+                else
+                {
+                    notes.Add("commission template dir not found: " + commDir);
+                }
+            }
+            catch (Exception ex)
+            {
+                notes.Add("scan templates/Commission failed: " + ex.Message);
+            }
+            return commission.OrderBy(c => (string)c["name"]).ToList();
         }
     }
 }

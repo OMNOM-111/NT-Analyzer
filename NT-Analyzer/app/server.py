@@ -705,6 +705,20 @@ def _connector_runtime_status(context: Dict[str, Any]) -> Dict[str, Any]:
     )
 
 
+def _connector_runtime_catalog(context: Dict[str, Any]) -> Dict[str, Any]:
+    status = _connector_runtime_status(context)
+    catalog = status.get("runtime_catalog")
+    if isinstance(catalog, Mapping):
+        return dict(catalog)
+    return {
+        "present": False,
+        "fresh": False,
+        "stale": False,
+        "state": "missing",
+        "catalog": {},
+    }
+
+
 def _connectors_dashboard_payload(context: Dict[str, Any]) -> Dict[str, Any]:
     """Aggregated connector/integration status for the Admin panel.
 
@@ -5850,7 +5864,35 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
         if path == "/api/catalog":
-            self._json(HTTPStatus.OK, jobqueue.build_catalog_response())
+            context = getattr(self, "_remote_context", None) or {}
+            if (_environment_has_no_local_ninjatrader()
+                    and owner_market_data_gateway.should_consume()
+                    and _entitled_to_owner_runtime(context)):
+                try:
+                    self._json(
+                        HTTPStatus.OK,
+                        owner_market_data_gateway.projected_runtime(path),
+                    )
+                    return
+                except Exception:
+                    # The hub being unavailable is not a fresh catalog. The
+                    # local response below labels its fallback/missing state.
+                    pass
+            context = owner_market_data_gateway.owner_scoped_context(context)
+            device_catalog = None
+            if (context.get("user_id")
+                    and _connector_is_the_runtime_transport(qs)):
+                try:
+                    device_catalog = _connector_runtime_catalog(context)
+                except Exception:
+                    device_catalog = {
+                        "present": False, "fresh": False, "stale": False,
+                        "state": "unavailable", "catalog": {},
+                    }
+            self._json(
+                HTTPStatus.OK,
+                jobqueue.build_catalog_response(device_catalog=device_catalog),
+            )
             return
 
         # Phase 22e — Strategy Profiles registry (best-of/locked configs).
@@ -10915,6 +10957,17 @@ class Handler(BaseHTTPRequestHandler):
             except practice_trading.PracticeTradingError as exc:
                 self._err(exc.status, str(exc))
             return
+        runtime_catalog = None
+        if connector_backtest.routes_through_connector():
+            try:
+                catalog_status = _connector_runtime_catalog(
+                    getattr(self, "_remote_context", None) or {},
+                )
+                catalog_doc = catalog_status.get("catalog")
+                if catalog_status.get("present") and isinstance(catalog_doc, Mapping):
+                    runtime_catalog = dict(catalog_doc)
+            except Exception:
+                runtime_catalog = None
         try:
             req = jobqueue.CreateJobRequest(
                 class_name=str(body.get("class_name") or ""),
@@ -10936,6 +10989,7 @@ class Handler(BaseHTTPRequestHandler):
                 role=str(body.get("role") or "research"),
                 job_id=None,  # never trust client-supplied ids
                 origin=origin,
+                runtime_catalog=runtime_catalog,
             )
         except (TypeError, ValueError) as e:
             self._err(HTTPStatus.BAD_REQUEST, f"bad request: {e}")

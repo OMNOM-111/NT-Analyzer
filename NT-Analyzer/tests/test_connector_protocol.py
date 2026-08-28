@@ -1441,3 +1441,115 @@ def test_the_connector_reads_the_snapshot_without_reinterpreting_dates() -> None
     reader = reader[: reader.index("catch (Exception ex)")]
     assert "DateParseHandling.None" in reader
     assert "JObject.Parse(" not in reader
+
+
+def test_dev17_signed_hello_collects_and_projects_device_runtime_catalog(
+    connector_store,
+) -> None:
+    """dev.17 reuses telemetry/snapshot_runtime and stores only a bounded,
+    installation-scoped projection. An ordinary heartbeat does not fabricate
+    strategy metadata on the Linux server.
+    """
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    welcome = connector_protocol.signed_hello(_hello(
+        private,
+        pending,
+        overrides={"connector_version": "0.4.2-dev.17"},
+    ))
+
+    polled = connector_protocol.poll_commands(
+        welcome["session_token"], connector_sequence=1, wait_seconds=0,
+    )
+    assert len(polled["commands"]) == 1
+    command = polled["commands"][0]
+    assert command["capability"] == "telemetry"
+    assert command["payload"] == {"command": "snapshot_runtime"}
+
+    connector_protocol.submit_result(welcome["session_token"], {
+        "command_id": command["command_id"],
+        "idempotency_key": command["idempotency_key"],
+        "status": "completed",
+        "connector_sequence": 2,
+        "safe_result": {
+            "message": "runtime snapshot available",
+            "catalog": {
+                "schema_version": 1,
+                "generated_at_utc": "2026-08-28T05:00:00Z",
+                "strategies": [{
+                    "class_name": "DeviceOnlyStrategy",
+                    "display_name": "Device-only strategy",
+                    "stable_id": "strategy-device-only",
+                }],
+                "commission_templates": [{
+                    "name": "NinjaTrader Custom",
+                    "display": "NinjaTrader Custom",
+                    "supported": True,
+                }],
+                "strategy_count": 1,
+                "commission_template_count": 1,
+                "parameter_schemas_included": False,
+                "truncated": False,
+            },
+        },
+        "error_class": "",
+    })
+
+    status = connector_protocol.runtime_account_status(
+        42, workspace_id=workspace["workspace_id"],
+    )
+    catalog_status = status["runtime_catalog"]
+    assert catalog_status["present"] is True
+    assert catalog_status["fresh"] is True
+    assert catalog_status["state"] == "fresh"
+    assert catalog_status["installation_id"] == pending["installation_id"]
+    assert catalog_status["workspace_id"] == workspace["workspace_id"]
+    assert catalog_status["connector_version"] == "0.4.2-dev.17"
+    catalog = catalog_status["catalog"]
+    assert catalog["strategies"][0]["class_name"] == "DeviceOnlyStrategy"
+    assert catalog["strategies"][0]["parameters"] == []
+    assert catalog["commission_templates"][0]["name"] == "NinjaTrader Custom"
+    assert "source" not in json.dumps(catalog)
+
+
+def test_dev16_signed_hello_does_not_receive_the_dev17_catalog_command(
+    connector_store,
+) -> None:
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    welcome = connector_protocol.signed_hello(_hello(
+        private,
+        pending,
+        overrides={"connector_version": "0.4.2-dev.16"},
+    ))
+    polled = connector_protocol.poll_commands(
+        welcome["session_token"], connector_sequence=1, wait_seconds=0,
+    )
+    assert polled["commands"] == []
+
+
+def test_runtime_catalog_rejects_unknown_or_forbidden_device_fields() -> None:
+    catalog = {
+        "schema_version": 1,
+        "generated_at_utc": "2026-08-28T05:00:00Z",
+        "strategies": [{
+            "class_name": "SafeStrategy",
+            "display_name": "Safe strategy",
+            "stable_id": "safe-strategy",
+            "parameters": [{"name": "NotActuallyTransferred"}],
+        }],
+        "commission_templates": [],
+        "strategy_count": 1,
+        "commission_template_count": 0,
+        "parameter_schemas_included": False,
+        "truncated": False,
+    }
+    with pytest.raises(connector_protocol.ConnectorProtocolError) as unknown:
+        connector_protocol._normalise_runtime_catalog(catalog, time.time())
+    assert unknown.value.code == "invalid_runtime_catalog"
+
+    with pytest.raises(connector_protocol.ConnectorProtocolError) as forbidden:
+        connector_protocol._safe_result({
+            "catalog": {"strategies": [], "source": "device filesystem"},
+        })
+    assert forbidden.value.code == "forbidden_command_field"
