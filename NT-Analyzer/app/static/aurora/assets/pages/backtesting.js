@@ -1,5 +1,5 @@
 /* Бэктестирование — реальная интеграция. CSP-safe (external, no inline handlers).
-   Instruments /api/ops/runtime/instruments · strategies /api/strategies · reports /api/reports ·
+   Instruments /api/ops/runtime/instruments · strategies/templates /api/catalog · reports /api/reports ·
    submit POST /api/jobs · favorites /api/report-favorites · job detail /api/jobs/{id}[/trades]. */
 UI.ready(async function () {
   let roots = [], strategies = [], profiles = [], coverage = null, catalog = null, basket = [], repOffset = 0, repFilter = 'all', repSort = 'mtime', repDir = 'desc', repHierarchy = 'report';
@@ -99,6 +99,39 @@ UI.ready(async function () {
       const type = param.kind === 'int' || param.kind === 'float' ? 'number' : 'text'; const step = param.kind === 'float' ? 'any' : '1';
       return `<div class="field"><label>${UI.esc(param.label || param.name)}</label><input type="${type}" step="${step}" ${param.min != null ? `min="${param.min}"` : ''} ${param.max != null ? `max="${param.max}"` : ''} value="${UI.esc(value == null ? '' : value)}" data-param="${UI.esc(param.name)}" data-kind="${UI.esc(param.kind || 'string')}"></div>`;
     }).join('') : '<span class="muted">У стратегии нет экспортированных параметров.</span>';
+  }
+
+  function renderStrategyCatalog() {
+    const entries = ((catalog && catalog.strategies) || []).filter(item => item && item.class_name);
+    strategies = entries.map(item => String(item.class_name));
+    UI.qs('#f-strategy').innerHTML = entries.map(item => {
+      const className = String(item.class_name);
+      const displayName = String(item.display_name || className);
+      const label = displayName && displayName !== className
+        ? `${displayName} · ${className}` : className;
+      return `<option value="${UI.esc(className)}">${UI.esc(label)}</option>`;
+    }).join('') || '<option value="">нет стратегий</option>';
+
+    const note = UI.qs('#f-strategy-source-note');
+    if (!note) return;
+    const device = catalog && catalog.device_catalog;
+    if (device) {
+      const count = entries.length;
+      const sourceText = device.fresh
+        ? `Каталог VMNINJA актуален · ${count} стратегий`
+        : device.present
+          ? `Каталог VMNINJA: последний snapshot (${device.state || 'stale'}) · ${count} стратегий`
+          : `Каталог VMNINJA недоступен (${device.state || 'missing'}); device-стратегии не подтверждены`;
+      note.textContent = sourceText;
+      note.hidden = false;
+      return;
+    }
+    if (!catalog) {
+      note.textContent = 'Каталог стратегий недоступен; список не подменён резервными данными.';
+      note.hidden = false;
+      return;
+    }
+    note.hidden = true;
   }
 
   // The bridge applies commission only through a NinjaTrader template; a
@@ -507,14 +540,13 @@ UI.ready(async function () {
   // load data
   const initialReports = loadReports(true);
   const initialQueue = pollQueue();
-  const [instr, strat, prof, cov, cat] = await Promise.all([API.http.instruments().catch(() => null), API.http.strategies().catch(() => null), API.http.profiles().catch(() => null), API.http.coverage().catch(() => null), API.http.catalog().catch(() => null)]);
+  const [instr, prof, cov, cat] = await Promise.all([API.http.instruments().catch(() => null), API.http.profiles().catch(() => null), API.http.coverage().catch(() => null), API.http.catalog().catch(() => null)]);
   roots = (instr && instr.roots) || [];
-  strategies = (strat && strat.strategies) || [];
   profiles = (prof && prof.profiles) || []; coverage = cov; catalog = cat;
+  renderStrategyCatalog();
   renderCommissionTemplates();
   const groups = Array.from(new Set(roots.map(rootGroup))).sort((a, b) => a.localeCompare(b, 'ru'));
   UI.qs('#inst-group').innerHTML = '<option value="all">Все группы</option>' + groups.map(group => `<option>${UI.esc(group)}</option>`).join('');
-  UI.qs('#f-strategy').innerHTML = strategies.map(s => `<option value="${UI.esc(s)}">${UI.esc(s)}</option>`).join('') || '<option value="">нет стратегий</option>';
   renderInst(); renderBasket(); renderProfiles(); renderCoverage(); renderStrategyParams({});
   await initialReports;
   await initialQueue;
