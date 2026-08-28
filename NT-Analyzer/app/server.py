@@ -568,7 +568,7 @@ def _cancel_backtest_on_connector(
             capability=connector_backtest.CAPABILITY,
             idempotency_key=f"cancel-backtest:{job_id}",
             payload=connector_backtest.cancel_payload(job_id),
-            expires_in_sec=300,
+            expires_in_sec=connector_protocol.MAX_COMMAND_TTL_SEC,
         )
     except Exception:
         observability.event(
@@ -616,7 +616,11 @@ def _dispatch_backtest_to_connector(
         capability=connector_backtest.CAPABILITY,
         idempotency_key=idempotency_key,
         payload=payload,
-        expires_in_sec=900,
+        # This is the window in which the device must *collect* the command,
+        # not a budget for the run. The Connector polls every few seconds, and
+        # once it has accepted the work the run is bounded by its own
+        # cancellation token rather than by this.
+        expires_in_sec=connector_protocol.MAX_COMMAND_TTL_SEC,
     )
     command = queued.get("command") if isinstance(queued, dict) else {}
     connector_backtest.record_dispatch(

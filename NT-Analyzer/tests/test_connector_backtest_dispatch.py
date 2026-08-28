@@ -531,3 +531,23 @@ def test_a_dispatched_job_is_never_swept(tmp_path):
 
     assert connector_backtest.recover_undispatched(jobs_root) == []
     assert connector_backtest.locate(jobs_root, "ui_live")[0] == "pending"
+
+
+def test_dispatch_uses_a_delivery_ttl_the_protocol_accepts():
+    """A backtest can run for minutes, but the command TTL is a delivery
+    window, not a budget for the run: once the device accepts the work the run
+    is bounded by its own cancellation token. Asking for longer than the
+    protocol allows simply refused the command, and the job failed before
+    NinjaTrader ever heard about it.
+    """
+    from pathlib import Path
+
+    from app import connector_protocol
+    from app import server as server_mod
+
+    text = Path(server_mod.__file__).read_text(encoding="utf-8")
+    block = text[text.index("def _dispatch_backtest_to_connector("):]
+    block = block[: block.index("def _connector_is_the_runtime_transport")]
+    assert "expires_in_sec=connector_protocol.MAX_COMMAND_TTL_SEC," in block
+    assert "expires_in_sec=900" not in block
+    assert connector_protocol.MAX_COMMAND_TTL_SEC >= 60
