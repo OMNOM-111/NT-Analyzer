@@ -39,6 +39,7 @@ import urllib.parse
 import urllib.request
 from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from email.utils import formatdate, parsedate_to_datetime
 from http import HTTPStatus
 from http.cookies import SimpleCookie
@@ -2234,6 +2235,11 @@ class Handler(BaseHTTPRequestHandler):
         """
         if isinstance(value, float):
             return value if math.isfinite(value) else None
+        if isinstance(value, Decimal):
+            if not value.is_finite():
+                return None
+            integral = value.to_integral_value()
+            return int(value) if value == integral else float(value)
         if isinstance(value, dict):
             return {k: self._json_safe(v) for k, v in value.items()}
         if isinstance(value, list):
