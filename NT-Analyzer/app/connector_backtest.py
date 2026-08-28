@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
 
@@ -61,6 +62,15 @@ MAX_PARAMETERS = 200
 MAX_PARAMETER_NAME = 64
 MAX_PARAMETER_VALUE = 256
 MAX_TRADES_IN_RESULT = 200
+
+# A freshly-created pending directory is the job currently being dispatched,
+# or a concurrent request doing the same thing.  Treating every directory that
+# does not have dispatch.json *yet* as legacy races the ordinary create ->
+# queue -> record sequence and cancels real UI runs before the Connector can
+# collect them.  Five minutes is the protocol's bounded delivery window; after
+# it elapses an unrecorded job can no longer be an in-flight dispatch and is
+# safe to close with the explicit legacy reason.
+UNDISPATCHED_RECOVERY_GRACE_SEC = 300.0
 
 
 class BacktestDispatchError(RuntimeError):
@@ -353,7 +363,11 @@ def dispatch_record(job_dir: Path) -> Dict[str, Any]:
         return {}
 
 
-def recover_undispatched(jobs_root: Path) -> list:
+def recover_undispatched(
+    jobs_root: Path,
+    *,
+    min_age_sec: float = UNDISPATCHED_RECOVERY_GRACE_SEC,
+) -> list:
     """Close out jobs that were queued before a transport existed.
 
     A job created when this environment had no way to reach NinjaTrader will
@@ -370,6 +384,16 @@ def recover_undispatched(jobs_root: Path) -> list:
         if not job_dir.is_dir() or job_dir.name.startswith("."):
             continue
         if dispatch_record(job_dir):
+            continue
+        try:
+            job_mtime = (job_dir / "job.json").stat().st_mtime
+            age_sec = max(0.0, time.time() - job_mtime)
+        except OSError:
+            # A concurrently-created directory whose job document is not yet
+            # visible is not legacy evidence.  The next bounded sweep can
+            # reconsider it once creation has settled.
+            continue
+        if age_sec < max(0.0, float(min_age_sec)):
             continue
         try:
             (job_dir / "result.json").write_text(
