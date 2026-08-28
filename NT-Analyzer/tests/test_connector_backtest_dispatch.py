@@ -14,6 +14,8 @@ honest account of what it does and does not contain.
 from __future__ import annotations
 
 import json
+import os
+import time
 
 import pytest
 
@@ -509,6 +511,8 @@ def test_a_job_queued_before_dispatch_existed_is_closed_with_its_reason(tmp_path
     legacy.mkdir(parents=True)
     (legacy / "job.json").write_text(json.dumps(_job_doc(job_id="ui_legacy")),
                                      encoding="utf-8")
+    stale = time.time() - connector_backtest.UNDISPATCHED_RECOVERY_GRACE_SEC - 1
+    os.utime(legacy / "job.json", (stale, stale))
 
     recovered = connector_backtest.recover_undispatched(jobs_root)
     assert recovered == ["ui_legacy"]
@@ -516,6 +520,22 @@ def test_a_job_queued_before_dispatch_existed_is_closed_with_its_reason(tmp_path
     result = json.loads(
         (jobs_root / "cancelled" / "ui_legacy" / "result.json").read_text(encoding="utf-8"))
     assert "legacy pre-dispatch job" in result["error"]
+
+
+def test_a_fresh_ui_job_is_not_misclassified_as_legacy_before_dispatch(tmp_path):
+    """create_job writes pending before queue_command can write dispatch.json.
+
+    The recovery sweep runs inside that interval.  A real Production UI job
+    used to cancel itself here before NinjaTrader ever received a command.
+    """
+    jobs_root = tmp_path / "jobs"
+    fresh = jobs_root / "pending" / "ui_fresh"
+    fresh.mkdir(parents=True)
+    (fresh / "job.json").write_text(json.dumps(_job_doc(job_id="ui_fresh")),
+                                    encoding="utf-8")
+
+    assert connector_backtest.recover_undispatched(jobs_root) == []
+    assert connector_backtest.locate(jobs_root, "ui_fresh")[0] == "pending"
 
 
 def test_a_dispatched_job_is_never_swept(tmp_path):
