@@ -599,15 +599,33 @@ def _dispatch_backtest_to_connector(
             "NinjaTrader Connector не подключён: backtest некуда отправить.",
         )
 
-    connector_protocol.queue_command(
+    # Jobs queued before this environment could reach NinjaTrader would wait
+    # forever. Closing them out here keeps the queue meaning what it says.
+    for stale in connector_backtest.recover_undispatched(jobqueue.jobs_dir()):
+        observability.event(
+            "connector_backtest", "recovered_pre_dispatch_job",
+            severity="info", payload={"job_id": stale[:64]},
+        )
+
+    idempotency_key = f"backtest:{job_id}"
+    queued = connector_protocol.queue_command(
         context.get("user_id"),
         workspace_id=str(status.get("source_workspace_id")
                          or active.get("workspace_id") or ""),
         connection_id=connection_id,
         capability=connector_backtest.CAPABILITY,
-        idempotency_key=f"backtest:{job_id}",
+        idempotency_key=idempotency_key,
         payload=payload,
         expires_in_sec=900,
+    )
+    command = queued.get("command") if isinstance(queued, dict) else {}
+    connector_backtest.record_dispatch(
+        job_dir,
+        command_id=str((command or {}).get("command_id")
+                       or (queued or {}).get("command_id") or ""),
+        connection_id=connection_id,
+        idempotency_key=idempotency_key,
+        queued_at_utc=str((command or {}).get("created_at_utc") or ""),
     )
     # The job stays pending. "Accepted" means the device has the work, not
     # that it has begun it, and a Connector that goes silent after accepting

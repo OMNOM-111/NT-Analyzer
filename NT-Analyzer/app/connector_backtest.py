@@ -38,7 +38,16 @@ CAPABILITY = "paper_commands"
 # a backtest request.
 JOB_FIELDS = (
     "schema_version", "job_id", "kind", "instrument", "created_at_utc",
-    "timeframe", "period", "execution", "risk_profile",
+    "timeframe", "period", "execution",
+)
+
+# Risk profile travels flattened. The stored document nests a margin_source
+# block whose own "source" key the command validator forbids outright, and the
+# strategy never reads it there anyway: capital and margin reach the run through
+# strategy.parameters. Projecting the scalars keeps the run identical and keeps
+# a nested shape from carrying a name the transport refuses.
+RISK_FIELDS = (
+    "mode", "currency", "starting_capital", "intraday_only", "status",
 )
 STRATEGY_FIELDS = ("class_name", "parameters")
 
@@ -118,6 +127,13 @@ def command_payload(job_doc: Mapping[str, Any]) -> Dict[str, Any]:
         "class_name": class_name,
         "parameters": _parameters(strategy.get("parameters")),
     }
+    risk = job_doc.get("risk_profile")
+    if isinstance(risk, Mapping):
+        flattened = {
+            field: _scalar(risk[field]) for field in RISK_FIELDS if field in risk
+        }
+        if flattened:
+            job["risk_profile"] = flattened
     return {"command": COMMAND, "job": job}
 
 
@@ -305,6 +321,77 @@ def settle(jobs_root: Path, job_id: str, status: str,
     fail_job(jobs_root, job_id,
              str(safe_result.get("message") or "backtest failed on NinjaTrader"))
     return {"action": "failed", "status": "failed", "job_id": job_id}
+
+
+def record_dispatch(job_dir: Path, *, command_id: str, connection_id: str,
+                    idempotency_key: str, queued_at_utc: str) -> None:
+    """Leave proof beside the job that it was handed to a device.
+
+    Without it a job sitting in pending is ambiguous: it may be waiting for a
+    device that has it, or it may predate dispatch entirely and be waiting for
+    nothing. That difference decides whether an operator should keep waiting.
+    """
+    try:
+        (job_dir / "dispatch.json").write_text(
+            json.dumps({
+                "transport": "production_connector",
+                "command_id": command_id,
+                "connection_id": connection_id,
+                "idempotency_key": idempotency_key,
+                "queued_at_utc": queued_at_utc,
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+
+def dispatch_record(job_dir: Path) -> Dict[str, Any]:
+    try:
+        return json.loads((job_dir / "dispatch.json").read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def recover_undispatched(jobs_root: Path) -> list:
+    """Close out jobs that were queued before a transport existed.
+
+    A job created when this environment had no way to reach NinjaTrader will
+    never run: nothing was told about it and nothing ever will be. Leaving it
+    in pending shows the operator a queue that is not moving for a reason the
+    queue cannot express, so it is moved to a terminal state that says exactly
+    what happened, rather than deleted as if it had never been asked for.
+    """
+    recovered = []
+    pending_root = jobs_root / "pending"
+    if not pending_root.is_dir():
+        return recovered
+    for job_dir in sorted(pending_root.iterdir()):
+        if not job_dir.is_dir() or job_dir.name.startswith("."):
+            continue
+        if dispatch_record(job_dir):
+            continue
+        try:
+            (job_dir / "result.json").write_text(
+                json.dumps({
+                    "schema_version": "0.1",
+                    "job_id": job_dir.name,
+                    "metrics": {},
+                    "trades": [],
+                    "error": (
+                        "Задача создана до появления серверной отправки в "
+                        "NinjaTrader и никогда не была передана устройству "
+                        "(legacy pre-dispatch job)."
+                    ),
+                    "source": {"execution_transport": "none"},
+                }, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            continue
+        move_job(job_dir, jobs_root, "cancelled")
+        recovered.append(job_dir.name)
+    return recovered
 
 
 def cancel_payload(job_id: str) -> Dict[str, Any]:
