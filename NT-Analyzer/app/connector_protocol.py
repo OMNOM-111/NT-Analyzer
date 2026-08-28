@@ -1896,6 +1896,12 @@ def _validate_command_capability(capability: str, payload: Mapping[str, Any]) ->
         "paper_commands": {
             "enable_strategy", "disable_strategy", "reconnect_account",
             "resubscribe_market_data", "resubscribe_instrument",
+            # A backtest is a read-only historical replay on the paper contour:
+            # it opens no position and routes no order. It rides the paper
+            # capability rather than a new one so an already enrolled device
+            # needs no re-enrollment, and it is allow-listed by name here so
+            # the capability cannot be used to name arbitrary work.
+            "run_backtest", "cancel_backtest",
         },
         "live_read": {"snapshot_live_accounts"},
         "live_commands": set(),

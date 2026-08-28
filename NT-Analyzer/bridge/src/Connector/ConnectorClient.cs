@@ -583,14 +583,36 @@ namespace NTAnalyzerBridge.Connector
                 string id = (string)row["command_id"] ?? "";
                 if (!_queuedCommandIds.Contains(id) || reported.Contains(id)) continue;
                 string localStatus = ((string)row["status"] ?? "").ToLowerInvariant();
-                string status = localStatus == "completed" || localStatus == "success"
-                    ? "completed"
-                    : localStatus == "rejected" ? "rejected" : "failed";
+                string status;
+                switch (localStatus)
+                {
+                    // A long-running backtest reports progress before it ends.
+                    // Forwarding those verbatim is what lets the server move a
+                    // job to running only once the device truly started it.
+                    case "accepted": status = "accepted"; break;
+                    case "running":  status = "running"; break;
+                    case "completed":
+                    case "success":  status = "completed"; break;
+                    case "rejected": status = "rejected"; break;
+                    default:         status = "failed"; break;
+                }
+                // Only a terminal row closes a command; progress rows may be
+                // sent more than once without being remembered as the answer.
+                bool terminal = status == "completed" || status == "rejected"
+                    || status == "failed";
+                string progressKey = id + ":" + localStatus;
+                if (!terminal && reported.Contains(progressKey)) continue;
                 string idempotencyKey = FindLocalIdempotencyKey(id);
                 if (string.IsNullOrWhiteSpace(idempotencyKey)) continue;
                 string message = (string)row["message"] ?? (string)row["error"] ?? status;
                 ReportResult(id, idempotencyKey, status, Truncate(message, 1000),
-                    status == "failed" ? "ninjatrader_command_failed" : "");
+                    status == "failed" ? "ninjatrader_command_failed" : "",
+                    row["safe_result"] as JObject);
+                if (!terminal)
+                {
+                    reported.Add(progressKey);
+                    continue;
+                }
                 reported.Add(id);
                 _state.ReportedCommandIds.Add(id);
                 ConnectorStateStore.Save(_stateDir, _state);
@@ -601,15 +623,32 @@ namespace NTAnalyzerBridge.Connector
             string commandId, string idempotencyKey, string status,
             string message, string errorClass)
         {
+            ReportResult(commandId, idempotencyKey, status, message, errorClass, null);
+        }
+
+        private void ReportResult(
+            string commandId, string idempotencyKey, string status,
+            string message, string errorClass, JObject safeResult)
+        {
             if (string.IsNullOrWhiteSpace(commandId) || string.IsNullOrWhiteSpace(idempotencyKey))
                 return;
+            // The executor already bounded this below the channel limit. A
+            // payload that somehow still does not fit is dropped in favour of
+            // the message, so an oversized body can never turn a finished
+            // backtest into a transport failure.
+            JObject body = safeResult != null
+                ? (JObject)safeResult.DeepClone()
+                : new JObject();
+            body["message"] = Truncate(message, 1000);
+            if (Encoding.UTF8.GetByteCount(body.ToString(Formatting.None)) > 16000)
+                body = new JObject { ["message"] = Truncate(message, 1000) };
             PostJson("api/connector/v1/commands/result", new JObject
             {
                 ["command_id"] = commandId,
                 ["idempotency_key"] = idempotencyKey,
                 ["status"] = status,
                 ["connector_sequence"] = NextSequence(),
-                ["safe_result"] = new JObject { ["message"] = Truncate(message, 1000) },
+                ["safe_result"] = body,
                 ["error_class"] = errorClass ?? "",
             }, _sessionToken);
         }
