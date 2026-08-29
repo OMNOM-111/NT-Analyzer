@@ -258,3 +258,84 @@ def test_the_boundary_flag_is_set_only_where_the_boundary_fires():
 
     outcome = (BRIDGE / "Execution" / "HistoricalRunner.cs").read_text("utf-8")
     assert "public bool CancelSeenBeforeTradeCollection { get; set; }" in outcome
+
+
+# --------------------------------------------------------------------------- #
+# The evidence has to be somewhere an operator can reach.
+# --------------------------------------------------------------------------- #
+def test_the_device_answer_is_kept_beside_the_job(tmp_path, monkeypatch):
+    """The operational event goes to the API process log, which is readable
+    only by root. A Production cancel produced exactly the diagnostics that
+    were needed and none of them could be read back."""
+    from app import jobqueue
+
+    root = tmp_path / "jobs"
+    d = root / "cancel_requested" / "ui_1"
+    d.mkdir(parents=True)
+    (d / "job.json").write_text(json.dumps({"job_id": "ui_1"}), encoding="utf-8")
+    monkeypatch.setattr(jobqueue, "jobs_dir", lambda: root)
+    monkeypatch.setattr(server_mod.observability, "event", lambda *a, **k: None)
+
+    server_mod._record_cancel_outcome("ui_1", {"safe_result": {
+        "target_job_id": "ui_1", "active_run_found": True,
+        "cancellation_requested": True, "active_count": 1,
+        "execution_instance_id": "0123456789abcdef",
+        "executor_state": "running",
+    }})
+    kept = json.loads((d / "cancel_evidence.json").read_text("utf-8"))
+    assert kept["active_run_found"] is True
+    assert kept["cancellation_requested"] is True
+    assert kept["recorded_at_utc"]
+
+
+def test_a_missing_job_does_not_break_the_device_report(tmp_path, monkeypatch):
+    from app import jobqueue
+
+    monkeypatch.setattr(jobqueue, "jobs_dir", lambda: tmp_path / "jobs")
+    monkeypatch.setattr(server_mod.observability, "event", lambda *a, **k: None)
+    server_mod._record_cancel_outcome("ui_missing", {"safe_result": {}})
+
+
+def test_the_report_keeps_what_the_device_saw_on_the_cancellation_path():
+    """It was produced by the device and dropped by the server's projection,
+    so the run that most needed explaining arrived with nothing to explain."""
+    doc = connector_backtest.result_document(
+        {"job_id": "ui_1"},
+        {
+            "metrics": {"trade_count": 48252},
+            "trades": [],
+            "trades_total": 48252,
+            "execution_details": {"execution_source": "ninjatrader"},
+            "cancellation": {
+                "execution_instance_id": "0123456789abcdef",
+                "cancel_requested_on_device": True,
+                "cancel_seen_before_run": False,
+                "cancel_seen_after_run": True,
+                "cancel_seen_before_trade_collection": False,
+                "outcome_status": "Done",
+            },
+        },
+    )
+    assert doc["cancellation"]["execution_instance_id"] == "0123456789abcdef"
+    assert doc["cancellation"]["outcome_status"] == "Done"
+
+
+def test_a_local_result_simply_has_no_cancellation_block():
+    doc = connector_backtest.result_document(
+        {"job_id": "ui_1"},
+        {"metrics": {}, "trades": [], "trades_total": 0,
+         "execution_details": {}},
+    )
+    assert doc["cancellation"] == {}
+
+
+def test_a_finished_job_keeps_neither_cancel_marker(tmp_path):
+    root = tmp_path / "jobs"
+    d = root / "cancel_requested" / "ui_1"
+    d.mkdir(parents=True)
+    (d / "job.json").write_text("{}", encoding="utf-8")
+    (d / "cancel.flag").write_text("", encoding="utf-8")
+    (d / "cancel_requested.json").write_text("{}", encoding="utf-8")
+    moved = connector_backtest.move_job(d, root, "done")
+    assert not (moved / "cancel.flag").exists()
+    assert not (moved / "cancel_requested.json").exists()

@@ -552,6 +552,31 @@ def _settle_connector_backtest(body: Mapping[str, Any]) -> None:
         )
 
 
+def _persist_cancel_evidence(job_id: str, payload: Mapping[str, Any]) -> None:
+    """Keep the device's answer beside the job it was about.
+
+    The operational event carrying this goes to the API process log, which is
+    readable only by root. An operator asking "did the cancel reach the run?"
+    cannot get there, so the answer is written where the job already lives.
+    """
+    try:
+        located = connector_backtest.locate(jobqueue.jobs_dir(), str(job_id))
+        if located is None:
+            return
+        _, job_dir = located
+        (job_dir / "cancel_evidence.json").write_text(
+            json.dumps({
+                "schema_version": "0.1",
+                "recorded_at_utc": jobqueue.utcnow_iso("ms"),
+                **{k: v for k, v in payload.items()},
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:
+        # Evidence is never worth failing a device report over.
+        pass
+
+
 def _record_cancel_outcome(job_id: str, body: Mapping[str, Any]) -> None:
     """Say whether the device actually had the run it was asked to stop.
 
@@ -572,6 +597,7 @@ def _record_cancel_outcome(job_id: str, body: Mapping[str, Any]) -> None:
         "already_finished": bool(detail.get("already_finished")),
         "executor_state": str(detail.get("executor_state") or "")[:40],
     }
+    _persist_cancel_evidence(job_id, payload)
     if found and requested:
         observability.event(
             "connector_backtest", "backtest_cancel_requested_on_device",
