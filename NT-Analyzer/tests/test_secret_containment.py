@@ -10,6 +10,7 @@ packaged archive.
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -116,7 +117,9 @@ def test_the_guard_sits_before_anything_is_copied():
         text.index('install -o stratforge -g root -m 0600 "$PROD_ENV"')
 
 
+@pytest.mark.skipif(shutil.which("bash") is None,
+                    reason="no shell on this runner")
 def test_the_promotion_script_is_valid_shell():
-    result = subprocess.run(["bash", "-n", str(PROMOTE)],
+    result = subprocess.run([shutil.which("bash"), "-n", str(PROMOTE)],
                             capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
