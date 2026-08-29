@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading;
 using Newtonsoft.Json.Linq;
 using NTAnalyzerBridge.Util;
 
@@ -37,7 +38,18 @@ namespace NTAnalyzerBridge.Execution
         /// </summary>
         public bool EnableVerboseDiagnostics { get; set; } = false;
 
+        // A finished backtest can hold tens of thousands of trades, and
+        // walking them is our own work, not NinjaTrader's. Checking once at
+        // the start would mean a cancel arriving on the second trade is only
+        // honoured after the forty-eight thousandth.
+        private const int CancelCheckEveryTrades = 256;
+
         public bool Collect(object strategyBase)
+        {
+            return Collect(strategyBase, CancellationToken.None);
+        }
+
+        public bool Collect(object strategyBase, CancellationToken ct)
         {
             if (strategyBase == null)
             {
@@ -63,7 +75,7 @@ namespace NTAnalyzerBridge.Execution
             }
             else
             {
-                ExtractTrades(tradeCollection);
+                ExtractTrades(tradeCollection, ct);
             }
 
             object metricsHost = ProbeMetricsHost(sp);
@@ -225,13 +237,14 @@ namespace NTAnalyzerBridge.Execution
             return null;
         }
 
-        private void ExtractTrades(object tradeCollection)
+        private void ExtractTrades(object tradeCollection, CancellationToken ct)
         {
             int n = 0;
             foreach (var t in (IEnumerable)tradeCollection)
             {
                 if (t == null) continue;
                 n++;
+                if (n % CancelCheckEveryTrades == 0) ct.ThrowIfCancellationRequested();
                 try
                 {
                     Trades.Add(BuildTradeJson(t, n));

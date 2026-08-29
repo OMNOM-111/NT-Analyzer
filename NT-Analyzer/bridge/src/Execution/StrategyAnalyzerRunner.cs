@@ -185,21 +185,20 @@ namespace NTAnalyzerBridge.Execution
             // serialising the report -- is ours and is skipped outright when a
             // cancel is pending. It is the earliest supported point at which a
             // cancel can actually save work.
-            if (ct.IsCancellationRequested)
-            {
-                JobRunOutcome stopped = JobRunOutcome.Cancelled(
-                    "cancelled before trade collection");
-                stopped.CancelSeenBeforeTradeCollection = true;
-                return stopped;
-            }
+            if (ct.IsCancellationRequested) return CancelledAt("before_trade_collection");
 
             // 4) Extract trades + metrics.
             var collector = new TradeCollector { EnableVerboseDiagnostics = _cfg.EnableVerboseDiagnostics };
-            try { collector.Collect(backtested); }
+            try { collector.Collect(backtested, ct); }
+            catch (OperationCanceledException)
+            {
+                return CancelledAt("during_trade_collection");
+            }
             catch (Exception ex)
             {
                 diag.Add("TradeCollector: " + ex.GetType().Name + ": " + ex.Message);
             }
+            if (ct.IsCancellationRequested) return CancelledAt("after_trade_collection");
             // Last-resort fill for winning_pct from the trades list (NT 8.1.6.3
             // does not expose WinningTrades publicly on TradesPerformance).
             try { collector.FinaliseWinningPctFromTrades(); } catch { }
@@ -234,12 +233,17 @@ namespace NTAnalyzerBridge.Execution
             // BarsLoaded, default lookback), the result.json would mis-
             // describe the prog\u0440on and any manual cross-check vs Strategy
             // Analyzer UI would compare two different runs.
-            string periodErr = CheckPeriodInvariant(job, collector.Trades, diag);
+            if (ct.IsCancellationRequested) return CancelledAt("before_metrics");
+            string periodErr;
+            try { periodErr = CheckPeriodInvariant(job, collector.Trades, diag, ct); }
+            catch (OperationCanceledException) { return CancelledAt("during_metrics"); }
             if (periodErr != null)
             {
                 return WriteFailure(jobId, runningDir, "period_mismatch",
                     periodErr, diag, rb, job, strategyType);
             }
+
+            if (ct.IsCancellationRequested) return CancelledAt("before_serialization");
 
             // 5) Build result.json.
             var finalParams = ExtractFinalParameters(backtested, diag);
@@ -342,6 +346,11 @@ namespace NTAnalyzerBridge.Execution
                     arts["bars_file"] = barsFileWritten ? (JToken)"bars.json" : JValue.CreateNull();
             }
             catch { }
+
+            // The commit point. Up to here a cancel still wins and nothing has
+            // been published; past it the run has produced a real report and a
+            // late cancel has honestly lost the race.
+            if (ct.IsCancellationRequested) return CancelledAt("before_final_write");
 
             // Write result.json + trades.json + raw.json (+ bars.json if present).
             WriteJobOutputs(runningDir, result, collector.Trades);
@@ -1251,7 +1260,21 @@ namespace NTAnalyzerBridge.Execution
         /// session/TZ boundary effects. Returns null on success, or an
         /// error string suitable for error.detail otherwise.
         /// </summary>
-        private static string CheckPeriodInvariant(JObject job, JArray trades, List<string> diag)
+        /// <summary>
+        /// One cancellation boundary, naming itself so the server can say where
+        /// the run actually stopped rather than only that it did.
+        /// </summary>
+        private static JobRunOutcome CancelledAt(string boundary)
+        {
+            JobRunOutcome outcome = JobRunOutcome.Cancelled("cancelled at " + boundary);
+            outcome.CancelBoundary = boundary;
+            outcome.CancelSeenBeforeTradeCollection =
+                boundary == "before_trade_collection";
+            return outcome;
+        }
+
+        private static string CheckPeriodInvariant(
+            JObject job, JArray trades, List<string> diag, CancellationToken ct)
         {
             if (trades == null || trades.Count == 0) return null;
 
@@ -1272,9 +1295,13 @@ namespace NTAnalyzerBridge.Execution
             DateTime hi = to   + tol;
 
             int before = 0, after = 0;
+            int checkedTrades = 0;
             DateTime firstEntry = DateTime.MaxValue, lastEntry = DateTime.MinValue;
             foreach (var jt in trades)
             {
+                // This walks every trade too, so it gets the same treatment as
+                // collection: a cancel must not have to wait out the whole list.
+                if (++checkedTrades % 256 == 0) ct.ThrowIfCancellationRequested();
                 string es = (string)jt["entry_time_utc"];
                 string xs = (string)jt["exit_time_utc"];
                 DateTime et = ParseDate(es);

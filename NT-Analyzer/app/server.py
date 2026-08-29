@@ -591,6 +591,11 @@ def _record_cancel_outcome(job_id: str, body: Mapping[str, Any]) -> None:
     requested = bool(detail.get("cancellation_requested"))
     payload = {
         "job_id": str(job_id)[:64],
+        # Without this the cancel answer and the run's own result cannot be
+        # shown to describe the same execution -- which is the whole point of
+        # minting the id in the first place.
+        "execution_instance_id": str(
+            detail.get("execution_instance_id") or "")[:64],
         "active_run_found": found,
         "cancellation_requested": requested,
         "active_count": detail.get("active_count"),

@@ -253,8 +253,9 @@ def test_every_terminal_result_carries_the_diagnostics():
 
 def test_the_boundary_flag_is_set_only_where_the_boundary_fires():
     runner = (BRIDGE / "Execution" / "StrategyAnalyzerRunner.cs").read_text("utf-8")
-    assert "stopped.CancelSeenBeforeTradeCollection = true;" in runner
-    assert runner.count("CancelSeenBeforeTradeCollection") == 1
+    # One place decides it, for every boundary, from the boundary's own name.
+    assert "outcome.CancelSeenBeforeTradeCollection =" in runner
+    assert runner.count("CancelSeenBeforeTradeCollection") == 1,         "the flag must be set in exactly one place"
 
     outcome = (BRIDGE / "Execution" / "HistoricalRunner.cs").read_text("utf-8")
     assert "public bool CancelSeenBeforeTradeCollection { get; set; }" in outcome
