@@ -23,6 +23,7 @@ import json
 import re
 import shutil
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple
 
@@ -304,9 +305,21 @@ def settle(jobs_root: Path, job_id: str, status: str,
 
     if status == "running":
         if current != "pending":
+            # A job already in cancel_requested stays there: the device having
+            # started is not news that changes what the operator asked for.
             return {"action": "noop", "status": current, "job_id": job_id}
         move_job(job_dir, jobs_root, "running")
         return {"action": "started", "status": "running", "job_id": job_id}
+
+    if status == "cancelled":
+        # The device reached a boundary its runner could honour and stopped
+        # there. This is the only thing that makes a job cancelled.
+        if current in {"done", "failed", "cancelled"}:
+            return {"action": "noop_terminal", "status": current, "job_id": job_id}
+        move_job(job_dir, jobs_root, "cancelled")
+        write_cancelled_marker(jobs_root / "cancelled" / job_id,
+                               "runner stopped at a cancellation boundary")
+        return {"action": "cancelled", "status": "cancelled", "job_id": job_id}
 
     if status not in {"completed", "failed", "rejected"}:
         return {"action": "ignored", "status": current, "job_id": job_id}
@@ -333,11 +346,32 @@ def settle(jobs_root: Path, job_id: str, status: str,
     if status == "completed":
         materialize(job_dir, job_doc, safe_result)
         move_job(job_dir, jobs_root, "done")
+        if current == "cancel_requested":
+            # The run finished before any boundary could take effect. The
+            # result is real and is kept; presenting it as a cancellation
+            # would be a lie in the other direction.
+            return {"action": "cancel_race_completed_before_abort_boundary",
+                    "status": "done", "job_id": job_id}
         return {"action": "completed", "status": "done", "job_id": job_id}
 
     fail_job(jobs_root, job_id,
              str(safe_result.get("message") or "backtest failed on NinjaTrader"))
     return {"action": "failed", "status": "failed", "job_id": job_id}
+
+
+def write_cancelled_marker(job_dir: Path, reason: str) -> None:
+    """Say why a job landed in cancelled/ without making a reader infer it."""
+    try:
+        (job_dir / "result.json").write_text(json.dumps({
+            "schema_version": "0.1",
+            "status": "cancelled",
+            "cancelled_at_utc": datetime.now(timezone.utc).isoformat(
+                timespec="milliseconds").replace("+00:00", "Z"),
+            "reason": reason,
+            "verification_warnings": ["cancelled by user"],
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def record_dispatch(job_dir: Path, *, command_id: str, connection_id: str,
@@ -437,7 +471,8 @@ def move_job(job_dir: Path, jobs_root: Path, status: str) -> Path:
     understands. The Connector's own command lifecycle is an implementation
     detail of the transport and never reaches the browser.
     """
-    if status not in {"pending", "running", "done", "failed", "cancelled"}:
+    if status not in {"pending", "running", "cancel_requested",
+                      "done", "failed", "cancelled"}:
         raise BacktestDispatchError(f"Недопустимый статус задачи: {status}")
     if status in {"done", "failed", "cancelled"}:
         # cancel.flag is how a *local* AddOn is asked to stop; it means nothing
@@ -497,7 +532,8 @@ def read_job_document(job_dir: Path) -> Dict[str, Any]:
 
 
 def locate(jobs_root: Path, job_id: str) -> Optional[Tuple[str, Path]]:
-    for status in ("running", "pending", "done", "failed", "cancelled"):
+    for status in ("running", "cancel_requested", "pending",
+                   "done", "failed", "cancelled"):
         candidate = jobs_root / status / job_id
         if candidate.is_dir():
             return status, candidate

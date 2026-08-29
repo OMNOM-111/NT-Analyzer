@@ -180,6 +180,14 @@ namespace NTAnalyzerBridge.Execution
                     "no_backtest_path_succeeded", diag, rb, job, strategyType);
             }
 
+            // Boundary: the computation NinjaTrader would not let us stop is
+            // over. Everything below -- collecting trades, building metrics,
+            // serialising the report -- is ours and is skipped outright when a
+            // cancel is pending. It is the earliest supported point at which a
+            // cancel can actually save work.
+            if (ct.IsCancellationRequested)
+                return JobRunOutcome.Cancelled("cancelled before trade collection");
+
             // 4) Extract trades + metrics.
             var collector = new TradeCollector { EnableVerboseDiagnostics = _cfg.EnableVerboseDiagnostics };
             try { collector.Collect(backtested); }

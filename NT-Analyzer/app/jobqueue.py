@@ -55,7 +55,14 @@ _FALLBACK_STRATEGIES: List[str] = ["SampleMACrossOver"]
 WHITELISTED_STRATEGIES: List[str] = list(_FALLBACK_STRATEGIES)
 
 JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.\-]{0,127}$")
-QUEUE_SUBDIRS = ("pending", "running", "done", "failed", "cancelled")
+# ``cancel_requested`` is a real state, not a decoration. A backtest that
+# runs on a remote NinjaTrader cannot be stopped on demand: RunBacktest()
+# takes no cancellation token and NinjaTrader offers no supported way to
+# preempt it, so between "the operator asked" and "the device confirmed it
+# stopped" there is a stretch during which the run is genuinely still
+# computing. Calling that ``cancelled`` tells the operator something untrue.
+QUEUE_SUBDIRS = ("pending", "running", "cancel_requested",
+                 "done", "failed", "cancelled")
 BATCH_ID_PATTERN = JOB_ID_PATTERN
 _RESERVED_WINDOWS_NAMES = {
     "CON", "PRN", "AUX", "NUL",
@@ -5357,7 +5364,8 @@ def list_reports(limit: int = 100,
     sort_col = _coerce_report_sort_col(sort_col)
     sort_dir = _coerce_report_sort_dir(sort_dir)
     status_filter = str(status_filter or "all").strip().lower()
-    if status_filter not in {"all", "pending", "running", "done", "failed", "cancelled", "favorite"}:
+    if status_filter not in {"all", "pending", "running", "cancel_requested",
+                             "done", "failed", "cancelled", "favorite"}:
         status_filter = "all"
 
     counts = {sub: 0 for sub in QUEUE_SUBDIRS}
@@ -5704,8 +5712,8 @@ def _aggregate_batch_finished(children: List[Dict[str, Any]],
 def _aggregate_batch_status(children: List[Dict[str, Any]],
                             loc_index: Optional[Dict[str, Tuple[str, Path, float]]] = None
                             ) -> Dict[str, int]:
-    counts = {"pending": 0, "running": 0, "done": 0, "failed": 0, "cancelled": 0,
-              "missing": 0}
+    counts = {"pending": 0, "running": 0, "cancel_requested": 0,
+              "done": 0, "failed": 0, "cancelled": 0, "missing": 0}
     for c in children:
         jid = c.get("job_id")
         if not jid:
@@ -5929,6 +5937,21 @@ def _extract_period_check(warnings: List[Any]) -> Optional[Dict[str, Any]]:
 # Already-terminal statuses (done/failed/cancelled) are no-ops.
 # ---------------------------------------------------------------------------
 
+def _move_job_dir(jdir: Path, target: str, job_id: str) -> Path:
+    """Move one job directory between queue states, never overwriting."""
+    parent = jobs_dir() / target
+    parent.mkdir(parents=True, exist_ok=True)
+    dest = parent / job_id
+    if dest.exists():
+        dest = parent / f"{job_id}__{utcnow_iso('ms').replace(':','').replace('-','')}"
+    try:
+        os.rename(str(jdir), str(dest))
+    except OSError as e:
+        raise JobValidationError(
+            f"failed to move job to {target}: {e}") from e
+    return dest
+
+
 def cancel_job(job_id: str) -> Dict[str, Any]:
     """Idempotent cancel. Returns {job_id, status, action}.
 
@@ -5944,6 +5967,31 @@ def cancel_job(job_id: str) -> Dict[str, Any]:
     if status in ("done", "failed", "cancelled"):
         return {"job_id": job_id, "status": status,
                 "action": "noop_terminal"}
+    if status == "cancel_requested":
+        # Asking twice is the same request. The device has it; nothing here
+        # can make it arrive again sooner.
+        return {"job_id": job_id, "status": "cancel_requested",
+                "action": "cancel_requested"}
+
+    from . import connector_backtest as _cb
+    if _cb.routes_through_connector():
+        # The run is executing on a NinjaTrader this process cannot reach, and
+        # `pending` here does not mean "not started" -- the device picks a job
+        # up while the canonical job is still pending. Moving it straight to
+        # cancelled would claim a stop that has not happened. The job waits in
+        # cancel_requested until the device says which way it went.
+        dest = _move_job_dir(jdir, "cancel_requested", job_id)
+        try:
+            _atomic_write_text(dest / "cancel_requested.json", json.dumps({
+                "schema_version": "0.1",
+                "requested_at_utc": utcnow_iso("ms"),
+                "note": "awaiting device confirmation; NinjaTrader cannot be "
+                        "preempted mid-run",
+            }, ensure_ascii=False, indent=2))
+        except OSError:
+            pass
+        return {"job_id": job_id, "status": "cancel_requested",
+                "action": "cancel_requested"}
 
     if status == "pending":
         target_parent = jobs_dir() / "cancelled"
