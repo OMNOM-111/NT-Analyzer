@@ -89,7 +89,8 @@ def test_the_device_says_whether_it_had_the_run():
                if line.strip().startswith('["') and "] =" in line}
     assert emitted == {"target_job_id", "active_run_found",
                        "cancellation_requested", "active_count",
-                       "already_finished", "executor_state"}, emitted
+                       "already_finished", "executor_state",
+                       "execution_instance_id"}, emitted
     assert "_active.Keys" not in cancel
 
 
@@ -200,3 +201,60 @@ def test_the_registry_is_cleared_only_when_the_task_actually_ends():
     assert "_active.Remove(record.JobId)" in finally_block
     assert "_finished.Add(record.JobId)" in finally_block
     assert "record.Cancellation.Dispose()" in finally_block
+
+
+# --------------------------------------------------------------------------- #
+# Correlating the run the cancel found with the run that produced the result.
+# --------------------------------------------------------------------------- #
+def test_a_started_run_gets_an_opaque_execution_instance_id():
+    """`active_run_found` alone cannot answer whether the entry the cancel hit
+    is the execution that later returned a result. An id created at Start and
+    echoed by both answers exactly that -- and nothing else: it is opaque,
+    per-process and carries no address, thread or workspace information."""
+    src = _executor_source()
+    assert "public string ExecutionInstanceId;" in src
+    assert 'ExecutionInstanceId = Guid.NewGuid().ToString("N").Substring(0, 16)' in src
+
+
+def test_the_cancel_answer_and_the_run_result_carry_the_same_id():
+    src = _executor_source()
+    start = src.index("public void Cancel(")
+    cancel = src[start:src.index("// ---", start)]
+    assert '["execution_instance_id"]' in cancel
+
+    diag = src[src.index("private static JObject Diagnostics("):]
+    diag = diag[: diag.index("private string BuildSafeResult(")]
+    assert '["execution_instance_id"] = record.ExecutionInstanceId' in diag
+
+
+def test_the_runner_boundaries_report_what_they_saw():
+    """Four plain booleans separate a registry miss from a token that never
+    reached the runner from a runner that saw the cancel and finished anyway."""
+    src = _executor_source()
+    diag = src[src.index("private static JObject Diagnostics("):]
+    diag = diag[: diag.index("private string BuildSafeResult(")]
+    for field in ("cancel_seen_before_run", "cancel_seen_after_run",
+                  "cancel_seen_before_trade_collection", "outcome_status",
+                  "cancel_requested_on_device"):
+        assert f'["{field}"]' in diag, field
+    # Diagnostics only: nothing about objects, threads or other runs.
+    for forbidden in ("GetHashCode", "Thread", "ManagedThreadId", "workspace"):
+        assert forbidden not in diag
+
+
+def test_every_terminal_result_carries_the_diagnostics():
+    """A cancelled run used to report with a null body, so the one outcome that
+    most needed explaining explained nothing."""
+    src = _executor_source()
+    execute = src[src.index("private void Execute("):src.index("public void Cancel(")]
+    assert execute.count("Diagnostics(record") >= 3
+    assert "Diagnostics(record, null, true, true)" in execute
+
+
+def test_the_boundary_flag_is_set_only_where_the_boundary_fires():
+    runner = (BRIDGE / "Execution" / "StrategyAnalyzerRunner.cs").read_text("utf-8")
+    assert "stopped.CancelSeenBeforeTradeCollection = true;" in runner
+    assert runner.count("CancelSeenBeforeTradeCollection") == 1
+
+    outcome = (BRIDGE / "Execution" / "HistoricalRunner.cs").read_text("utf-8")
+    assert "public bool CancelSeenBeforeTradeCollection { get; set; }" in outcome

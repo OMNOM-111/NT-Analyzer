@@ -234,5 +234,6 @@ def test_the_runner_stops_before_doing_work_it_no_longer_needs_to_do():
     root = Path(__file__).resolve().parent.parent
     rs = (root / "bridge" / "src" / "Execution"
           / "StrategyAnalyzerRunner.cs").read_text("utf-8")
-    assert 'JobRunOutcome.Cancelled("cancelled before trade collection")' in rs
+    assert '"cancelled before trade collection"' in rs
+    assert "stopped.CancelSeenBeforeTradeCollection = true;" in rs,         "the boundary must also say that it was the one that saw the cancel"
     assert rs.count("ct.IsCancellationRequested") >= 4
