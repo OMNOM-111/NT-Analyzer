@@ -2397,7 +2397,11 @@ def submit_result(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
     command_id = _safe_id(payload.get("command_id"), "command_id")
     idempotency_key = str(payload.get("idempotency_key") or "").strip()
     status = str(payload.get("status") or "").strip().lower()
-    if status not in {"accepted", "running", "completed", "failed", "rejected"}:
+    # `cancelled` is terminal and distinct from `failed`: a run the operator
+    # stopped is not a run that broke, and recording it as a failure would put
+    # an error in front of somebody who got exactly what they asked for.
+    if status not in {"accepted", "running", "completed",
+                      "cancelled", "failed", "rejected"}:
         raise ConnectorProtocolError(
             "Некорректный command result status.", 400, "invalid_result_status",
         )
@@ -2467,7 +2471,7 @@ def submit_result(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
                 409,
                 "command_expired",
             )
-        terminal = status in {"completed", "failed", "rejected"}
+        terminal = status in {"completed", "cancelled", "failed", "rejected"}
         command["status"] = status
         if terminal:
             command["finished_at_utc"] = _now_iso(now)

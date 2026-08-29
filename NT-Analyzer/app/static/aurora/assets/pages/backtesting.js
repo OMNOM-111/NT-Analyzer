@@ -6,7 +6,12 @@ UI.ready(async function () {
   const reportSummaries = new Map();
   const reportSparkLoaded = new Set();
   const REP_PAGE = 50;
-  const ST_BADGE = { done: 'done', failed: 'failed', cancelled: 'archived', running: 'running', pending: 'trial' };
+  const ST_BADGE = { done: 'done', failed: 'failed', cancelled: 'archived', running: 'running', pending: 'trial', cancel_requested: 'running' };
+  // What the operator is told while a cancel is in flight. NinjaTrader
+  // cannot be interrupted mid-run, so this is a normal state to be in for
+  // a while -- not an error, and not a finished cancellation.
+  const ST_TEXT = { cancel_requested: 'Отмена… NinjaTrader завершает текущую фазу' };
+  const stText = s => ST_TEXT[s] || s;
   const statusBadge = (st) => `<span class="badge ${ST_BADGE[st] || ''}">${UI.esc(st || '')}</span>`;
   const fmtDate = (iso) => { try { return new Date(iso).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch (e) { return iso || ''; } };
   const tfLabel = (tf) => tf ? `${tf.value || tf.bars_period_value || ''} ${(tf.bars_period_type === 'Minute' ? 'мин' : (tf.bars_period_type || ''))}` : '';
@@ -515,18 +520,18 @@ UI.ready(async function () {
     let doc;
     try { doc = await API.http.jobs({ limit: 20 }); } catch (e) { return; }
     const c = doc.counts || {};
-    const active = (doc.jobs || []).filter(j => j.status === 'running' || j.status === 'pending');
+    const active = (doc.jobs || []).filter(j => j.status === 'running' || j.status === 'pending' || j.status === 'cancel_requested');
     const panel = UI.qs('#queue-panel');
     if (!active.length) { panel.hidden = true; return; }
     panel.hidden = false;
     UI.qs('#queue-sub').textContent = `${c.running || 0} в работе · ${c.pending || 0} в очереди`;
-    UI.qs('#queue-list').innerHTML = active.map(j => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(j.class_name || j.job_id)}</div><div class="row-sub">${UI.esc(j.instrument || '')} · ${UI.esc(j.status)}</div></div><div class="row-val"><button class="btn sm danger" data-cancel="${UI.esc(j.job_id)}">Отмена</button></div></div>`).join('');
+    UI.qs('#queue-list').innerHTML = active.map(j => `<div class="row"><div class="row-main"><div class="row-title">${UI.esc(j.class_name || j.job_id)}</div><div class="row-sub">${UI.esc(j.instrument || '')} · ${UI.esc(stText(j.status))}</div></div><div class="row-val">${j.status === 'cancel_requested' ? '<span class="sub">отменяется…</span>' : `<button class="btn sm danger" data-cancel="${UI.esc(j.job_id)}">Отмена</button>`}</div></div>`).join('');
     // No native confirm(): it blocks the page, cannot be styled, and stands
     // between an operator and stopping a run that is burning time right now.
     // Cancelling is reversible -- the backtest can simply be started again --
     // so it acts immediately and says so. Deleting a report keeps its
     // confirmation, because that one cannot be undone.
-    UI.qsa('#queue-list button[data-cancel]').forEach(b => b.onclick = async () => { b.disabled = true; try { await API.http.cancelJob(b.dataset.cancel); UI.toast('Отмена запрошена'); pollQueue(); loadReports(true); } catch (e) { b.disabled = false; UI.reportError(e); } });
+    UI.qsa('#queue-list button[data-cancel]').forEach(b => b.onclick = async () => { b.disabled = true; try { await API.http.cancelJob(b.dataset.cancel); UI.toast('Отмена запрошена — NinjaTrader завершает текущую фазу'); pollQueue(); loadReports(true); } catch (e) { b.disabled = false; UI.reportError(e); } });
   }
 
   // ---------- init ----------

@@ -202,6 +202,15 @@ namespace NTAnalyzerBridge.Runtime
             {
                 Directory.CreateDirectory(workDir);
 
+                // Boundary 0. A cancel that arrived between dispatch and the
+                // first line of work costs nothing to honour.
+                if (record.Cancellation.IsCancellationRequested)
+                {
+                    _writeResult(record.CommandId, "cancelled",
+                        "cancelled before the run started", null);
+                    return;
+                }
+
                 // Reported only now: the run is genuinely under way, so the
                 // canonical job moves to running only when it is true.
                 _writeResult(record.CommandId, "running",
@@ -211,18 +220,44 @@ namespace NTAnalyzerBridge.Runtime
                     record.JobId, job, strategyType, workDir,
                     record.Cancellation.Token);
 
-                if (record.CancelRequested || record.Cancellation.IsCancellationRequested)
+                // The runner's own outcome is the authority, not the fact that
+                // somebody asked. NinjaTrader's RunBacktest() takes no token
+                // and cannot be preempted, so a cancel can arrive while the
+                // run is already finishing. Reporting that as "cancelled"
+                // would throw away a complete, valid result and tell the
+                // operator something untrue about their own run.
+                if (outcome != null && outcome.Status == JobStatus.Cancelled)
                 {
-                    // A run that was stopped must never report success, even if
-                    // the runner managed to finish on its way out.
                     _writeResult(record.CommandId, "cancelled",
-                        "backtest cancelled before completion", null);
+                        Truncate(outcome.Message ?? "cancelled at a runner boundary", 400),
+                        null);
+                    return;
+                }
+
+                if (record.CancelRequested)
+                {
+                    // Honest race: the run reached its end before any boundary
+                    // could take effect. The server records this rather than
+                    // presenting a finished run as a cancelled one.
+                    BridgeLog.Info(
+                        "ConnectorBacktestExecutor: cancel_race_completed_before_abort_boundary job="
+                        + record.JobId);
+                }
+
+                if (outcome != null && outcome.Status == JobStatus.Failed)
+                {
+                    _writeResult(record.CommandId, "failed",
+                        Truncate((outcome.ErrorType ?? "run_failed") + ": "
+                                 + (outcome.Message ?? ""), 400), null);
                     return;
                 }
 
                 string safeResult = BuildSafeResult(record, workDir, outcome);
                 _writeResult(record.CommandId, "success",
-                    "backtest completed on NinjaTrader", safeResult);
+                    record.CancelRequested
+                        ? "backtest completed before cancellation could take effect"
+                        : "backtest completed on NinjaTrader",
+                    safeResult);
             }
             catch (OperationCanceledException)
             {

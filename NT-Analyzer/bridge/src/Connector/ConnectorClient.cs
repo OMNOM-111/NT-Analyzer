@@ -195,6 +195,16 @@ namespace NTAnalyzerBridge.Connector
                         EnsureSession();
                         SendHeartbeat();
                         FlushMarketData();
+                        // Drained before the command poll as well as after it.
+                        // PollCommands blocks on a bounded long poll, so a
+                        // progress row written while the previous iteration was
+                        // waiting used to sit in the spool for a whole poll
+                        // window -- long enough that a backtest could finish
+                        // before the server ever learned it had started, and
+                        // the canonical job stayed "pending" for the entire
+                        // run. This costs no extra requests: the same loop,
+                        // one call earlier.
+                        ReportRuntimeResults();
                         PollCommands();
                         ReportRuntimeResults();
                         backoffSeconds = 2;
@@ -589,13 +599,17 @@ namespace NTAnalyzerBridge.Connector
                     case "running":  status = "running"; break;
                     case "completed":
                     case "success":  status = "completed"; break;
+                    // A stopped run is not a broken one. Without this it fell
+                    // through to "failed" and the operator was shown an error
+                    // for doing exactly what they meant to do.
+                    case "cancelled": status = "cancelled"; break;
                     case "rejected": status = "rejected"; break;
                     default:         status = "failed"; break;
                 }
                 // Only a terminal row closes a command; progress rows may be
                 // sent more than once without being remembered as the answer.
-                bool terminal = status == "completed" || status == "rejected"
-                    || status == "failed";
+                bool terminal = status == "completed" || status == "cancelled"
+                    || status == "rejected" || status == "failed";
                 string progressKey = id + ":" + localStatus;
                 if (!terminal && reported.Contains(progressKey)) continue;
                 string idempotencyKey = FindLocalIdempotencyKey(id);

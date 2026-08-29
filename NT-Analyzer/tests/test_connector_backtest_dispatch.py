@@ -423,11 +423,23 @@ def test_cancel_targets_one_job_and_is_idempotent():
     assert "rejected" not in cancel.split("cancel job_id missing")[1]
 
 
-def test_a_cancelled_run_never_reports_success():
-    """The runner may still finish on its way out; that is not a completion."""
+def test_the_outcome_of_a_run_is_decided_by_the_runner():
+    """This test used to assert the opposite, and the opposite was wrong.
+
+    It pinned "somebody asked to cancel, so report cancelled" -- which threw
+    away a complete, valid result whenever a cancel arrived while the run was
+    already finishing, and told the operator their finished run had been
+    stopped. NinjaTrader's RunBacktest() cannot be preempted, so that race is
+    ordinary rather than exotic. The runner reports which boundary it actually
+    reached, and that is what the outcome follows.
+    """
     source = _executor_source()
-    assert "record.CancelRequested || record.Cancellation.IsCancellationRequested" in source
-    assert "backtest cancelled before completion" in source
+    assert "outcome != null && outcome.Status == JobStatus.Cancelled" in source
+    assert "record.CancelRequested || record.Cancellation.IsCancellationRequested"         not in source
+    # The race is recorded rather than hidden.
+    assert "cancel_race_completed_before_abort_boundary" in source
+    # And a cancel that beat the first line of work still costs nothing.
+    assert "cancelled before the run started" in source
 
 
 def test_a_failed_run_cleans_up_its_state():
