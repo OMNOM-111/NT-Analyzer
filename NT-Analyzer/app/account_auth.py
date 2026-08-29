@@ -3966,10 +3966,19 @@ _RESEND_ENDPOINT = "https://api.resend.com/emails"
 _RESEND_USER_AGENT = "StratForge-Auth/1 (+https://app.stratforges.com)"
 
 
+def _resend_api_key() -> str:
+    """Platform secret, from the external per-environment store."""
+    from . import platform_secrets
+    try:
+        return platform_secrets.get("NTA_RESEND_API_KEY").strip()
+    except platform_secrets.PlatformSecretError:
+        return ""
+
+
 def _email_provider_config() -> Dict[str, str]:
     return {
         "provider": str(os.environ.get("NTA_EMAIL_AUTH_PROVIDER") or "").strip().lower(),
-        "api_key": str(os.environ.get("NTA_RESEND_API_KEY") or "").strip(),
+        "api_key": _resend_api_key(),
         "sender": str(os.environ.get("NTA_EMAIL_AUTH_FROM") or "").strip(),
     }
 

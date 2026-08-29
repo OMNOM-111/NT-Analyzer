@@ -108,9 +108,14 @@ ACTION_DEPLOY_CANARY = "release_deploy_canary"
 ACTION_APPROVE_PRODUCTION = "release_approve_production"
 ACTION_PROMOTE_PRODUCTION = "release_promote_production"
 ACTION_ROLLBACK_PRODUCTION = "release_rollback_production"
+#: Replacing a platform credential is a step-up action in its own right, and
+#: deliberately not one the owner session alone may perform.
+ACTION_REPLACE_PLATFORM_SECRET = "replace_platform_secret"
+
 STEP_UP_ACTIONS = (
     ACTION_DEPLOY_CANARY, ACTION_APPROVE_PRODUCTION,
     ACTION_PROMOTE_PRODUCTION, ACTION_ROLLBACK_PRODUCTION,
+    ACTION_REPLACE_PLATFORM_SECRET,
 )
 STEP_UP_GRANT_TTL_SEC = 10 * 60
 
@@ -386,10 +391,18 @@ def _git_state() -> Tuple[str, bool]:
 # --------------------------------------------------------------------------- #
 # Step-up (reuse the Phase 4-5 security-challenge grants; owner is exempt).
 # --------------------------------------------------------------------------- #
-def _require_step_up(actor: Any, *, action: str, challenge_id: str = "") -> Dict[str, Any]:
+def _require_step_up(actor: Any, *, action: str, challenge_id: str = "",
+                     allow_owner_exempt: bool = True) -> Dict[str, Any]:
+    """Confirm a recent, unused step-up grant for this action.
+
+    The owner is exempt for release actions, where the account itself is the
+    authority. Replacing a platform secret is different: possession of the
+    session is not meant to be enough, so that caller asks for the strict form
+    and no exemption applies.
+    """
     if action not in STEP_UP_ACTIONS:
         raise ReleaseCenterError("Недопустимое step-up действие.", 400, code="action_invalid")
-    if _is_owner(actor):
+    if allow_owner_exempt and _is_owner(actor):
         return {"ok": True, "owner_exempt": True, "action": action}
     from . import security_devices
     environment = runtime_env.deployment_environment()
