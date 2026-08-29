@@ -4354,20 +4354,35 @@
     }
     async function refresh() {
       const healthTask = API.http.health().then(h => {
-        setChip(ntC, h.ninjatrader_running ? 'ok' : 'bad', 'NinjaTrader', h.ninjatrader_running ? 'NinjaTrader запущен' : 'NinjaTrader не запущен');
+        const connectorState = h.connector_confirmation_state || '';
+        const connectorGraded = !!connectorState;
+        const age = Math.round(h.connector_heartbeat_age_sec || 0);
+        if (connectorGraded && h.connector_confirmed_live) {
+          setChip(ntC, 'ok', 'NinjaTrader · LIVE', `последний подписанный heartbeat ${age}с назад`);
+        } else if (connectorGraded && h.connector_functional) {
+          setChip(ntC, 'warn', 'NinjaTrader · ожидание', `ожидается heartbeat; последнее подтверждение ${age}с назад`);
+        } else if (connectorGraded) {
+          setChip(ntC, 'bad', 'NinjaTrader · OFF', h.connector_heartbeat_age_sec == null ? 'NinjaTrader не подтверждён' : `heartbeat устарел (${age}с)`);
+        } else {
+          setChip(ntC, h.ninjatrader_running ? 'ok' : 'bad', h.ninjatrader_running ? 'NinjaTrader · LIVE' : 'NinjaTrader · OFF', h.ninjatrader_running ? 'локальный процесс NinjaTrader запущен' : 'локальный процесс NinjaTrader не запущен');
+        }
       }).catch(() => setChip(ntC, 'off', 'NinjaTrader', 'статус недоступен'));
       const bridgeTask = API.http.runtimeHeartbeat().then(hb => {
         // functional_live is the Connector transport's word. A local runtime
         // heartbeat does not carry it and must not be judged by its absence:
         // where the field is missing the old, correct local rule applies.
         const graded = Object.prototype.hasOwnProperty.call(hb, 'functional_live');
-        const ok = hb.present && hb.fresh && (!graded || hb.functional_live);
+        const confirmationGraded = Object.prototype.hasOwnProperty.call(hb, 'confirmed_live');
+        const ok = hb.present && hb.fresh && (!graded || hb.functional_live) && (!confirmationGraded || hb.confirmed_live);
+        const grace = hb.present && hb.fresh && confirmationGraded && hb.functional_live && !hb.confirmed_live;
         const heartbeatOnly = hb.present && hb.fresh && graded && !hb.functional_live;
         const title = ok
           ? `мост и account snapshot активны · ${Math.round(hb.age_sec || 0)}с · v${hb.exporter_version || '?'}`
-          : (heartbeatOnly
+          : (grace
+            ? `ожидается следующий heartbeat; последнее подтверждение ${Math.round(hb.age_sec || 0)}с назад`
+            : (heartbeatOnly
             ? 'heartbeat активен, но свежий account snapshot отсутствует'
-            : (hb.present ? `данные устарели (${Math.round(hb.age_sec || 0)}с)` : 'мост не отвечает'));
+            : (hb.present ? `данные устарели (${Math.round(hb.age_sec || 0)}с)` : 'мост не отвечает')));
         setChip(brC, ok ? 'ok' : (hb.present ? 'warn' : 'bad'), 'Bridge', title);
       }).catch(() => setChip(brC, 'off', 'Bridge', 'статус недоступен'));
       const lmTask = API.http.aiLmStudioHealth().then(lm => {
@@ -4375,10 +4390,21 @@
         setChip(lmC, st, 'LM Studio', lm.message_ru || (lm.ready ? 'модели готовы' : 'недоступна'));
       }).catch(() => setChip(lmC, 'off', 'LM Studio', 'статус недоступен'));
       const accountsTask = API.http.runtimeAccounts().then(accounts => {
-        runtimeAccounts = (accounts.accounts || accounts.online_accounts || []).filter(account => !account.is_system);
+        const listed = (accounts.accounts || accounts.online_accounts || []).filter(account => !account.is_system);
         let preferred = selectedAccount && selectedAccount.account_name;
         if (!preferred) { try { preferred = localStorage.getItem(AuroraDomain.ACCOUNT_KEY); } catch (e) { /* ignore */ } }
-        setSelectedAccount(preferred, false);
+        const confirmationGraded = Object.prototype.hasOwnProperty.call(accounts, 'confirmed_live');
+        if (confirmationGraded && !accounts.confirmed_live) {
+          runtimeAccounts = [];
+          selectedAccount = null;
+          const lastKnown = AuroraDomain.selectAccount(listed, preferred);
+          const grace = accounts.heartbeat_confirmation_state === 'grace';
+          setChip(accC, grace ? 'warn' : 'bad', lastKnown ? `${lastKnown.account_name} · ${grace ? 'ожидание' : 'OFF'}` : 'Счёт недоступен', lastKnown ? `последние подтверждённые данные; ${grace ? 'ожидается heartbeat' : 'NinjaTrader offline'}` : 'свежий account snapshot отсутствует');
+          window.dispatchEvent(new CustomEvent('nt-account-change', { detail: null }));
+        } else {
+          runtimeAccounts = listed;
+          setSelectedAccount(preferred, false);
+        }
       }).catch(() => { runtimeAccounts = []; selectedAccount = null; setChip(accC, 'off', 'Счёт недоступен', 'runtime accounts endpoint недоступен'); });
       await Promise.allSettled([healthTask, bridgeTask, lmTask, accountsTask]);
     }

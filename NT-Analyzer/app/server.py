@@ -5756,8 +5756,13 @@ class Handler(BaseHTTPRequestHandler):
             # A Connector installation being enrolled says nothing about the
             # NinjaTrader running on this machine. Where there is a local one,
             # the local check is the answer.
+            connector_functional = bool(connector_runtime.get("functional_live"))
+            connector_confirmed = (
+                bool(connector_runtime.get("confirmed_live"))
+                if "confirmed_live" in connector_runtime else connector_functional
+            )
             ninja_running = (
-                bool(connector_runtime.get("functional_live"))
+                connector_confirmed
                 if connector_runtime.get("present") and _connector_is_the_runtime_transport()
                 else jobqueue.ninjatrader_running()
             )
@@ -5766,7 +5771,14 @@ class Handler(BaseHTTPRequestHandler):
                 "host": str(self.server.server_address[0]),
                 "deployment": runtime_env.public_status(),
                 "ninjatrader_running": ninja_running,
-                "connector_functional": bool(connector_runtime.get("functional_live")),
+                "connector_functional": connector_functional,
+                "connector_confirmed_live": connector_confirmed,
+                "connector_confirmation_state": str(
+                    connector_runtime.get("heartbeat_confirmation_state") or ""),
+                "connector_heartbeat_age_sec": connector_runtime.get("age_sec"),
+                "connector_heartbeat_interval_sec": connector_runtime.get(
+                    "heartbeat_interval_sec"),
+                "connector_offline_after_sec": connector_runtime.get("offline_after_sec"),
                 "worker": local_worker.status(),
                 "admission": (
                     self.server.admission_metrics()

@@ -174,7 +174,10 @@ async function renderLive() {
   const accounts = ((accountDoc && (accountDoc.accounts || accountDoc.online_accounts)) || [])
     .filter(account => account && !account.is_system && account.account_name);
   const preferred = UI.getSelectedAccount();
-  const selectedAccount = AuroraDomain.selectAccount(accounts, preferred && preferred.account_name);
+  const connectorConfirmed = !accountDoc || !Object.prototype.hasOwnProperty.call(accountDoc, 'confirmed_live') || accountDoc.confirmed_live;
+  const selectedAccount = connectorConfirmed
+    ? AuroraDomain.selectAccount(accounts, preferred && preferred.account_name)
+    : null;
   const accountName = selectedAccount && selectedAccount.account_name;
   if (selectedAccount && (!preferred || preferred.account_name !== accountName)) UI.setSelectedAccount(accountName, false);
 

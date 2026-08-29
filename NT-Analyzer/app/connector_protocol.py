@@ -41,6 +41,12 @@ CHALLENGE_REQUEST_SKEW_SEC = 2 * 60
 SESSION_TTL_SEC = 15 * 60
 HEARTBEAT_INTERVAL_SEC = 15
 OFFLINE_AFTER_SEC = 45
+# The 45-second offline lease intentionally tolerates a delayed heartbeat.  It
+# is a transport/security lifetime, not permission for the UI to keep making a
+# categorical "NinjaTrader is running" claim.  After one expected heartbeat
+# plus a small delivery allowance the last observation is shown as grace/last
+# known until a new signed heartbeat arrives.
+HEARTBEAT_CONFIRMED_MAX_AGE_SEC = HEARTBEAT_INTERVAL_SEC + 5
 COMMAND_DELIVERY_LEASE_SEC = 30
 MAX_COMMAND_TTL_SEC = 5 * 60
 RUNTIME_CATALOG_FRESH_SEC = 24 * 60 * 60
@@ -2749,6 +2755,10 @@ def runtime_account_status(user_id: Any, *, workspace_id: str = "",
         heartbeat_at and -5 <= now - heartbeat_at <= OFFLINE_AFTER_SEC
         and str(selected.get("status") or "") == "online"
     )
+    heartbeat_confirmed = bool(
+        heartbeat_fresh and heartbeat_age is not None
+        and heartbeat_age <= HEARTBEAT_CONFIRMED_MAX_AGE_SEC
+    )
     snapshot = selected.get("account_snapshot")
     if not isinstance(snapshot, Mapping):
         snapshot = {}
@@ -2759,6 +2769,7 @@ def runtime_account_status(user_id: Any, *, workspace_id: str = "",
     )
     accounts = copy.deepcopy(snapshot.get("accounts") or []) if snapshot else []
     functional_live = bool(heartbeat_fresh and snapshot_fresh and accounts)
+    confirmed_live = bool(heartbeat_confirmed and snapshot_fresh and accounts)
     runtime_catalog = selected.get("runtime_catalog")
     if not isinstance(runtime_catalog, Mapping):
         runtime_catalog = {}
@@ -2794,6 +2805,14 @@ def runtime_account_status(user_id: Any, *, workspace_id: str = "",
         "present": bool(selected),
         "fresh": heartbeat_fresh,
         "functional_live": functional_live,
+        "confirmed_live": confirmed_live,
+        "heartbeat_confirmation_state": (
+            "confirmed" if heartbeat_confirmed else
+            ("grace" if heartbeat_fresh else "offline")
+        ),
+        "heartbeat_interval_sec": HEARTBEAT_INTERVAL_SEC,
+        "heartbeat_confirmed_max_age_sec": HEARTBEAT_CONFIRMED_MAX_AGE_SEC,
+        "offline_after_sec": OFFLINE_AFTER_SEC,
         "state": ("functional" if functional_live else
                   ("heartbeat_only" if heartbeat_fresh else "offline")),
         "heartbeat_at_utc": str(selected.get("last_heartbeat_utc") or ""),
