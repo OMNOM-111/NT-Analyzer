@@ -225,6 +225,14 @@ def result_document(job_doc: Mapping[str, Any],
             ),
         },
         "result_command_id": str(safe_result.get("command_id") or ""),
+        # What the device observed on the cancellation path, kept with the run
+        # it describes. The operational log that carried it is readable only
+        # by root, so the one place an operator can actually reach is the
+        # report itself -- and that is where the question gets asked.
+        "cancellation": (
+            dict(safe_result["cancellation"])
+            if isinstance(safe_result.get("cancellation"), Mapping) else {}
+        ),
         "verification_warnings": [
             str(item)[:400]
             for item in (safe_result.get("verification_warnings") or [])[:200]
@@ -479,12 +487,13 @@ def move_job(job_dir: Path, jobs_root: Path, status: str) -> Path:
         # once the job is over. Leaving it behind makes a finished report look
         # like it is still being cancelled, and a recovered directory carry a
         # request nobody will ever read.
-        try:
-            (job_dir / "cancel.flag").unlink()
-        except FileNotFoundError:
-            pass
-        except OSError:
-            pass
+        for leftover in ("cancel.flag", "cancel_requested.json"):
+            try:
+                (job_dir / leftover).unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
     target_parent = jobs_root / status
     target_parent.mkdir(parents=True, exist_ok=True)
     destination = target_parent / job_dir.name
