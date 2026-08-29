@@ -654,6 +654,186 @@ def test_signed_heartbeat_carries_a_bounded_functional_account_snapshot(connecto
     assert other["accounts"] == []
 
 
+def test_missed_expected_heartbeat_projects_last_known_account_not_active(
+    connector_store,
+) -> None:
+    """The lease may remain valid while the visible running claim does not.
+
+    NinjaTrader can close just after a signed heartbeat.  The transport keeps a
+    bounded 45-second grace period, but after the next heartbeat was expected
+    the UI must stop describing its cached account snapshot as connected.
+    """
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    welcome = connector_protocol.signed_hello(_hello(private, pending))
+    connector_protocol.heartbeat(welcome["session_token"], {
+        "connector_sequence": 1,
+        "ninja_instance_id": "nt_test_instance_01",
+        "account_snapshot": {
+            "generated_at_utc": datetime.now(timezone.utc).isoformat().replace(
+                "+00:00", "Z"),
+            "exporter_version": "0.4.2-dev.18",
+            "accounts": [{
+                "account_name": "DEMO3369390",
+                "account_mode": "paper",
+                "net_liquidation": 11017.42,
+                "connection_status": "Connected",
+            }],
+        },
+    })
+
+    with connector_protocol._RUNTIME_ACCOUNT_CACHE_LOCK:
+        cached = connector_protocol._RUNTIME_ACCOUNT_CACHE[pending["installation_id"]]
+        cached["last_heartbeat_at"] = (
+            time.time() - connector_protocol.HEARTBEAT_CONFIRMED_MAX_AGE_SEC - 1
+        )
+
+    grace = connector_protocol.runtime_account_status(
+        42, workspace_id=workspace["workspace_id"],
+    )
+    assert grace["fresh"] is True, "the bounded transport lease is preserved"
+    assert grace["functional_live"] is True
+    assert grace["confirmed_live"] is False
+    assert grace["heartbeat_confirmation_state"] == "grace"
+    assert grace["heartbeat_interval_sec"] == 15
+    assert grace["offline_after_sec"] == 45
+
+    projected = ops_runtime.accounts_from_connector_status(grace)
+    assert projected["bridge_transport_fresh"] is True
+    assert projected["bridge_online"] is False
+    assert projected["confirmed_live"] is False
+    assert projected["online_accounts"] == []
+    assert projected["accounts"][0]["net_liquidation"] == 11017.42
+    assert projected["accounts"][0]["connection_status"] == "HeartbeatGrace"
+    assert projected["accounts"][0]["last_known_connection_status"] == "Connected"
+    assert projected["accounts"][0]["is_selectable_for_online"] is False
+    assert projected["accounts"][0]["control_allowed"] is False
+    assert "последние" in projected["warnings"][0].lower()
+
+    with connector_protocol._RUNTIME_ACCOUNT_CACHE_LOCK:
+        cached["last_heartbeat_at"] = (
+            time.time() - connector_protocol.OFFLINE_AFTER_SEC - 1
+        )
+    offline = connector_protocol.runtime_account_status(
+        42, workspace_id=workspace["workspace_id"],
+    )
+    assert offline["fresh"] is False
+    assert offline["functional_live"] is False
+    assert offline["confirmed_live"] is False
+    assert offline["heartbeat_confirmation_state"] == "offline"
+    offline_projected = ops_runtime.accounts_from_connector_status(offline)
+    assert offline_projected["accounts"][0]["connection_status"] == "Offline"
+    assert offline_projected["online_accounts"] == []
+
+
+def test_a_fresh_signed_heartbeat_is_live(connector_store) -> None:
+    """The unremarkable case, pinned so the stricter display rule cannot
+    quietly start withholding LIVE from a device that is plainly running."""
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    welcome = connector_protocol.signed_hello(_hello(private, pending))
+    connector_protocol.heartbeat(welcome["session_token"], {
+        "connector_sequence": 1,
+        "ninja_instance_id": "nt_test_instance_01",
+        "account_snapshot": {
+            "generated_at_utc": datetime.now(timezone.utc).isoformat().replace(
+                "+00:00", "Z"),
+            "exporter_version": "0.4.2-dev.18",
+            "accounts": [{
+                "account_name": "DEMO3369390",
+                "account_mode": "paper",
+                "net_liquidation": 11017.42,
+                "connection_status": "Connected",
+            }],
+        },
+    })
+    live = connector_protocol.runtime_account_status(
+        42, workspace_id=workspace["workspace_id"],
+    )
+    assert live["confirmed_live"] is True
+    assert live["heartbeat_confirmation_state"] == "confirmed"
+
+    projected = ops_runtime.accounts_from_connector_status(live)
+    assert projected["bridge_online"] is True
+    assert projected["online_accounts"], "a running device offers its account"
+    assert projected["accounts"][0]["connection_status"] == "Connected"
+    assert projected["accounts"][0]["is_selectable_for_online"] is True
+
+
+def test_a_new_heartbeat_restores_live_without_re_enrolling(connector_store) -> None:
+    """Coming back must cost nothing. The grace rule is about what is shown,
+    not about the device's standing: no restart, no re-enrollment, and the same
+    installation and session carry straight on."""
+    workspace = connector_store[42]
+    private, _, _, pending = _enroll(workspace["workspace_id"])
+    welcome = connector_protocol.signed_hello(_hello(private, pending))
+    session = welcome["session_token"]
+    snapshot = {
+        "generated_at_utc": datetime.now(timezone.utc).isoformat().replace(
+            "+00:00", "Z"),
+        "exporter_version": "0.4.2-dev.18",
+        "accounts": [{
+            "account_name": "DEMO3369390",
+            "account_mode": "paper",
+            "net_liquidation": 11017.42,
+            "connection_status": "Connected",
+        }],
+    }
+    connector_protocol.heartbeat(session, {
+        "connector_sequence": 1,
+        "ninja_instance_id": "nt_test_instance_01",
+        "account_snapshot": snapshot,
+    })
+
+    # Fall past the offline lease entirely.
+    with connector_protocol._RUNTIME_ACCOUNT_CACHE_LOCK:
+        cached = connector_protocol._RUNTIME_ACCOUNT_CACHE[
+            pending["installation_id"]]
+        cached["last_heartbeat_at"] = (
+            time.time() - connector_protocol.OFFLINE_AFTER_SEC - 1)
+    gone = connector_protocol.runtime_account_status(
+        42, workspace_id=workspace["workspace_id"])
+    assert gone["heartbeat_confirmation_state"] == "offline"
+
+    # NinjaTrader comes back and the very next heartbeat is enough.
+    snapshot["generated_at_utc"] = datetime.now(timezone.utc).isoformat().replace(
+        "+00:00", "Z")
+    connector_protocol.heartbeat(session, {
+        "connector_sequence": 2,
+        "ninja_instance_id": "nt_test_instance_01",
+        "account_snapshot": snapshot,
+    })
+    back = connector_protocol.runtime_account_status(
+        42, workspace_id=workspace["workspace_id"])
+    assert back["confirmed_live"] is True
+    assert back["heartbeat_confirmation_state"] == "confirmed"
+    assert back["installation_id"] == pending["installation_id"],         "the same installation -- nothing was re-enrolled"
+    projected = ops_runtime.accounts_from_connector_status(back)
+    assert projected["online_accounts"], "the account is selectable again"
+
+
+def test_a_local_runtime_is_not_judged_by_a_field_it_never_sends() -> None:
+    """Development runs its own NinjaTrader and its heartbeat carries neither
+    functional_live nor confirmed_live. Absence must not read as offline --
+    that regression cost a working LOCAL once already."""
+    local_status = {
+        "present": True,
+        "fresh": True,
+        "age_sec": 3,
+        "account_snapshot_present": True,
+        "accounts": [{
+            "account_name": "Sim101",
+            "account_mode": "paper",
+            "net_liquidation": 100000.0,
+            "connection_status": "Connected",
+        }],
+    }
+    projected = ops_runtime.accounts_from_connector_status(local_status)
+    assert projected["bridge_online"] is True
+    assert projected["confirmed_live"] is True
+    assert projected["accounts"][0]["connection_status"] == "Connected"
+
+
 def test_connector_transport_runtime_accounts_use_the_signed_snapshot(monkeypatch) -> None:
     """Where the Connector is the transport, its snapshot is the answer.
 

@@ -3219,11 +3219,45 @@ def accounts_from_connector_status(status: Dict[str, Any]) -> Dict[str, Any]:
         _normalize_account(row) for row in (raw_accounts or [])
         if isinstance(row, dict)
     ]
-    online_accounts = [row for row in items if row.get("is_selectable_for_online")]
     functional = bool(status.get("functional_live"))
+    # ``functional_live`` follows the bounded Connector lease and deliberately
+    # survives a delayed heartbeat.  ``confirmed_live`` is the stricter display
+    # truth: once an expected signed heartbeat is missed, preserve balances as
+    # last-known data but do not project the account as connected/selectable.
+    # A local NinjaTrader heartbeat carries neither field. Absence is not a
+    # denial: judging it by a field it never sends is what once turned a
+    # perfectly healthy Development runtime offline. Only the Connector
+    # transport's own word is graded here; everything else keeps the old rule.
+    if "confirmed_live" in status:
+        confirmed = bool(status.get("confirmed_live"))
+    elif "functional_live" in status:
+        confirmed = functional
+    else:
+        confirmed = bool(status.get("fresh"))
+    connection_state = str(status.get("heartbeat_confirmation_state") or (
+        "confirmed" if confirmed else ("grace" if status.get("fresh") else "offline")
+    ))
+    if not confirmed:
+        for row in items:
+            row["last_known_connection_status"] = row.get("connection_status")
+            row["connection_status"] = (
+                "HeartbeatGrace" if connection_state == "grace" else "Offline"
+            )
+            row["is_selectable_for_online"] = False
+            row["control_allowed"] = False
+            row["runtime_connection_state"] = connection_state
+    else:
+        for row in items:
+            row["runtime_connection_state"] = "confirmed"
+    online_accounts = [row for row in items if row.get("is_selectable_for_online")]
     warnings: List[str] = []
     next_action: Optional[str] = None
-    if status.get("fresh") and not status.get("account_snapshot_present"):
+    if functional and not confirmed:
+        warnings.append(
+            "Ожидается следующий подписанный heartbeat; показаны только последние "
+            "подтверждённые данные счёта."
+        )
+    elif status.get("fresh") and not status.get("account_snapshot_present"):
         warnings.append(
             "Connector heartbeat активен, но AddOn ещё не передал account snapshot."
         )
@@ -3248,8 +3282,15 @@ def accounts_from_connector_status(status: Dict[str, Any]) -> Dict[str, Any]:
         "heartbeat_at_utc": str(status.get("heartbeat_at_utc") or ""),
         "accounts_age_sec": status.get("account_snapshot_age_sec"),
         "heartbeat_age_sec": status.get("age_sec"),
-        "bridge_online": bool(status.get("fresh")),
+        "bridge_online": confirmed,
+        "bridge_transport_fresh": bool(status.get("fresh")),
         "functional_live": functional,
+        "confirmed_live": confirmed,
+        "heartbeat_confirmation_state": connection_state,
+        "heartbeat_interval_sec": status.get("heartbeat_interval_sec"),
+        "heartbeat_confirmed_max_age_sec": status.get(
+            "heartbeat_confirmed_max_age_sec"),
+        "offline_after_sec": status.get("offline_after_sec"),
         "installation_id": str(status.get("installation_id") or ""),
         "requested_workspace_id": str(status.get("requested_workspace_id") or ""),
         "source_workspace_id": str(status.get("source_workspace_id") or ""),

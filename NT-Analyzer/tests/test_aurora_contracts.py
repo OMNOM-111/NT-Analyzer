@@ -678,6 +678,22 @@ def test_aurora_chart_context_sparklines_and_ai_origin_badges_are_wired():
     assert "Простой" not in ai_lab and "Цикл не запущен" in ai_lab
 
 
+def test_connector_heartbeat_grace_is_not_rendered_as_running_or_active_account():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    overview = (AURORA / "assets" / "pages" / "overview.js").read_text(
+        encoding="utf-8")
+    status_block = ui[ui.index("function wireSystemStatus()"):
+                      ui.index("async function action(")]
+
+    assert "connector_confirmed_live" in status_block
+    assert "NinjaTrader · ожидание" in status_block
+    assert "NinjaTrader · OFF" in status_block
+    assert "accounts.confirmed_live" in status_block
+    assert "последние подтверждённые данные" in status_block
+    assert "'NinjaTrader запущен'" not in status_block
+    assert "connectorConfirmed" in overview
+
+
 def test_runtime_strategy_adapter_uses_real_nested_contract():
     result = _domain_eval("""
       (() => {
