@@ -652,7 +652,29 @@ def _read_doc_reference() -> Dict[str, Any]:
         return loaded
 
 
+# The owner bootstrap is idempotent and, in a healthy deployment, changes
+# nothing. It was still reading the entire account document -- from Postgres,
+# with no cache on that path, then migrating it -- on every authenticated
+# poll, which measured about 37 ms of server time per request against 0.9 ms
+# for an endpoint that touches no auth at all. Remembering that the owner row
+# was already correct is enough; it cannot spontaneously stop being true, and
+# any write in this process clears it immediately.
+_OWNER_BOOTSTRAP_TTL_SEC = 30.0
+_OWNER_BOOTSTRAP_LOCK = threading.Lock()
+_OWNER_BOOTSTRAP: Dict[str, Any] = {"uid": 0, "until": 0.0, "user": None}
+
+
+def _forget_owner_bootstrap() -> None:
+    with _OWNER_BOOTSTRAP_LOCK:
+        _OWNER_BOOTSTRAP["uid"] = 0
+        _OWNER_BOOTSTRAP["until"] = 0.0
+        _OWNER_BOOTSTRAP["user"] = None
+
+
 def _write_doc(doc: Dict[str, Any]) -> None:
+    # Any mutation of the account store invalidates what the bootstrap
+    # remembered, so the memo can never outlive a change made here.
+    _forget_owner_bootstrap()
     doc = _migrate_doc(copy.deepcopy(doc))
     if _authoritative_storage():
         from . import storage_router
@@ -1674,6 +1696,19 @@ def ensure_owner(owner_id: Any) -> Optional[Dict[str, Any]]:
     if not configured_owner or str(uid) != configured_owner:
         raise AccountAuthError("Owner identity не совпадает с настроенным личным чатом Telegram.", 403)
     canonical = canonical_owner_uuid()
+
+    now = time.time()
+    with _OWNER_BOOTSTRAP_LOCK:
+        remembered = (
+            _OWNER_BOOTSTRAP["user"]
+            if _OWNER_BOOTSTRAP["uid"] == uid and now < _OWNER_BOOTSTRAP["until"]
+            else None
+        )
+    if remembered is not None:
+        # Nothing is authorised here. This says the owner row exists and is
+        # already correct; every session check still reads the store.
+        return copy.deepcopy(remembered)
+
     with _LOCK:
         doc = _read_doc()
         existing = _user(doc, uid)
@@ -1741,7 +1776,15 @@ def ensure_owner(owner_id: Any) -> Optional[Dict[str, Any]]:
         _sync_user_identity_summary(doc, existing)
         if changed:
             _write_doc(doc)
-        return _public_user(existing, include_contact=True)
+        public = _public_user(existing, include_contact=True)
+        if not changed:
+            # Only a run that had nothing to fix may be remembered. One that
+            # repaired something says nothing about the next call.
+            with _OWNER_BOOTSTRAP_LOCK:
+                _OWNER_BOOTSTRAP["uid"] = uid
+                _OWNER_BOOTSTRAP["until"] = time.time() + _OWNER_BOOTSTRAP_TTL_SEC
+                _OWNER_BOOTSTRAP["user"] = copy.deepcopy(public)
+        return public
 
 
 def _primary_owner_row() -> Optional[Dict[str, Any]]:
