@@ -104,9 +104,16 @@ def save_secrets(*, client_id: str, client_secret: str, redirect_uri: str = "") 
 def credentials() -> Dict[str, str]:
     file_doc = _read_secret_file()
     client_id = str(os.environ.get("NTA_GOOGLE_CLIENT_ID") or file_doc.get("client_id") or "").strip()
-    client_secret = str(
-        os.environ.get("NTA_GOOGLE_CLIENT_SECRET") or file_doc.get("client_secret") or ""
-    ).strip()
+    # Platform secret: the external per-environment store is the source of
+    # truth. A process variable still wins for an emergency override, and the
+    # legacy file remains a fallback until every deployment has migrated.
+    from . import platform_secrets
+    try:
+        client_secret = platform_secrets.get("NTA_GOOGLE_CLIENT_SECRET").strip()
+    except platform_secrets.PlatformSecretError:
+        client_secret = ""
+    if not client_secret:
+        client_secret = str(file_doc.get("client_secret") or "").strip()
     redirect = str(
         os.environ.get("NTA_GOOGLE_REDIRECT_URI") or file_doc.get("redirect_uri") or ""
     ).strip()

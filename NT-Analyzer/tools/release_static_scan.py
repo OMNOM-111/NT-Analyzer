@@ -97,12 +97,42 @@ SECRET_PATTERNS = (
     ("github_token", re.compile(r"\bgh[psoru]_[A-Za-z0-9]{30,}\b")),
     ("google_api_key", re.compile(r"\bAIza[0-9A-Za-z_-]{30,}\b")),
     ("telegram_token", re.compile(r"\b\d{8,12}:[A-Za-z0-9_-]{30,}\b")),
+    # The providers this deployment actually holds credentials for. These
+    # prefixes are unambiguous: nothing but a real credential looks like this.
+    ("google_client_secret", re.compile(r"GOCSPX-[A-Za-z0-9_-]{20,}")),
+    ("resend_api_key", re.compile(r"\bre_[A-Za-z0-9]{20,}\b")),
+    ("anthropic_key", re.compile(r"\bsk-ant-[A-Za-z0-9_-]{32,}\b")),
+    ("aws_access_key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    ("slack_token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}")),
 )
 TEXT_SUFFIXES = {
     ".py", ".js", ".ts", ".html", ".css", ".json", ".jsonl", ".md",
     ".yml", ".yaml", ".toml", ".ini", ".cfg", ".ps1", ".cmd", ".cs",
     ".csproj", ".xml", ".txt", ".env", ".gitignore",
 }
+
+
+def scan_secret_template() -> list[str]:
+    """A committed template is exactly where a real secret gets pasted.
+
+    secrets.example.env documents which platform secrets a deployment needs.
+    It carries names. A value there -- even one that looks harmless -- means a
+    credential has been committed, and that fails the release like any other.
+    """
+    example = ROOT / "secrets.example.env"
+    if not example.is_file():
+        return ["secrets.example.env is missing"]
+    errors: list[str] = []
+    for line_no, line in enumerate(
+            example.read_text(encoding="utf-8").splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name, _, value = line.partition("=")
+        if value.strip():
+            errors.append(
+                f"secrets.example.env:{line_no}: {name.strip()} carries a value")
+    return errors
 
 
 def scan_secrets() -> list[str]:
@@ -158,7 +188,7 @@ def main() -> int:
     args = parser.parse_args()
     scans = {
         "csp": scan_csp,
-        "secrets": scan_secrets,
+        "secrets": lambda: scan_secrets() + scan_secret_template(),
         "markdown": scan_markdown_links,
     }
     selected = scans if args.scan == "all" else {args.scan: scans[args.scan]}

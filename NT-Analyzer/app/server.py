@@ -70,6 +70,7 @@ if __package__ is None or __package__ == "":
     from app import dev_preview  # type: ignore[no-redef]
     from app import dev_service_accounts  # type: ignore[no-redef]
     from app import release_center  # type: ignore[no-redef]
+    from app import platform_secrets  # type: ignore[no-redef]
     from app import doc_specs  # type: ignore[no-redef]
     from app import subscriptions  # type: ignore[no-redef]
     from app import permissions  # type: ignore[no-redef]
@@ -167,6 +168,7 @@ else:
     from . import dev_preview
     from . import dev_service_accounts
     from . import release_center
+    from . import platform_secrets
     from . import doc_specs
     from . import subscriptions
     from . import permissions
@@ -4756,6 +4758,65 @@ class Handler(BaseHTTPRequestHandler):
         except release_center.ReleaseCenterError as exc:
             self._err(exc.status, str(exc), code=exc.code)
 
+    def _platform_secrets_post(self, path: str) -> None:
+        """Replace or roll back a platform credential.
+
+        Owner capability is necessary and not sufficient: holding the session
+        does not authorise handing the deployment a new Google client secret,
+        so a fresh step-up grant is required with no owner exemption. The value
+        arrives here once and is never echoed back -- the response is status.
+        """
+        if not self._check_local_post():
+            return
+        context = self._require_owner_actor()
+        if context is None:
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if not isinstance(body, dict):
+            self._err(HTTPStatus.BAD_REQUEST, "Тело запроса должно быть объектом.",
+                      code="invalid_body")
+            return
+        actor = {"user_id": context.get("user_id"),
+                 "is_owner": bool(context.get("is_owner")),
+                 "user_uuid": context.get("user_uuid")}
+        actor_label = f"owner:{context.get('user_id')}"
+        try:
+            release_center._require_step_up(
+                actor,
+                action=release_center.ACTION_REPLACE_PLATFORM_SECRET,
+                challenge_id=str(body.get("step_up_challenge_id") or ""),
+                allow_owner_exempt=False,
+            )
+        except release_center.ReleaseCenterError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+            return
+        try:
+            if path == "/api/admin/platform-secrets/replace":
+                out = platform_secrets.replace(
+                    str(body.get("name") or ""),
+                    str(body.get("value") or ""),
+                    actor=actor_label,
+                    environment=str(body.get("environment") or ""),
+                )
+            elif path == "/api/admin/platform-secrets/rollback":
+                out = platform_secrets.rollback(
+                    str(body.get("name") or ""),
+                    actor=actor_label,
+                    environment=str(body.get("environment") or ""),
+                )
+            else:
+                self._err(HTTPStatus.NOT_FOUND, "no platform-secret route",
+                          code="platform_secret_route_not_found")
+                return
+        except platform_secrets.PlatformSecretError as exc:
+            # Never let a failure carry the value that caused it.
+            self._err(HTTPStatus.BAD_REQUEST,
+                      platform_secrets.redact(str(exc)))
+            return
+        self._json(HTTPStatus.OK, out)
+
     def _releases_post(self, path: str) -> None:
         if not self._check_local_post():
             return
@@ -5599,6 +5660,32 @@ class Handler(BaseHTTPRequestHandler):
                     getattr(self, "_remote_context", None) or {},
                 ),
             )
+            return
+
+        if path == "/api/admin/platform-secrets":
+            # Status only, and status carries no value: which platform secrets
+            # are configured, which are required and missing, when each was
+            # last rotated and by whom. There is deliberately no route that
+            # returns a value -- not masked, not partially, not ever.
+            if not self._require_owner_actor():
+                return
+            try:
+                self._json(HTTPStatus.OK, platform_secrets.status(
+                    str((qs.get("environment") or [""])[0])))
+            except platform_secrets.PlatformSecretError as exc:
+                self._err(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+
+        if path == "/api/admin/platform-secrets/audit":
+            if not self._require_owner_actor():
+                return
+            try:
+                self._json(HTTPStatus.OK, {
+                    "entries": platform_secrets.audit(
+                        str((qs.get("environment") or [""])[0])),
+                })
+            except platform_secrets.PlatformSecretError as exc:
+                self._err(HTTPStatus.BAD_REQUEST, str(exc))
             return
 
         if path == "/api/admin/connectors":
@@ -9356,6 +9443,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/dev/service-login":
             self._dev_service_login()
+            return
+
+        if path.startswith("/api/admin/platform-secrets"):
+            self._platform_secrets_post(path)
             return
 
         if path.startswith("/api/admin/releases"):
