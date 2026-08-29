@@ -4582,7 +4582,14 @@ def read_job_full(job_id: str) -> Optional[Dict[str, Any]]:
             trades_doc = _read_json_array_cached(jdir / "trades.json")
             params = ((job_doc.get("strategy") if isinstance(job_doc, dict) else None) or {}).get("parameters") or {}
             execution = ((job_doc.get("execution") if isinstance(job_doc, dict) else None) or {})
-            adj = _compute_adjusted_metrics(
+            # The drawer reads this. When trades.json is a bounded sample of a
+            # remote run, recomputing here and merging into `metrics` puts
+            # sample-derived numbers under the same names the device's own
+            # aggregates use -- and the UI prefers the *_after_commission keys,
+            # so a 37-row sample was rendered as the run: +$547 and PF 2.15
+            # beside a trade count of 3992, where NinjaTrader had -$10,490.30
+            # and PF 0.92.
+            adj = None if _result_is_truncated(res) else _compute_adjusted_metrics(
                 trades_doc,
                 params,
                 m,

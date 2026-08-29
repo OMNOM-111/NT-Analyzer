@@ -328,7 +328,9 @@ UI.ready(async function () {
     // The device runs the whole backtest but sends a bounded number of trade
     // rows. Showing "37" beside metrics computed over 269 trades would read as
     // a disagreement in the data rather than as what it is: a sample.
-    const transfer = (detail && detail.trade_transfer) || (model && model.trade_transfer) || null;
+    const transfer = (detail && detail.trade_transfer)
+      || (detail && detail.result && detail.result.trade_transfer)
+      || (model && model.trade_transfer) || null;
     const truncated = !!(transfer && (transfer.trades_truncated
       || (transfer.trades_total || 0) > (transfer.trades_transferred || 0)));
     const tradesCountLabel = truncated

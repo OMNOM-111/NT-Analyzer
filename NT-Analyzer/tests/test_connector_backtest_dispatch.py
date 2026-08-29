@@ -881,3 +881,32 @@ def test_cancelling_from_the_ui_has_no_blocking_dialog():
           / "backtesting.js").read_text(encoding="utf-8")
     assert "confirm('Отменить задание" not in js
     assert "confirm('Удалить отчёт" in js
+
+
+def test_the_drawer_path_does_not_recompute_either():
+    """read_job_summary was gated first; the drawer reads read_job_full, and
+    that one merged sample-derived metrics straight into the device's own
+    `metrics` block under the same key names. On Production it rendered
+    +$547 / PF 2.15 from 37 rows beside a trade count of 3992, where
+    NinjaTrader reported -$10,490.30 / PF 0.92.
+    """
+    from pathlib import Path
+
+    from app import jobqueue
+
+    text = Path(jobqueue.__file__).read_text(encoding="utf-8")
+    full = text[text.index("def read_job_full("):]
+    full = full[: full.index("\ndef ", 10)] if "\ndef " in full[10:] else full
+    assert "_compute_adjusted_metrics(" in full, "call site moved"
+    assert "None if _result_is_truncated(res) else _compute_adjusted_metrics(" in full
+
+
+def test_the_label_finds_the_transfer_block_where_the_api_puts_it():
+    """read_job_full nests it under `result`, and reading only the top level
+    left the table saying a bare "37" for a 3992-trade run."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    js = (root / "app" / "static" / "aurora" / "assets" / "pages"
+          / "backtesting.js").read_text(encoding="utf-8")
+    assert "detail.result && detail.result.trade_transfer" in js
