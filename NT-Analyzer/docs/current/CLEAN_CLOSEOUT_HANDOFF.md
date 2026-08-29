@@ -1,89 +1,127 @@
-# Clean closeout — beta.61 accepted and live in Production
+# Clean closeout — beta.79 live in Production
 
-Дата проверки: `2026-08-27T22:33:11Z`.
+Дата закрытия: `2026-08-29`. Предыдущая редакция описывала beta.61 и заменена
+целиком: она отражала промежуточное состояние.
 
-## Outcome
+## Current system state
 
-Scoped performance closeout Production workers завершён. На beta.60 пустая
-очередь не останавливала 11 worker loops: каждый примерно раз в 250 ms делал
-claim и отдельно запускал stale sweep. На beta.61 concurrency сохранена
-`4/4/2/1`, пустые worker slots переходят на jittered backoff до примерно 2 s,
-после job сразу возвращаются к 250 ms, а stale leases обслуживает один
-останавливаемый coordinator раз в 30 s.
+| Environment | Version | Runtime | Status |
+| --- | --- | --- | --- |
+| Production | `0.10.0-beta.79` | same immutable artifact as Canary | live |
+| Canary | `0.10.0-beta.79` | тот же artifact, без пересборки | accepted |
+| Development (LOCAL) | источник релизов, DIMONCHECK | собственный NinjaTrader | ready |
+| Connector (VMNINJA) | `0.4.2-dev.20` (`ed634e09…`) | trust `SHA256:3a048138…` | live, `compatible` |
 
-Canary и Production прошли одинаковые функциональные probes: pickup менее 2 s,
-cancel, timeout, advancing heartbeat, retry, stale recovery, пустая очередь и
-изоляция job IDs. Market-data, TopstepX, SignalR, NinjaTrader/Connector protocol,
-chart realtime/history/cache/failover/rendering не менялись.
+VMNINJA — единственная машина, зачисленная в Production; счёт `DEMO3369390`,
+NetLiq `$11 017.42`. LOCAL и Production используют раздельные NinjaTrader.
 
-## Current release identity
+## Что закрыто в этом этапе
 
-| Environment | Version | Git SHA | Build / runtime artifact | Status |
-| --- | --- | --- | --- | --- |
-| LOCAL release source | `0.10.0-beta.61` | `60d922b2600d1d31e611c7a670cbddebc889beef` | clean, `dirty=false` | current |
-| Canary | `0.10.0-beta.61` | same | `sf-0.10.0-beta.61-60d922b2600d-20260827T175814Z` / `E9195140…AF53` | accepted, ready |
-| Production | `0.10.0-beta.61` | same | same build / same runtime hash | live, ready |
+### SERVER BACKTEST — PASS
 
-- candidate `rc_8016843875644befbbd681c5cc2bde0e`;
-- artifact `art_77d98a4ed8aa4473bb241addf19c45b3`;
-- archive SHA256
-  `E61B8C9293308D522AE3017EEBCF09B73A01CABA689EA8636A0C2BDA12236534`;
-- runtime/manifest SHA256
-  `E9195140BDB22C53EB83405FCF5655E76FD60068637FED1A0CAE35B1A769AF53`;
-- shared release directory suffix `0.10.0-beta.61-60d922b2600d`;
-- Canary previous и Production rollback `0.10.0-beta.60-101d7c447e2d`.
+- **Drawer показывает агрегаты устройства.** Раньше PF/P&L/комиссия
+  пересчитывались по переданной выборке: отчёт показывал `+$547` и `PF 2.15`
+  по 37 строкам рядом с числом сделок 3992, тогда как NinjaTrader дал
+  `−$10 490.30` и `0.92`. Пересчёт отключён в обеих функциях чтения; таблица
+  маркируется «Показано 37 из 3992 сделок».
+- **Отмена работает кооперативно.** NinjaTrader не даёт прервать
+  `RunBacktest()`: у метода нет ни токена, ни параметров, а `IProgress.IsAborted`
+  доступен только `Optimizer`. Поэтому прерывается всё, что после него — наш
+  собственный конвейер, закрытый семью границами вплоть до точки коммита
+  `WriteJobOutputs`. Измерено: `CTS → cancelled` **0.71 с**, клик → **4.21 с**.
+- **State machine честная:** `pending → running → cancel_requested → cancelled`,
+  либо `done` + аудит `cancel_race_completed_before_abort_boundary`, если
+  прогон успел завершиться. Терминальный `cancelled` даёт только
+  `JobRunOutcome.Cancelled`.
 
-Canary deployment `dep_9f5c8b6e10d64a299b2c9a9e41738486` прошёл final
-acceptance `chk_63c486896c474479a8c8b765b2d30b10`. Затем тот же artifact
-без rebuild стал Production deployment
-`dep_9a552fc7bbb54297ad8da764adae3659`.
+### Connector state honesty — PASS
 
-## Performance evidence
+45-секундная heartbeat-аренда не менялась; отдельный презентационный порог
+(`interval + 5 s`) даёт `confirmed / grace / offline`. В grace счёт показывается
+как последний известный и не выбирается; в offline кэш не маскирует отсутствие
+связи. Возврат в LIVE — без re-enrollment.
 
-| Environment / metric | Before | After |
-| --- | ---: | ---: |
-| Canary worker CPU | 83.711% | 4.839% |
-| Canary total DB TX/s | 155.378 | 28.700 |
-| Production worker CPU | 83.778% | 5.522% |
-| Production worker-attributable TX/s | 69.002 | около 5.822 |
-| Production total DB TX/s | 259.069 | 175.194 |
+### Performance — PASS по hotspot
 
-Остаток Production измерен отдельно: API process `59.267%` CPU, worker
-`5.650%`, Telegram `4.367%`; `sf_connector_sessions` получил 25,124 updates за
-60 s. Поэтому общий Production DB rate не выдаётся за worker result: scoped
-worker activity снизилась примерно на 88–92%, а отдельный активный
-Connector/API mirror path оставлен без изменений.
+`ensure_owner()` читала весь документ аккаунтов из Postgres на каждом
+авторизованном опросе (production-ветка `_read_doc` кэша не имела). Мемоизация
+no-op результата: `/api/auth/status` медиана **43.2 → 19.0 мс**.
 
-## Verification
+**CPU не изменился в пределах шума** (19.2 % → 18.9 % одного ядра за 60 с) —
+приписывать снижение этой правке нельзя. Исходный baseline 28.0 % снят в другое
+время суток без записи нагрузки и несопоставим.
 
-- PR #198: mandatory CI `5/5` GREEN;
-- full regression: `2134 passed`, `32 skipped`, `0 failed`;
-- targeted worker/isolation: `55 passed`, `12 skipped`, `0 failed`;
-- project runner: `13/13`;
-- compile/static/CSP/secrets/Markdown/Context/diff gates: PASS;
-- Canary pickup p50/max `1.372/1.455 s`;
-- Production pickup p50/max `1.392/1.468 s`;
-- dashboard и AI Agents на обоих server environments показали beta.61 без
-  browser console errors;
-- readiness: database, queue, Telegram consumer, Connector control и object
-  storage PASS.
+### Secret management — PASS
 
-## Retained boundaries
+Канонический контракт: [PLATFORM_SECRETS](../operations/PLATFORM_SECRETS.md).
+Четыре скомпрометированных креда (2 Google, 2 Resend) заменены по
+последовательному runbook, старые отозваны, 314 копий в promote-бэкапах
+вычищены, постоянная защита от повторения добавлена.
 
-- TopstepX остаётся основным независимым read-only источником графиков;
-  NinjaTrader остаётся execution/backtest/runtime truth и отдельным fallback.
-- Отдельная оптимизация измеренного Connector/API mirror write rate не входит
-  в beta.61 и требует нового scoped reproduction без изменения принятого
-  функционального baseline.
-- Public Connector package остаётся `EXTERNAL BLOCKED` на разрешённом
-  Authenticode material.
-- Два Google Client Secret и два Resend key не ротировались; это следующий
-  отдельный security closeout.
-- Legal documents остаются DRAFT до owner/legal closeout.
+## Test / acceptance matrix
 
-Подробная техническая и release evidence:
-[beta.61 production worker idle scheduling](../changelog/2026-08-27-beta61-worker-idle-performance.md).
+| Область | Как доказано | Итог |
+| --- | --- | --- |
+| Drawer aggregates | Production-прогон 3992 сделки: 8 показателей = VMNINJA | PASS |
+| Trades label | «Показано 37 из 3992 сделок» в UI | PASS |
+| `running` виден серверу | 4.8–9.0 с после запуска (ранее не появлялся) | PASS |
+| `cancel_requested` | держится, пока NinjaTrader считает | PASS |
+| Terminal `cancelled` | `command_result: cancelled` + маркер runner boundary | PASS |
+| Cancel latency | CTS → cancelled 0.71 с; клик → 4.21 с | PASS |
+| Registry cleared | следующий бэктест принят и завершён | PASS |
+| Race → `done` | доказано на реальном прогоне | PASS |
+| Connector LIVE / GRACE / OFFLINE | API + визуальная проверка владельца | PASS |
+| Recovery без re-enrollment | та же installation `…bbfsVSnkvY` | PASS |
+| Auth hotspot | 43.2 → 19.0 мс, тот же метод | PASS |
+| Production CPU | 18.9 % vs 19.2 % — в пределах шума | не улучшен |
+| DB tx/s | безопасного пути нет | not measured |
+| Secret rotation ×4 | Canary → Production → revoke → post-revoke smoke | PASS |
+| Secret containment | 0 отозванных значений во всём `production_data` | PASS |
+
+Полный набор: **2327 passed, 32 skipped, 0 failed**.
+
+## Active work / handoff
+
+Активной незавершённой работы нет. Открытых release candidate, pending
+promotion и других блокеров следующего этапа нет.
+
+## Backlog — известные долги, намеренно не исправленные
+
+Ни один не блокирует разработку; каждый требует отдельного решения.
+
+1. **`cancel_boundary` не сохраняется** у отменённого прогона: для исхода
+   `cancelled` сервер пишет только маркер и не сохраняет `safe_result`
+   устройства. Отмена доказана; страдает детальность разбора.
+2. **dev.19 health-receipt / LKG.** При переходе на dev.20 устройство временно
+   откатилось на dev.18. Механизм отработал по проекту — LKG создаётся из
+   версии, стоявшей на момент применения. Почему активация dev.19 не была
+   подтверждена health-квитанцией, доказать не удалось: артефакты лежат на
+   VMNINJA, доступа нет. Bounded: downgrade без подписанного/LKG артефакта
+   невозможен, enrollment сохраняется.
+3. **Timing-sensitive тест**
+   `test_operations_degrades_a_stalled_connector_without_holding_the_panel`
+   промахнулся на 3 мс при пороге 200 мс под нагрузкой self-hosted раннера.
+   Порог намеренно не менялся.
+4. **Профилировщик Production отсутствует** (`py-spy`/`austin`/`perf`).
+   Профилирование велось замерами с хоста — достаточно для найденного hotspot,
+   но полного профиля не даёт.
+5. **DB tx/s — not measured.** Обращений к `pg_stat_database` в коде нет,
+   безопасного diagnostics-пути не существует.
+6. **BYOK не workspace-scoped.** Ключи AI-провайдеров глобальные; требование
+   «пользователь не читает credential чужого workspace» на уровне модели данных
+   не выполнено. Закрыто: значение принимается только при создании и обратно
+   не возвращается. Изменение схемы — отдельная задача.
+7. **Platform Secrets UI** не рисовался по решению владельца; API готов.
+8. **Проверить новые механизмы резервного копирования** на обход `secrets/`.
+   Защита добавлена для promote и release-архива.
+
+Из прошлой редакции сохраняются: Public Connector package остаётся
+`EXTERNAL BLOCKED` на разрешённом Authenticode material; legal documents
+остаются DRAFT до owner/legal closeout.
+
+Подробная техническая evidence:
+[beta.79 secret management и cancel closeout](../changelog/2026-08-29-beta79-secret-management-and-cancel-closeout.md).
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-27T22:33:11Z | GPT-5.5 через Codex по запросу owner | Текущий handoff обновлён до exact beta.61 immutable release, worker idle performance evidence и честно отделённого Connector/API residual.
+2026-08-29 | Claude Opus 5 по запросу owner | Handoff обновлён до beta.79: SERVER BACKTEST cancel, connector grace-state honesty, auth hotspot, secret-management contract и ротация четырёх кредов. Backlog перечислен явно.
 -->

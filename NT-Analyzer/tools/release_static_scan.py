@@ -109,7 +109,64 @@ TEXT_SUFFIXES = {
     ".py", ".js", ".ts", ".html", ".css", ".json", ".jsonl", ".md",
     ".yml", ".yaml", ".toml", ".ini", ".cfg", ".ps1", ".cmd", ".cs",
     ".csproj", ".xml", ".txt", ".env", ".gitignore",
+    # Shell scripts are where `export SECRET=...` actually lives; leaving them
+    # out meant the one file shape most likely to carry a credential was the
+    # one shape never scanned.
+    ".sh", ".bash",
 }
+
+
+#: Platform-secret variable names. An assignment carrying a value is a
+#: credential, wherever it appears -- a release archive, a config backup, a
+#: support bundle. 314 copies of two of these accumulated in promote backups
+#: before anybody looked.
+PLATFORM_SECRET_NAMES = (
+    "NTA_GOOGLE_CLIENT_SECRET",
+    "NTA_RESEND_API_KEY",
+    "NTA_TELEGRAM_BOT_TOKEN",
+    "STRATFORGE_OWNER_MARKET_GATEWAY_TOKEN",
+    "STRATFORGE_CONNECTOR_RELEASE_SIGNING_KEY",
+)
+_SECRET_ASSIGNMENT = re.compile(
+    r"^\s*(?:export\s+)?(" + "|".join(PLATFORM_SECRET_NAMES) + r")\s*=\s*(\S.*)$")
+
+
+def scan_platform_secret_values(root: Path | None = None) -> list[str]:
+    """No platform secret may travel inside anything we ship or keep.
+
+    The names may appear freely -- documentation, the committed template, the
+    module that reads them. What must never appear is a name with a value
+    beside it, and the secrets directory itself must never be inside a tree
+    that gets archived.
+    """
+    base = Path(root) if root is not None else ROOT
+    errors: list[str] = []
+    if (base / "production_data" / "secrets").exists() or (base / "secrets").is_dir():
+        errors.append("a secrets/ directory is inside the packaged tree")
+    for path in _working_source_files() if root is None else sorted(base.rglob("*")):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in TEXT_SUFFIXES and path.name != ".gitignore":
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for line_no, line in enumerate(text.splitlines(), 1):
+            match = _SECRET_ASSIGNMENT.match(line)
+            if not match:
+                continue
+            value = match.group(2).strip().strip('"').strip("'")
+            # The committed template and any documentation keep the name with
+            # nothing after it; that is the whole point of them.
+            if not value or value.startswith("#"):
+                continue
+            try:
+                shown = path.relative_to(base)
+            except ValueError:
+                shown = path
+            errors.append(f"{shown}:{line_no}: {match.group(1)} carries a value")
+    return errors
 
 
 def scan_secret_template() -> list[str]:
@@ -192,7 +249,8 @@ def main() -> int:
     args = parser.parse_args()
     scans = {
         "csp": scan_csp,
-        "secrets": lambda: scan_secrets() + scan_secret_template(),
+        "secrets": lambda: (scan_secrets() + scan_secret_template()
+                            + scan_platform_secret_values()),
         "markdown": scan_markdown_links,
     }
     selected = scans if args.scan == "all" else {args.scan: scans[args.scan]}
