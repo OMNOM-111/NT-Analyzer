@@ -42,6 +42,12 @@ def test_a_secrets_directory_inside_the_checkout_is_refused(monkeypatch):
     assert "репозитор" in str(caught.value).lower()
 
 
+def test_the_repository_keeps_the_template():
+    """The scanner tolerates its absence, because the server archive does not
+    ship it. Something still has to notice if it disappears from the repo."""
+    assert (ROOT / "secrets.example.env").is_file()
+
+
 def test_the_committed_example_carries_names_and_no_values():
     example = ROOT / "secrets.example.env"
     assert example.is_file()
@@ -237,6 +243,11 @@ def test_a_value_in_the_committed_template_fails_the_release(tmp_path, monkeypat
         sys.path.pop(0)
 
     assert scan.scan_secret_template() == [], "the real template must be clean"
+
+    # Absence is not a finding: the server archive is a curated file list and
+    # does not ship developer documentation. Making it one broke a release.
+    monkeypatch.setattr(scan, "ROOT", tmp_path / "empty")
+    assert scan.scan_secret_template() == []
 
     fake_root = tmp_path
     (fake_root / "secrets.example.env").write_text(
