@@ -186,7 +186,12 @@ namespace NTAnalyzerBridge.Execution
             // cancel is pending. It is the earliest supported point at which a
             // cancel can actually save work.
             if (ct.IsCancellationRequested)
-                return JobRunOutcome.Cancelled("cancelled before trade collection");
+            {
+                JobRunOutcome stopped = JobRunOutcome.Cancelled(
+                    "cancelled before trade collection");
+                stopped.CancelSeenBeforeTradeCollection = true;
+                return stopped;
+            }
 
             // 4) Extract trades + metrics.
             var collector = new TradeCollector { EnableVerboseDiagnostics = _cfg.EnableVerboseDiagnostics };

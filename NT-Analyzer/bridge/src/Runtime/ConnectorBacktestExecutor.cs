@@ -43,6 +43,11 @@ namespace NTAnalyzerBridge.Runtime
             public Task Execution;
             public DateTime StartedUtc;
             public volatile bool CancelRequested;
+            // Opaque, per-start, and meaningless outside this process. It ties
+            // "the run the cancel found" to "the run that produced the result"
+            // -- without it, a registry hit and a completed result cannot be
+            // shown to belong to the same execution.
+            public string ExecutionInstanceId;
         }
 
         private readonly BridgeConfig _cfg;
@@ -144,6 +149,7 @@ namespace NTAnalyzerBridge.Runtime
                 CommandId = commandId,
                 Cancellation = new CancellationTokenSource(),
                 StartedUtc = DateTime.UtcNow,
+                ExecutionInstanceId = Guid.NewGuid().ToString("N").Substring(0, 16),
             };
             lock (_gate) { _active[jobId] = record; }
 
@@ -204,10 +210,13 @@ namespace NTAnalyzerBridge.Runtime
 
                 // Boundary 0. A cancel that arrived between dispatch and the
                 // first line of work costs nothing to honour.
-                if (record.Cancellation.IsCancellationRequested)
+                bool cancelSeenBeforeRun = record.Cancellation.IsCancellationRequested;
+                if (cancelSeenBeforeRun)
                 {
                     _writeResult(record.CommandId, "cancelled",
-                        "cancelled before the run started", null);
+                        "cancelled before the run started",
+                        Diagnostics(record, null, true, true)
+                            .ToString(Formatting.None));
                     return;
                 }
 
@@ -226,11 +235,14 @@ namespace NTAnalyzerBridge.Runtime
                 // run is already finishing. Reporting that as "cancelled"
                 // would throw away a complete, valid result and tell the
                 // operator something untrue about their own run.
+                bool cancelSeenAfterRun = record.Cancellation.IsCancellationRequested;
+
                 if (outcome != null && outcome.Status == JobStatus.Cancelled)
                 {
                     _writeResult(record.CommandId, "cancelled",
                         Truncate(outcome.Message ?? "cancelled at a runner boundary", 400),
-                        null);
+                        Diagnostics(record, outcome, cancelSeenBeforeRun,
+                                    cancelSeenAfterRun).ToString(Formatting.None));
                     return;
                 }
 
@@ -248,11 +260,14 @@ namespace NTAnalyzerBridge.Runtime
                 {
                     _writeResult(record.CommandId, "failed",
                         Truncate((outcome.ErrorType ?? "run_failed") + ": "
-                                 + (outcome.Message ?? ""), 400), null);
+                                 + (outcome.Message ?? ""), 400),
+                        Diagnostics(record, outcome, cancelSeenBeforeRun,
+                                    cancelSeenAfterRun).ToString(Formatting.None));
                     return;
                 }
 
-                string safeResult = BuildSafeResult(record, workDir, outcome);
+                string safeResult = BuildSafeResult(
+                    record, workDir, outcome, cancelSeenBeforeRun, cancelSeenAfterRun);
                 _writeResult(record.CommandId, "success",
                     record.CancelRequested
                         ? "backtest completed before cancellation could take effect"
@@ -294,26 +309,90 @@ namespace NTAnalyzerBridge.Runtime
                 return;
             }
             ActiveRun record = null;
-            lock (_gate) { _active.TryGetValue(jobId, out record); }
+            int activeCount;
+            bool alreadyFinished;
+            lock (_gate)
+            {
+                _active.TryGetValue(jobId, out record);
+                activeCount = _active.Count;
+                alreadyFinished = _finished.Contains(jobId);
+            }
+
+            // "I cancelled it" and "there was nothing here to cancel" used to
+            // look identical on the wire: both were a bare success. That is
+            // how a cancel could fail to reach a run while the audit showed a
+            // clean completion, and it hid a real defect for a whole release.
+            // The answer now says which of the two happened. Only the job the
+            // caller already named is echoed -- no other run's id, no
+            // workspace data.
+            JObject detail = new JObject
+            {
+                ["target_job_id"] = jobId,
+                ["active_run_found"] = record != null,
+                ["cancellation_requested"] = false,
+                ["active_count"] = activeCount,
+                ["already_finished"] = alreadyFinished,
+                ["executor_state"] = _stopping ? "stopping" : "running",
+                ["execution_instance_id"] =
+                    record != null ? record.ExecutionInstanceId : "",
+            };
+
             if (record == null)
             {
-                // Unknown or already finished. Saying so plainly is the honest
-                // answer and repeating the cancel changes nothing.
                 _writeResult(commandId, "success",
-                    "no active backtest for this job", null);
+                    alreadyFinished
+                        ? "backtest already finished; nothing to cancel"
+                        : "no active backtest for this job",
+                    detail.ToString(Formatting.None));
                 return;
             }
+
             record.CancelRequested = true;
-            try { record.Cancellation.Cancel(); }
-            catch (ObjectDisposedException) { }
+            try
+            {
+                record.Cancellation.Cancel();
+                detail["cancellation_requested"] = true;
+            }
+            catch (ObjectDisposedException)
+            {
+                // The run ended between the lookup and the cancel. Say so
+                // rather than claiming a cancellation that reached nothing.
+                detail["executor_state"] = "run_ended_before_cancel";
+            }
             _writeResult(commandId, "success",
-                "cancellation requested for running backtest", null);
+                "cancellation requested for running backtest",
+                detail.ToString(Formatting.None));
         }
 
         // ------------------------------------------------------------------
         // Bounded result
         // ------------------------------------------------------------------
-        private string BuildSafeResult(ActiveRun record, string workDir, JobRunOutcome outcome)
+        /// <summary>
+        /// What the cancellation path actually observed, as plain booleans.
+        /// No object addresses, no thread internals, no workspace data -- only
+        /// enough to tell a registry miss from a token that never reached the
+        /// runner from a runner that saw the cancel and finished anyway.
+        /// </summary>
+        private static JObject Diagnostics(
+            ActiveRun record, JobRunOutcome outcome,
+            bool cancelSeenBeforeRun, bool cancelSeenAfterRun)
+        {
+            return new JObject
+            {
+                ["execution_instance_id"] = record.ExecutionInstanceId,
+                ["cancel_requested_on_device"] = record.CancelRequested,
+                ["cancel_seen_before_run"] = cancelSeenBeforeRun,
+                ["cancel_seen_after_run"] = cancelSeenAfterRun,
+                ["cancel_seen_before_trade_collection"] =
+                    outcome != null && outcome.CancelSeenBeforeTradeCollection,
+                ["outcome_status"] = outcome == null
+                    ? "none" : outcome.Status.ToString(),
+            };
+        }
+
+        private string BuildSafeResult(
+            ActiveRun record, string workDir, JobRunOutcome outcome,
+            bool cancelSeenBeforeRun, bool cancelSeenAfterRun)
         {
             JObject result = ReadJson(Path.Combine(workDir, "result.json"));
             JArray trades = ReadArray(Path.Combine(workDir, "trades.json"));
@@ -344,6 +423,8 @@ namespace NTAnalyzerBridge.Runtime
                 ["trades"] = transferred,
                 ["trades_total"] = total,
                 ["trades_truncated"] = total > transferred.Count,
+                ["cancellation"] = Diagnostics(
+                    record, outcome, cancelSeenBeforeRun, cancelSeenAfterRun),
             };
 
             // Shrink until it fits rather than letting a successful run fail in

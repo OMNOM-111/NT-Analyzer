@@ -20,6 +20,15 @@ namespace NTAnalyzerBridge.Execution
         public string ErrorType { get; }
         public string Message { get; }
 
+        /// <summary>
+        /// Diagnostics only. True when the boundary that guards the work after
+        /// NinjaTrader's uninterruptible RunBacktest() actually observed a
+        /// cancelled token. It answers what the outcome alone cannot: whether
+        /// the runner was handed the same cancellation the operator asked for,
+        /// or a different one it never saw.
+        /// </summary>
+        public bool CancelSeenBeforeTradeCollection { get; set; }
+
         private JobRunOutcome(JobStatus status, string errorType, string message)
         {
             Status = status;
