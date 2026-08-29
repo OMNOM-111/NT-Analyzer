@@ -201,32 +201,54 @@ def test_no_module_returns_a_platform_secret_through_an_api():
 # --------------------------------------------------------------------------- #
 # The scanner that blocks a release.
 # --------------------------------------------------------------------------- #
-def test_the_secret_scanner_finds_real_credential_shapes(tmp_path):
-    """A scanner that only ever says "clean" is worse than none."""
+def test_the_release_scanner_knows_our_providers_credential_shapes():
+    """A scanner that only ever says "clean" is worse than none.
+
+    The literals are assembled rather than written out, because the scanner
+    quite correctly refuses a repository that contains them.
+    """
     sys.path.insert(0, str(ROOT / "tools"))
     try:
-        import secret_scan
+        import release_static_scan as scan
     finally:
         sys.path.pop(0)
 
-    planted = {
-        "google": "GOCSPX-" + "a" * 28,
-        "resend": "re_" + "b" * 30,
-        "openai": "sk-" + "c" * 40,
-        "aws": "AKIA" + "D" * 16,
-        "private_key": "-----BEGIN RSA PRIVATE KEY-----",
-    }
-    for label, value in planted.items():
-        assert any(pattern.search(value) for _, pattern in secret_scan.PATTERNS), label
+    labels = {label for label, _ in scan.SECRET_PATTERNS}
+    assert {"google_client_secret", "resend_api_key", "anthropic_key",
+            "aws_access_key", "private_key"} <= labels
 
-    # And an obvious placeholder is not a finding.
-    assert secret_scan.ALLOW.search("client_secret=your-key-here")
-    assert secret_scan.ALLOW.search("token=<example>")
+    samples = {
+        "google_client_secret": "GOCSPX-" + "a" * 28,
+        "resend_api_key": "re_" + "b" * 30,
+        "anthropic_key": "sk-ant-" + "c" * 40,
+        "aws_access_key": "AKIA" + "D" * 16,
+        "private_key": "-----BEGIN " + "RSA PRIVATE KEY-----",
+    }
+    for label, value in samples.items():
+        pattern = dict(scan.SECRET_PATTERNS)[label]
+        assert pattern.search(value), label
+
+
+def test_a_value_in_the_committed_template_fails_the_release(tmp_path, monkeypatch):
+    sys.path.insert(0, str(ROOT / "tools"))
+    try:
+        import release_static_scan as scan
+    finally:
+        sys.path.pop(0)
+
+    assert scan.scan_secret_template() == [], "the real template must be clean"
+
+    fake_root = tmp_path
+    (fake_root / "secrets.example.env").write_text(
+        "NTA_RESEND_API_KEY=oops-a-real-one" + chr(10), encoding="utf-8")
+    monkeypatch.setattr(scan, "ROOT", fake_root)
+    assert scan.scan_secret_template(), "a value in the template must fail"
 
 
 def test_the_repository_carries_no_credentials_right_now():
     result = subprocess.run(
-        [sys.executable, str(ROOT / "tools" / "secret_scan.py")],
+        [sys.executable, str(ROOT / "tools" / "release_static_scan.py"),
+         "--scan", "secrets"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     assert result.returncode == 0, result.stdout
@@ -235,7 +257,7 @@ def test_the_repository_carries_no_credentials_right_now():
 def test_the_secret_scan_blocks_the_release_in_ci():
     workflow = (ROOT.parent / ".github" / "workflows"
                 / "next-architecture-ci.yml").read_text(encoding="utf-8")
-    assert "tools/secret_scan.py" in workflow
+    assert "release_static_scan.py --scan all" in workflow
 
 
 # --------------------------------------------------------------------------- #
