@@ -22,6 +22,15 @@ test "$(id -u)" = 0
 case "$(realpath "$RELEASE_DIR")" in "$BASE/releases/"*) ;; *) echo "REFUSING: release outside immutable release root" >&2; exit 1;; esac
 test -f "$RELEASE_DIR/manifest.json"; test -f "$RELEASE_DIR/manifest.sig"; test -x "$RELEASE_DIR/.venv/bin/python"
 test -f "$PROD_ENV"; test -f "$CONF"; test ! -e "$BACKUP"
+
+# A promotion copies PROD_ENV into a backup that is kept indefinitely. Before
+# platform secrets moved to their own store, that quietly accumulated 314
+# copies of live credentials. Refuse to promote at all rather than make
+# another one: the config carries configuration, never a secret value.
+if grep -qE '^[[:space:]]*(export[[:space:]]+)?(NTA_GOOGLE_CLIENT_SECRET|NTA_RESEND_API_KEY|NTA_TELEGRAM_BOT_TOKEN|STRATFORGE_OWNER_MARKET_GATEWAY_TOKEN|STRATFORGE_CONNECTOR_RELEASE_SIGNING_KEY)[[:space:]]*=[[:space:]]*[^[:space:]#]' "$PROD_ENV"; then
+  echo "REFUSING: $PROD_ENV carries a platform secret value; move it to the secrets store" >&2
+  exit 1
+fi
 test "$(readlink -f /home/stratforge/canary-current)" = "$(realpath "$RELEASE_DIR")"
 mkdir -p "$EVIDENCE"
 
