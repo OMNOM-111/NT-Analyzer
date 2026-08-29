@@ -506,6 +506,10 @@ def _settle_connector_backtest(body: Mapping[str, Any]) -> None:
     """
     try:
         idempotency_key = str(body.get("idempotency_key") or "")
+        if idempotency_key.startswith("cancel-backtest:"):
+            _record_cancel_outcome(
+                idempotency_key.split(":", 1)[1], body)
+            return
         if not idempotency_key.startswith("backtest:"):
             return
         job_id = idempotency_key.split(":", 1)[1]
@@ -529,7 +533,13 @@ def _settle_connector_backtest(body: Mapping[str, Any]) -> None:
                 payload={"job_id": job_id[:64], "detail": str(exc)[:200]},
             )
             return
-        if outcome.get("action") in {"started", "completed", "failed"}:
+        # The race outcome must be recorded. Without it, a job that ended as
+        # `done` after a cancel was indistinguishable from a job whose cancel
+        # never reached the run -- and that ambiguity hid a real defect.
+        if outcome.get("action") in {
+            "started", "completed", "failed", "cancelled",
+            "cancel_race_completed_before_abort_boundary",
+        }:
             observability.event(
                 "connector_backtest", str(outcome.get("action")), severity="info",
                 payload={"job_id": job_id[:64],
@@ -540,6 +550,40 @@ def _settle_connector_backtest(body: Mapping[str, Any]) -> None:
             "connector_backtest", "settle_failed", severity="warning",
             payload={"idempotency_key": str(body.get("idempotency_key") or "")[:80]},
         )
+
+
+def _record_cancel_outcome(job_id: str, body: Mapping[str, Any]) -> None:
+    """Say whether the device actually had the run it was asked to stop.
+
+    A cancel that found nothing is not a cancel. Both used to arrive as a bare
+    success, so the audit showed a clean cancellation for a run that carried on
+    to completion. The device now reports which happened and the two are
+    recorded as different events.
+    """
+    detail = body.get("safe_result")
+    detail = detail if isinstance(detail, Mapping) else {}
+    found = bool(detail.get("active_run_found"))
+    requested = bool(detail.get("cancellation_requested"))
+    payload = {
+        "job_id": str(job_id)[:64],
+        "active_run_found": found,
+        "cancellation_requested": requested,
+        "active_count": detail.get("active_count"),
+        "already_finished": bool(detail.get("already_finished")),
+        "executor_state": str(detail.get("executor_state") or "")[:40],
+    }
+    if found and requested:
+        observability.event(
+            "connector_backtest", "backtest_cancel_requested_on_device",
+            severity="info", payload=payload,
+        )
+        return
+    # Not found, or found but the token could not be set. Either way the run
+    # was not asked to stop, and a warning is the honest severity.
+    observability.event(
+        "connector_backtest", "backtest_cancel_target_not_found",
+        severity="warning", payload=payload,
+    )
 
 
 def _cancel_backtest_on_connector(

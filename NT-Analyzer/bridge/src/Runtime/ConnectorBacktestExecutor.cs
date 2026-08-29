@@ -294,20 +294,57 @@ namespace NTAnalyzerBridge.Runtime
                 return;
             }
             ActiveRun record = null;
-            lock (_gate) { _active.TryGetValue(jobId, out record); }
+            int activeCount;
+            bool alreadyFinished;
+            lock (_gate)
+            {
+                _active.TryGetValue(jobId, out record);
+                activeCount = _active.Count;
+                alreadyFinished = _finished.Contains(jobId);
+            }
+
+            // "I cancelled it" and "there was nothing here to cancel" used to
+            // look identical on the wire: both were a bare success. That is
+            // how a cancel could fail to reach a run while the audit showed a
+            // clean completion, and it hid a real defect for a whole release.
+            // The answer now says which of the two happened. Only the job the
+            // caller already named is echoed -- no other run's id, no
+            // workspace data.
+            JObject detail = new JObject
+            {
+                ["target_job_id"] = jobId,
+                ["active_run_found"] = record != null,
+                ["cancellation_requested"] = false,
+                ["active_count"] = activeCount,
+                ["already_finished"] = alreadyFinished,
+                ["executor_state"] = _stopping ? "stopping" : "running",
+            };
+
             if (record == null)
             {
-                // Unknown or already finished. Saying so plainly is the honest
-                // answer and repeating the cancel changes nothing.
                 _writeResult(commandId, "success",
-                    "no active backtest for this job", null);
+                    alreadyFinished
+                        ? "backtest already finished; nothing to cancel"
+                        : "no active backtest for this job",
+                    detail.ToString(Formatting.None));
                 return;
             }
+
             record.CancelRequested = true;
-            try { record.Cancellation.Cancel(); }
-            catch (ObjectDisposedException) { }
+            try
+            {
+                record.Cancellation.Cancel();
+                detail["cancellation_requested"] = true;
+            }
+            catch (ObjectDisposedException)
+            {
+                // The run ended between the lookup and the cancel. Say so
+                // rather than claiming a cancellation that reached nothing.
+                detail["executor_state"] = "run_ended_before_cancel";
+            }
             _writeResult(commandId, "success",
-                "cancellation requested for running backtest", null);
+                "cancellation requested for running backtest",
+                detail.ToString(Formatting.None));
         }
 
         // ------------------------------------------------------------------
