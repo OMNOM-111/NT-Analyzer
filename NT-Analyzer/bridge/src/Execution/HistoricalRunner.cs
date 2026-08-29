@@ -29,6 +29,12 @@ namespace NTAnalyzerBridge.Execution
         /// </summary>
         public bool CancelSeenBeforeTradeCollection { get; set; }
 
+        /// <summary>
+        /// Diagnostics only: the name of the boundary that observed the
+        /// cancel. Empty when the run was not cancelled.
+        /// </summary>
+        public string CancelBoundary { get; set; }
+
         private JobRunOutcome(JobStatus status, string errorType, string message)
         {
             Status = status;

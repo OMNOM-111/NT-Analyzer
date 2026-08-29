@@ -385,6 +385,10 @@ namespace NTAnalyzerBridge.Runtime
                 ["cancel_seen_after_run"] = cancelSeenAfterRun,
                 ["cancel_seen_before_trade_collection"] =
                     outcome != null && outcome.CancelSeenBeforeTradeCollection,
+                // Which of our own post-processing boundaries actually stopped
+                // the run. Empty when nothing did.
+                ["cancel_boundary"] = outcome != null
+                    ? (outcome.CancelBoundary ?? "") : "",
                 ["outcome_status"] = outcome == null
                     ? "none" : outcome.Status.ToString(),
             };
