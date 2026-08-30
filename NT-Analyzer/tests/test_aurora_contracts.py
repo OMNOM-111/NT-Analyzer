@@ -193,12 +193,22 @@ def test_legal_terms_payload_is_short_form_master_document():
     payload = legal.terms_payload()
 
     assert payload["title"] == "Я соглашаюсь."
-    assert payload["version"] == "2026-08-25-shortform-v1"
+    assert payload["summary"] == "Пользовательское соглашение StratForge AI"
+    assert payload["version"] == "2026-08-30-v1"
+    assert payload["date"] == "30 августа 2026 года"
+    assert len(payload["digest"]) == 64
     headings = [section["heading"] for section in payload["sections"]]
-    assert headings[0] == "Что я подтверждаю"
-    assert "Подробные приложения" in headings
-    assert "Контакты" in headings
+    assert headings[0] == "Принятие соглашения"
+    assert "Данные и конфиденциальность" in headings
+    assert "AI-функции" in headings
+    assert "Cookies, локальное хранилище и сообщения" in headings
+    assert "Интеграции и market data" in headings
+    assert "Оплата, пожертвования и сторонние платежи" in headings
+    assert "Связь с Оператором" in headings
     assert "18 лет" in payload["sections"][0]["body"]
+    rendered = " ".join(section["body"] for section in payload["sections"])
+    assert "ТРЕБУЕТ РЕШЕНИЯ" not in rendered
+    assert "отдельной явной активации" in rendered
 
 
 def test_unauthenticated_entry_uses_provider_login_not_promo_gate():

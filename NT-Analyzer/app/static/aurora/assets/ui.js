@@ -3990,7 +3990,8 @@
     try { data = await (window.API ? API.http.legalTerms() : Promise.reject()); }
     catch (e) { toast('Не удалось загрузить условия'); return; }
     const sections = (data.sections || []).map(s => `<h4>${esc(s.heading)}</h4><p>${esc(s.body)}</p>`).join('');
-    const overlay = el(`<div class="terms-modal"><div class="terms-modal-card"><div class="terms-modal-head"><strong>${esc(data.title || 'Условия использования')}</strong><button class="btn ghost sm" id="terms-close">Закрыть</button></div><div class="terms-modal-body">${sections}<div class="cab-sub">Версия ${esc(data.version || '')}</div></div></div></div>`);
+    const meta = [data.summary, data.date].filter(Boolean).map(esc).join(' · ');
+    const overlay = el(`<div class="terms-modal"><div class="terms-modal-card"><div class="terms-modal-head"><strong>${esc(data.title || 'Условия использования')}</strong><button class="btn ghost sm" id="terms-close">Закрыть</button></div><div class="terms-modal-body">${meta ? `<p class="cab-sub">${meta}</p>` : ''}${sections}<div class="cab-sub">Версия ${esc(data.version || '')}</div></div></div></div>`);
     document.body.appendChild(overlay);
     const close = () => overlay.remove();
     const closeBtn = qs('#terms-close', overlay); if (closeBtn) closeBtn.onclick = close;

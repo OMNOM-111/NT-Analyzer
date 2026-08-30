@@ -12,7 +12,7 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from app import account_auth, permissions, secure_store, subscriptions, workspaces
+from app import account_auth, legal, permissions, secure_store, subscriptions, workspaces
 from app import server as server_mod
 from app.production_storage import MigrationRunner
 from app.production_storage.core import DocumentRepository
@@ -125,7 +125,10 @@ def test_new_account_activates_full_trial_after_contact_profile_and_terms(auth_s
     context = account_auth.authenticate_session(result["session_token"])
     assert context and context["user_id"] == 42
     assert account_auth.verify_csrf(context, result["csrf_token"])
-    assert account_auth._user(account_auth._read_doc(), 42)["terms_accepted_at_utc"]
+    accepted = account_auth._user(account_auth._read_doc(), 42)
+    assert accepted["terms_accepted_at_utc"]
+    assert accepted["terms_version"] == legal.TERMS_VERSION
+    assert accepted["terms_digest"] == legal.TERMS_DIGEST
 
     raw = account_auth._store_path().read_bytes()
     assert b"ADA@example.com" not in raw

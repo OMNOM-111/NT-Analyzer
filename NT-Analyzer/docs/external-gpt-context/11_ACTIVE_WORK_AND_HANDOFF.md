@@ -50,7 +50,7 @@
 | DB tx/s diagnostics path | missing | safe `pg_stat_database` diagnostics are not exposed in the app; do not search DSNs/secrets for this |
 | Cross-user shared owner feed | `EXTERNAL BLOCKED` | written provider/exchange distribution authority and per-user entitlement policy |
 | Public Connector installer | `EXTERNAL BLOCKED` | authorized Authenticode signing tool/material |
-| Legal publication | `IN DEVELOPMENT` | DRAFT until owner/legal decisions and counsel review |
+| Legal publication | `IN DEVELOPMENT` | Self-contained onboarding agreement `2026-08-30-v1` is implemented in Development; immutable release deployment and counsel review remain separate |
 
 ## Next development boundary
 
@@ -69,6 +69,7 @@ baselines.
 - [market data and Connector](06_MARKET_DATA_TRADING_CONNECTOR.md)
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-30T15:15:14Z | GPT-5.5 через Codex по запросу owner | Added the Development handoff boundary for onboarding agreement 2026-08-30-v1; no Canary or Production publication claimed.
 2026-08-27T22:33:11Z | GPT-5.5 через Codex по запросу owner | Replaced the completed beta.48 handoff with exact beta.61 worker scheduling, test, live measurement, immutable release and bounded residual-attribution evidence.
 2026-08-30T02:05:00Z | GPT-5.5 через Codex по запросу owner | Housekeeping sync to beta.79 and marked remaining work as repository cleanup only.
 -->

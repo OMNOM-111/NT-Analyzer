@@ -31,7 +31,7 @@
 | NinjaTrader / Connector | `BETA` | Production Connector on VMNINJA is `0.4.2-dev.20`; SERVER BACKTEST, cancel state machine, device catalog, account snapshot and Connector LIVE/GRACE/OFFLINE presentation are accepted | public installer distribution remains `EXTERNAL BLOCKED` on authorized Authenticode material |
 | Production worker queue | `AVAILABLE` | Eleven worker slots remain 4/4/2/1; empty workers use adaptive jittered backoff and one 30-second stale sweeper. Later auth hot-spot work reduced `/api/auth/status` latency but did not claim CPU improvement outside noise | DB tx/s still lacks a safe first-class diagnostics path |
 | Documents | `BETA` | Current handoff and Context Pack reflect beta.79; detailed technical history lives in changelog rather than current document bodies | legal publication remains separate |
-| Legal | `IN DEVELOPMENT` | Structured legal package exists and remains DRAFT | owner/legal decisions and counsel review are still required |
+| Legal | `IN DEVELOPMENT` | One self-contained onboarding agreement `2026-08-30-v1` is the sole versioned clickwrap text; the other legal files are non-binding research templates | release deployment and licensed counsel review are still required before legal publication is declared complete |
 
 ## Current operational identity
 
@@ -53,6 +53,7 @@ Both environments use release-directory suffix
 - A StratForge product trial is not a provider/exchange redistribution grant.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-30T15:15:14Z | GPT-5.5 через Codex по запросу owner | Recorded the single self-contained onboarding agreement 2026-08-30-v1 while preserving IN DEVELOPMENT status until deployment and counsel review.
 2026-08-26T18:22:14Z | GPT-5.5 через Codex по запросу owner | Replaced stale beta.31/beta.29 state with exact beta.48 live identity and the verified Production Connector recovery.
 2026-08-27T22:33:11Z | GPT-5.5 через Codex по запросу owner | Advanced current operational identity to beta.61 and recorded the scoped worker idle performance closeout while preserving accepted market-data and Connector baselines.
 2026-08-30T02:05:00Z | GPT-5.5 через Codex по запросу owner | Housekeeping sync to beta.79 after server backtest cancel, Connector state honesty, auth hotspot and secret-management closeout.
