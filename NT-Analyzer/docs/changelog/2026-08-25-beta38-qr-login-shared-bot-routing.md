@@ -1,7 +1,6 @@
 # Beta.38 QR Login, Canonical Owner and Shared-Bot Confirmation Routing
 
 - Date: 2026-08-25 UTC
-- Author: Claude Opus 5 через Claude Code по запросу owner
 - Clean beta.38 SHA: `39c00b83d8ad02b0d72b1845f2d575c93f08d465`
 - Status: `BETA.38 CANARY ACCEPTED / PRODUCTION LIVE`
 - Production before: `0.10.0-beta.29` → `0.10.0-beta.33` → `0.10.0-beta.38`

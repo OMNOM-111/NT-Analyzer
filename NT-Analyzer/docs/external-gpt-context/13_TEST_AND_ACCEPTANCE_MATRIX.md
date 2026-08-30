@@ -57,8 +57,3 @@ The workspace `AGENTS.md` explicitly avoids automatic in-app browser testing for
 local pages unless the owner asks for it. Treat authenticated browser E2E and
 visual QA as targeted manual or explicit-owner actions, not a default automated
 gate.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Pointed live Canary/Production acceptance at 1fae1f39 HTTP identity; /proc still open.
-2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Replaced obsolete beta.1 test/release status with beta.29 regression, 84/84 responsive, multi-client market-data, immutable Canary and same-artifact Production evidence.
--->

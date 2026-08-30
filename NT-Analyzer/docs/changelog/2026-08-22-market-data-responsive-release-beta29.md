@@ -119,8 +119,3 @@ readiness и `same_immutable_artifact=true`.
   доказана тем же byte-identical artifact в Development.
 - CME был закрыт: новый raw trade не утверждается. Fresh quote/SignalR
   heartbeat честно удерживал неизменившуюся цену в live green/red состоянии.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-23T01:29:45Z | GPT-5.5 через Codex по запросу owner | Создан технический acceptance snapshot beta.29: воспроизводимые fixes, 12-page fan-out evidence, responsive matrix и неизменённая entitlement boundary.
-2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Закрыта цепочка PR #142 → merge 4d15f1d → signed artifact → Canary acceptance → same-artifact Production; добавлены live chart, gateway, responsive и exact identity evidence.
--->

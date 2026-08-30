@@ -119,7 +119,3 @@ Production, затем отзыв, затем post-revoke smoke. Целостн�
 Production и Canary работают из одного immutable artifact `0.10.0-beta.79`.
 Connector на VMNINJA — `0.4.2-dev.20`, собран из merge SHA `ed634e09…`,
 подписан цепочкой `SHA256:3a048138…`.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-29 | Claude Opus 5 по запросу owner | Changelog за beta.70–beta.79.
--->

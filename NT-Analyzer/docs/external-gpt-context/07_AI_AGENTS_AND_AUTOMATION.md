@@ -79,7 +79,3 @@ above Vitek.
 - `app/ai_lab/domain_agents.py`
 - `app/ai_lab/agent_tts.py`
 - `app/vitek.py`
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-27T22:33:11Z | GPT-5.5 через Codex по запросу owner | Recorded the accepted beta.61 adaptive queue polling, unchanged 4/4/2/1 concurrency, single stale sweeper and storage-outage backoff contract.
--->

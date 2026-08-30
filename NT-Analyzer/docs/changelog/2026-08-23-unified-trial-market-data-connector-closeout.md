@@ -1,7 +1,6 @@
 # Unified Trial, Market-Data Admission and Connector Closeout
 
 - Date: 2026-08-23 UTC
-- Author: GPT-5.5 через Codex по запросу owner
 - Development base: `653f2b5bcfae2597dc0d14a22f07e741acd84cc8`
 - Branch: `codex/trial-connector-release-20260823`
 - Status: `IN DEVELOPMENT / LOCAL ACCEPTANCE PASS / CONNECTOR ACCEPTANCE PASS / EXTERNAL GATES OPEN`
@@ -92,9 +91,3 @@ through to another workspace or the owner's global feed.
 - Clean `a3979a3f` browser smoke kept the accepted TopstepX baseline intact:
   MNQ/MES were `LIVE`, colored price labels remained rendered and a second
   simultaneous client saw the same two live instruments.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Created the canonical Development checkpoint for unified trial/access, scoped market-data admission and real Connector closeout boundaries.
-2026-08-23T22:20:31Z | GPT-5.5 через Codex по запросу owner | Recorded clean LOCAL automated and two-client 10-minute visual acceptance; preserved external redistribution, physical Connector and signing gates.
-2026-08-24T01:52:25Z | GPT-5.5 через Codex по запросу owner | Recorded physical Development Connector install, retained enrollment, heartbeat/history/live evidence, bounded transport-drain fix and safe demo-backtest; retained Authenticode and redistribution gates.
--->

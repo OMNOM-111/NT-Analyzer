@@ -1869,6 +1869,7 @@ def ensure_service_account_user(
                 "ux_mode": "professional",
                 "terms_accepted_at_utc": now,
                 "terms_version": str(getattr(legal, "TERMS_VERSION", "1") or "1"),
+                "terms_digest": str(getattr(legal, "TERMS_DIGEST", "") or ""),
             }
             doc["users"].append(user)
         else:
@@ -2478,6 +2479,7 @@ def complete_profile(challenge_id: str, profile: Dict[str, Any], *,
                        user_agent=user_agent, email=email)
         user["terms_accepted_at_utc"] = _now_iso()
         user["terms_version"] = legal.TERMS_VERSION
+        user["terms_digest"] = legal.TERMS_DIGEST
         if user.get("status") in {"revoked", "denied", "blocked"}:
             # Owner explicitly removed access — completing the profile again does
             # not restore it.
@@ -2604,6 +2606,7 @@ def register_via_telegram(tg_user: Dict[str, Any], *, email: str = "",
             user["telegram_user_id"] = uid
         user["terms_accepted_at_utc"] = now
         user["terms_version"] = legal.TERMS_VERSION
+        user["terms_digest"] = legal.TERMS_DIGEST
         user["identity_verified_via"] = "mini_app_initdata"
         _link_identity_in_doc(
             doc, user, provider="telegram", subject=str(uid),
@@ -4247,6 +4250,7 @@ def _new_external_user(
         "revoked_at_utc": "",
         "terms_accepted_at_utc": now,
         "terms_version": legal.TERMS_VERSION,
+        "terms_digest": legal.TERMS_DIGEST,
     }
     _activate_verified_human_in_doc(user, source=f"{provider}_verified_registration")
     doc["users"].append(user)
@@ -4536,6 +4540,7 @@ def create_or_update_virtual_user(
             if terms_accepted:
                 user["terms_accepted_at_utc"] = _now_iso()
                 user["terms_version"] = str(getattr(legal, "TERMS_VERSION", "1") or "1")
+                user["terms_digest"] = str(getattr(legal, "TERMS_DIGEST", "") or "")
             doc["users"].append(user)
         else:
             user.update({

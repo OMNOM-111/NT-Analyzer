@@ -116,7 +116,3 @@ This is functional smoke evidence, not the owner's final design/UI acceptance.
 - Owner reviews final spacing, hierarchy, chart chrome and document-journal design.
 - No merge, Canary/Production promotion or deployment occurs before that separate
   acceptance and approval.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-11T09:03:34Z | GPT-5.5 через Codex по запросу owner | Зафиксирован принятый baseline и добавлено фактическое DEV smoke-evidence: multi-client TopstepX live, NinjaTrader OFF, одна upstream session, без нового loginKey; финальный design acceptance остаётся owner gate.
--->

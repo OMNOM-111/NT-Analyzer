@@ -65,7 +65,3 @@
 - `app/release_center.py`
 - `app/blue_green.py`
 - `app/permissions.py`
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Added current browser market-data edge, signed release-control and bounded Admin integration endpoint families used by beta.29 acceptance.
--->

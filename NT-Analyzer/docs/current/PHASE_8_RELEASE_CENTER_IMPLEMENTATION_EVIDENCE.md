@@ -203,7 +203,3 @@ and its routes are inert unless the Release Center is used.
 - CI ([Actions run 30807581743](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30807581743)): Static gates PASS; Tests (ubuntu-latest) PASS; Tests (windows-latest) PASS.
 - Merge commit: `4efddb42`; task branch `phase/8-release-center` deleted locally and on origin; integration `release/0.10.0-next-architecture` in sync with origin after merge.
 - Extraneous dirty/untracked files (`data/catalog/margins.json`, `data/development/durable/nt_analyzer.sqlite3`, `data/development/audit/`, `data/development/integrations/`, `data/governance-rendered/*`, `docs/AGENT_PERSONAS.md`, `docs/governance/*`) were preserved on disk and remained outside the Phase 8 delivery.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Removed the visible technical amendment header during final Development documentation closeout; historical evidence remains in Git history.
--->

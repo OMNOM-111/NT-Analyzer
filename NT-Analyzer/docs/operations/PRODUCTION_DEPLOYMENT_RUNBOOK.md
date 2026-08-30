@@ -275,7 +275,3 @@ NinjaTrader. Private admin RDP/PowerShell разрешены лишь через
    destructive in-place downgrade запрещён.
 6. Запустить старый release, проверить local readiness, затем edge smoke.
 7. Зафиксировать incident timestamps, release/schema/backup IDs и проверки.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-14T05:06:04Z | GPT-5.5 через Codex по запросу owner | Зафиксирован обязательный release contract DEV → CANARY → PRODUCTION: один immutable artifact, Canary acceptance, затем exact same artifact в Production без rebuild/partial hotfix.
--->

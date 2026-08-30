@@ -1,7 +1,6 @@
 # Beta.31 Canary Batch Rate Regression and Beta.32 Correction
 
 - Date: 2026-08-24 UTC
-- Author: GPT-5.5 через Codex по запросу owner
 - Clean beta.31 SHA: `8e83d4ccbad9d9fadf10109f0afdd6b3ce9fe6eb`
 - Status: `BETA.31 CANARY NOT ACCEPTED / BETA.32 DEVELOPMENT`
 - Production: unchanged accepted `0.10.0-beta.29`
@@ -31,7 +30,3 @@ Worker/Telegram/Connector status is already shown. Development keeps the real
 local NinjaTrader/bridge-log diagnostic.
 
 No beta.31 acceptance or Production promotion was recorded.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-24T16:33:38Z | GPT-5.5 через Codex по запросу owner | Recorded the non-accepted beta.31 Canary rate-class regression and the minimal beta.32 chart-batch/Admin correction while Production remained beta.29.
--->

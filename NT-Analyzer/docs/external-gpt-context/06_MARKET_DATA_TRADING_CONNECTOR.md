@@ -114,9 +114,3 @@ realtime or rendering only after a reproduced defect with targeted evidence.
 - [market-data resilience plan](../architecture/MARKET_DATA_RESILIENCE_PLAN.md)
 - `app/connector_protocol.py`
 - `app/production_storage/core.py`
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-26T18:22:14Z | GPT-5.5 через Codex по запросу owner | Replaced the old Development-only Connector checkpoint with the verified beta.48 Production online challenge/hello/heartbeat/ingest state and protected the accepted TopstepX baseline.
-2026-08-26T18:48:02Z | GPT-5.5 через Codex по запросу owner | Recorded two successful automatic session TTL rollovers and distinguished expected session_expired from absent storage or unexpected refusals.
-2026-08-26T23:46:20Z | GPT-5.5 через Codex по запросу owner | Recorded the beta.49 functional-account candidate: signed bounded snapshot, exact owner/workspace projection and truthful degraded status until real deployment acceptance.
--->

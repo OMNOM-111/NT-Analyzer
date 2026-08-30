@@ -129,7 +129,3 @@ released immediately when the grant expires or source changes.
 3. **Phase 3:** Rithmic connector configuration interface & integration.
 4. **Phase 4:** CQG/Tradovate connector integration.
 5. **Phase 5:** Per-user failover between user's own connected sources.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Reconciled the BYOMD strategy with the accepted owner hub, the new per-user HTTP/WS source admission and the still-blocked cross-user redistribution and physical Connector acceptance.
--->

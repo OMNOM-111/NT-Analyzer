@@ -92,8 +92,3 @@
 - Суть: Результаты принимаются только из канонического пути NT-Analyzer bridge -> NinjaTrader.
 - Источники: `РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md`
 - Автосинхронизация: governance docs
-
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-24T16:33:38Z | GPT-5.5 через Codex по запросу owner | Зафиксировать отклонение beta.31 Canary после воспроизводимого chart batch HTTP 429 и минимальную beta.32 коррекцию rate class/remote Diagnostics без изменения TopstepX gateway baseline.
--->

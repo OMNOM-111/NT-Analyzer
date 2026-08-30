@@ -96,7 +96,3 @@ Production не развёртывалась, не переключалась и
 Production previous — `0.10.0-beta.1-795db0c1`.
 
 Promotion `7ebda6fa` в Production требует отдельного явного ответа владельца.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-13T09:49:37Z | GPT-5.5 через Codex по запросу owner | Recorded exact mission-led Documents artifact, 619.899-second market-data soak, Canary load/rollback acceptance, external blockers and unchanged Production boundary.
--->

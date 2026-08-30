@@ -158,7 +158,3 @@ change was made in Phase 10.
 - CI ([Actions run 30829268990](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/30829268990)): Static gates PASS; Tests (ubuntu-latest) PASS; Tests (windows-latest) PASS.
 - Merge commit: `bd4fbc47`; task branch `phase/10-documentation` deleted locally and on origin; integration `release/0.10.0-next-architecture` in sync with origin after merge.
 - Extraneous dirty/untracked files (`data/catalog/margins.json`, `data/development/durable/nt_analyzer.sqlite3`, `data/development/audit/`, `data/development/integrations/`, `data/governance-rendered/*`, `docs/AGENT_PERSONAS.md`, `docs/governance/*`) were preserved on disk and remained outside the Phase 10 delivery.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Removed the visible technical amendment header during final Development documentation closeout; historical evidence remains in Git history.
--->

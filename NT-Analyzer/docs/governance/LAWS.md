@@ -1,6 +1,6 @@
 # LAWS
 
-Дата актуализации: 2026-08-14T06:20:00Z
+Дата актуализации: 2026-08-30T21:38:37Z
 
 Короткий свод действующих проектных законов для пользователей и системы StratForge AI.
 
@@ -92,8 +92,3 @@
 - Суть: Результаты принимаются только из канонического пути NT-Analyzer bridge -> NinjaTrader.
 - Источники: `РАЗРАБОТКА СТРАТЕГИЙ/Общие правила разработки стратегий.md`
 - Автосинхронизация: governance docs
-
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Зафиксировать live HTTP identity 1fae1f39 на Canary+Production и repository-фикс Documents/Release Center allowlist + TopstepX fallback на сервере. Не STAGE CLOSED: нет /proc cwd/exe и нет нового signed artifact.
--->

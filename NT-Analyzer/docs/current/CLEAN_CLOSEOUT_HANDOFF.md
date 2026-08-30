@@ -135,7 +135,3 @@ promotion и других блокеров следующего этапа не�
 
 Подробная техническая evidence:
 [beta.79 secret management и cancel closeout](../changelog/2026-08-29-beta79-secret-management-and-cancel-closeout.md).
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-29 | Claude Opus 5 по запросу owner | Handoff обновлён до beta.79: SERVER BACKTEST cancel, connector grace-state honesty, auth hotspot, secret-management contract и ротация четырёх кредов. Backlog перечислен явно.
--->

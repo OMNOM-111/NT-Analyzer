@@ -50,7 +50,7 @@
 | DB tx/s diagnostics path | missing | safe `pg_stat_database` diagnostics are not exposed in the app; do not search DSNs/secrets for this |
 | Cross-user shared owner feed | `EXTERNAL BLOCKED` | written provider/exchange distribution authority and per-user entitlement policy |
 | Public Connector installer | `EXTERNAL BLOCKED` | authorized Authenticode signing tool/material |
-| Legal publication | `IN DEVELOPMENT` | DRAFT until owner/legal decisions and counsel review |
+| Legal package deployment | `IN DEVELOPMENT` | Official agreement `2026-08-30-v2`, public endpoint isolation, AI provenance policy and release governance are implemented in Development; immutable Canary/Production promotion remains separate. Live Trading is unavailable |
 
 ## Next development boundary
 
@@ -67,8 +67,3 @@ baselines.
 - [environments and release](04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md)
 - [AI agents and worker queues](07_AI_AGENTS_AND_AUTOMATION.md)
 - [market data and Connector](06_MARKET_DATA_TRADING_CONNECTOR.md)
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-27T22:33:11Z | GPT-5.5 через Codex по запросу owner | Replaced the completed beta.48 handoff with exact beta.61 worker scheduling, test, live measurement, immutable release and bounded residual-attribution evidence.
-2026-08-30T02:05:00Z | GPT-5.5 через Codex по запросу owner | Housekeeping sync to beta.79 and marked remaining work as repository cleanup only.
--->

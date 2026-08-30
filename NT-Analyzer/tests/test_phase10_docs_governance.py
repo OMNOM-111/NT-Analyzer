@@ -182,17 +182,16 @@ def test_revision_one_uses_factual_creation_metadata():
     assert revision["title"] == "документ создан"
     assert revision["ts_utc"] == "2026-08-10T20:49:49Z"
     assert revision["author_kind"] == "ai"
-    assert "Claude Opus 4.8" in revision["author"]
+    assert revision["author"] == "AI-assisted change"
     assert revision["initiator"] == governance.PROJECT_OWNER
 
 
-def test_public_document_view_hides_owner_paths_and_internal_provenance():
+def test_public_document_view_hides_owner_paths():
     charter = governance.read_document("charter")
-    assert charter and "STRATFORGE_INTERNAL_AMENDMENT" in charter["content"]
+    assert charter and charter["content"]
     public = governance.public_document(charter)
     assert "owner" not in public
     assert "abs_path" not in public and "rel_path" not in public
-    assert "STRATFORGE_INTERNAL_AMENDMENT" not in public["content"]
     roles = next(row for row in governance.list_documents() if row["id"] == "roles")
     assert governance.document_is_public(roles) is False
 

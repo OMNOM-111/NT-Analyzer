@@ -126,7 +126,3 @@ Production source of truth: Stage 6 переводит тот же repository co
 PostgreSQL. Откат Stage 3 — выключить Production connector commands и сохранить
 `local_development`; private key/config не удаляются, installation можно
 отозвать. Ни rollback, ни repair не должны включать live commands.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-26T23:46:20Z | GPT-5.5 через Codex по запросу owner | Added bounded signed account snapshots, exact workspace/owner projection and the rule that transport heartbeat alone is not functional Connector PASS.
--->

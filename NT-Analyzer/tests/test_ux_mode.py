@@ -207,6 +207,32 @@ def test_api_beginner_deny_and_practice_ok(http_server, ux_store) -> None:
     assert status == 404
 
 
+def test_owner_legal_configuration_is_unreachable_through_document_api(http_server, ux_store) -> None:
+    token, csrf = "o" * 64, "p" * 48
+    with account_auth._LOCK:
+        doc = account_auth._read_doc()
+        doc["sessions"].append(_token_row(999, token, csrf))
+        account_auth._write_doc(doc)
+
+    status, listing = _request(http_server, "/api/governance/documents", token=token)
+    assert status == 200
+    serialized = json.dumps(listing, ensure_ascii=False)
+    assert "OWNER_LEGAL_CONFIGURATION" not in serialized
+
+    for candidate in (
+        "OWNER_LEGAL_CONFIGURATION",
+        "owner-legal-configuration",
+        "..%2Flegal%2FOWNER_LEGAL_CONFIGURATION.md",
+        "legal%2FOWNER_LEGAL_CONFIGURATION.md",
+    ):
+        status, _ = _request(
+            http_server, f"/api/governance/documents/{candidate}", token=token,
+        )
+        assert status == 404
+        status, _ = _request(http_server, f"/api/documents/{candidate}", token=token)
+        assert status == 404
+
+
 def test_api_set_ux_mode(http_server, ux_store) -> None:
     account_auth.create_or_update_virtual_user(
         user_id=5301, username="pick", first_name="Pick", ux_mode="",

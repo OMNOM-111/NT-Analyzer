@@ -1,6 +1,6 @@
 # LOCAL_AI_LAWS
 
-Дата актуализации: 2026-08-14T06:20:00Z
+Дата актуализации: 2026-08-30T21:38:37Z
 
 Короткий свод законов для локального ИИ и узкого облачного fallback в AI Lab sandbox.
 
@@ -162,8 +162,3 @@
 - Значение: `Да`
 - Суть: Фразы «не запускай», «ничего не восстанавливай» и вопросы о причине не превращаются в команды. Ответ владельца на needs_input передаётся в том же диалоге и тому же профильному агенту; подтверждение не подписывается именем другого специалиста.
 - Автосинхронизация: app/ai_lab/intent_classifier.py, app/ai_lab/chief_agent.py, app/vitek.py
-
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Зафиксировать live HTTP identity 1fae1f39 на Canary+Production и repository-фикс Documents/Release Center allowlist + TopstepX fallback на сервере. Не STAGE CLOSED: нет /proc cwd/exe и нет нового signed artifact.
--->

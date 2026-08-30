@@ -22,11 +22,6 @@ from . import runtime_env
 
 TEXT_EXTENSIONS = {".md", ".markdown", ".txt", ".py", ".js", ".json", ".html"}
 PROJECT_OWNER = "Черевко Дмитро"
-INTERNAL_AMENDMENT_RE = re.compile(
-    r"\n?<!--\s*STRATFORGE_INTERNAL_AMENDMENT\b.*?-->",
-    flags=re.IGNORECASE | re.DOTALL,
-)
-
 # This is an API boundary, not just a navigation preference. Documents absent
 # from this set remain available to owner/docs administrators but cannot be
 # enumerated or fetched by an ordinary account through /api/governance/*.
@@ -810,6 +805,22 @@ DEFAULT_DOCUMENTS: Dict[str, Any] = {
             "audience": "user",
         },
         {
+            "id": "ai-provenance-policy",
+            "title": "AI Provenance Policy",
+            "label": "Политика происхождения AI-метаданных",
+            "category": "governance",
+            "path": "docs/governance/AI_PROVENANCE_POLICY.md",
+            "editable_kind": "none",
+        },
+        {
+            "id": "release-governance-policy",
+            "title": "Release Governance Policy",
+            "label": "Обязательный release-конвейер",
+            "category": "governance",
+            "path": "docs/governance/RELEASE_GOVERNANCE_POLICY.md",
+            "editable_kind": "none",
+        },
+        {
             "id": "legacy-rules",
             "title": "Legacy Rules",
             "label": "Старые общие правила",
@@ -896,61 +907,61 @@ DEFAULT_DOCUMENTS: Dict[str, Any] = {
         },
         {
             "id": "legal-00", "title": "Ключевые юридические положения",
-            "label": "Проект · краткое резюме перед регистрацией",
+            "label": "Текущая редакция · условия регистрации",
             "category": "legal", "path": "docs/legal/00_KEY_LEGAL_POINTS.md",
-            "editable_kind": "none", "audience": "user", "draft": True,
+            "editable_kind": "none", "audience": "user", "draft": False,
             "created_at_utc": "2026-08-10T20:49:49Z",
-            "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+            "created_author": "AI-assisted change",
             "created_author_kind": "ai", "created_initiator": PROJECT_OWNER,
-            "created_reason": "Создан проект пользовательского юридического пакета.",
+            "created_reason": "Создан пользовательский юридический пакет.",
         },
         {
             "id": "legal-01", "title": "Пользовательское соглашение (ToS + EULA)",
-            "label": "Проект · главный договор пользователя",
+            "label": "Текущая редакция · условия использования",
             "category": "legal", "path": "docs/legal/01_TERMS_OF_SERVICE_EULA.md",
-            "editable_kind": "none", "audience": "user", "draft": True,
+            "editable_kind": "none", "audience": "user", "draft": False,
         },
         {
             "id": "legal-02", "title": "Политика конфиденциальности",
-            "label": "Проект · обработка данных",
+            "label": "Текущая редакция · обработка данных",
             "category": "legal", "path": "docs/legal/02_PRIVACY_POLICY.md",
-            "editable_kind": "none", "audience": "user", "draft": True,
+            "editable_kind": "none", "audience": "user", "draft": False,
         },
         {
             "id": "legal-03", "title": "Раскрытие торговых и авто-рисков",
-            "label": "Проект · market / software / AI / automation риски",
+            "label": "Текущая редакция · торговые и технологические риски",
             "category": "legal", "path": "docs/legal/03_TRADING_AUTOMATION_RISK_DISCLOSURE.md",
-            "editable_kind": "none", "audience": "user", "draft": True,
+            "editable_kind": "none", "audience": "user", "draft": False,
         },
         {
             "id": "legal-04", "title": "Сторонние интеграции и market data",
-            "label": "Проект · NinjaTrader, TopstepX, Telegram, Google",
+            "label": "Текущая редакция · сторонние сервисы и данные",
             "category": "legal", "path": "docs/legal/04_THIRD_PARTY_INTEGRATIONS_AND_MARKET_DATA.md",
-            "editable_kind": "none", "audience": "user", "draft": True,
+            "editable_kind": "none", "audience": "user", "draft": False,
         },
         {
             "id": "legal-05", "title": "Раскрытие ИИ и обработки данных",
-            "label": "Проект · что передаётся AI-провайдерам",
+            "label": "Текущая редакция · использование ИИ",
             "category": "legal", "path": "docs/legal/05_AI_DISCLOSURE_AND_DATA_PROCESSING.md",
-            "editable_kind": "none", "audience": "user", "draft": True,
+            "editable_kind": "none", "audience": "user", "draft": False,
         },
         {
             "id": "legal-06", "title": "Согласие на автоматизацию / live",
-            "label": "Проект · отдельные согласия и активация",
+            "label": "Текущая редакция · автоматизация и Live Trading",
             "category": "legal", "path": "docs/legal/06_AUTOMATION_LIVE_TRADING_ACTIVATION_CONSENT.md",
-            "editable_kind": "none", "audience": "user", "draft": True,
+            "editable_kind": "none", "audience": "user", "draft": False,
         },
         {
             "id": "legal-07", "title": "Электронный акцепт и согласия",
-            "label": "Проект · clickwrap, версии, отзыв",
+            "label": "Текущая редакция · электронное принятие",
             "category": "legal", "path": "docs/legal/07_CONSENT_AND_ELECTRONIC_ACCEPTANCE_POLICY.md",
-            "editable_kind": "none", "audience": "user", "draft": True,
+            "editable_kind": "none", "audience": "user", "draft": False,
         },
         {
             "id": "legal-08", "title": "Cookies и региональные приложения",
-            "label": "Проект · Cookie/Analytics + California/EU",
+            "label": "Текущая редакция · cookies и региональные права",
             "category": "legal", "path": "docs/legal/08_COOKIE_ANALYTICS_AND_REGIONAL_ADDENDA.md",
-            "editable_kind": "none", "audience": "user", "draft": True,
+            "editable_kind": "none", "audience": "user", "draft": False,
         },
     ],
 }
@@ -1163,10 +1174,10 @@ def _normalize_documents_registry(data: Dict[str, Any]) -> Dict[str, Any]:
             merged.update(existing[key])
         if key.startswith("legal-"):
             merged.setdefault("created_at_utc", "2026-08-10T20:49:49Z")
-            merged.setdefault("created_author", "GitHub Copilot (Claude Opus 4.8) через VS Code")
+            merged.setdefault("created_author", "AI-assisted change")
             merged.setdefault("created_author_kind", "ai")
             merged.setdefault("created_initiator", PROJECT_OWNER)
-            merged.setdefault("created_reason", "Создан проект пользовательского юридического пакета.")
+            merged.setdefault("created_reason", "Создан пользовательский юридический пакет.")
         normalized.append(merged)
         seen.add(key)
     for row in docs:
@@ -1402,20 +1413,6 @@ def _history_line(entry: Dict[str, Any]) -> str:
     )
 
 
-def _internal_amendment_comment() -> str:
-    """Hidden provenance for generated Markdown; UI history remains the display."""
-    latest = read_change_log(limit=1)
-    if not latest:
-        return ""
-    entry = latest[0]
-    text = " | ".join((
-        str(entry.get("ts_utc") or ""),
-        str(entry.get("actor") or "system"),
-        str(entry.get("reason") or "generated governance render"),
-    )).replace("--", "—")
-    return f"<!-- STRATFORGE_INTERNAL_AMENDMENT\n{text}\n-->"
-
-
 def _governance_updated_at() -> str:
     """Deterministic "last updated" stamp for generated governance documents.
 
@@ -1475,9 +1472,6 @@ def _render_laws_markdown(audience: str) -> str:
         if review:
             parts.append(f"- Ручная проверка: {', '.join(review)}")
         parts.append("")
-    internal = _internal_amendment_comment()
-    if internal:
-        parts.extend(["", internal])
     return "\n".join(parts).strip() + "\n"
 
 
@@ -1506,9 +1500,6 @@ def _render_sync_map_markdown() -> str:
                 "",
             ]
         )
-    internal = _internal_amendment_comment()
-    if internal:
-        parts.extend(["", internal])
     return "\n".join(parts).strip() + "\n"
 
 
@@ -1525,6 +1516,8 @@ def _render_readme_markdown() -> str:
 - `../agents/AI_LAB_COMPETITIVE_FEEDBACK.md` — контракт конкурентной обратной связи для AI-ролей.
 - `REGISTRY_POLICY.md` — правила ведения реестра стратегий.
 - `SYNC_MAP.md` — что синхронизируется автоматически, а что нужно проверять вручную.
+- `AI_PROVENANCE_POLICY.md` — запрет самоназвания и угадывания AI-метаданных.
+- `RELEASE_GOVERNANCE_POLICY.md` — обязательный конвейер до Canary и Production.
 
 Редактируемый machine source of truth:
 
@@ -1532,8 +1525,7 @@ def _render_readme_markdown() -> str:
 - `data/governance/documents.json`
 - `data/governance/change_log.jsonl` — последовательный журнал поправок с датой, временем, автором и before/after.
 """
-    internal = _internal_amendment_comment()
-    return body.rstrip() + (f"\n\n{internal}" if internal else "") + "\n"
+    return body.rstrip() + "\n"
 
 
 def _render_overview_markdown() -> str:
@@ -1608,9 +1600,6 @@ def _render_overview_markdown() -> str:
         "- После изменения смотреть `SYNC_MAP`, блок `Где проверять после изменения` и журнал поправок.",
         "- Подробный журнал редакций и технические сведения доступны владельцу/разработчику справа во вкладке «Документы» через «Подробнее».",
     ]
-    internal = _internal_amendment_comment()
-    if internal:
-        parts.extend(["", internal])
     return "\n".join(parts).strip() + "\n"
 
 
@@ -1758,14 +1747,12 @@ def document_is_public(item: Dict[str, Any]) -> bool:
 
 
 def public_document(item: Dict[str, Any]) -> Dict[str, Any]:
-    """Remove owner/dev paths and internal amendment comments from a document."""
+    """Remove owner/developer metadata from a public document response."""
     allowed = {
         "id", "title", "label", "category", "editable_kind", "audience",
         "draft", "exists", "content", "laws",
     }
     out = {key: copy.deepcopy(value) for key, value in item.items() if key in allowed}
-    if "content" in out:
-        out["content"] = INTERNAL_AMENDMENT_RE.sub("", str(out.get("content") or "")).rstrip() + "\n"
     return out
 
 

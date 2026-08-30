@@ -207,8 +207,3 @@
 - Текущее значение: `Да`
 - Автоматически обновляется: app/ai_lab/intent_classifier.py, app/ai_lab/chief_agent.py, app/vitek.py
 - Нужно проверить вручную: —
-
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-24T16:33:38Z | GPT-5.5 через Codex по запросу owner | Зафиксировать отклонение beta.31 Canary после воспроизводимого chart batch HTTP 429 и минимальную beta.32 коррекцию rate class/remote Diagnostics без изменения TopstepX gateway baseline.
--->

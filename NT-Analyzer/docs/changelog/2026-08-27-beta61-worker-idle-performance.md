@@ -97,7 +97,3 @@ successful real stale-lease recovery establish the effective rate of about
 Known skips remain the explicitly gated real-PostgreSQL integration cases and
 the platform-specific Windows bash-syntax check. The two Google Client Secrets
 and two Resend keys were not changed.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-27T22:33:11Z | GPT-5.5 через Codex по запросу owner | Recorded the independently reproduced worker busy-polling root cause, scoped scheduler correction, equal-window Canary/Production measurements, same-artifact release identity and measured non-worker Production residual.
--->

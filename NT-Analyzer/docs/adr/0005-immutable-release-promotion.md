@@ -1,6 +1,5 @@
 # ADR-0005: Immutable artifact и promotion без пересборки
 
-История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — утвердить release evidence, Canary promotion и blue-green boundary.
 
 - Статус: Принято
 - Дата решения: 2026-08-01

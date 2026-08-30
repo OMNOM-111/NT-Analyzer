@@ -411,9 +411,3 @@ baseline до изменений; схема после; p50/p95/p99; callback�
 5. Финальный engineering отчёт только после проверки доступной инженерной части
 
 После каждой фазы: targeted tests → regression → git diff review → docs → без несвязанных изменений → старые fallback не удалять до зелёных новых тестов.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-14T18:45:00Z | Claude Opus 5 через Claude Code по запросу owner | Gateway доведён до рабочего состояния: продление hub lease фоновым потоком, expired lease больше не считается held, secret-гигиена env-шаблонов восстановлена, websockets объявлен в requirements.txt, документация роли/lease/ограничений.
-2026-08-14T18:10:00Z | Grok 4.6 через Cursor по запросу owner | Fail-closed designated owner market-data gateway: one ProjectX hub, lease against duplicates, consumer/cache fan-out; status IN DEVELOPMENT until the next signed artifact.
-2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Current-блок приведён к принятому TopstepX-first functional baseline; исторический фазовый план сохранён без переписывания market-data implementation.
--->
