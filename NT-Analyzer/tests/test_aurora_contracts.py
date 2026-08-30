@@ -187,6 +187,20 @@ def test_unified_identity_ui_uses_public_uuid_and_provider_login_contract():
     assert 'id="auth-email-verify-accept"' in ui
 
 
+def test_legal_terms_payload_is_short_form_master_document():
+    from app import legal
+
+    payload = legal.terms_payload()
+
+    assert payload["title"] == "Я соглашаюсь."
+    assert payload["version"] == "2026-08-25-shortform-v1"
+    headings = [section["heading"] for section in payload["sections"]]
+    assert headings[0] == "Что я подтверждаю"
+    assert "Подробные приложения" in headings
+    assert "Контакты" in headings
+    assert "18 лет" in payload["sections"][0]["body"]
+
+
 def test_unauthenticated_entry_uses_provider_login_not_promo_gate():
     ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
     boot = ui.split("async function authenticateAndStart", 1)[1].split(
