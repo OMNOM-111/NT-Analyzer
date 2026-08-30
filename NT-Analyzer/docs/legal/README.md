@@ -22,7 +22,7 @@ data-flow (см. таблицу ниже).
 
 | № | Файл | Назначение |
 |---|---|---|
-| 1 | [00_KEY_LEGAL_POINTS.md](00_KEY_LEGAL_POINTS.md) | Краткое обязательное резюме перед регистрацией (Key Legal Points) |
+| 1 | [00_KEY_LEGAL_POINTS.md](00_KEY_LEGAL_POINTS.md) | Краткий signable master-договор для онбординга |
 | 2 | [01_TERMS_OF_SERVICE_EULA.md](01_TERMS_OF_SERVICE_EULA.md) | Master Terms of Service + EULA (главный договор) |
 | 3 | [02_PRIVACY_POLICY.md](02_PRIVACY_POLICY.md) | Политика конфиденциальности (по подтверждённому data-flow) |
 | 4 | [03_TRADING_AUTOMATION_RISK_DISCLOSURE.md](03_TRADING_AUTOMATION_RISK_DISCLOSURE.md) | Раскрытие торговых и автоматизационных рисков |
@@ -31,6 +31,10 @@ data-flow (см. таблицу ниже).
 | 7 | [06_AUTOMATION_LIVE_TRADING_ACTIVATION_CONSENT.md](06_AUTOMATION_LIVE_TRADING_ACTIVATION_CONSENT.md) | Отдельное согласие на автоматизацию / live-торговлю |
 | 8 | [07_CONSENT_AND_ELECTRONIC_ACCEPTANCE_POLICY.md](07_CONSENT_AND_ELECTRONIC_ACCEPTANCE_POLICY.md) | Политика и UX электронного акцепта, versioned evidence, re-consent, withdrawal |
 | 9 | [08_COOKIE_ANALYTICS_AND_REGIONAL_ADDENDA.md](08_COOKIE_ANALYTICS_AND_REGIONAL_ADDENDA.md) | Cookie/Analytics Notice + California и EU/EEA addenda |
+
+На онбординге пользователь подписывает **только документ 1**. Остальные
+файлы — подробные приложения и справка для review; они не создают отдельного
+обязательного клика.
 
 Каждый документ самостоятелен: его можно открыть, сохранить и распечатать
 отдельно. Приложение должно ссылаться на **конкретную версию** (`version` +
