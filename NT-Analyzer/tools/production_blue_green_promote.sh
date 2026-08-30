@@ -27,7 +27,11 @@ test -f "$PROD_ENV"; test -f "$CONF"; test ! -e "$BACKUP"
 # platform secrets moved to their own store, that quietly accumulated 314
 # copies of live credentials. Refuse to promote at all rather than make
 # another one: the config carries configuration, never a secret value.
-if grep -qE '^[[:space:]]*(export[[:space:]]+)?(NTA_GOOGLE_CLIENT_SECRET|NTA_RESEND_API_KEY|NTA_TELEGRAM_BOT_TOKEN|STRATFORGE_OWNER_MARKET_GATEWAY_TOKEN|STRATFORGE_CONNECTOR_RELEASE_SIGNING_KEY)[[:space:]]*=[[:space:]]*[^[:space:]#]' "$PROD_ENV"; then
+# Only the secrets that have actually been migrated to the store are listed.
+# Guarding a name that still legitimately lives in this config would block
+# every release on a false positive -- which is exactly what happened the
+# first time this guard ran. Extend the list as each remaining secret moves.
+if grep -qE '^[[:space:]]*(export[[:space:]]+)?(NTA_GOOGLE_CLIENT_SECRET|NTA_RESEND_API_KEY)[[:space:]]*=[[:space:]]*[^[:space:]#]' "$PROD_ENV"; then
   echo "REFUSING: $PROD_ENV carries a platform secret value; move it to the secrets store" >&2
   exit 1
 fi

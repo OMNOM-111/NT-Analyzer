@@ -114,6 +114,12 @@ promotion и других блокеров следующего этапа не�
 7. **Platform Secrets UI** не рисовался по решению владельца; API готов.
 8. **Проверить новые механизмы резервного копирования** на обход `secrets/`.
    Защита добавлена для promote и release-архива.
+9. **Три платформенных секрета ещё не перенесены** в хранилище и законно
+   лежат в `production-app.env`: `NTA_TELEGRAM_BOT_TOKEN`,
+   `NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN`, `STRATFORGE_SIGNING_KEY`. Гвард
+   promote намеренно ограничен только перенесёнными (Google, Resend) —
+   иначе он блокировал бы каждый релиз ложным срабатыванием, что и произошло
+   при первом запуске. Список расширяется по мере переноса каждого секрета.
 
 Из прошлой редакции сохраняются: Public Connector package остаётся
 `EXTERNAL BLOCKED` на разрешённом Authenticode material; legal documents
