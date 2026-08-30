@@ -2,7 +2,7 @@
 
 - Context Pack document: 06_MARKET_DATA_TRADING_CONNECTOR.md
 - Last verified UTC: 2026-08-26T23:46:20Z
-- Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
+- Verified against Git SHA: 1279645e48e32000978364b38fb20d3dcd303843
 - Verified deployed artifact Git SHA: `ae9c5c913e4a3250dd978ce2bf682e52590e82ef`
 - Scope: NinjaTrader authority, Connector protocol, market-data gateway and trading safety gates
 - Status: PARTIAL

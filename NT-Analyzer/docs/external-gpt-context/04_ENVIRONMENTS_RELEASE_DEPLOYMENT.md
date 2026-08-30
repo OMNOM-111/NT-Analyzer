@@ -1,9 +1,9 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-08-27T22:33:11Z
-- Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
-- Verified deployed artifact Git SHA: `60d922b2600d1d31e611c7a670cbddebc889beef`
+- Last verified UTC: 2026-08-30T02:05:00Z
+- Verified against Git SHA: 1279645e48e32000978364b38fb20d3dcd303843
+- Verified deployed artifact Git SHA: `1a1d54aa728d487203bb8342ecf142752610f4cd`
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: DONE
 
@@ -38,28 +38,25 @@ flowchart LR
 The Environment Switcher opens the selected origin and never carries session
 or browser storage between origins.
 
-## Current beta.61 release
+## Current beta.79 release
 
 | Field | Value |
 | --- | --- |
-| Candidate | `rc_8016843875644befbbd681c5cc2bde0e` |
-| Artifact | `art_77d98a4ed8aa4473bb241addf19c45b3` |
-| Version / Git SHA | `0.10.0-beta.61` / `60d922b2600d1d31e611c7a670cbddebc889beef` |
-| Build ID | `sf-0.10.0-beta.61-60d922b2600d-20260827T175814Z` |
-| Archive SHA256 | `E61B8C9293308D522AE3017EEBCF09B73A01CABA689EA8636A0C2BDA12236534` |
-| Runtime/manifest SHA256 | `E9195140BDB22C53EB83405FCF5655E76FD60068637FED1A0CAE35B1A769AF53` |
+| Candidate | recorded in Release Center ledger |
+| Artifact | same immutable artifact promoted from Canary to Production |
+| Version / Git SHA | `0.10.0-beta.79` / `1a1d54aa728d487203bb8342ecf142752610f4cd` |
+| Build ID | `sf-0.10.0-beta.79-1a1d54aa728d-20260829T234541Z` |
+| Archive SHA256 | recorded in release evidence |
+| Runtime/manifest SHA256 | current runtime artifact in live release dir |
 | Signature / migrations | verified production trust / pending `0` |
 
-Canary deployment `dep_9f5c8b6e10d64a299b2c9a9e41738486` completed all
-blue-green stages and final acceptance
-`chk_63c486896c474479a8c8b765b2d30b10`. Production deployment
-`dep_9a552fc7bbb54297ad8da764adae3659` then promoted the exact same artifact
-without rebuild.
+Canary accepted the beta.79 release and Production was promoted to the exact
+same artifact without rebuild.
 
 | Environment | Release directory | Previous / rollback | Ready |
 | --- | --- | --- | --- |
-| Canary | `production_data/releases/0.10.0-beta.61-60d922b2600d` | `0.10.0-beta.60-101d7c447e2d` | PASS |
-| Production | same | `0.10.0-beta.60-101d7c447e2d` | PASS |
+| Canary | `production_data/releases/0.10.0-beta.79-1a1d54aa728d` | `0.10.0-beta.79-47207e77c31f` | PASS |
+| Production | same | `0.10.0-beta.78-bb50168cbe79` | PASS |
 
 Both live endpoints report the same Git SHA, build ID and runtime artifact
 SHA256. Production readiness includes config, data root, signing key, object
@@ -76,19 +73,20 @@ different artifact.
 
 ## Verification
 
-- PR #198: mandatory CI `5/5` GREEN;
-- full regression `2134 passed`, `32 skipped`, `0 failed`;
+- beta.79 closeout through PR #230: mandatory CI GREEN;
+- full regression `2327 passed`, `32 skipped`, `0 failed`;
 - Canary and Production deployment evidence:
   `identity_verified`, `signature_verified`, `readiness_verified`,
   `same_immutable_artifact` all true;
-- Canary and Production browser surfaces displayed beta.61 with no console errors;
-- equal-window live worker scheduling measurements and functional queue probes
-  passed in both server environments;
-- no pending migration and no secret rotation.
+- Canary and Production server surfaces display beta.79 from the same release
+  directory;
+- SERVER BACKTEST cancel, Connector state honesty, auth hotspot and secret
+  containment closeout passed;
+- no pending migration.
 
 ## Canonical evidence
 
-- [beta.61 worker idle performance closeout](../changelog/2026-08-27-beta61-worker-idle-performance.md)
+- [beta.79 secret management and cancel closeout](../changelog/2026-08-29-beta79-secret-management-and-cancel-closeout.md)
 - [environment and release identity ADR](../adr/0001-environments-and-release-identity.md)
 - `app/runtime_env.py`
 - `app/release_control.py`
@@ -98,4 +96,5 @@ different artifact.
 <!-- STRATFORGE_INTERNAL_AMENDMENT
 2026-08-26T18:22:14Z | GPT-5.5 через Codex по запросу owner | Replaced historical non-accepted beta.30/beta.31 body with the current accepted beta.48 one-artifact Canary-to-Production release identity.
 2026-08-27T22:33:11Z | GPT-5.5 через Codex по запросу owner | Replaced the prior live identity with exact beta.61 candidate, artifact, hashes, deployments, rollback slot and same-artifact performance acceptance evidence.
+2026-08-30T02:05:00Z | GPT-5.5 через Codex по запросу owner | Housekeeping sync to current beta.79 live release directory and closeout evidence.
 -->

@@ -2,7 +2,7 @@
 
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
 - Last verified UTC: 2026-08-23T21:36:03Z
-- Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
+- Verified against Git SHA: 1279645e48e32000978364b38fb20d3dcd303843
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: PARTIAL
 
