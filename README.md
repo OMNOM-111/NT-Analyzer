@@ -133,7 +133,3 @@ See `NT-Analyzer/docs/repository-hygiene.md` for the full policy.
 
 Proprietary. See `LICENSE`.
 
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Aligned the product overview with the accepted TopstepX-first read-only chart baseline, NinjaTrader execution/runtime authority, and the current live-command release gate.
-2026-08-13T09:03:17Z | GPT-5.5 через Codex по запросу owner | Integrated the owner-approved mission-led product opening while preserving the accepted market-data and release boundaries.
--->
