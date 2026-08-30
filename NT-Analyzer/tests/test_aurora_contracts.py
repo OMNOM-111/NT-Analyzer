@@ -194,21 +194,46 @@ def test_legal_terms_payload_is_short_form_master_document():
 
     assert payload["title"] == "Я соглашаюсь."
     assert payload["summary"] == "Пользовательское соглашение StratForge AI"
-    assert payload["version"] == "2026-08-30-v1"
+    assert payload["version"] == "2026-08-30-v2"
     assert payload["date"] == "30 августа 2026 года"
     assert len(payload["digest"]) == 64
+    assert len(payload["sections"]) == 21
     headings = [section["heading"] for section in payload["sections"]]
     assert headings[0] == "Принятие соглашения"
     assert "Данные и конфиденциальность" in headings
     assert "AI-функции" in headings
     assert "Cookies, локальное хранилище и сообщения" in headings
     assert "Интеграции и market data" in headings
+    assert "Определения" in headings
+    assert "Возраст и правоспособность" in headings
+    assert "Лицензия и интеллектуальная собственность" in headings
+    assert "Запрещённое использование" in headings
+    assert "Приостановка и прекращение аккаунта" in headings
+    assert "Экспорт, закрытие аккаунта и удаление данных" in headings
+    assert "Beta-функции, обновления и API" in headings
+    assert "Обстоятельства вне контроля" in headings
+    assert "Экспортный контроль и санкции" in headings
     assert "Оплата, пожертвования и сторонние платежи" in headings
     assert "Связь с Оператором" in headings
-    assert "18 лет" in payload["sections"][0]["body"]
+    age = next(section for section in payload["sections"] if section["heading"] == "Возраст и правоспособность")
+    assert "18 лет" in age["body"]
     rendered = " ".join(section["body"] for section in payload["sections"])
     assert "ТРЕБУЕТ РЕШЕНИЯ" not in rendered
     assert "отдельной явной активации" in rendered
+    assert [notice["id"] for notice in payload["notices"]] == [
+        "legal-02", "legal-08", "legal-05", "legal-03", "legal-04", "legal-06",
+    ]
+
+
+def test_registration_terms_modal_links_informational_legal_notices():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    css = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
+
+    assert "showLegalNoticeModal" in ui
+    assert "API.http.governanceDocument(id)" in ui
+    assert 'data-legal-notice=' in ui
+    assert "Отдельное принятие при регистрации не требуется" in ui
+    assert "terms-notice-modal" in css
 
 
 def test_unauthenticated_entry_uses_provider_login_not_promo_gate():

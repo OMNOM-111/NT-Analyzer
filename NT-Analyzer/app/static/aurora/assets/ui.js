@@ -3985,16 +3985,32 @@
     return `<div class="auth-screen"><section class="auth-card"><div class="auth-brand"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Защищённый вход</span></div></div>${inner}<div class="auth-security">Единый профиль · подтверждённые Telegram, Google или e-mail<br>Внутренний идентификатор аккаунта — UUID; способы входа не объединяются автоматически</div></section></div>`;
   }
 
+  async function showLegalNoticeModal(id, fallbackLabel) {
+    let data;
+    try { data = await (window.API ? API.http.governanceDocument(id) : Promise.reject()); }
+    catch (e) { toast('Не удалось загрузить связанный документ'); return; }
+    const title = data.title || fallbackLabel || 'Связанный документ';
+    const draft = data.draft ? '<span class="terms-draft-badge">ПРОЕКТ</span>' : '';
+    const overlay = el(`<div class="terms-modal terms-notice-modal"><div class="terms-modal-card"><div class="terms-modal-head"><strong>${esc(title)} ${draft}</strong><button class="btn ghost sm" data-notice-close>Закрыть</button></div><div class="terms-modal-body"><p class="cab-sub">Информационный документ. Отдельное принятие при регистрации не требуется.</p><pre class="terms-notice-text">${esc(data.content || '')}</pre></div></div></div>`);
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    const closeBtn = qs('[data-notice-close]', overlay); if (closeBtn) closeBtn.onclick = close;
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  }
+
   async function showTermsModal() {
     let data;
     try { data = await (window.API ? API.http.legalTerms() : Promise.reject()); }
     catch (e) { toast('Не удалось загрузить условия'); return; }
     const sections = (data.sections || []).map(s => `<h4>${esc(s.heading)}</h4><p>${esc(s.body)}</p>`).join('');
     const meta = [data.summary, data.date].filter(Boolean).map(esc).join(' · ');
-    const overlay = el(`<div class="terms-modal"><div class="terms-modal-card"><div class="terms-modal-head"><strong>${esc(data.title || 'Условия использования')}</strong><button class="btn ghost sm" id="terms-close">Закрыть</button></div><div class="terms-modal-body">${meta ? `<p class="cab-sub">${meta}</p>` : ''}${sections}<div class="cab-sub">Версия ${esc(data.version || '')}</div></div></div></div>`);
+    const notices = (data.notices || []).map(n => `<button type="button" class="linklike terms-notice-link" data-legal-notice="${esc(n.id)}">${esc(n.label)}</button>`).join('');
+    const noticeBlock = notices ? `<h4>Связанные документы</h4><p>Эти материалы можно прочитать отдельно. Они не требуют отдельного принятия при регистрации.</p><div class="terms-notice-links">${notices}</div>` : '';
+    const overlay = el(`<div class="terms-modal"><div class="terms-modal-card"><div class="terms-modal-head"><strong>${esc(data.title || 'Условия использования')}</strong><button class="btn ghost sm" id="terms-close">Закрыть</button></div><div class="terms-modal-body">${meta ? `<p class="cab-sub">${meta}</p>` : ''}${sections}${noticeBlock}<div class="cab-sub">Версия ${esc(data.version || '')} · SHA-256 ${esc(data.digest || '')}</div></div></div></div>`);
     document.body.appendChild(overlay);
     const close = () => overlay.remove();
     const closeBtn = qs('#terms-close', overlay); if (closeBtn) closeBtn.onclick = close;
+    qsa('[data-legal-notice]', overlay).forEach(btn => btn.onclick = () => showLegalNoticeModal(btn.dataset.legalNotice, btn.textContent));
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   }
 
