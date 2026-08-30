@@ -1,8 +1,6 @@
 # ADR-0004: Admin Panel и capability permissions
 
-История поправки: 2026-08-02T03:06:47Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 2 — уточнить реализованный capability catalog, expiring grants и переходную security boundary.
 
-История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — утвердить административную границу и server-side authorization.
 
 - Статус: Принято
 - Дата решения: 2026-08-01

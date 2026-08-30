@@ -1,6 +1,5 @@
 # REQUIRES_OWNER_CLASSIFICATION
 
-История поправки: 2026-08-03T16:53:14Z; внёс `GitHub Copilot`; scope: Phase 10B — зафиксировать документы, которые не перемещены автоматически и требуют решения владельца.
 
 Files that were **not** relocated during the Phase 10B documentation move because
 their canonical destination or content resolution needs an explicit owner

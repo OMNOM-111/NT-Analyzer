@@ -28,8 +28,10 @@ The docs tree is intentionally partitioned into `current`, `architecture`,
 | Global/governance docs | owner or `docs.manage_global` capability required |
 | Workspace/strategy docs | scoped by workspace and separate from global governance |
 | Revision chain | additive append-only statuses such as `draft`, `review`, `approved`, `published`, `superseded` |
-| Amendment log | actor, reason, UTC timestamp and change details are recorded |
-| Public view | internal provenance and owner-only metadata stay hidden |
+| Amendment log | actor, reason, UTC timestamp and change details are stored as structured data |
+| AI provenance | model name/version/environment comes only from trusted infrastructure or is absent; no inherited/manual model signature |
+| Public view | owner-only metadata and files are excluded by registry and API boundaries |
+| Release governance | local checks -> tests -> clean Git -> CI -> immutable artifact -> Canary acceptance -> same artifact Production |
 
 ## Russian canonical language policy
 
@@ -63,15 +65,16 @@ Unfilled operator requisites are isolated in the non-public
 `docs/legal/OWNER_LEGAL_CONFIGURATION.md` and are not exposed through the
 governance document registry.
 
+Direct owner and non-owner API tests cover registry listing, exact IDs, encoded
+path traversal candidates and the independent `/api/documents/*` namespace.
+
 ## Canonical evidence
 
 - [../DOCUMENTATION_GOVERNANCE.md](../DOCUMENTATION_GOVERNANCE.md)
 - [../DOCS_STRUCTURE.md](../DOCS_STRUCTURE.md)
 - [../LOCALIZATION.md](../LOCALIZATION.md)
 - [../legal/README.md](../legal/README.md)
+- [../governance/AI_PROVENANCE_POLICY.md](../governance/AI_PROVENANCE_POLICY.md)
+- [../governance/RELEASE_GOVERNANCE_POLICY.md](../governance/RELEASE_GOVERNANCE_POLICY.md)
 - `data/governance/change_log.jsonl`
 - `app/production_storage/migrations/0011_document_specifications.sql`
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-30T20:59:15Z | GPT-5.5 через Codex по запросу owner | Legal package status changed to official current documentation; owner-only requisites isolated and Live Trading retained as unavailable.
--->

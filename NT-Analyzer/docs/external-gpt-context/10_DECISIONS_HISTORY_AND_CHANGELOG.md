@@ -50,7 +50,3 @@
 - [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md)
 - [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md)
 - [../legal/README.md](../legal/README.md)
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Marked older live snapshots historical and recorded beta.29 4d15f1d as the current immutable Canary/Production milestone.
--->

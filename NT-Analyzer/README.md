@@ -180,7 +180,3 @@ sources, AI prompts/schemas/reference docs. В Git не попадают runtime
 backtest results, reports, local profiles, runtime telemetry, AI experiment
 registry, model-call logs, screenshots, caches, bridge build output и личные
 research dumps. Подробно: `docs/repository-hygiene.md`.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Зафиксирован фактический TopstepX-first read-only chart baseline, роль NinjaTrader как execution/runtime authority и актуальный release-gate live-команд; техническая история убрана из верха документа.
--->

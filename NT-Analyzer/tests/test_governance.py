@@ -40,9 +40,20 @@ def test_runtime_defaults_shape() -> None:
 
 def test_governance_documents_exist() -> None:
     docs = {row["id"]: row for row in governance.list_documents()}
-    for required in ("project-overview", "charter", "roles", "laws", "local-ai-laws", "registry-policy", "sync-map", "ai-lab-competitive-feedback"):
+    for required in ("project-overview", "charter", "roles", "laws", "local-ai-laws", "registry-policy", "sync-map", "ai-provenance-policy", "release-governance-policy", "ai-lab-competitive-feedback"):
         assert required in docs, f"missing document registry row: {required}"
         assert Path(docs[required]["abs_path"]).is_file(), f"missing file for {required}"
+
+
+def test_governance_policies_forbid_guessed_ai_identity_and_release_bypass() -> None:
+    provenance = governance.read_document("ai-provenance-policy")["content"]
+    release = governance.read_document("release-governance-policy")["content"]
+    assert "не имеет права" in provenance
+    assert "доверенной инфраструктурой" in provenance
+    assert "не копирует подписи" in provenance
+    assert "чистый Git" in release
+    assert "immutable artifact" in release
+    assert "тот же artifact в Production" in release
 
 
 def test_charter_is_mission_led_and_legal_package_is_public() -> None:
@@ -69,12 +80,11 @@ def test_public_legal_package_has_no_internal_draft_markers() -> None:
         assert not any(token in content for token in forbidden), path
 
 
-def test_public_legal_documents_hide_internal_provenance() -> None:
+def test_public_legal_documents_hide_owner_metadata() -> None:
     for number in range(9):
         document = governance.read_document(f"legal-{number:02d}")
         assert document is not None
         public = governance.public_document(document)
-        assert "STRATFORGE_INTERNAL_AMENDMENT" not in public["content"]
         assert "abs_path" not in public
         assert public["draft"] is False
 

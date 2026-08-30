@@ -45,8 +45,3 @@ EXTERNAL` — локально сделано и проверено, реаль�
 Пункты 6 и 7 сохраняют внешние зависимости для реальной доставки уведомлений
 и Google/e-mail acceptance. Пункт 5 доступен в Canary; Production отдельно
 owner-gated.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-11T09:03:34Z | GPT-5.5 через Codex по запросу owner | Removed the visible technical amendment header and recorded the final Development functional smoke and owner-only design acceptance boundary.
-2026-08-13T08:31:00Z | GPT-5.5 через Codex по запросу owner | Recorded real in-app Canary release lifecycle, rollback rehearsal and 689-second multi-browser TopstepX marker acceptance; Production remained unchanged.
--->

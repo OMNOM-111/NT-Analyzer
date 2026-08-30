@@ -327,18 +327,3 @@ Browser verification 2026-08-12 (hang-fix artifact `6b6dc458`): local DEV `[DEV]
 - Status: **NOT STAGE CLOSED.** Live Canary+Production process identity is
   `1fae1f39`. Repository Documents/Charts fixes are not that artifact.
   Authenticated server TopstepX PASS and local DEV process identity remain open.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-14T06:45:00Z | Grok 4.6 через Cursor по запросу owner | Host /proc cwd/exe: Canary+Production current slot 1fae1f39; 0f2a90ea is previous only; not STAGE CLOSED.
-2026-08-13T09:49:37Z | GPT-5.5 через Codex по запросу owner | Recorded exact 7ebda6fa Canary artifact, Documents UI closeout, 619.899-second chart soak, load and real rollback rehearsal; Production unchanged.
-2026-08-13T08:31:00Z | GPT-5.5 через Codex по запросу owner | Recorded final acceptance hardening, real Release Center Canary lifecycle and rollback rehearsal; Production unchanged.
-2026-08-12T23:50:00Z | Grok 4.6 через Cursor по запросу owner | Record PR #26 MERGED to main (5b43569d) and annotated tag stratforge-server-v0.10.0-beta.1-6b6dc458 on the live hang-fix artifact.
-2026-08-12T23:40:00Z | Grok 4.6 через Cursor по запросу owner | Record live 6b6dc458 hang-fix artifact: Canary then exact-artifact Production, /ready 36ms, Environment Switcher DEV→CANARY→PROD.
-2026-08-12T23:45:00Z | Grok 4.6 через Cursor по запросу owner | Record /ready hang root cause (Connector JSON load ~19s + overlapping curl --max-time 5) and the bounded ping/timeout/single-flight/promote-/live fix that requires a new signed artifact.
-2026-08-12T22:30:00Z | Grok 4.6 через Cursor по запросу owner | Record live 795db0c1 artifact after auth/DEV fix: Canary+Production Sign in/Register, Telegram login/start 200, local DEV restored.
-2026-08-12T22:15:00Z | Grok 4.6 через Cursor по запросу owner | Reopen 0.10.0-beta.1: record real DEV/auth acceptance failures and the code fix that must ship as a new artifact.
-2026-08-12T21:30:00Z | GPT-5.5 через Codex по запросу owner | Record factual 0.10.0-beta.1 Canary PASS and exact-artifact Production promotion results.
-2026-08-11T09:15:42Z | GPT-5.5 через Codex по запросу owner | Removed the visible technical amendment preamble during final Development documentation closeout; historical evidence remains in Git history.
-2026-08-13T21:46:54Z | GPT-5.5 через Codex по запросу owner | Recorded Canary owner-login auth hotfix scope: shared existing Telegram bot routing, isolated Canary queues/sessions, no Production change.
-2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Replaced stale beta.1 top-level current claims with accepted beta.29 PR #142 identity and marked the long Phase 12 body historical.
--->

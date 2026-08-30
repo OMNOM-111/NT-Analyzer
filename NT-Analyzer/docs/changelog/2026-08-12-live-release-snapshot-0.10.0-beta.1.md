@@ -77,7 +77,3 @@ operational closeout evidence, not a template default.
 - [NEXT_ARCHITECTURE_CHANGELOG.md](NEXT_ARCHITECTURE_CHANGELOG.md)
 - [../../deploy/canary/README.md](../../deploy/canary/README.md)
 - [../../deploy/production/README.md](../../deploy/production/README.md)
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-13T04:59:15Z | GPT-5.5 через Codex по запросу owner | Сохранён компактный canonical operational release snapshot для live 0.10.0-beta.1 / 6b6dc458, чтобы Context Pack ссылался на постоянный repo source, а не на chat history.
--->

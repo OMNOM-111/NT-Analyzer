@@ -92,9 +92,3 @@ different artifact.
 - `app/release_control.py`
 - `app/release_center.py`
 - `tools/stage9_remote_release.sh`
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-26T18:22:14Z | GPT-5.5 через Codex по запросу owner | Replaced historical non-accepted beta.30/beta.31 body with the current accepted beta.48 one-artifact Canary-to-Production release identity.
-2026-08-27T22:33:11Z | GPT-5.5 через Codex по запросу owner | Replaced the prior live identity with exact beta.61 candidate, artifact, hashes, deployments, rollback slot and same-artifact performance acceptance evidence.
-2026-08-30T02:05:00Z | GPT-5.5 через Codex по запросу owner | Housekeeping sync to current beta.79 live release directory and closeout evidence.
--->

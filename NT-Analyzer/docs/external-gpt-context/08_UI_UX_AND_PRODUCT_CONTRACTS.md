@@ -72,7 +72,3 @@
 - `app/static/aurora/assets/api.js`
 - `app/static/aurora/assets/pages/desktop.js`
 - `app/static/aurora/assets/pages/documents.js`
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Replaced historical Canary-only UI acceptance with beta.29 84/84 responsive, authenticated Canary and same-artifact Production browser evidence.
--->

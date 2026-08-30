@@ -73,6 +73,22 @@
       "audience": "user"
     },
     {
+      "id": "ai-provenance-policy",
+      "title": "AI Provenance Policy",
+      "label": "Политика происхождения AI-метаданных",
+      "category": "governance",
+      "path": "docs/governance/AI_PROVENANCE_POLICY.md",
+      "editable_kind": "none"
+    },
+    {
+      "id": "release-governance-policy",
+      "title": "Release Governance Policy",
+      "label": "Обязательный release-конвейер",
+      "category": "governance",
+      "path": "docs/governance/RELEASE_GOVERNANCE_POLICY.md",
+      "editable_kind": "none"
+    },
+    {
       "id": "legacy-rules",
       "title": "Legacy Rules",
       "label": "Старые общие правила",
@@ -167,7 +183,7 @@
       "audience": "user",
       "draft": false,
       "created_at_utc": "2026-08-10T20:49:49Z",
-      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author": "AI-assisted change",
       "created_author_kind": "ai",
       "created_initiator": "Черевко Дмитро",
       "created_reason": "Создан пользовательский юридический пакет."
@@ -182,7 +198,7 @@
       "audience": "user",
       "draft": false,
       "created_at_utc": "2026-08-10T20:49:49Z",
-      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author": "AI-assisted change",
       "created_author_kind": "ai",
       "created_initiator": "Черевко Дмитро",
       "created_reason": "Создан пользовательский юридический пакет."
@@ -197,7 +213,7 @@
       "audience": "user",
       "draft": false,
       "created_at_utc": "2026-08-10T20:49:49Z",
-      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author": "AI-assisted change",
       "created_author_kind": "ai",
       "created_initiator": "Черевко Дмитро",
       "created_reason": "Создан пользовательский юридический пакет."
@@ -212,7 +228,7 @@
       "audience": "user",
       "draft": false,
       "created_at_utc": "2026-08-10T20:49:49Z",
-      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author": "AI-assisted change",
       "created_author_kind": "ai",
       "created_initiator": "Черевко Дмитро",
       "created_reason": "Создан пользовательский юридический пакет."
@@ -227,7 +243,7 @@
       "audience": "user",
       "draft": false,
       "created_at_utc": "2026-08-10T20:49:49Z",
-      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author": "AI-assisted change",
       "created_author_kind": "ai",
       "created_initiator": "Черевко Дмитро",
       "created_reason": "Создан пользовательский юридический пакет."
@@ -242,7 +258,7 @@
       "audience": "user",
       "draft": false,
       "created_at_utc": "2026-08-10T20:49:49Z",
-      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author": "AI-assisted change",
       "created_author_kind": "ai",
       "created_initiator": "Черевко Дмитро",
       "created_reason": "Создан пользовательский юридический пакет."
@@ -257,7 +273,7 @@
       "audience": "user",
       "draft": false,
       "created_at_utc": "2026-08-10T20:49:49Z",
-      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author": "AI-assisted change",
       "created_author_kind": "ai",
       "created_initiator": "Черевко Дмитро",
       "created_reason": "Создан пользовательский юридический пакет."
@@ -272,7 +288,7 @@
       "audience": "user",
       "draft": false,
       "created_at_utc": "2026-08-10T20:49:49Z",
-      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author": "AI-assisted change",
       "created_author_kind": "ai",
       "created_initiator": "Черевко Дмитро",
       "created_reason": "Создан пользовательский юридический пакет."
@@ -287,7 +303,7 @@
       "audience": "user",
       "draft": false,
       "created_at_utc": "2026-08-10T20:49:49Z",
-      "created_author": "GitHub Copilot (Claude Opus 4.8) через VS Code",
+      "created_author": "AI-assisted change",
       "created_author_kind": "ai",
       "created_initiator": "Черевко Дмитро",
       "created_reason": "Создан пользовательский юридический пакет."

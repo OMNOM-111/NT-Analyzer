@@ -1,6 +1,5 @@
 # Next Architecture: границы системы
 
-История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — краткая карта утверждённой целевой архитектуры.
 
 Подробные решения находятся в [ADR index](../adr/README.md), план выполнения — в [NEXT_ARCHITECTURE_PROGRAM_STATUS.md](../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md).
 

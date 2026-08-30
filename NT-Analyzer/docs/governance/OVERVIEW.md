@@ -1,6 +1,6 @@
 # OVERVIEW
 
-Дата актуализации: 2026-08-14T06:20:00Z
+Дата актуализации: 2026-08-30T21:38:37Z
 
 ## О StratForge AI
 
@@ -36,7 +36,3 @@ StratForge AI — платформа автоматической торговл
 - Законы менять в `LAWS` или `LOCAL_AI_LAWS`.
 - После изменения смотреть `SYNC_MAP`, блок `Где проверять после изменения` и журнал поправок.
 - Подробный журнал редакций и технические сведения доступны владельцу/разработчику справа во вкладке «Документы» через «Подробнее».
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Зафиксировать live HTTP identity 1fae1f39 на Canary+Production и repository-фикс Documents/Release Center allowlist + TopstepX fallback на сервере. Не STAGE CLOSED: нет /proc cwd/exe и нет нового signed artifact.
--->

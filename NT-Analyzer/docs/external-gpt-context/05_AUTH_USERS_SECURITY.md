@@ -124,9 +124,3 @@ Key admin capability names already in the contract: `admin.view`,
 - `app/security_devices.py`
 - `app/personal_nt_security.py`
 - [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md)
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Noted live Telegram login on 1fae1f39 and remaining Canary Cloudflare 1010 forward gap.
-2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Replaced stale beta.1/Canary-bot blocker with authenticated beta.29 existing-owner login and isolated shared-bot routing facts; Google/email external gates remain.
-2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Documented the Development-only verified-registration activation, one seven-day trial clock, owner extension history and removal of anonymous blurred access; four Google/Resend secrets remain untouched.
--->

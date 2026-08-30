@@ -1,7 +1,6 @@
 # Beta.30 Canary History-Range Regression and Beta.31 Correction
 
 - Date: 2026-08-24 UTC
-- Author: GPT-5.5 через Codex по запросу owner
 - Development base: `27184197ea5d495b8e0d90d0cc5c06d6539f7ab9`
 - Branch: `codex/canary-history-range-beta31`
 - Status: `BETA.30 CANARY NOT ACCEPTED / BETA.31 DEVELOPMENT PASS`
@@ -72,7 +71,3 @@ WebSockets: the two test clients plus the owner's already-open local page.
 - Compileall, 22 JavaScript syntax checks, External GPT Context, CSP, secret,
   Markdown and `git diff --check`: PASS.
 - Production remained on accepted beta.29 throughout this corrective cycle.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-24T04:22:21Z | GPT-5.5 через Codex по запросу owner | Recorded non-accepted beta.30 Canary saturation, the first consumer viewport-range divergence and the minimal beta.31 correction with Production unchanged.
--->

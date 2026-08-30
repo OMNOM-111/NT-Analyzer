@@ -128,7 +128,3 @@ flowchart LR
 - [../architecture/CONNECTOR_PROTOCOL_V1.md](../architecture/CONNECTOR_PROTOCOL_V1.md)
 - [../architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md](../architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md)
 - [12_API_AND_SCHEMA_REFERENCE.md](12_API_AND_SCHEMA_REFERENCE.md)
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Added the accepted Production-hub/Canary-Development-consumer gateway trust boundary and same-origin browser chart flow without changing NinjaTrader execution authority.
--->

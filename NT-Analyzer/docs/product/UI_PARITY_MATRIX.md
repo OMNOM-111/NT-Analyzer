@@ -35,7 +35,3 @@ Classic remains available for rollback/reference, but normal work starts in Auro
   movements stay unknown; this is stricter than displaying balance growth as P&L.
 - Classic is not deleted. It is a safe fallback at `/ui/legacy/`, but not required
   to access the endpoint families used by normal operation.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Матрица приведена к TopstepX read-only baseline и фактическому documents revision UI с автоматической attribution и privilege boundary.
--->

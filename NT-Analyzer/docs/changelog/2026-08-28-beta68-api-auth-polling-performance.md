@@ -48,7 +48,3 @@ NinjaTrader, host, container, firewall or Supervisor behavior changed.
 
 Live equal-window after measurements and exact immutable release identity are
 recorded only after Canary acceptance and same-artifact Production promotion.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-28T21:11:49Z | GPT-5.5 через Codex по запросу owner | Recorded the measured Production owner-auth polling CPU root cause, scoped fail-closed correction and pre-release verification without changing Connector or market-data semantics.
--->

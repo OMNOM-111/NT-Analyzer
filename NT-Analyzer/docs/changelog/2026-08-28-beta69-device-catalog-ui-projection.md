@@ -33,7 +33,3 @@ device catalog.
 
 No Connector protocol, NinjaTrader DLL, server job transport, worker
 scheduling, TopstepX, SignalR, market-data or chart behavior changed.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-28T21:34:46Z | GPT-5.5 через Codex по запросу owner | Recorded the real UI catalog projection divergence and its narrow correction without changing Connector or market-data semantics.
--->

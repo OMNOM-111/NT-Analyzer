@@ -41,7 +41,3 @@ If TopstepX is unavailable, NinjaTrader is off, and no eligible credentialed liv
 3. Serve the last valid canonical bars when available.
 4. Mark the payload `status=offline`, `live=false`, `strategy_blocked`, `execution_blocked` as applicable.
 5. Show the global/per-chart offline state instead of a false live price.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-11T08:13:16Z | GPT-5.5 через Codex по запросу owner | Reconciled the operational matrix with the accepted TopstepX-first Development runtime; no provider or chart implementation was changed.
--->

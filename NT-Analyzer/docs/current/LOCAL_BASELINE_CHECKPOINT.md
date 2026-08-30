@@ -180,16 +180,3 @@ Authenticode tool/material; runtime Connector protocol принят.
 Canary → acceptance → SAME artifact Production`.
 
 Четыре Google/Resend secrets не ротировать.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Актуализирован LOCAL checkpoint: закрытые PR #130/#131/#135, fail-closed release decision и полная test-root isolation для final acceptance beta.28.
-2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Добавлен фактический Canary PASS 2790fb43 и найденный в штатном promotion flow blocker approved_for_production; новый цикл обязателен, Production не менялся.
-2026-08-21T03:50:00Z | GPT-5.5 через Codex по запросу owner | Закрыт полный release cycle merge 36600dba → signed artifact → Canary acceptance → same-artifact Production; market-data baseline сохранён.
-2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Обновлён checkpoint после beta.29: чистый merge, зелёный PR #142, один immutable artifact, Canary/Production PASS, fan-out и responsive evidence.
-2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Added the open Development trial/market-data/Connector checkpoint and its LOCAL automated evidence; beta.29 remains the unchanged live rollback-safe baseline.
-2026-08-23T22:20:31Z | GPT-5.5 через Codex по запросу owner | Added clean 1943/32/0 regression and 10m56s two-client MNQ/MES browser fan-out evidence; retained the physical Connector and redistribution blockers.
-2026-08-24T01:52:25Z | GPT-5.5 через Codex по запросу owner | Recorded physical Development Connector dev.14 acceptance with retained enrollment, signed heartbeat, MNQ/MES history/live, zero-drop bounded drain and a safe synthetic no-order demo-backtest.
-2026-08-24T02:41:31Z | GPT-5.5 через Codex по запросу owner | Recorded owner-authorized PR #144 merge fb7d7f9b and repeated clean-merge Connector heartbeat/history/live plus safe UI demo-backtest #18782; opened only the required beta.30 versioned release commit.
-2026-08-24T04:22:21Z | GPT-5.5 через Codex по запросу owner | Recorded the non-accepted beta.30 Canary capacity regression, unchanged beta.29 Production and the minimal beta.31 viewport-range correction with the TopstepX/SignalR baseline preserved.
-2026-08-24T16:33:38Z | GPT-5.5 через Codex по запросу owner | Recorded the non-accepted beta.31 Canary chart-batch rate regression, unchanged beta.29 Production and the minimal beta.32 admission/UI correction with the TopstepX baseline preserved.
--->

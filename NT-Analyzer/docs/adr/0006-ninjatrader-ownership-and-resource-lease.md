@@ -1,6 +1,5 @@
 # ADR-0006: NinjaTrader ownership, агенты и resource lease
 
-История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — утвердить границу личного и общего NinjaTrader.
 
 - Статус: Принято
 - Дата решения: 2026-08-01

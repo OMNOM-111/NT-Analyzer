@@ -2,7 +2,6 @@
 
 История поправки: 2026-08-14T06:20:00Z; внёс `Grok 4.6 через Cursor по запросу owner`; scope: live HTTP identity `1fae1f39` on Canary+Production; repository Documents/Charts fix not yet that artifact.
 История поправки: 2026-08-12T23:50:00Z; внёс `Grok 4.6 через Cursor по запросу owner`; scope: PR #26 merged to main; hang-fix tag on `6b6dc458`.
-История поправки: 2026-08-03T16:53:14Z; внёс `GitHub Copilot`; scope: Phase 10B — создать честный changelog новой архитектурной программы с разделением по аудитории и по фактическому статусу развёртывания.
 
 Программа: переход от одновладельческого контура к многопользовательской
 архитектуре StratForge (`0.10.0-dev` line, integration branch
@@ -148,10 +147,3 @@ Dry-run, mock, тестовый backend и неподключённые внеш
   (`strategy.spec.manage`, migration `0011`, `app/doc_specs.py`). Остаётся
   owner design/UI acceptance. Canary Telegram uses shared-webhook forwarding;
   public Cloudflare 1010 and `/proc` identity proof remain open.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Recorded live HTTP identity 1fae1f39; hang-fix 6b6dc458 is historical; Documents/Charts follow-up not STAGE CLOSED.
-2026-08-12T22:30:00Z | Grok 4.6 через Cursor по запросу owner | Record live 795db0c1 auth/DEV fix artifact on Canary and Production.
-2026-08-12T22:15:00Z | Grok 4.6 через Cursor по запросу owner | Reopen: owner auth/DEV acceptance failed on live 2f9409c4; record UUID hydrate + launcher + primary Sign in/Register fix requiring a new artifact.
-2026-08-12T21:30:00Z | GPT-5.5 через Codex по запросу owner | Record factual 0.10.0-beta.1 Canary/Production deployment; remove stale "not deployed" claims.
--->

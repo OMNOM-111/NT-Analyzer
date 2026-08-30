@@ -1,8 +1,6 @@
 # ADR-0001: Окружения и идентичность сборки
 
-История поправки: 2026-08-02T01:55:27Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 1 — реализовать канонические environment/channel, полный build identity и fail-closed изоляцию data roots.
 
-История поправки: 2026-08-02T00:53:55Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Phase 0 — утвердить модель Development, Canary, Production и release metadata.
 
 - Статус: Принято
 - Дата решения: 2026-08-01

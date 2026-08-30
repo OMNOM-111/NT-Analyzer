@@ -73,7 +73,3 @@ owner credentials. Живая конфигурация:
   hub, а не назначать себя hub'ом.
 - Google OAuth и transactional email остаются `configured: false` на обоих
   окружениях: внешние блокеры, кодом не закрываются.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-14T20:15:00Z | Claude Opus 5 через Claude Code по запросу owner | Live release fad80484 на Canary+Production: designated owner market-data gateway, один provider connection на топологию, owner login/Documents/Release Center/Charts/isolation PASS на обоих окружениях.
--->

@@ -100,8 +100,3 @@ evidence. Do not collapse the two into one undifferentiated claim.
 - Environment and identity ADRs: [../adr/0001-environments-and-release-identity.md](../adr/0001-environments-and-release-identity.md), [../adr/0002-unified-identity.md](../adr/0002-unified-identity.md), [../adr/0003-trusted-devices-and-step-up.md](../adr/0003-trusted-devices-and-step-up.md), [../adr/0004-admin-panel-and-capabilities.md](../adr/0004-admin-panel-and-capabilities.md), [../adr/0005-immutable-release-promotion.md](../adr/0005-immutable-release-promotion.md)
 - Connector and market-data contracts: [../architecture/CONNECTOR_PROTOCOL_V1.md](../architecture/CONNECTOR_PROTOCOL_V1.md), [../architecture/MARKET_DATA_RESILIENCE_PLAN.md](../architecture/MARKET_DATA_RESILIENCE_PLAN.md), [../architecture/UI_API_MAP.md](../architecture/UI_API_MAP.md)
 - Operational release evidence: [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md), [../current/CLEAN_CLOSEOUT_HANDOFF.md](../current/CLEAN_CLOSEOUT_HANDOFF.md), [../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md](../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md), [../changelog/NEXT_ARCHITECTURE_CHANGELOG.md](../changelog/NEXT_ARCHITECTURE_CHANGELOG.md)
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Recorded live HTTP identity 1fae1f39 vs repository Documents/Charts follow-up; not STAGE CLOSED.
-2026-08-23T02:27:02Z | GPT-5.5 через Codex по запросу owner | Replaced obsolete beta.1 index snapshot with accepted beta.29 DEV/Canary/Production identity, gateway roles, rollback slot and canonical operational evidence.
--->

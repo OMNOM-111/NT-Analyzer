@@ -162,8 +162,3 @@
 - Значение: `Да`
 - Суть: Фразы «не запускай», «ничего не восстанавливай» и вопросы о причине не превращаются в команды. Ответ владельца на needs_input передаётся в том же диалоге и тому же профильному агенту; подтверждение не подписывается именем другого специалиста.
 - Автосинхронизация: app/ai_lab/intent_classifier.py, app/ai_lab/chief_agent.py, app/vitek.py
-
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-24T16:33:38Z | GPT-5.5 через Codex по запросу owner | Зафиксировать отклонение beta.31 Canary после воспроизводимого chart batch HTTP 429 и минимальную beta.32 коррекцию rate class/remote Diagnostics без изменения TopstepX gateway baseline.
--->

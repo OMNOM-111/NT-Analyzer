@@ -335,7 +335,3 @@ data/
   topbar показывает active workspace и открывает drawer переключения.
 - Regression coverage: `tests/test_account_auth.py`, `tests/test_subscriptions.py`,
   `tests/test_workspaces.py`.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Reconciled canonical identity activation, one seven-day trial, post-trial baseline and the separate per-user market-data entitlement boundary with the Development implementation.
--->

@@ -1,6 +1,5 @@
 # ADR-0008: Изоляция cookie и local-storage по окружениям
 
-История поправки: 2026-08-03T18:00:00Z; внёс `GitHub Copilot`; scope: Phase 11 — зафиксировать распределение имён session-cookie и local-storage namespace по окружениям + threat analysis (finding 6).
 
 - Статус: Принято
 - Дата решения: 2026-08-03

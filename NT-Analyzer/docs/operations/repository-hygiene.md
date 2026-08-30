@@ -1,6 +1,5 @@
 # Repository hygiene
 
-История поправки: 2026-08-01T23:47:37Z; внёс `GPT-5.5 через Codex по запросу owner`; scope: Stage 10 Repository Hygiene Closeout.
 
 ## Stage 10 closeout record
 

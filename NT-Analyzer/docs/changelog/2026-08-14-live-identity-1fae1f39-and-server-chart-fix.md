@@ -72,8 +72,3 @@ Live Production owner session (предыдущий Codex прогон) пока
 Этот фикс **ещё не** является live `1fae1f39`. Нужен новый signed artifact и
 тот же путь DEV → CANARY → PRODUCTION, затем `/proc` identity на новом SHA и
 живой TopstepX history/realtime на сервере.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-14T06:45:00Z | Grok 4.6 через Cursor по запросу owner | Host /proc cwd/exe: Canary+Production current slot 1fae1f39; 0f2a90ea is previous only.
-2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Recorded live HTTP identity 1fae1f39 on Canary+Production and the repository Documents/Charts TopstepX fix that is not yet that artifact.
--->

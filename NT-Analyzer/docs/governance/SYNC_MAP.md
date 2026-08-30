@@ -1,6 +1,6 @@
 # SYNC_MAP
 
-Дата актуализации: 2026-08-14T06:20:00Z
+Дата актуализации: 2026-08-30T21:38:37Z
 
 Этот файл показывает, что именно меняется автоматически после редактирования закона, а что остаётся на ручную проверку.
 
@@ -207,8 +207,3 @@
 - Текущее значение: `Да`
 - Автоматически обновляется: app/ai_lab/intent_classifier.py, app/ai_lab/chief_agent.py, app/vitek.py
 - Нужно проверить вручную: —
-
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-14T06:20:00Z | Grok 4.6 через Cursor по запросу owner | Зафиксировать live HTTP identity 1fae1f39 на Canary+Production и repository-фикс Documents/Release Center allowlist + TopstepX fallback на сервере. Не STAGE CLOSED: нет /proc cwd/exe и нет нового signed artifact.
--->

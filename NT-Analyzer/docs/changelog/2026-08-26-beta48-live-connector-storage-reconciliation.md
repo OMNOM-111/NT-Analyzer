@@ -102,8 +102,3 @@ snapshot; его source timestamp был старым, поэтому stale stat
 Четыре Google/Resend secrets не изменялись. Public Connector distribution
 остаётся отдельно `EXTERNAL BLOCKED` до появления разрешённого Authenticode
 tool/material.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-26T18:22:14Z | GPT-5.5 через Codex по запросу owner | Зафиксированы root cause Production Connector FK failure, fail-closed reconciliation, exact beta.48 immutable release identity и живые challenge/hello/heartbeat/market-data evidence.
-2026-08-26T18:48:02Z | GPT-5.5 через Codex по запросу owner | Уточнён audit после двух штатных session TTL rollover: expected session_expired автоматически сменялся challenge/hello; storage_constraint и unexpected refusals отсутствуют.
--->

@@ -1180,7 +1180,3 @@ The process is accepted when:
 8. After complete closeout, `git status --short` is empty or every remaining change is documented.
 9. Documentation matches the real repository state.
 10. It is unambiguous which commit corresponds to each completed version.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-11T08:36:17Z | GPT-5.5 через Codex по запросу owner | Removed the visible technical amendment header during final Development documentation closeout; historical evidence remains in Git history.
--->

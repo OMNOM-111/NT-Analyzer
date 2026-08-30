@@ -215,11 +215,3 @@ and the exact final identity; all readiness checks are `ok/ready`. Public guest
 UI and static cache-bust values match the same build. Authenticated owner UI
 recheck is completed only after the environment-isolated Production Telegram
 session is physically confirmed; no Canary cookie/storage is copied.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-20T23:00:44Z | GPT-5.5 через Codex по запросу owner | Редакция №1: создан canonical pre-release snapshot для final acceptance beta.28; финальные artifact и live evidence намеренно не предсказаны до deployment.
-2026-08-21T00:53:04Z | GPT-5.5 через Codex по запросу owner | Редакция №2: зафиксирован fail-closed stop первого beta.28 candidate и scoped correction archive/runtime identity; Production не менялся.
-2026-08-21T02:03:00Z | GPT-5.5 через Codex по запросу owner | Редакция №3: зафиксированы PR #137/#138, не принятый Canary artifact 8865fad0 и найденное расхождение isolated revision ledger; Production оставлен beta.26.
-2026-08-21T02:52:33Z | GPT-5.5 через Codex по запросу owner | Редакция №4: зафиксированы Canary artifact 2790fb43, 616-секундный chart PASS и реальный blocker approved_for_production в authoritative gate; Production оставлен beta.26, требуется новый цикл.
-2026-08-21T03:50:00Z | GPT-5.5 через Codex по запросу owner | Редакция №5: зафиксированы final artifact 36600dba, 610-секундный MES/MNQ 5m Canary PASS и реальный same-artifact Production promotion; owner Production session не подменяется Canary cookie.
--->

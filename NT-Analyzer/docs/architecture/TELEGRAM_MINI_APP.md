@@ -147,7 +147,3 @@ Webhook и long-poll используют общий durable inbox. Update сн�
 
 Если Mini App сообщает, что `initData` истёк, закройте и заново откройте её из
 Menu Button. Это создаст новый подписанный Telegram launch context.
-
-<!-- STRATFORGE_INTERNAL_AMENDMENT
-2026-08-23T21:36:03Z | GPT-5.5 через Codex по запросу owner | Replaced the retired Free Preview/manual-activation description with verified automatic seven-day trial, idempotent multi-device behavior and owner extension history.
--->

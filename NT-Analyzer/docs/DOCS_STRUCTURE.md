@@ -7,7 +7,6 @@ target home for every documentation file so the physical relocation can be
 executed (via `git mv` + reference rewrites) in owner-approved steps without
 breaking inbound links.
 
-История поправки: 2026-08-03T15:40:00Z; внёс `GitHub Copilot`; scope: Phase 10 — создать канонический docs-tree и migration map (структура каталогов + целевые адреса документов; массовое перемещение выполняется после owner-approval этой карты).
 
 ## Canonical tree
 
