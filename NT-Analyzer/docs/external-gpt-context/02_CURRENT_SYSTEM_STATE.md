@@ -30,8 +30,8 @@
 | Charts / fan-out | `BETA` | Browser clients consume same-origin StratForge market-data WebSockets; provider credentials are not delivered to browsers and consumers do not create their own TopstepX loginKey/SignalR sessions | broader design acceptance is separate from this Connector closeout |
 | NinjaTrader / Connector | `BETA` | Production Connector on VMNINJA is `0.4.2-dev.20`; SERVER BACKTEST, cancel state machine, device catalog, account snapshot and Connector LIVE/GRACE/OFFLINE presentation are accepted | public installer distribution remains `EXTERNAL BLOCKED` on authorized Authenticode material |
 | Production worker queue | `AVAILABLE` | Eleven worker slots remain 4/4/2/1; empty workers use adaptive jittered backoff and one 30-second stale sweeper. Later auth hot-spot work reduced `/api/auth/status` latency but did not claim CPU improvement outside noise | DB tx/s still lacks a safe first-class diagnostics path |
-| Documents | `BETA` | Current handoff and Context Pack reflect beta.79; detailed technical history lives in changelog rather than current document bodies | legal publication remains separate |
-| Legal | `IN DEVELOPMENT` | One self-contained onboarding agreement `2026-08-30-v2` is the sole versioned clickwrap text; related draft policies are readable informational notices outside the acceptance digest | release deployment and licensed counsel review are still required before legal publication is declared complete |
+| Documents | `BETA` | Current handoff and Context Pack reflect beta.79; detailed technical history lives in changelog rather than current document bodies | the new legal package remains a Development change until immutable release promotion |
+| Legal | `AVAILABLE` | One official onboarding agreement `2026-08-30-v2` is the sole versioned clickwrap; related official policies are readable informational documents outside the acceptance digest | Live Trading remains unavailable pending separate release and legal requirements |
 
 ## Current operational identity
 
@@ -49,10 +49,11 @@ Both environments use release-directory suffix
 - beta.29-beta.78 release identities are history, not current live state.
 - The target Production installation is no longer offline or blocked by
   `sf_connector_installations_workspace_id_fkey`.
-- DRAFT legal documents are not effective terms.
+- Earlier draft legal labels are obsolete; the current package is official product documentation.
 - A StratForge product trial is not a provider/exchange redistribution grant.
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-30T20:59:15Z | GPT-5.5 через Codex по запросу owner | Marked the unified legal package as official current documentation while preserving the Development deployment boundary and unavailable Live Trading status.
 2026-08-30T15:15:14Z | GPT-5.5 через Codex по запросу owner | Recorded the single self-contained onboarding agreement 2026-08-30-v1 while preserving IN DEVELOPMENT status until deployment and counsel review.
 2026-08-30T20:17:36Z | GPT-5.5 через Codex по запросу owner | Advanced the Development clickwrap to structured agreement v2 and kept related draft notices outside the accepted digest.
 2026-08-26T18:22:14Z | GPT-5.5 через Codex по запросу owner | Replaced stale beta.31/beta.29 state with exact beta.48 live identity and the verified Production Connector recovery.

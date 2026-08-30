@@ -6941,7 +6941,11 @@ class Handler(BaseHTTPRequestHandler):
             if not doc:
                 self._err(HTTPStatus.NOT_FOUND, f"governance document not found: {doc_id}")
                 return True
-            if not self._has_governance_read_privilege():
+            # Legal documents are always rendered through the public boundary,
+            # including for owners, so provenance comments never reach user UI.
+            if str(doc.get("category") or "") == "legal":
+                doc = governance.public_document(doc)
+            elif not self._has_governance_read_privilege():
                 if not governance.document_is_public(doc):
                     self._err(HTTPStatus.NOT_FOUND, f"governance document not found: {doc_id}")
                     return True

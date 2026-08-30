@@ -45,7 +45,7 @@ def test_governance_documents_exist() -> None:
         assert Path(docs[required]["abs_path"]).is_file(), f"missing file for {required}"
 
 
-def test_charter_is_mission_led_and_legal_package_remains_draft() -> None:
+def test_charter_is_mission_led_and_legal_package_is_public() -> None:
     charter = governance.read_document("charter")["content"]
     assert "## Миссия" in charter
     assert "Автотрейдинг — ещё лучше" in charter
@@ -56,7 +56,27 @@ def test_charter_is_mission_led_and_legal_package_remains_draft() -> None:
     assert "отдельный Canary Telegram bot — `EXTERNAL BLOCKED`" not in charter
     legal = [row for row in governance.list_documents() if row["id"].startswith("legal-")]
     assert len(legal) == 9
-    assert all(row["draft"] is True for row in legal)
+    assert all(row["draft"] is False for row in legal)
+
+
+def test_public_legal_package_has_no_internal_draft_markers() -> None:
+    forbidden = (
+        "ПРОЕКТ", "DRAFT", "не публиковать", "ТРЕБУЕТ РЕШЕНИЯ",
+        "RETENTION_", "ВЫБРАТЬ ПО ФАКТУ", "ВКЛЮЧАТЬ ТОЛЬКО",
+    )
+    for path in sorted((ROOT / "docs" / "legal").glob("[0-9][0-9]_*.md")):
+        content = path.read_text(encoding="utf-8")
+        assert not any(token in content for token in forbidden), path
+
+
+def test_public_legal_documents_hide_internal_provenance() -> None:
+    for number in range(9):
+        document = governance.read_document(f"legal-{number:02d}")
+        assert document is not None
+        public = governance.public_document(document)
+        assert "STRATFORGE_INTERNAL_AMENDMENT" not in public["content"]
+        assert "abs_path" not in public
+        assert public["draft"] is False
 
 
 def test_competitive_feedback_law_is_registered() -> None:

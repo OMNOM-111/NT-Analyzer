@@ -3990,8 +3990,7 @@
     try { data = await (window.API ? API.http.governanceDocument(id) : Promise.reject()); }
     catch (e) { toast('Не удалось загрузить связанный документ'); return; }
     const title = data.title || fallbackLabel || 'Связанный документ';
-    const draft = data.draft ? '<span class="terms-draft-badge">ПРОЕКТ</span>' : '';
-    const overlay = el(`<div class="terms-modal terms-notice-modal"><div class="terms-modal-card"><div class="terms-modal-head"><strong>${esc(title)} ${draft}</strong><button class="btn ghost sm" data-notice-close>Закрыть</button></div><div class="terms-modal-body"><p class="cab-sub">Информационный документ. Отдельное принятие при регистрации не требуется.</p><pre class="terms-notice-text">${esc(data.content || '')}</pre></div></div></div>`);
+    const overlay = el(`<div class="terms-modal terms-notice-modal"><div class="terms-modal-card"><div class="terms-modal-head"><strong>${esc(title)}</strong><button class="btn ghost sm" data-notice-close>Закрыть</button></div><div class="terms-modal-body"><p class="cab-sub">Официальный информационный документ текущей версии продукта. Отдельное принятие при регистрации не требуется.</p><pre class="terms-notice-text">${esc(data.content || '')}</pre></div></div></div>`);
     document.body.appendChild(overlay);
     const close = () => overlay.remove();
     const closeBtn = qs('[data-notice-close]', overlay); if (closeBtn) closeBtn.onclick = close;
@@ -4005,7 +4004,7 @@
     const sections = (data.sections || []).map(s => `<h4>${esc(s.heading)}</h4><p>${esc(s.body)}</p>`).join('');
     const meta = [data.summary, data.date].filter(Boolean).map(esc).join(' · ');
     const notices = (data.notices || []).map(n => `<button type="button" class="linklike terms-notice-link" data-legal-notice="${esc(n.id)}">${esc(n.label)}</button>`).join('');
-    const noticeBlock = notices ? `<h4>Связанные документы</h4><p>Эти материалы можно прочитать отдельно. Они не требуют отдельного принятия при регистрации.</p><div class="terms-notice-links">${notices}</div>` : '';
+    const noticeBlock = notices ? `<h4>Дополнительные информационные документы</h4><p>Эти официальные материалы можно прочитать отдельно. Они не требуют отдельного принятия при регистрации.</p><div class="terms-notice-links">${notices}</div>` : '';
     const overlay = el(`<div class="terms-modal"><div class="terms-modal-card"><div class="terms-modal-head"><strong>${esc(data.title || 'Условия использования')}</strong><button class="btn ghost sm" id="terms-close">Закрыть</button></div><div class="terms-modal-body">${meta ? `<p class="cab-sub">${meta}</p>` : ''}${sections}${noticeBlock}<div class="cab-sub">Версия ${esc(data.version || '')} · SHA-256 ${esc(data.digest || '')}</div></div></div></div>`);
     document.body.appendChild(overlay);
     const close = () => overlay.remove();

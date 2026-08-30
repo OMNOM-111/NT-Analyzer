@@ -50,7 +50,7 @@
 | DB tx/s diagnostics path | missing | safe `pg_stat_database` diagnostics are not exposed in the app; do not search DSNs/secrets for this |
 | Cross-user shared owner feed | `EXTERNAL BLOCKED` | written provider/exchange distribution authority and per-user entitlement policy |
 | Public Connector installer | `EXTERNAL BLOCKED` | authorized Authenticode signing tool/material |
-| Legal publication | `IN DEVELOPMENT` | Structured onboarding agreement `2026-08-30-v2` and linked informational draft notices are implemented in Development; immutable release deployment and counsel review remain separate |
+| Legal package deployment | `IN DEVELOPMENT` | Official agreement `2026-08-30-v2` and official informational documents are implemented in Development; immutable Canary/Production promotion remains separate. Live Trading is unavailable |
 
 ## Next development boundary
 
@@ -69,6 +69,7 @@ baselines.
 - [market data and Connector](06_MARKET_DATA_TRADING_CONNECTOR.md)
 
 <!-- STRATFORGE_INTERNAL_AMENDMENT
+2026-08-30T20:59:15Z | GPT-5.5 через Codex по запросу owner | Updated handoff for the official unified legal package and preserved the undeployed Development and Live Trading boundaries.
 2026-08-30T15:15:14Z | GPT-5.5 через Codex по запросу owner | Added the Development handoff boundary for onboarding agreement 2026-08-30-v1; no Canary or Production publication claimed.
 2026-08-30T20:17:36Z | GPT-5.5 через Codex по запросу owner | Updated the handoff to agreement v2 with non-binding related notice links; no Canary or Production publication claimed.
 2026-08-27T22:33:11Z | GPT-5.5 через Codex по запросу owner | Replaced the completed beta.48 handoff with exact beta.61 worker scheduling, test, live measurement, immutable release and bounded residual-attribution evidence.

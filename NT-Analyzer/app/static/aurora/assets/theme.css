@@ -2686,7 +2686,6 @@ html.ux-beginner .orch-fab { display: none !important; }
 .terms-notice-modal { z-index: 121; }
 .terms-notice-modal .terms-modal-card { width: min(100%, 720px); }
 .terms-notice-text { margin: 14px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--tx-2); font: 12px/1.55 var(--mono); }
-.terms-draft-badge { display: inline-flex; margin-left: 6px; padding: 2px 6px; border: 1px solid var(--warn); border-radius: 999px; color: var(--warn); font-size: 10px; vertical-align: middle; }
 
 /* Staging / impersonation safety banner — always visible while "войти как". */
 .impersonation-banner {
