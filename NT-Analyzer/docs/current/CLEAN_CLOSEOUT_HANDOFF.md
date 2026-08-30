@@ -58,6 +58,12 @@ no-op результата: `/api/auth/status` медиана **43.2 → 19.0 м
 последовательному runbook, старые отозваны, 314 копий в promote-бэкапах
 вычищены, постоянная защита от повторения добавлена.
 
+Проверка после отзыва пройдена на обеих средах: Resend — реальной
+отправкой, Google — реальным входом владельца. Google client secret
+невозможно проверить с сервера: он участвует только в обмене
+authorization code на токен, поэтому единственная настоящая проверка —
+живой вход.
+
 ## Test / acceptance matrix
 
 | Область | Как доказано | Итог |
@@ -76,6 +82,8 @@ no-op результата: `/api/auth/status` медиана **43.2 → 19.0 м
 | Production CPU | 18.9 % vs 19.2 % — в пределах шума | не улучшен |
 | DB tx/s | безопасного пути нет | not measured |
 | Secret rotation ×4 | Canary → Production → revoke → post-revoke smoke | PASS |
+| Post-revoke Google OAuth | реальный вход владельца на Canary и Production после отзыва старых client secrets | PASS |
+| Post-revoke Resend | реальная отправка на обеих средах после отзыва | PASS |
 | Secret containment | 0 отозванных значений во всём `production_data` | PASS |
 
 Полный набор: **2327 passed, 32 skipped, 0 failed**.
