@@ -2,7 +2,7 @@
 
 - Context Pack document: 03_ARCHITECTURE_AND_DATA_MODEL.md
 - Last verified UTC: 2026-08-23T02:27:02Z
-- Verified against Git SHA: 7ebda6faf2e7c64d4a707a41062b29857882181a
+- Verified against Git SHA: 1279645e48e32000978364b38fb20d3dcd303843
 - Scope: Current components, trust boundaries, entities and key flows
 - Status: DONE
 
