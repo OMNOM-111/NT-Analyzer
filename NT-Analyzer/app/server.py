@@ -5503,6 +5503,29 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, legal.terms_payload())
             return
 
+        if path == "/api/legal/documents":
+            # Public: the registration screen links to the official legal
+            # documents, so a visitor must be able to list them before auth.
+            self._json(HTTPStatus.OK, {
+                "ok": True,
+                "documents": governance.public_legal_index(),
+            })
+            return
+
+        if path.startswith("/api/legal/documents/"):
+            # Public read of one legal document, resolved strictly through the
+            # registry allowlist. Anything outside it — owner-only or internal
+            # files included — is indistinguishable from a missing document.
+            document = governance.read_public_legal_document(
+                path[len("/api/legal/documents/"):].strip("/")
+            )
+            if document is None:
+                self._err(HTTPStatus.NOT_FOUND, "document not found",
+                          code="document_not_found")
+                return
+            self._json(HTTPStatus.OK, {"ok": True, "document": document})
+            return
+
         if path == "/api/billing/access-options":
             # Public: pre-auth welcome screen needs donate tiers + PayPal handle.
             self._json(HTTPStatus.OK, subscriptions.donation_options())
