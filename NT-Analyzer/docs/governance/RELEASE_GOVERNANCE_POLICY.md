@@ -16,5 +16,9 @@
 - Production promotion разрешён только после Canary PASS.
 - Любое изменение после сборки начинает новый цикл с нового commit и artifact.
 - Ручные hotfix-копии, частичный deploy и обход этапов запрещены.
+- Любой repository-wide governance/security/provenance scan, используемый как
+  release gate, запускается от корня репозитория. Скан, выполненный из
+  подкаталога, не является доказательством PASS: он не видит tracked-файлы
+  выше по дереву и может пропустить release-блокер.
 - Release closeout фиксирует Git SHA, build ID, archive/manifest SHA-256,
   release directory, Canary/Production status и rollback target.

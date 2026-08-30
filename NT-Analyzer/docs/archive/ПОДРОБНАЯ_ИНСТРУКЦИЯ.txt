@@ -4,7 +4,7 @@
 Текущая фиксация: 2026-05-08
 
 Статус документа: историческая подробная инструкция (перенесена в
-`docs/archive/` 2026-08-10 по запросу owner, GitHub Copilot через VS Code). Она описывает
+`docs/archive/` 2026-08-10 по запросу owner, AI-assisted change). Она описывает
 ранний, NinjaTrader-центричный контур проекта. Сегодня продукт
 называется **StratForge AI** — торгово-аналитическая платформа (Aurora +
 multi-provider market data + Connector + AI-агенты + окружения

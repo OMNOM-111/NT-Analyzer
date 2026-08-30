@@ -32,6 +32,7 @@ The docs tree is intentionally partitioned into `current`, `architecture`,
 | AI provenance | model name/version/environment comes only from trusted infrastructure or is absent; no inherited/manual model signature |
 | Public view | owner-only metadata and files are excluded by registry and API boundaries |
 | Release governance | local checks -> tests -> clean Git -> CI -> immutable artifact -> Canary acceptance -> same artifact Production |
+| Governance scans | repository-wide governance/security/provenance scans run from the repository root; a subdirectory scan is not PASS evidence |
 
 ## Russian canonical language policy
 
