@@ -24,6 +24,7 @@ STAGE_CANDIDATE = "candidate"
 STAGE_BUILD = "build"
 STAGE_VERIFY = "verify"
 STAGE_DEPLOY = "deploy"
+STAGE_ACCEPTANCE = "acceptance"
 STAGE_DONE = "done"
 
 STAGES = (
@@ -31,6 +32,7 @@ STAGES = (
     (STAGE_BUILD, "Сборка"),
     (STAGE_VERIFY, "Проверка"),
     (STAGE_DEPLOY, "Развёртывание"),
+    (STAGE_ACCEPTANCE, "Canary checks / acceptance"),
     (STAGE_DONE, "Готово"),
 )
 
@@ -54,6 +56,53 @@ def release_target() -> Dict[str, str]:
     }
 
 
+def canary_acceptance(candidate_id: str, origin: str, expected_build_id: str,
+                      *, readiness=None, smoke=None) -> Dict[str, Any]:
+    """The checks acceptance actually stands for, run against the live Canary.
+
+    Recording a pass without probing would make the stage a formality and the
+    "✓ Readiness / ✓ Smoke" line a decoration. Each row here is the result of a
+    request that was made, and the names are what the panel shows.
+    """
+    from . import release_publish
+
+    readiness_fn = readiness or release_publish._readiness
+    smoke_fn = smoke or release_publish._smoke
+
+    rows: List[Dict[str, Any]] = []
+    if not origin:
+        return {"ok": False, "reason": "Origin Canary не настроен, проверка невозможна.",
+                "checks": rows}
+
+    ready = readiness_fn(origin)
+    rows.append({"name": "readiness", "label": "Readiness", "ok": bool(ready.get("ok")),
+                 "detail": str(ready.get("reason") or "все компоненты готовы")})
+    if not ready.get("ok"):
+        return {"ok": False, "reason": str(ready.get("reason") or "Canary не готов."),
+                "checks": rows}
+
+    live_build = str((ready.get("deployment") or {}).get("build_id") or "")
+    identical = bool(expected_build_id) and live_build == expected_build_id
+    rows.append({
+        "name": "artifact_identity", "label": "Artifact identity", "ok": identical,
+        "detail": (f"Canary выполняет {live_build or 'неизвестный build'}"
+                   if not identical else expected_build_id),
+    })
+    if not identical:
+        return {"ok": False,
+                "reason": (f"Canary сообщает build {live_build or 'неизвестен'}, "
+                           f"ожидался {expected_build_id}."),
+                "checks": rows}
+
+    checked = smoke_fn(origin, expected_build_id)
+    rows.append({"name": "smoke", "label": "Smoke", "ok": bool(checked.get("ok")),
+                 "detail": str(checked.get("reason") or "публичные маршруты отвечают")})
+    if not checked.get("ok"):
+        return {"ok": False, "reason": str(checked.get("reason") or "Smoke не прошёл."),
+                "checks": rows}
+    return {"ok": True, "reason": "", "checks": rows}
+
+
 def _stage_row(stage: str, label: str) -> Dict[str, Any]:
     return {"stage": stage, "label": label, "state": "not_started", "reason": ""}
 
@@ -64,12 +113,17 @@ def deliver(
     build: Optional[Callable[..., Dict[str, Any]]] = None,
     verify: Optional[Callable[..., Dict[str, Any]]] = None,
     deploy: Optional[Callable[..., Dict[str, Any]]] = None,
+    record: Optional[Callable[..., Dict[str, Any]]] = None,
+    accept: Optional[Callable[..., Dict[str, Any]]] = None,
+    canary_origin: str = "",
 ) -> Dict[str, Any]:
     """Create, build, verify and deploy to Canary, reporting each stage."""
     create_fn = create or release_center.create_candidate
     build_fn = build or release_center.build_release
     verify_fn = verify or release_center.verify_release
     deploy_fn = deploy or release_center.deploy_canary
+    record_fn = record or release_center.record_canary_check
+    accept = accept or canary_acceptance
 
     stages: List[Dict[str, Any]] = [_stage_row(key, label) for key, label in STAGES]
     by_key = {row["stage"]: row for row in stages}
@@ -134,6 +188,38 @@ def deliver(
         return fail(STAGE_DEPLOY,
                     str(summary.get("failure_reason") or "Развёртывание не удалось."),
                     code="deploy_failed")
+
+    # Acceptance is part of the same action, and it is a real probe of the live
+    # environment rather than a formality: readiness, the artifact Canary is
+    # actually running, and the public surface answering.
+    verdict = accept(candidate_id, canary_origin,
+                     str(summary.get("build_id") or ""))
+    checks = verdict.get("checks") or []
+    if not verdict.get("ok"):
+        out = fail(STAGE_ACCEPTANCE, str(verdict.get("reason") or "Приёмка не прошла."),
+                   code="acceptance_failed")
+        out["checks"] = checks
+        return out
+    for row in checks:
+        try:
+            record_fn(actor=actor, candidate_id=candidate_id, name=str(row["name"]),
+                      result="pass", evidence={"detail": str(row.get("detail") or "")},
+                      final=False, idempotency_key=idempotency_key + "-" + str(row["name"])[:8])
+        except release_center.ReleaseCenterError as exc:
+            out = fail(STAGE_ACCEPTANCE, str(exc), status=exc.status, code=exc.code)
+            out["checks"] = checks
+            return out
+    try:
+        record_fn(actor=actor, candidate_id=candidate_id, name="acceptance",
+                  result="pass", evidence={"detail": "readiness, artifact identity, smoke"},
+                  final=True, idempotency_key=idempotency_key + "-final")
+    except release_center.ReleaseCenterError as exc:
+        out = fail(STAGE_ACCEPTANCE, str(exc), status=exc.status, code=exc.code)
+        out["checks"] = checks
+        return out
+    by_key[STAGE_ACCEPTANCE]["state"] = "passed"
+
+    summary = release_center.get_release(candidate_id).get("summary") or {}
     by_key[STAGE_DONE]["state"] = "passed"
     return {"ok": True, "stages": stages, "failed_stage": "", "reason": "",
-            "candidate_id": candidate_id, "summary": summary}
+            "candidate_id": candidate_id, "summary": summary, "checks": checks}

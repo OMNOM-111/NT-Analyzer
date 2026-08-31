@@ -39,13 +39,19 @@ def test_delivery_runs_the_whole_sequence_in_order(monkeypatch) -> None:
                         lambda cid: {"summary": {"state": "canary_checking"}})
     out = release_deliver.deliver(
         actor={"is_owner": True}, idempotency_key="k" * 20,
+        canary_origin="https://example.invalid",
         create=lambda **kw: (seen.append("create"), {"candidate_id": "rc_1"})[1],
         build=record("build"), verify=record("verify"), deploy=record("deploy"),
+        record=record("record"),
+        accept=lambda cid, origin, build: (seen.append("accept"), {
+            "ok": True, "checks": [{"name": "readiness", "label": "Readiness",
+                                    "ok": True, "detail": "ok"}]})[1],
     )
     assert out["ok"] is True
-    assert seen == ["create", "build", "verify", "deploy"]
+    assert seen[:5] == ["create", "build", "verify", "deploy", "accept"]
     assert out["candidate_id"] == "rc_1"
-    assert [row["state"] for row in out["stages"]] == ["passed"] * 5
+    assert [row["state"] for row in out["stages"]] == ["passed"] * 6
+    assert out["checks"][0]["label"] == "Readiness"
 
 
 def test_delivery_stops_at_the_failing_stage(monkeypatch) -> None:
@@ -83,6 +89,8 @@ def test_delivery_never_chooses_the_commit(monkeypatch) -> None:
     release_deliver.deliver(
         actor={"is_owner": True}, idempotency_key="k" * 20, create=create,
         build=lambda **kw: {}, verify=lambda **kw: {}, deploy=lambda **kw: {},
+        record=lambda **kw: {}, accept=lambda cid, origin, build: {"ok": True, "checks": []},
+        canary_origin="https://example.invalid",
     )
     assert captured["git_commit_sha"] == ""
 
@@ -131,39 +139,38 @@ def test_the_panel_offers_delivery_without_another_screen() -> None:
 
 # ---- load charts ------------------------------------------------------------
 
-def test_first_level_shows_the_four_figures_an_owner_reads() -> None:
-    block = UI[UI.index("function loadChartHtml("):UI.index("function technicalMetricsHtml(")]
-    for label in ("CPU", "RAM", "Диск", "Запросы"):
+def test_first_level_shows_cpu_ram_and_disk_only() -> None:
+    block = UI[UI.index("function gaugesHtml("):UI.index("function technicalHtml(")]
+    for label in ("CPU", "RAM", "Диск"):
         assert label in block
     assert "Данные недоступны" in block
+    # Request load and latency are diagnosis, not the glance.
+    for moved in ("Запросы", "duration_ms", "websockets"):
+        assert moved not in block
 
 
 def test_diagnostics_leave_the_first_level_but_are_not_removed() -> None:
-    technical = UI[UI.index("function technicalMetricsHtml("):UI.index("function stageCardHtml(")]
-    assert "Технические данные / Метрики" in technical
-    for kept in ("p50", "p95", "p99", "WebSocket", "Принято", "Отклонено"):
+    technical = UI[UI.index("function technicalHtml("):UI.index("const ENV_PURPOSE")]
+    for kept in ("Задержка p50", "Задержка p95", "Задержка p99", "WebSocket",
+                 "Принято", "Отклонено", "Активных запросов", "Commit", "Artifact"):
         assert kept in technical
-    # Slice to the comment that introduces the diagnostics block: prose about
-    # what moved is not the same as the markup still rendering it.
-    first_level = UI[UI.index("function loadChartHtml("):UI.index("  // Kept, but off the first level")]
-    for moved in ("p95", "WebSocket", "Отклонено"):
-        assert moved not in first_level
+    skeleton = UI[UI.index("function stageCardSkeleton("):UI.index("function patchSlot(")]
+    assert "Технические данные / Метрики" in skeleton
 
 
 def test_one_threshold_scale_defined_once() -> None:
     assert "const LOAD_THRESHOLDS = { elevated: 60, high: 80, critical: 92 };" in UI
     level = UI[UI.index("function loadLevel("):UI.index("function loadGaugeHtml(")]
-    for name in ("critical", "high", "elevated", "normal"):
+    for name in ("critical", "high", "elevated"):
         assert name in level
-    # Every gauge must classify through the one function, not its own numbers.
-    block = UI[UI.index("function loadGaugeHtml("):UI.index("function technicalMetricsHtml(")]
-    assert block.count("loadLevel(") >= 2
+    gauge = UI[UI.index("function loadGaugeHtml("):UI.index("function gaugesHtml(")]
+    assert "loadLevel(value)" in gauge, "every gauge classifies through the one scale"
     for colour in ("is-normal", "is-elevated", "is-high", "is-critical"):
         assert ".load-gauge." + colour in CSS
 
 
 def test_a_figure_that_was_not_measured_is_named_not_drawn() -> None:
-    gauge = UI[UI.index("function loadGaugeHtml("):UI.index("function loadChartHtml(")]
+    gauge = UI[UI.index("function loadGaugeHtml("):UI.index("function gaugesHtml(")]
     assert "нет данных" in gauge
     assert "percent == null" in gauge
 
@@ -232,14 +239,12 @@ def test_the_registry_can_store_what_the_heartbeat_reports() -> None:
     assert any("host" in path.name for path in migrations.iterdir())
 
 
-# ---- one summary ------------------------------------------------------------
+# ---- per-card summary -------------------------------------------------------
 
-def test_a_uniform_release_states_what_changed_once() -> None:
-    panel = UI[UI.index("function renderEnvironmentTargets("):]
-    panel = panel[:panel.index("renderEnvironmentCompareInto")]
-    assert "const uniform =" in panel
-    assert "stage-shared" in panel
-    assert "hide_summary" in panel
-    assert "Все среды на версии" in panel
-    meta = UI[UI.index("function environmentMetaHtml("):UI.index("function stageStatusHtml(")]
-    assert "!target.hide_summary" in meta, "the card must suppress its own copy"
+def test_every_card_states_its_own_version() -> None:
+    """A single block above the flow left each card unable to say what it is."""
+    summary = UI[UI.index("function summaryHtml("):UI.index("function statusHtml(")]
+    assert "summary_title" in summary
+    assert "slice(0, 3)" in summary, "short: a title and at most three points"
+    assert "stage-shared" not in UI
+    assert "hide_summary" not in UI
