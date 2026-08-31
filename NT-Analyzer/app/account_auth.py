@@ -2681,6 +2681,31 @@ def _send_owner_approval(api_call: Callable[..., Any], owner_chat_id: str,
     })
 
 
+_ENVIRONMENT_APP_ORIGINS = {
+    runtime_env.CANARY: "https://canary.stratforges.com",
+    runtime_env.PRODUCTION: "https://app.stratforges.com",
+}
+
+
+def _app_open_url() -> str:
+    """Public https URL of this environment's StratForge, or "" when there is none.
+
+    Feeds a plain Telegram URL button, never a Web App button: the retired Mini
+    App container must not come back through the bot.  Development has no public
+    origin, so it gets no button at all rather than a loopback link Telegram
+    would reject.
+    """
+    try:
+        origin = str(runtime_env.deployment_config().public_origin or "").strip()
+    except Exception:
+        origin = ""
+    if not origin.startswith("https://"):
+        origin = _ENVIRONMENT_APP_ORIGINS.get(runtime_env.deployment_environment(), "")
+    if not origin.startswith("https://"):
+        return ""
+    return origin.rstrip("/") + "/"
+
+
 def _claim_refusal_text(doc: Dict[str, Any], *, code: str, uid: int) -> str:
     """Explain precisely why a scanned code was not accepted."""
     for row in reversed(doc.get("challenges") or []):
@@ -3134,14 +3159,29 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
         return True
 
     if re.fullmatch(r"/start(?:@[A-Za-z0-9_]+)?", text, flags=re.IGNORECASE):
-        api_call("sendMessage", {
+        payload: Dict[str, Any] = {
             "chat_id": uid,
             "text": (
                 "Для входа нужна одноразовая ссылка из окна StratForge AI. "
                 "Если браузер открыл Telegram без кода, вернитесь в приложение, нажмите "
                 "«Начать заново» и введите здесь ручную команду вида /login ABCD1234."
             ),
-        })
+        }
+        # A plain URL button opens StratForge in the normal browser.  It is
+        # deliberately not a Web App button: the Mini App container is retired
+        # and the bot must not be the way it comes back.
+        open_url = _app_open_url()
+        if open_url:
+            payload["text"] = (
+                "StratForge AI открывается в браузере — кнопкой ниже.\n\n"
+                "Для входа нужна одноразовая ссылка из окна StratForge AI. "
+                "Если браузер открыл Telegram без кода, вернитесь в приложение, нажмите "
+                "«Начать заново» и введите здесь ручную команду вида /login ABCD1234."
+            )
+            payload["reply_markup"] = {"inline_keyboard": [[
+                {"text": "🚀 Открыть StratForge", "url": open_url},
+            ]]}
+        api_call("sendMessage", payload)
         return True
 
     contact = message.get("contact")
