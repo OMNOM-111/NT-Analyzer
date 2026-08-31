@@ -1756,41 +1756,51 @@ def public_document(item: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def _canonical_public_legal_rows() -> List[Dict[str, Any]]:
+    """Official public legal documents, taken from the canonical registry.
+
+    Deliberately read from DEFAULT_DOCUMENTS rather than the environment's
+    mutable copy. The registration screen links to this package, so a stale or
+    edited per-environment registry must not be able to un-publish it, and an
+    overridden `path` must not become readable before authentication.
+    """
+    rows = []
+    for row in DEFAULT_DOCUMENTS["documents"]:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("category") or "").lower() != "legal":
+            continue
+        if str(row.get("audience") or "").lower() != "user":
+            continue
+        if bool(row.get("draft")):
+            continue
+        if not str(row.get("id") or "").strip():
+            continue
+        rows.append(row)
+    return rows
+
+
 def public_legal_document_ids() -> frozenset:
     """Document IDs a visitor may read before authenticating.
 
-    The allowlist is derived from the legal registry itself, never from the
-    request: only published, user-facing legal documents qualify. Internal and
-    owner-only files are absent from the registry or fail these predicates, so
-    they can never enter the set.
+    The allowlist comes from the canonical legal registry, never from the
+    request. Internal and owner-only files are absent from that registry or
+    fail these predicates, so they can never enter the set.
     """
-    ids = set()
-    for item in list_documents():
-        if str(item.get("category") or "").lower() != "legal":
-            continue
-        if str(item.get("audience") or "").lower() != "user":
-            continue
-        if bool(item.get("draft")):
-            continue
-        doc_id = str(item.get("id") or "").strip()
-        if doc_id:
-            ids.add(doc_id)
-    return frozenset(ids)
+    return frozenset(str(row["id"]).strip() for row in _canonical_public_legal_rows())
 
 
 def public_legal_index() -> List[Dict[str, Any]]:
     """Registration-screen listing of the official public legal documents."""
-    allowed = public_legal_document_ids()
-    rows = []
-    for item in list_documents():
-        if str(item.get("id") or "") not in allowed:
-            continue
-        rows.append({
-            "id": str(item.get("id") or ""),
-            "title": str(item.get("title") or ""),
-            "label": str(item.get("label") or ""),
-            "category": str(item.get("category") or ""),
-        })
+    rows = [
+        {
+            "id": str(row.get("id") or ""),
+            "title": str(row.get("title") or ""),
+            "label": str(row.get("label") or ""),
+            "category": str(row.get("category") or ""),
+        }
+        for row in _canonical_public_legal_rows()
+    ]
     rows.sort(key=lambda row: row["id"])
     return rows
 
@@ -1799,16 +1809,21 @@ def read_public_legal_document(doc_id: str) -> Optional[Dict[str, Any]]:
     """Read one public legal document by allowlisted ID.
 
     Returns None for anything outside the allowlist so the caller answers 404
-    without revealing whether the identifier exists elsewhere. No filesystem
-    path is ever taken from the caller.
+    without revealing whether the identifier exists elsewhere. Both the ID and
+    the file path come from the canonical registry; nothing is taken from the
+    caller and nothing from mutable per-environment state.
     """
     key = str(doc_id or "").strip()
-    if key not in public_legal_document_ids():
+    row = next((item for item in _canonical_public_legal_rows()
+                if str(item.get("id")).strip() == key), None)
+    if row is None:
         return None
-    item = read_document(key)
-    if item is None:
-        return None
-    return public_document(item)
+    path = _resolve_doc_path(str(row.get("path") or ""))
+    try:
+        content = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        content = ""
+    return public_document({**copy.deepcopy(row), "exists": path.is_file(), "content": content})
 
 
 def _document_by_id(doc_id: str) -> Optional[Dict[str, Any]]:

@@ -221,3 +221,61 @@ def test_every_registration_screen_link_is_publicly_openable(http_server) -> Non
         assert status == 200, f"{notice['id']} ({notice['label']}) must open pre-auth"
         assert payload["document"]["content"].strip()
     assert {row["id"] for row in legal.TERMS_NOTICES} == {row["id"] for row in notices}
+
+
+def test_stale_environment_registry_cannot_unpublish_the_package(monkeypatch) -> None:
+    """A per-environment registry must not break the registration screen.
+
+    Canary carried a legacy registry in which the legal package was still
+    DRAFT, which emptied the pre-auth listing and left the visitor unable to
+    open the documents the agreement links to.
+    """
+    stale = {
+        "documents": [
+            {**row, "draft": True, "audience": "owner"}
+            for row in governance.load_documents_registry()["documents"]
+        ],
+    }
+    monkeypatch.setattr(governance, "load_documents_registry", lambda: stale)
+    monkeypatch.setattr(governance, "list_documents", lambda: stale["documents"])
+    assert governance.public_legal_document_ids()
+    assert governance.public_legal_index()
+    assert governance.read_public_legal_document("legal-02")["content"].strip()
+
+
+def test_environment_registry_cannot_redirect_a_public_document(monkeypatch) -> None:
+    """An overridden path must never become readable before authentication."""
+    hijacked = {
+        "documents": [
+            {**row, "path": "secrets.example.env"} if str(row.get("id")) == "legal-02" else row
+            for row in governance.load_documents_registry()["documents"]
+        ],
+    }
+    monkeypatch.setattr(governance, "load_documents_registry", lambda: hijacked)
+    monkeypatch.setattr(governance, "list_documents", lambda: hijacked["documents"])
+    document = governance.read_public_legal_document("legal-02")
+    assert "path" not in document
+    assert "Политика конфиденциальности" in document["title"]
+
+
+def test_artifact_ships_public_legal_package_without_the_owner_file() -> None:
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(governance.__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location(
+        "build_server_release", root / "tools" / "build_server_release.py",
+    )
+    builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder)
+
+    assert "docs/legal" in builder._INCLUDED_TREES, (
+        "an artifact without docs/legal cannot serve the registration documents"
+    )
+    assert "docs/legal/OWNER_LEGAL_CONFIGURATION.md" in builder._EXCLUDED_FILES
+
+    selected = {path.as_posix() for path in builder._selected_files(root)}
+    assert "docs/legal/OWNER_LEGAL_CONFIGURATION.md" not in selected
+    for doc_id in governance.public_legal_document_ids():
+        row = next(r for r in governance.DEFAULT_DOCUMENTS["documents"] if r["id"] == doc_id)
+        assert row["path"] in selected, f"{doc_id} is not shipped in the artifact"
