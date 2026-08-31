@@ -38,49 +38,52 @@ flowchart LR
 The Environment Switcher opens the selected origin and never carries session
 or browser storage between origins.
 
-## Current beta.80 release
+## Current beta.81 release
 
 | Field | Value |
 | --- | --- |
-| Candidate | `rc_9fa9fa0933dc4343b31f33a0b0df5810` |
-| Artifact | `art_ddd72f5f4f7a49139b306760c86b0d34` |
-| Version / Git SHA | `0.10.0-beta.80` / `36128ae4301f1d6ba17441dfbf7fba7000a49070` |
-| Build ID | `sf-0.10.0-beta.80-36128ae4301f-20260831T001943Z` |
-| Archive SHA256 | `B4E4E20502AA8AEA0A18C64271088C0A51563101690A957FE0CCAD957A058F10` |
-| Manifest SHA256 | `DD55B6DAB9B121E58EF53CEDA13E8F961CAC08E52584442715EA3FDC63E8CBC5` |
+| Candidate | `rc_b886226b4ae04a3b9cba9105a6de7c5f` |
+| Artifact | `art_2a97e2ba143641afaad40b59610d3bc0` |
+| Version / Git SHA | `0.10.0-beta.81` / `2f726d6b094e6a7c4248e935424e632bc7699324` |
+| Build ID | `sf-0.10.0-beta.81-2f726d6b094e-20260831T030814Z` |
+| Archive SHA256 | `5F546F4A97C8070509ED5BFF6478A2706D788D577E4C6FD73B259A19B84E6C39` |
+| Manifest SHA256 | `3028354E1C92897B74ED1F99928C6CE8...` |
 | Signature / worktree | verified / clean |
 
-Canary accepted the beta.80 release and Production was promoted to the exact
-same artifact without rebuild: both deployments record artifact
-`art_ddd72f5f4f7a49139b306760c86b0d34`, the same archive SHA256 and the same
-build ID.
+Canary accepted beta.81 and Production received the exact same artifact without
+rebuild: both deployments record `art_2a97e2ba143641afaad40b59610d3bc0`, the
+same archive SHA256 and the same build ID.
 
 | Environment | State | Ready |
 | --- | --- | --- |
 | Canary | live | PASS |
 | Production | live | PASS |
 
-Both live endpoints report the same Git SHA and build ID. Production readiness
-covers config, data root, signing key, object storage, database, connector
-control, Telegram consumer and queue; `live_trading_allowed` stays `false`.
+`live_trading_allowed` stays `false`. Production readiness covers config, data
+root, signing key, object storage, database, connector control, Telegram
+consumer and queue.
 
 ### What this release contains
 
-- Unified legal package with the structured onboarding user agreement.
-- All nine public legal documents readable before registration through a
-  registry allowlist; owner-only and internal files answer `404`.
-- AI Provenance Policy and Release Governance Policy, including the rule that
-  repository-wide governance scans run from the repository root.
-- Retired `STRATFORGE_INTERNAL_AMENDMENT` markers and manual AI self-signatures.
+- The Environment Switcher is the release control panel: three stages in order,
+  one action per stage, identifiers behind a disclosure.
+- One canonical environment state for the whole screen.
+- «Что изменилось» read from the release's own changelog entry.
+- Publication as one backend operation reporting real stages.
 
-### Acceptance evidence
+### Promotion was driven through the new operation
 
-Canary acceptance was recorded check by check in the Release Center ledger:
-artifact identity, readiness, pre-auth access to all nine legal documents,
-resolution of every agreement link, the deployed UI using the public legal
-route, and `404` for owner/internal identifiers including percent-encoded
-traversal. Production smoke repeated the same probes against the live
-environment.
+Production was promoted with `POST /api/admin/releases/<id>/publish-production`
+— the same call the panel's button makes — and all five stages reported passed:
+Подтверждение, Развёртывание, Readiness, Smoke, Готово.
+
+### Control plane configuration is what enables the button
+
+The promotion gate answers `allowed` only when the deciding peer is reachable.
+A Development process started without `data/secrets/environment-registry.env`
+has no peer list and no signing key, so the panel's publish button is disabled
+with «Control plane не настроен». Started through `start.ps1`, which loads that
+file, the gate returns `allowed` with `decided_by: canary` and the button works.
 
 ## Promotion authority
 
