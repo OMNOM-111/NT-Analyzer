@@ -40,6 +40,12 @@ _INCLUDED_FILES = (
     "docs/operations/PRODUCTION_TELEGRAM_RUNBOOK.md",
     "docs/operations/PRODUCTION_WORKER_RUNBOOK.md",
     "docs/strategies/risk-profile.md",
+    # Registry documents with audience "user": listed and served by the
+    # Documents API, so an artifact without them serves an empty page. The rest
+    # of docs/agents is deliberately not shipped, which is why these are named
+    # individually rather than by including the tree.
+    "docs/agents/AI_LAB_CLOUD_AGENTS.md",
+    "docs/agents/AI_LAB_COMPETITIVE_FEEDBACK.md",
     "tools/production_preflight.py",
     "tools/production_storage_cli.py",
     "tools/canary_blue_green_promote.sh",

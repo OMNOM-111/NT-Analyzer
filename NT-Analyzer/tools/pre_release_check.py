@@ -56,11 +56,16 @@ def _run_static_scan(bundle: Path) -> list[str]:
 
 
 def _check_runtime_reads(bundle: Path, shipped: set[str]) -> list[str]:
-    """Files the running service reads, which must travel with it.
+    """Files the running service reads, which have to travel with it.
 
-    Both known escapes were of this kind: the legal package the registration
+    Every escape so far was of this kind: the legal package the registration
     screen serves, and the changelog the release summary reads. Neither is
-    imported, so nothing failed until a deployed environment tried to read it.
+    imported, so nothing failed until a deployed environment tried to read it
+    and served an empty page.
+
+    A document whose path leaves the shipment root cannot ship at all; those
+    are reported as accepted exclusions rather than failures, because no change
+    to the file selection could satisfy them.
     """
     errors: list[str] = []
     sys.path.insert(0, str(ROOT))
@@ -70,13 +75,17 @@ def _check_runtime_reads(bundle: Path, shipped: set[str]) -> list[str]:
         return [f"cannot inspect runtime reads: {type(exc).__name__}: {exc}"]
 
     for row in governance.DEFAULT_DOCUMENTS["documents"]:
-        if str(row.get("category") or "").lower() != "legal":
-            continue
-        if str(row.get("audience") or "").lower() != "user" or row.get("draft"):
-            continue
         path = str(row.get("path") or "")
-        if path and path not in shipped:
-            errors.append(f"public legal document not shipped: {path}")
+        if not path or not governance.document_is_public(row):
+            continue
+        if path.startswith("..") or Path(path).is_absolute():
+            continue                      # outside the shipment root by design
+        if not (ROOT / path).is_file():
+            continue                      # absent from the repository too
+        if path not in shipped:
+            errors.append(
+                f"public document {row.get('id')} is not shipped: {path} "
+                "(the Documents API would serve it empty)")
 
     version = ""
     version_file = bundle / "VERSION.json"
@@ -86,7 +95,7 @@ def _check_runtime_reads(bundle: Path, shipped: set[str]) -> list[str]:
         except ValueError:
             errors.append("VERSION.json in the artifact is not valid JSON")
     if version:
-        # Resolve the summary against the bundle, not the repository.
+        # Resolved against the bundle, not the repository.
         summary = release_summary.summary_for(
             version, directory=bundle / "docs" / "changelog")
         if not summary["title"]:
@@ -94,6 +103,21 @@ def _check_runtime_reads(bundle: Path, shipped: set[str]) -> list[str]:
                 f"release summary for {version} does not resolve inside the artifact; "
                 "the card would show no «Что изменилось»")
     return errors
+
+
+def accepted_exclusions() -> list[str]:
+    """Registry documents that can never ship, stated rather than hidden."""
+    sys.path.insert(0, str(ROOT))
+    try:
+        from app import governance
+    except Exception:  # pragma: no cover - import guard
+        return []
+    rows = []
+    for row in governance.DEFAULT_DOCUMENTS["documents"]:
+        path = str(row.get("path") or "")
+        if path.startswith("..") or (path and Path(path).is_absolute()):
+            rows.append(f"{row.get('id')} -> {path}")
+    return rows
 
 
 def _check_python_compiles(bundle: Path) -> list[str]:
@@ -108,6 +132,28 @@ def _check_python_compiles(bundle: Path) -> list[str]:
     return [line for line in detail.splitlines() if line.strip()][:20]
 
 
+def _check_javascript_syntax(bundle: Path) -> list[str]:
+    """The shipped front-end has to parse.
+
+    A literal newline inside a string shipped once and was caught only on the
+    Windows CI runner, because nothing local looked at the JavaScript at all.
+    """
+    scripts = sorted(bundle.glob("app/static/aurora/assets/*.js"))
+    if not scripts:
+        return ["no Aurora assets in the artifact"]
+    errors: list[str] = []
+    for script in scripts:
+        completed = subprocess.run(
+            ["node", "--check", str(script)], cwd=bundle, text=True,
+            encoding="utf-8", errors="replace", capture_output=True,
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "").strip().splitlines()
+            first = next((line for line in detail if "Error" in line), "")
+            errors.append(f"{script.relative_to(bundle).as_posix()}: {first or 'parse failed'}")
+    return errors
+
+
 def check(root: Path = ROOT, *, keep: bool = False) -> dict:
     holder = tempfile.mkdtemp(prefix="stratforge-prerelease-")
     bundle = Path(holder) / "bundle"
@@ -119,6 +165,7 @@ def check(root: Path = ROOT, *, keep: bool = False) -> dict:
             "static_scan_in_bundle": _run_static_scan(bundle),
             "runtime_reads_shipped": _check_runtime_reads(bundle, shipped),
             "python_compiles": _check_python_compiles(bundle),
+            "javascript_syntax": _check_javascript_syntax(bundle),
         }
         failures = {name: rows for name, rows in gates.items() if rows}
         return {
@@ -127,6 +174,7 @@ def check(root: Path = ROOT, *, keep: bool = False) -> dict:
             "bundle": str(bundle) if keep else "",
             "gates": gates,
             "failed_gates": sorted(failures),
+            "accepted_exclusions": accepted_exclusions(),
         }
     finally:
         if not keep:
@@ -150,6 +198,8 @@ def main() -> int:
         print(f"{'OK  ' if not rows else 'FAIL'} {name}")
         for row in rows[:20]:
             print(f"      {row}")
+    for row in result.get("accepted_exclusions") or []:
+        print(f"     accepted exclusion: {row}")
     if result["bundle"]:
         print(f"bundle kept at: {result['bundle']}")
     print("PRE-RELEASE PASS" if result["ok"] else "PRE-RELEASE FAIL")
