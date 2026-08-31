@@ -64,6 +64,8 @@ if __package__ is None or __package__ == "":
     from app import development_sync  # type: ignore[no-redef]
     from app import data_root_guard  # type: ignore[no-redef]
     from app import pipeline_view  # type: ignore[no-redef]
+    from app import release_summary  # type: ignore[no-redef]
+    from app import release_publish  # type: ignore[no-redef]
     from app import personal_nt_security  # type: ignore[no-redef]
     from app import ninjatrader_resources  # type: ignore[no-redef]
     from app import agent_allocation  # type: ignore[no-redef]
@@ -162,6 +164,8 @@ else:
     from . import development_sync
     from . import data_root_guard
     from . import pipeline_view
+    from . import release_summary
+    from . import release_publish
     from . import personal_nt_security
     from . import ninjatrader_resources
     from . import agent_allocation
@@ -1172,9 +1176,30 @@ def _server_environment_explicit() -> bool:
     )
 
 
+def _canonical_environment_rows() -> Dict[str, Dict[str, Any]]:
+    """What each environment reports about itself, from the one registry.
+
+    The switcher used to describe only the environment the browser happened to
+    be on and leave the others blank until a probe filled them in. On the same
+    screen the pipeline table read the registry and knew better, so Development
+    could appear online with a version above and "неизвестно" below. Both now
+    read this.
+    """
+    try:
+        source = environment_registry.authoritative_rows()
+    except environment_registry.EnvironmentRegistryError:
+        return {}
+    return {
+        str(row.get("environment") or ""): row
+        for row in (source.get("environments") or [])
+        if isinstance(row, dict)
+    }
+
+
 def _admin_environment_targets() -> Dict[str, Any]:
     active = runtime_env.deployment_environment()
     deployment = runtime_env.public_status()
+    canonical = _canonical_environment_rows()
     configured = {
         runtime_env.DEVELOPMENT: os.environ.get("STRATFORGE_DEVELOPMENT_ORIGIN"),
         runtime_env.CANARY: os.environ.get("STRATFORGE_CANARY_ORIGIN"),
@@ -1189,15 +1214,22 @@ def _admin_environment_targets() -> Dict[str, Any]:
             _DEFAULT_ENVIRONMENT_ORIGINS.get(environment) or ""
         )
         origin = _validated_environment_origin(environment, supplied)
+        row = canonical.get(environment) or {}
+        presence = str(row.get("state") or ("live" if current else "never_seen"))
+        # What the environment is running, said in the release's own words
+        # rather than left for the reader to infer from a commit SHA.
+        summary = release_summary.summary_for(
+            str(row.get("app_version") or "")
+            or (str(deployment.get("app_version") or "") if current else "")
+        )
+        reported = bool(row)
         warnings = []
         if supplied and not origin:
             warnings.append("Настроенный origin отклонён политикой безопасности.")
         if not current and not origin:
             warnings.append("Origin для этой среды не настроен.")
-        if environment == runtime_env.DEVELOPMENT and not current:
-            warnings.append("Локальная разработка активируется только после проверки доступности в браузере.")
-        if not current:
-            warnings.append("Метаданные среды читаются только после её открытия по целевому origin.")
+        if environment == runtime_env.DEVELOPMENT and not current and not reported:
+            warnings.append("Локальный сервер не запущен.")
         rows.append({
             "environment": environment,
             "current": current,
@@ -1207,12 +1239,28 @@ def _admin_environment_targets() -> Dict[str, Any]:
             "requires_reachability_probe": bool(
                 environment == runtime_env.DEVELOPMENT and not current and origin
             ),
-            "health": "reachable" if current else "unknown",
-            "readiness": "current_server" if current else "unknown",
-            "version": str(deployment.get("app_version") or "") if current else "",
-            "commit": str(deployment.get("git_commit_sha") or "") if current else "",
-            "build_id": str(deployment.get("build_id") or "") if current else "",
-            "release_channel": str(deployment.get("release_channel") or "") if current else "",
+            # Identity comes from the canonical registry for every
+            # environment; the live process only fills in its own row.
+            "presence": presence,
+            "reported": reported,
+            "health": (
+                "reachable" if current or presence in {"live", "stale"}
+                else ("offline" if reported else "unknown")
+            ),
+            "readiness": str(row.get("readiness") or "")
+            or ("current_server" if current else "unknown"),
+            "version": str(row.get("app_version") or "")
+            or (str(deployment.get("app_version") or "") if current else ""),
+            "commit": str(row.get("git_commit_sha") or "")
+            or (str(deployment.get("git_commit_sha") or "") if current else ""),
+            "build_id": str(row.get("build_id") or "")
+            or (str(deployment.get("build_id") or "") if current else ""),
+            "artifact_sha256": str(row.get("artifact_sha256") or ""),
+            "last_seen_at_utc": str(row.get("last_seen_at_utc") or ""),
+            "release_channel": str(row.get("release_channel") or "")
+            or (str(deployment.get("release_channel") or "") if current else ""),
+            "summary_title": summary.get("title") or "",
+            "summary": summary.get("points") or [],
             "warnings": warnings,
         })
     return {
@@ -4915,6 +4963,51 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, release_center.promote_production(
                 actor=actor, candidate_id=candidate_id, idempotency_key=idem,
                 step_up_challenge_id=challenge))
+        elif action == "publish-production":
+            # One operation instead of a sequence the caller had to know. Every
+            # authorisation below is the existing one: capability here, then
+            # owner, step-up and the canary_passed state inside release_center.
+            if not self._require_release_capability(context, "releases.promote_production"):
+                return
+            if not release_control.authoritative():
+                try:
+                    ledger = release_center.get_release(candidate_id).get("summary") or {}
+                except release_center.ReleaseCenterError as exc:
+                    self._err(exc.status, str(exc), code=exc.code)
+                    return
+                decision = release_control.request_decision(
+                    release_control.claim_for(ledger, ci_green=True))
+                if not decision.get("allowed"):
+                    self._err(
+                        HTTPStatus.CONFLICT,
+                        str(decision.get("reason") or "Сервер не подтвердил промоушен."),
+                        code=str(decision.get("code") or "promotion_not_authorised"))
+                    return
+            out = release_publish.publish(
+                actor=actor, candidate_id=candidate_id, idempotency_key=idem,
+                step_up_challenge_id=challenge,
+                production_origin=str(
+                    os.environ.get("STRATFORGE_PRODUCTION_ORIGIN")
+                    or _DEFAULT_ENVIRONMENT_ORIGINS.get(runtime_env.PRODUCTION) or ""),
+            )
+            if not out.get("ok"):
+                # The stages travel with the error so the panel can show how far
+                # the run got instead of only that it failed.
+                self._json(HTTPStatus(int(out.get("status") or 409)), {
+                    "ok": False, "error": out.get("reason") or "Публикация остановлена.",
+                    "code": out.get("code") or "publish_failed",
+                    "stages": out.get("stages") or [],
+                    "failed_stage": out.get("failed_stage") or "",
+                    # Whether Production was switched over before the failure.
+                    # Reporting a validation failure as "not published" would
+                    # send the owner looking for a deployment that is live.
+                    "outcome": out.get("outcome") or "not_published",
+                    "production_deployed": bool(out.get("production_deployed")),
+                    "closeout_blocked": bool(out.get("closeout_blocked", True)),
+                    "rollback": out.get("rollback") or {},
+                })
+                return
+            self._json(HTTPStatus.OK, out)
         elif action == "mark-production-live":
             if not self._require_release_capability(context, "releases.promote_production"):
                 return

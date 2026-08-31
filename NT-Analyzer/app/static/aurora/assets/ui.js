@@ -4775,25 +4775,46 @@
     return !!(CURRENT_AUTH && (CURRENT_AUTH.is_owner || adminCapabilities()[capability] === true));
   }
 
+  const ENV_PURPOSE = {
+    development: 'Локальная разработка',
+    canary: 'Проверочная среда',
+    production: 'Рабочая среда',
+  };
+
+  // First level answers what an owner actually asks: what is this, what
+  // changed, is it checked, what can I do next. Commit/build/artifact/schema
+  // are audit material and live behind "Технические данные".
   function environmentMetaHtml(target) {
     const warnings = Array.isArray(target.warnings) ? target.warnings : [];
-    const healthRu = {
-      reachable: 'доступен', unknown: 'неизвестно', unreachable: 'недоступен', error: 'ошибка',
-    };
-    const readyRu = {
-      ready: 'готов', unknown: 'неизвестно', current_server: 'текущий сервер',
-      'runtime endpoint reachable': 'endpoint доступен', not_ready: 'не готов',
-    };
+    const env = String(target.environment || '');
+    const presence = String(target.presence || '');
     const health = String(target.health || 'unknown');
-    const readiness = String(target.readiness || 'unknown');
-    return `<div class="admin-env-meta">
-      <div><span>Версия</span><strong>${esc(target.version || 'неизвестно')}</strong></div>
-      <div><span>Commit</span><strong class="mono">${esc((target.commit || '').slice(0, 12) || 'неизвестно')}</strong></div>
-      <div><span>Build</span><strong class="mono">${esc(target.build_id || 'неизвестно')}</strong></div>
-      <div><span>Artifact</span><strong class="mono">${esc((target.artifact_sha256 || '').slice(0, 16) || '—')}</strong></div>
-      <div><span>Состояние</span><strong>${esc(healthRu[health] || health)}</strong></div>
-      <div><span>Готовность</span><strong>${esc(readyRu[readiness] || readiness)}</strong></div>
-    </div>${target.probe_error ? `<div class="admin-env-warnings"><div>⚠ ${esc(target.probe_error)}</div></div>` : ''}${warnings.length ? `<div class="admin-env-warnings">${warnings.map(row => `<div>⚠ ${esc(row)}</div>`).join('')}</div>` : ''}`;
+    const offline = health === 'offline' || presence === 'never_seen';
+    // "Локальный сервер не запущен" is a fact. A column of "неизвестно" is not.
+    const stateText = offline && env === 'development'
+      ? 'Локальный сервер не запущен'
+      : health === 'reachable' ? 'На связи'
+      : health === 'offline' ? 'Не отвечает'
+      : health === 'unreachable' ? 'Недоступен'
+      : 'Состояние неизвестно';
+    const summary = Array.isArray(target.summary) ? target.summary : [];
+    const checks = Array.isArray(target.checks) ? target.checks : [];
+    return `<div class="env-line"><strong class="env-version">${esc(target.version || '—')}</strong>
+        <span class="cab-sub">${esc(ENV_PURPOSE[env] || '')}</span></div>
+      ${target.summary_title ? `<div class="env-summary-title">${esc(target.summary_title)}</div>` : ''}
+      ${summary.length ? `<ul class="env-summary">${summary.map(row => `<li>${esc(row)}</li>`).join('')}</ul>` : ''}
+      <div class="env-state${offline ? ' is-offline' : ''}">${esc(stateText)}</div>
+      ${checks.length ? `<div class="env-checks">${checks.map(row => `<span class="env-check ${row.ok ? 'ok' : 'pending'}">${row.ok ? '✓' : '·'} ${esc(row.label)}</span>`).join('')}</div>` : ''}
+      <details class="env-tech"><summary>Технические данные</summary>
+        <div class="admin-env-meta">
+          <div><span>Commit</span><strong class="mono">${esc((target.commit || '').slice(0, 12) || '—')}</strong></div>
+          <div><span>Build</span><strong class="mono">${esc(target.build_id || '—')}</strong></div>
+          <div><span>Artifact</span><strong class="mono">${esc((target.artifact_sha256 || '').slice(0, 16) || '—')}</strong></div>
+          <div><span>Канал</span><strong>${esc(target.release_channel || '—')}</strong></div>
+          <div><span>Готовность</span><strong>${esc(target.readiness || '—')}</strong></div>
+          <div><span>Последний отчёт</span><strong class="mono">${esc(target.last_seen_at_utc || '—')}</strong></div>
+        </div>
+      </details>${target.probe_error ? `<div class="admin-env-warnings"><div>⚠ ${esc(target.probe_error)}</div></div>` : ''}${warnings.length ? `<div class="admin-env-warnings">${warnings.map(row => `<div>⚠ ${esc(row)}</div>`).join('')}</div>` : ''}`;
   }
 
   // ---- Environment registry (Phase 5) ---------------------------------------
@@ -5193,14 +5214,19 @@
         ${createBtn}
         ${canCanary ? `<button class="btn" ${stepAttrs('deploy-canary')}>Развернуть в Canary</button>` : ''}
         ${canCanary ? `<button class="btn" ${stepAttrs('acceptance')}>Приёмка</button>` : ''}
-        ${canPromote ? `<button class="btn ${blocked ? 'ghost' : 'primary'}"
-          ${stepAttrs('promote-production', blocked
-            ? (promotion.note || promotion.reason || 'Промоушен недоступен') : '')}
-          >Продвинуть в Production</button>` : ''}
+        ${canPromote ? (state === 'canary_passed'
+          ? `<button class="btn ${blocked ? 'ghost' : 'primary'}" data-pipe-publish="${esc(id)}"
+              ${blocked ? 'disabled' : ''} title="${esc(blocked
+                ? (promotion.note || promotion.reason || 'Промоушен недоступен')
+                : 'Опубликовать проверенный artifact в Production')}"
+              >Опубликовать в Production</button>`
+          : `<button class="btn ghost" disabled
+              title="Доступно только для кандидата, прошедшего Canary">Опубликовать в Production</button>`) : ''}
         <button class="btn sm ghost" data-release-open="${esc(id)}">Все действия</button>
       </div>
       ${blocked && !promotion.complete ? `<div class="admin-env-warnings">
         <div>⚠ Промоушен заблокирован: ${esc(promotion.reason || '')}</div></div>` : ''}
+      <div id="pipe-publish-progress"></div>
       <div class="cab-sub" id="pipe-step-msg"></div>
       <div id="pipe-create-form" hidden></div></section>`;
   }
@@ -5359,6 +5385,55 @@
     });
 
     const msg = qs('#pipe-step-msg', node);
+    // Publishing is one backend call. The panel shows the stages that call
+    // reports and stops at the first failure with its reason, instead of a log.
+    function publishStagesHtml(stages) {
+      const icon = { passed: '✓', failed: '✕', not_started: '·' };
+      return `<div class="pub-stages">${(stages || []).map(row => `<span class="pub-stage is-${esc(row.state)}">${icon[row.state] || '·'} ${esc(row.label)}</span>`).join('<span class="pub-sep">→</span>')}</div>`;
+    }
+
+    qsa('[data-pipe-publish]', node).forEach(button => button.onclick = async () => {
+      const candidate = doc.candidate || {};
+      const version = String(candidate.app_version || '');
+      if (!window.confirm(
+        'Опубликовать ' + version + '?' +
+        '\n\n' +
+        'В Production будет продвинут тот же проверенный artifact. Пересборки не будет.')) return;
+      const box = qs('#pipe-publish-progress', node);
+      const before = button.textContent;
+      button.disabled = true;
+      button.textContent = 'Публикую…';
+      if (msg) msg.textContent = '';
+      try {
+        const out = await API.http.releasePublish(candidate.candidate_id, releaseKey());
+        if (box) box.innerHTML = publishStagesHtml(out.stages);
+        toast('Опубликовано в Production');
+        await again();
+      } catch (e) {
+        // The failure carries how far the run got; show that, not just the text.
+        const detail = (e && e.payload) || {};
+        if (box) {
+          // A failure after the deploy stage means Production is already
+          // switched over. Saying "публикация не состоялась" there would send
+          // the owner looking for a deployment that is live.
+          const deployed = detail.production_deployed;
+          box.innerHTML = publishStagesHtml(detail.stages) +
+            `<div class="pub-outcome ${deployed ? 'is-deployed' : 'is-failed'}">${
+              deployed
+                ? 'Production развёрнут, validation failed'
+                : 'Публикация не выполнена'}${
+              detail.failed_stage ? ' · этап: ' + esc(detail.failed_stage) : ''}</div>` +
+            (detail.closeout_blocked ? '<div class="cab-sub">Closeout заблокирован до устранения причины.</div>' : '') +
+            (deployed && detail.rollback && detail.rollback.available
+              ? '<div class="cab-sub">Откат — штатным действием «rollback-production» в разделе «Все действия».</div>'
+              : '');
+        }
+        if (msg) msg.textContent = (e && e.message) || String(e);
+        button.disabled = false;
+        button.textContent = before;
+      }
+    });
+
     qsa('[data-pipe-step]', node).forEach(button => button.onclick = async () => {
       const step = button.dataset.pipeStep;
       const candidate = doc.candidate || {};

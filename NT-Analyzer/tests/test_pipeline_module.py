@@ -127,7 +127,12 @@ def test_the_module_asks_the_server_once():
     block = block[:block.index("\n  }\n\n", block.index("qsa('[data-pipe-step]"))]
     calls = re.findall(r"API\.http\.(\w+)\(", block)
     assert calls.count("adminPipeline") == 1
-    assert not [c for c in calls if c != "adminPipeline"], calls
+    # Actions the owner triggers are a different kind of call from the ones
+    # that build the view: they run on click and write, they do not assemble
+    # state. Only reads are forbidden here, and the list is deliberately short.
+    actions = {"releasePublish"}
+    reads = [c for c in calls if c != "adminPipeline" and c not in actions]
+    assert not reads, reads
 
 
 def test_the_api_layer_exposes_the_pipeline_endpoint():
