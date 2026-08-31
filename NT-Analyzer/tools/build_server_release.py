@@ -33,7 +33,9 @@ _SEMVER = re.compile(
     r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
     r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
-_INCLUDED_TREES = ("app", "ai_lab", "data", "deploy", "docs/governance")
+# docs/legal ships with the artifact: the registration screen serves those
+# documents pre-auth, so an artifact without them cannot onboard a user.
+_INCLUDED_TREES = ("app", "ai_lab", "data", "deploy", "docs/governance", "docs/legal")
 _INCLUDED_FILES = (
     "README.md",
     "README-RUN-MODES.md",
@@ -60,7 +62,13 @@ _INCLUDED_FILES = (
     "tools/release_static_scan.py",
     "tools/verify_server_release.py",
 )
-_EXCLUDED_FILES = {"docs/agents/AGENTS.md", "docs/AI_DIALOGUE_CONTRACT.md"}
+# docs/legal ships so the pre-auth registration screen can serve the public
+# package, but the owner-only configuration must never leave the repository.
+_EXCLUDED_FILES = {
+    "docs/agents/AGENTS.md",
+    "docs/AI_DIALOGUE_CONTRACT.md",
+    "docs/legal/OWNER_LEGAL_CONFIGURATION.md",
+}
 
 
 def _run(command: list[str], *, cwd: Path) -> str:
