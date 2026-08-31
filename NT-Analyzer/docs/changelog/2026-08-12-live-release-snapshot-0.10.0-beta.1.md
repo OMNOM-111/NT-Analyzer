@@ -73,7 +73,7 @@ operational closeout evidence, not a template default.
 
 ## Canonical sources paired with this snapshot
 
-- [../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md](../current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md)
+- `docs/current/NEXT_ARCHITECTURE_PROGRAM_STATUS.md`
 - [NEXT_ARCHITECTURE_CHANGELOG.md](NEXT_ARCHITECTURE_CHANGELOG.md)
 - [../../deploy/canary/README.md](../../deploy/canary/README.md)
 - [../../deploy/production/README.md](../../deploy/production/README.md)
