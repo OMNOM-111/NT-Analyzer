@@ -498,6 +498,24 @@ svg.ic { width: 18px; height: 18px; flex: none; vertical-align: middle; }
 .pub-outcome { margin-top: 6px; font-size: 12px; }
 .pub-outcome.is-deployed { color: var(--warn, #d29922); }
 .pub-outcome.is-failed { color: var(--bad, #f85149); }
+/* Three stages, in the order they happen. The arrow between them is the
+   workflow; the cards are equal width so none reads as the important one. */
+.stage-flow { display: flex; align-items: stretch; gap: 10px; flex-wrap: wrap; }
+.stage-flow > .stage-card { flex: 1 1 260px; min-width: 240px; display: flex; flex-direction: column; }
+.stage-arrow { align-self: center; color: var(--tx-3); font-size: 18px; flex: 0 0 auto; }
+.stage-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.stage-origin { margin-left: auto; font-size: 11px; opacity: 0.75; }
+.stage-status { margin-top: 8px; font-size: 12px; }
+.stage-status.is-pass { color: var(--ok, #3fb950); }
+.stage-status.is-progress { color: var(--warn, #d29922); }
+.stage-status.is-fail { color: var(--bad, #f85149); }
+.stage-status.is-ok { color: var(--tx-2); }
+.stage-status.is-idle { color: var(--tx-3); }
+.stage-actions { margin-top: auto; padding-top: 10px; }
+.stage-action { width: 100%; }
+.stage-note { margin-top: 10px; }
+.stage-blocked { margin-top: 6px; font-size: 11.5px; color: var(--tx-3); }
+@media (max-width: 900px) { .stage-arrow { transform: rotate(90deg); align-self: center; } }
 .pub-stages { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0; font-size: 11.5px; }
 .pub-stage.is-passed { color: var(--ok, #3fb950); }
 .pub-stage.is-failed { color: var(--bad, #f85149); }

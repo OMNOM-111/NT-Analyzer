@@ -389,8 +389,10 @@ def test_environment_switcher_probes_every_target_on_open():
     assert "const autoProbe = (target, index) =>" in UI_JS
     assert "Promise.all(targets.map(autoProbe))" in UI_JS
     # Independent probes: one slow or unreachable environment must not hold up
-    # the others, which a sequential await would do.
-    assert "probeEnvironmentTarget(target, card).then(" in UI_JS
+    # the others, which a sequential await would do. Each probe handles its own
+    # outcome on its own promise; how it chains is not the contract.
+    assert "probeEnvironmentTarget(target, card).then(restate).catch(" in UI_JS
+    assert "await probeEnvironmentTarget" not in UI_JS.split("const autoProbe")[1][:600]
 
 
 def test_environment_switcher_shows_a_concrete_failure_reason():
