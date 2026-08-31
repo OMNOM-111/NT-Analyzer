@@ -37,6 +37,7 @@
 - История изменений хранится в структурированном `NT-Analyzer/data/governance/change_log.jsonl`; скрытые amendment-комментарии в Markdown запрещены.
 - Requester/инициатор бизнес-решения и authenticated human/service actor фиксируются раздельно. AI не подменяет владельца как автора решения.
 - Любой repository-wide governance/security/provenance scan запускается **от корня репозитория**, а не из `NT-Analyzer/` или другого подкаталога. Скан из подкаталога не считается доказательством отсутствия находок: он физически не видит tracked-файлы выше по дереву (например корневой `README.md`) и даёт ложный PASS на release-блокере.
+- Перед PR/release, затрагивающим состав artifact, runtime-чтения или документы, запускается `python tools/pre_release_check.py`. Он собирает точный production-состав и выполняет `release_static_scan` **внутри bundle**, как это делает signing node. Repository-wide PASS не является доказательством: в checkout существуют файлы, которых в artifact нет, поэтому ссылки и runtime-зависимости резолвятся локально и падают на сборке.
 
 ## Definition of Done: документация — часть выполненной работы
 
