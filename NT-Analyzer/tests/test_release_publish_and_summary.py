@@ -274,3 +274,39 @@ def test_artifact_ships_what_the_release_summary_reads() -> None:
     assert entry is not None
     shipped = "docs/changelog/" + entry.name
     assert shipped in selected, f"{shipped} must travel with the artifact"
+
+
+def test_shipped_markdown_never_links_outside_the_artifact() -> None:
+    """A relative link that leaves the bundle is broken for everyone reading it
+    on a deployed environment, and the signer's build refuses such a tree."""
+    import re
+    import subprocess
+    import urllib.parse
+    from pathlib import Path
+
+    root = Path(release_publish.__file__).resolve().parents[1]
+    trees = ("app", "ai_lab", "data", "deploy", "docs/governance", "docs/legal",
+             "docs/changelog")
+    tracked = subprocess.check_output(
+        ["git", "ls-files"], cwd=root).decode("utf-8", "surrogateescape").split("\n")
+    shipped = {f for f in tracked if f.startswith(tuple(t + "/" for t in trees))}
+    link = re.compile(r"!?\[[^\]]*\]\((<[^>]+>|[^)\s]+)(?:\s+[\"'][^\"']*[\"'])?\)")
+
+    outside = []
+    for rel in sorted(f for f in shipped if f.endswith(".md")):
+        text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        for match in link.finditer(text):
+            target = match.group(1).strip("<>")
+            if not target or target.startswith(("#", "http://", "https://", "mailto:", "data:")):
+                continue
+            clean = urllib.parse.unquote(target.split("#")[0].split("?")[0])
+            if not clean:
+                continue
+            candidate = root / Path(rel).parent / clean
+            try:
+                norm = candidate.resolve().relative_to(root).as_posix()
+            except (OSError, ValueError):
+                norm = str(candidate)
+            if norm not in shipped:
+                outside.append(f"{rel} -> {target}")
+    assert not outside, "shipped markdown links leaving the artifact: " + "; ".join(outside)

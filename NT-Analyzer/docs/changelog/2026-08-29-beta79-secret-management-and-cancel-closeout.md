@@ -1,7 +1,7 @@
 # beta.70 → beta.79 — server backtest cancel, connector state honesty, secret management
 
 Период: 2026-08-28 → 2026-08-29. Закрывающая редакция:
-[CLEAN_CLOSEOUT_HANDOFF](../current/CLEAN_CLOSEOUT_HANDOFF.md).
+`docs/current/CLEAN_CLOSEOUT_HANDOFF.md`.
 
 ## Решения и почему
 
