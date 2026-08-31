@@ -38,29 +38,49 @@ flowchart LR
 The Environment Switcher opens the selected origin and never carries session
 or browser storage between origins.
 
-## Current beta.79 release
+## Current beta.80 release
 
 | Field | Value |
 | --- | --- |
-| Candidate | recorded in Release Center ledger |
-| Artifact | same immutable artifact promoted from Canary to Production |
-| Version / Git SHA | `0.10.0-beta.79` / `1a1d54aa728d487203bb8342ecf142752610f4cd` |
-| Build ID | `sf-0.10.0-beta.79-1a1d54aa728d-20260829T234541Z` |
-| Archive SHA256 | recorded in release evidence |
-| Runtime/manifest SHA256 | current runtime artifact in live release dir |
-| Signature / migrations | verified production trust / pending `0` |
+| Candidate | `rc_9fa9fa0933dc4343b31f33a0b0df5810` |
+| Artifact | `art_ddd72f5f4f7a49139b306760c86b0d34` |
+| Version / Git SHA | `0.10.0-beta.80` / `36128ae4301f1d6ba17441dfbf7fba7000a49070` |
+| Build ID | `sf-0.10.0-beta.80-36128ae4301f-20260831T001943Z` |
+| Archive SHA256 | `B4E4E20502AA8AEA0A18C64271088C0A51563101690A957FE0CCAD957A058F10` |
+| Manifest SHA256 | `DD55B6DAB9B121E58EF53CEDA13E8F961CAC08E52584442715EA3FDC63E8CBC5` |
+| Signature / worktree | verified / clean |
 
-Canary accepted the beta.79 release and Production was promoted to the exact
-same artifact without rebuild.
+Canary accepted the beta.80 release and Production was promoted to the exact
+same artifact without rebuild: both deployments record artifact
+`art_ddd72f5f4f7a49139b306760c86b0d34`, the same archive SHA256 and the same
+build ID.
 
-| Environment | Release directory | Previous / rollback | Ready |
-| --- | --- | --- | --- |
-| Canary | `production_data/releases/0.10.0-beta.79-1a1d54aa728d` | `0.10.0-beta.79-47207e77c31f` | PASS |
-| Production | same | `0.10.0-beta.78-bb50168cbe79` | PASS |
+| Environment | State | Ready |
+| --- | --- | --- |
+| Canary | live | PASS |
+| Production | live | PASS |
 
-Both live endpoints report the same Git SHA, build ID and runtime artifact
-SHA256. Production readiness includes config, data root, signing key, object
-storage, database, connector control, Telegram consumer and queue.
+Both live endpoints report the same Git SHA and build ID. Production readiness
+covers config, data root, signing key, object storage, database, connector
+control, Telegram consumer and queue; `live_trading_allowed` stays `false`.
+
+### What this release contains
+
+- Unified legal package with the structured onboarding user agreement.
+- All nine public legal documents readable before registration through a
+  registry allowlist; owner-only and internal files answer `404`.
+- AI Provenance Policy and Release Governance Policy, including the rule that
+  repository-wide governance scans run from the repository root.
+- Retired `STRATFORGE_INTERNAL_AMENDMENT` markers and manual AI self-signatures.
+
+### Acceptance evidence
+
+Canary acceptance was recorded check by check in the Release Center ledger:
+artifact identity, readiness, pre-auth access to all nine legal documents,
+resolution of every agreement link, the deployed UI using the public legal
+route, and `404` for owner/internal identifiers including percent-encoded
+traversal. Production smoke repeated the same probes against the live
+environment.
 
 ## Promotion authority
 
