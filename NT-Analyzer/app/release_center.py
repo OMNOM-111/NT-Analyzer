@@ -1179,6 +1179,17 @@ def record_canary_check(
     return out
 
 
+def _live_environment_rows() -> Dict[str, Any]:
+    """What the environments report, for the checks that need Production's own
+    word. A registry that cannot be read leaves the ledger as the fallback."""
+    from . import environment_registry
+
+    try:
+        return {"environments": environment_registry.authoritative_rows().get("environments") or []}
+    except Exception:
+        return {"environments": []}
+
+
 def approve_production(
     *, actor: Any, candidate_id: str, idempotency_key: str, step_up_challenge_id: str = "",
 ) -> Dict[str, Any]:
@@ -1207,6 +1218,21 @@ def approve_production(
             raise ReleaseCenterError(
                 str(provenance.get("reason") or "Эта сборка не создана из утверждённого main."),
                 409, code="provenance_not_approved")
+        # Approved main says where the code came from, not whether it is still
+        # current: an old commit on main is as approved as a new one, so a
+        # superseded candidate passes provenance while publishing it would roll
+        # Production back. Going back is what rollback_production is for, with
+        # its own gate and its own artifact rules.
+        forward = release_provenance.forward_only(
+            str(candidate.get("git_commit_sha") or ""),
+            release_provenance.live_production_commit(
+                _live_environment_rows(),
+                {"releases": [_candidate_summary(doc, row) for row in doc["candidates"]]}),
+        )
+        if not forward.get("ok"):
+            raise ReleaseCenterError(
+                str(forward.get("reason") or "Эта сборка старее текущего Production."),
+                409, code=str(forward.get("code") or "candidate_not_ahead_of_production"))
         artifact = _find(doc["artifacts"], "artifact_id", str(candidate.get("artifact_id") or ""))
         if not artifact:
             raise ReleaseCenterError("Artifact отсутствует.", 409, code="artifact_missing")

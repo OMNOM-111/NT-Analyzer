@@ -159,6 +159,62 @@ def evaluate(commit_sha: str = "", *, ci: Optional[Any] = None) -> Dict[str, Any
     }
 
 
+def live_production_commit(registry: Any = None, releases: Any = None) -> str:
+    """The commit Production is actually running.
+
+    Preferred source is what Production reports about itself; the release
+    ledger's last production_live candidate is the fallback for the window
+    before an environment has checked in.
+    """
+    for row in ((registry or {}).get("environments") or []):
+        if str(row.get("environment") or "") != "production":
+            continue
+        sha = str(row.get("git_commit_sha") or "").strip().lower()
+        if _SHA_RE.match(sha):
+            return sha
+    for row in ((releases or {}).get("releases") or []):
+        if str(row.get("state") or "") != "production_live":
+            continue
+        sha = str(row.get("git_commit_sha") or "").strip().lower()
+        if _SHA_RE.match(sha):
+            return sha
+    return ""
+
+
+def forward_only(candidate_sha: str, production_sha: str) -> Dict[str, Any]:
+    """Whether publishing this candidate would move Production forward.
+
+    Provenance asks where the code came from; it cannot tell a current release
+    from a superseded one, because an old commit on main is every bit as
+    approved as a new one. A candidate built from an earlier main commit
+    therefore passes provenance while publishing it would silently roll
+    Production back -- which is what an audit found sitting one click away.
+
+    Going back is a rollback, and rollback has its own contract, its own owner
+    gate and its own artifact rules. It is not this button.
+    """
+    candidate = str(candidate_sha or "").strip().lower()
+    live = str(production_sha or "").strip().lower()
+    if not _SHA_RE.match(candidate):
+        return {"ok": False, "reason": "Commit кандидата неизвестен.",
+                "code": "candidate_commit_unknown"}
+    if not _SHA_RE.match(live):
+        # Nothing is deployed, so nothing can be older than it.
+        return {"ok": True, "reason": "", "code": "", "production_commit": ""}
+    if candidate == live:
+        return {"ok": True, "reason": "", "code": "", "production_commit": live}
+    code, _ = _git("merge-base", "--is-ancestor", live, candidate)
+    if code == 0:
+        return {"ok": True, "reason": "", "code": "", "production_commit": live}
+    return {
+        "ok": False,
+        "production_commit": live,
+        "code": "candidate_not_ahead_of_production",
+        "reason": ("Эта сборка старее текущего Production "
+                   f"({live[:12]}). Для возврата используй Rollback."),
+    }
+
+
 # The panel asks on every poll, and the answer costs a fetch and a CI query.
 # Cached briefly per commit: ancestry does not change second to second, and a
 # stale-by-a-minute refusal is safe while a stale approval is not -- so only

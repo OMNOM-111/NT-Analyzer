@@ -202,3 +202,8 @@ def _approved_provenance(monkeypatch, request):
     monkeypatch.setattr(release_provenance, "eligibility", lambda sha: {
         "eligible": True, "checks": [], "blocking": [], "reason": "", "commit": sha,
     })
+    # Same reasoning for the forward-only rule: it asks git whether one real
+    # commit descends from another, which a made-up SHA can never satisfy.
+    monkeypatch.setattr(release_provenance, "forward_only", lambda candidate, live: {
+        "ok": True, "reason": "", "code": "", "production_commit": live,
+    })
