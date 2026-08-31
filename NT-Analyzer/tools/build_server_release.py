@@ -33,9 +33,12 @@ _SEMVER = re.compile(
     r"(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?"
     r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
 )
-# docs/legal ships with the artifact: the registration screen serves those
-# documents pre-auth, so an artifact without them cannot onboard a user.
-_INCLUDED_TREES = ("app", "ai_lab", "data", "deploy", "docs/governance", "docs/legal")
+# Trees the running service reads at runtime, not just sources. docs/legal is
+# served pre-auth on the registration screen and docs/changelog backs the
+# release summary; an artifact missing either leaves the deployed service
+# unable to answer something the UI asks it for.
+_INCLUDED_TREES = ("app", "ai_lab", "data", "deploy", "docs/governance", "docs/legal",
+                   "docs/changelog")
 _INCLUDED_FILES = (
     "README.md",
     "README-RUN-MODES.md",

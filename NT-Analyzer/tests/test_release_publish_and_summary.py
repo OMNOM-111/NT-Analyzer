@@ -250,3 +250,27 @@ def test_ui_distinguishes_a_deployed_but_unvalidated_run() -> None:
     assert "production_deployed" in ui
     assert "Closeout заблокирован" in ui
     assert "rollback-production" in ui
+
+
+def test_artifact_ships_what_the_release_summary_reads() -> None:
+    """The summary reads changelog files at runtime, so they must be shipped.
+
+    docs/changelog was left out of the artifact, which made "Что изменилось"
+    work in a repository checkout and stay permanently empty on Canary and
+    Production — the same failure shape as docs/legal before it.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    root = Path(release_publish.__file__).resolve().parents[1]
+    spec = importlib.util.spec_from_file_location(
+        "build_server_release", root / "tools" / "build_server_release.py")
+    builder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(builder)
+
+    assert "docs/changelog" in builder._INCLUDED_TREES
+    selected = {path.as_posix() for path in builder._selected_files(root)}
+    entry = release_summary._entry_for("0.10.0-beta.80")
+    assert entry is not None
+    shipped = "docs/changelog/" + entry.name
+    assert shipped in selected, f"{shipped} must travel with the artifact"
