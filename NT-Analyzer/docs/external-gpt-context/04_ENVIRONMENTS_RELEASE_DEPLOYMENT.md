@@ -38,49 +38,49 @@ flowchart LR
 The Environment Switcher opens the selected origin and never carries session
 or browser storage between origins.
 
-## Current beta.84 release
+## Current beta.85 release
 
 | Field | Value |
 | --- | --- |
-| Candidate | rc_9853e8e082594431b12af589211a6afc |
-| Artifact | art_edbfc143e7494527bca83d81fff6a488 |
-| Version / Git SHA | 0.10.0-beta.84 / 2438459dcd0dccbad7afa38363828a333b6df532 |
-| Build ID | sf-0.10.0-beta.84-2438459dcd0d-20260831T160722Z |
-| Archive SHA256 | 1088E359462AA217DF3806133F2052E05DDF625B34C256EAA83267C0B5E34219 |
+| Candidate | rc_f71db0e286b6447bb13dc6b265c06682 |
+| Artifact | art_7df5c53560f746c688262d86e46d0694 |
+| Version / Git SHA | 0.10.0-beta.85 / b923e7b2b4e034c4f890e89b33992d469c84b779 |
+| Build ID | sf-0.10.0-beta.85-b923e7b2b4e0-20260831T173711Z |
+| Archive SHA256 | F488506AFD7DBEBC2ECF6EA3C34C27E1AD09E1F5CBE88B52C2FC5DF2933DF572 |
 | Signature / worktree | verified / clean |
 
-Canary accepted beta.84 and Production received the exact same artifact without
-rebuild. live_trading_allowed stays false. Earlier cycles are recorded in their
+Canary accepted beta.85 and Production received the exact same artifact without
+rebuild. live_trading_allowed stays false. Earlier cycles are in their
 changelog entries.
 
-### The shipment has a gate of its own
+### Three gates stand between a candidate and Production
 
-`python tools/pre_release_check.py` assembles the exact production file set and
-runs four gates inside it: the static scan as the signer runs it, the runtime
-reads (every public registry document and the changelog the release summary
-resolves), Python compilation and JavaScript syntax. The selection lives in
+Approved main asks where the code came from: branch is main, worktree clean,
+HEAD equal to origin/main, the commit an ancestor of origin/main, and that exact
+SHA green in CI. A squash merge creates a new SHA, so a green pull request does
+not make the commit that reached main green -- both beta.84 and beta.85 were
+refused on the first attempt for exactly that, and published unchanged once the
+merge commit finished CI.
+
+Forward-only asks whether publishing would move Production forward. An old
+commit on main is as approved as a new one, so provenance alone let a
+superseded candidate sit one click from rolling Production back. Publication now
+requires the candidate to be the deployed commit or a descendant of it.
+
+Production identity is fail-closed. "Never deployed" permits a first
+publication; "deployed but the commit cannot be read" refuses until identity is
+restored. Conflating the two is how a rollback gets published by accident.
+
+Rollback is untouched by all of this: going back has its own contract.
+
+### The shipment has its own gate
+
+python tools/pre_release_check.py assembles the exact production file set and
+runs four checks inside it: the static scan as the signer runs it, runtime
+reads, Python compilation and JavaScript syntax. The selection lives in
 tools/release_bundle.py and is imported by the builder, so the check and the
-signer cannot disagree about what a release contains.
-
-A public document that no release can carry is a contradiction, not an
-exemption: the check fails on it. Four legacy-* documents that were advertised
-to users while living outside the product tree are no longer public.
-
-### CI is checked on the commit that reached main
-
-Promotion asks for green CI on the candidate's exact SHA. A squash merge
-creates a new commit, so a PR that was green does not make the merge commit
-green: beta.84's first promotion attempt was refused for exactly that reason and
-succeeded once CI on the merge commit finished. The five-check set runs on pull
-requests; a push to main runs the two checks in ci.yml, and the gate requires
-every check run that exists for the SHA to have succeeded.
-
-### Provenance answers where code came from, not whether it is current
-
-A candidate at canary_passed built from an old but legitimate main commit passes
-provenance. One such candidate (0.10.0-beta.27) was found during the audit,
-one click from rolling Production back, and was cancelled. Candidates left in
-canary_checking cannot be promoted, because publication requires canary_passed.
+signer cannot disagree. A public document that no release can carry is a
+contradiction to resolve, not an exemption to record.
 
 ## Promotion authority
 
