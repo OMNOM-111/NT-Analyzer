@@ -10,6 +10,8 @@
 - `../agents/AI_LAB_COMPETITIVE_FEEDBACK.md` — контракт конкурентной обратной связи для AI-ролей.
 - `REGISTRY_POLICY.md` — правила ведения реестра стратегий.
 - `SYNC_MAP.md` — что синхронизируется автоматически, а что нужно проверять вручную.
+- `AI_PROVENANCE_POLICY.md` — запрет самоназвания и угадывания AI-метаданных.
+- `RELEASE_GOVERNANCE_POLICY.md` — обязательный конвейер до Canary и Production.
 
 Редактируемый machine source of truth:
 
