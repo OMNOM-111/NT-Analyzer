@@ -295,6 +295,8 @@
     authEmailLinkVerify: (body) => send('/api/auth/email/link/verify', 'POST', body || {}),
     miniappRegister: (body) => send('/api/auth/miniapp/register', 'POST', body || {}),
     legalTerms: (o) => getJSON('/api/legal/terms', o),
+    legalDocuments: (o) => getJSON('/api/legal/documents', o),
+    legalDocument: (id, o) => getJSON('/api/legal/documents/' + encodeURIComponent(id), o),
     authLogout: () => send('/api/auth/logout', 'POST', {}),
     authUsers: (o) => getJSON('/api/auth/users', o),
     authUserDetail: (id, o) => getJSON('/api/auth/users/' + encodeURIComponent(id), o),

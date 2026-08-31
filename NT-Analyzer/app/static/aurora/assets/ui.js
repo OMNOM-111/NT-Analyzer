@@ -3987,8 +3987,9 @@
 
   async function showLegalNoticeModal(id, fallbackLabel) {
     let data;
-    try { data = await (window.API ? API.http.governanceDocument(id) : Promise.reject()); }
+    try { data = await (window.API ? API.http.legalDocument(id) : Promise.reject()); }
     catch (e) { toast('Не удалось загрузить связанный документ'); return; }
+    data = data.document || data;
     const title = data.title || fallbackLabel || 'Связанный документ';
     const overlay = el(`<div class="terms-modal terms-notice-modal"><div class="terms-modal-card"><div class="terms-modal-head"><strong>${esc(title)}</strong><button class="btn ghost sm" data-notice-close>Закрыть</button></div><div class="terms-modal-body"><p class="cab-sub">Официальный информационный документ текущей версии продукта. Отдельное принятие при регистрации не требуется.</p><pre class="terms-notice-text">${esc(data.content || '')}</pre></div></div></div>`);
     document.body.appendChild(overlay);

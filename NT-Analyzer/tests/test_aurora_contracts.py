@@ -230,7 +230,11 @@ def test_registration_terms_modal_links_informational_legal_notices():
     css = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
 
     assert "showLegalNoticeModal" in ui
-    assert "API.http.governanceDocument(id)" in ui
+    # The registration screen has no session: this modal must read the public
+    # legal route, never the privileged governance endpoint, or the visitor is
+    # asked to accept an agreement whose linked documents will not open.
+    assert "API.http.legalDocument(id)" in ui
+    assert "API.http.governanceDocument(id)" not in ui
     assert 'data-legal-notice=' in ui
     assert "Отдельное принятие при регистрации не требуется" in ui
     assert "terms-notice-modal" in css

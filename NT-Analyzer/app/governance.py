@@ -1756,6 +1756,61 @@ def public_document(item: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def public_legal_document_ids() -> frozenset:
+    """Document IDs a visitor may read before authenticating.
+
+    The allowlist is derived from the legal registry itself, never from the
+    request: only published, user-facing legal documents qualify. Internal and
+    owner-only files are absent from the registry or fail these predicates, so
+    they can never enter the set.
+    """
+    ids = set()
+    for item in list_documents():
+        if str(item.get("category") or "").lower() != "legal":
+            continue
+        if str(item.get("audience") or "").lower() != "user":
+            continue
+        if bool(item.get("draft")):
+            continue
+        doc_id = str(item.get("id") or "").strip()
+        if doc_id:
+            ids.add(doc_id)
+    return frozenset(ids)
+
+
+def public_legal_index() -> List[Dict[str, Any]]:
+    """Registration-screen listing of the official public legal documents."""
+    allowed = public_legal_document_ids()
+    rows = []
+    for item in list_documents():
+        if str(item.get("id") or "") not in allowed:
+            continue
+        rows.append({
+            "id": str(item.get("id") or ""),
+            "title": str(item.get("title") or ""),
+            "label": str(item.get("label") or ""),
+            "category": str(item.get("category") or ""),
+        })
+    rows.sort(key=lambda row: row["id"])
+    return rows
+
+
+def read_public_legal_document(doc_id: str) -> Optional[Dict[str, Any]]:
+    """Read one public legal document by allowlisted ID.
+
+    Returns None for anything outside the allowlist so the caller answers 404
+    without revealing whether the identifier exists elsewhere. No filesystem
+    path is ever taken from the caller.
+    """
+    key = str(doc_id or "").strip()
+    if key not in public_legal_document_ids():
+        return None
+    item = read_document(key)
+    if item is None:
+        return None
+    return public_document(item)
+
+
 def _document_by_id(doc_id: str) -> Optional[Dict[str, Any]]:
     for item in list_documents():
         if item.get("id") == doc_id:
