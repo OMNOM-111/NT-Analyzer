@@ -4775,39 +4775,6 @@
     return !!(CURRENT_AUTH && (CURRENT_AUTH.is_owner || adminCapabilities()[capability] === true));
   }
 
-  const ENV_PURPOSE = {
-    development: 'Локальная разработка',
-    canary: 'Проверочная среда',
-    production: 'Рабочая среда',
-  };
-
-  // First level answers what an owner actually asks: what is this, what
-  // changed, is it checked, what can I do next. Commit/build/artifact/schema
-  // are audit material and live behind "Технические данные".
-  function environmentMetaHtml(target) {
-    const warnings = Array.isArray(target.warnings) ? target.warnings : [];
-    const env = String(target.environment || '');
-    // Status belongs to the stage card, which owns the workflow reading; this
-    // renders identity and the summary only, so the two cannot contradict.
-    const summary = Array.isArray(target.summary) ? target.summary : [];
-    const checks = Array.isArray(target.checks) ? target.checks : [];
-    return `<div class="env-line"><strong class="env-version">${esc(target.version || '—')}</strong>
-        <span class="cab-sub">${esc(ENV_PURPOSE[env] || '')}</span></div>
-      ${(target.summary_title && !target.hide_summary) ? `<div class="env-summary-title">${esc(target.summary_title)}</div>` : ''}
-      ${(summary.length && !target.hide_summary) ? `<ul class="env-summary">${summary.map(row => `<li>${esc(row)}</li>`).join('')}</ul>` : ''}
-
-      ${checks.length ? `<div class="env-checks">${checks.map(row => `<span class="env-check ${row.ok ? 'ok' : 'pending'}">${row.ok ? '✓' : '·'} ${esc(row.label)}</span>`).join('')}</div>` : ''}
-      <details class="env-tech"><summary>Технические данные</summary>
-        <div class="admin-env-meta">
-          <div><span>Commit</span><strong class="mono">${esc((target.commit || '').slice(0, 12) || '—')}</strong></div>
-          <div><span>Build</span><strong class="mono">${esc(target.build_id || '—')}</strong></div>
-          <div><span>Artifact</span><strong class="mono">${esc((target.artifact_sha256 || '').slice(0, 16) || '—')}</strong></div>
-          <div><span>Канал</span><strong>${esc(target.release_channel || '—')}</strong></div>
-          <div><span>Готовность</span><strong>${esc(target.readiness || '—')}</strong></div>
-          <div><span>Последний отчёт</span><strong class="mono">${esc(target.last_seen_at_utc || '—')}</strong></div>
-        </div>
-      </details>${target.probe_error ? `<div class="admin-env-warnings"><div>⚠ ${esc(target.probe_error)}</div></div>` : ''}${warnings.length ? `<div class="admin-env-warnings">${warnings.map(row => `<div>⚠ ${esc(row)}</div>`).join('')}</div>` : ''}`;
-  }
 
   // ---- Environment registry (Phase 5) ---------------------------------------
   // The probe path can only describe environments that answer an HTTP call
@@ -4899,11 +4866,9 @@
 
   async function probeEnvironmentTarget(target, card) {
     const data = await API.http.adminEnvironmentProbe(target.environment);
+    // Merged into the target the caller already holds; the card is repainted
+    // slot by slot afterwards, so nothing the reader opened is thrown away.
     Object.assign(target, data.target || {});
-    if (card) {
-      const meta = qs('[data-env-meta]', card); if (meta) meta.innerHTML = environmentMetaHtml(target);
-      const open = qs('[data-env-open]', card); if (open) open.disabled = false;
-    }
     return target;
   }
 
@@ -4921,9 +4886,246 @@
   // themselves. The three stages now read in the order they happen, each card
   // carries the one action available at that stage, and the identifiers live
   // behind a disclosure.
+  // The stages of each single action, and the ledger state that means the
+  // stage is currently running. Derived from what the release ledger reports,
+  // so the progress shown is the progress that happened.
+  const DELIVER_STAGES = [
+    { key: 'candidate', label: 'Создание кандидата', running: [''] },
+    { key: 'build', label: 'Сборка', running: ['draft', 'build_failed'] },
+    { key: 'verify', label: 'Проверка', running: ['built'] },
+    { key: 'deploy', label: 'Развёртывание', running: ['signed', 'canary_deploying', 'canary_failed'] },
+    { key: 'acceptance', label: 'Canary checks / acceptance', running: ['canary_checking'] },
+    { key: 'done', label: 'Готово', running: [] },
+  ];
+  const PUBLISH_STAGES = [
+    { key: 'approve', label: 'Подтверждение', running: ['canary_passed'] },
+    { key: 'deploy', label: 'Развёртывание', running: ['approved_for_production', 'production_scheduled', 'production_deploying'] },
+    { key: 'readiness', label: 'Readiness', running: [] },
+    { key: 'smoke', label: 'Smoke', running: [] },
+    { key: 'done', label: 'Готово', running: [] },
+  ];
+
+  function progressHtml(plan, activeKey, finished) {
+    const activeIndex = plan.findIndex(row => row.key === activeKey);
+    return '<div class="pub-stages">' + plan.map((row, index) => {
+      let state = 'not_started';
+      if (finished) state = 'passed';
+      else if (activeIndex >= 0 && index < activeIndex) state = 'passed';
+      else if (index === activeIndex) state = 'running';
+      return '<span class="pub-stage is-' + state + '">'
+        + (state === 'running' ? '<span class="spinner sm"></span> '
+          : (state === 'passed' ? '✓ ' : '· '))
+        + esc(row.label) + '</span>';
+    }).join('<span class="pub-sep">→</span>') + '</div>';
+  }
+
+  function finalStagesHtml(stages) {
+    const icon = { passed: '✓', failed: '✕', not_started: '·' };
+    return '<div class="pub-stages">' + (stages || []).map(row =>
+      '<span class="pub-stage is-' + esc(row.state) + '">' + (icon[row.state] || '·')
+      + ' ' + esc(row.label) + '</span>').join('<span class="pub-sep">→</span>') + '</div>';
+  }
+
+  // One user action, however many internal steps it takes. While it runs the
+  // card shows which step is happening rather than a frozen button, and the
+  // button is disabled so a second click cannot start a second run.
+  async function runStagedAction(card, node, msg, options) {
+    const box = qs('[data-stage-progress]', card);
+    const actions = qs('[data-slot="actions"]', card);
+    const button = actions && qs('button', actions);
+    card.dataset.busy = '1';
+    if (button) { button.disabled = true; button.textContent = options.working; }
+    if (msg) msg.textContent = '';
+    if (box) box.innerHTML = progressHtml(options.plan, options.plan[0].key, false);
+
+    let polling = true;
+    const advance = async () => {
+      while (polling) {
+        try {
+          const view = await API.http.adminPipeline();
+          const state = String(((view || {}).candidate || {}).state || '');
+          const stage = options.plan.find(row => row.running.indexOf(state) >= 0);
+          if (stage && box && polling) box.innerHTML = progressHtml(options.plan, stage.key, false);
+        } catch (e) { /* a poll that fails must not end the operation */ }
+        await new Promise(resolve => setTimeout(resolve, 2500));
+      }
+    };
+    advance();
+
+    try {
+      const out = await options.request();
+      polling = false;
+      if (box) {
+        box.innerHTML = finalStagesHtml(out.stages)
+          + (out.checks && out.checks.length ? checksHtml(out.checks) : '');
+      }
+      toast(options.done);
+      await options.again();
+    } catch (e) {
+      polling = false;
+      const detail = (e && e.payload) || {};
+      if (box) box.innerHTML = finalStagesHtml(detail.stages)
+        + (detail.checks && detail.checks.length ? checksHtml(detail.checks) : '')
+        + options.failure(detail);
+      if (msg) msg.textContent = (e && e.message) || String(e);
+      if (button) { button.disabled = false; button.textContent = options.label; }
+    } finally {
+      polling = false;
+      delete card.dataset.busy;
+    }
+  }
+
+  function wireStageActions(node, targets, candidate, msg) {
+    const again = () => renderEnvironmentSwitcherInto(node);
+
+    qsa('[data-stage-deliver]', node).forEach(button => {
+      if (button.dataset.wired) return;
+      button.dataset.wired = '1';
+      button.onclick = () => {
+        // Building and deploying to Canary from one click, with no statement of
+        // what is being built, is how an artifact from an unmerged branch
+        // reached Canary during beta.82. Still one decision, but a stated one.
+        const target = (targets || []).find(row => row.environment === 'development') || {};
+        if (!window.confirm('Отправить в Canary?' + '\n\n'
+          + 'Будет собран artifact из текущего commit ' + String(target.commit || '').slice(0, 12)
+          + ' и развёрнут в Canary с автоматической приёмкой.')) return;
+        return runStagedAction(button.closest('[data-stage-env]'), node, msg, {
+        plan: DELIVER_STAGES,
+        label: 'Отправить в Canary',
+        working: 'Отправляю…',
+        done: 'Развёрнуто в Canary и принято',
+        again,
+        request: () => API.http.releaseDeliverCanary(releaseKey()),
+        failure: detail => '<div class="pub-outcome is-failed">Отправка остановлена'
+          + (detail.failed_stage ? ' · этап: ' + esc(detail.failed_stage) : '') + '</div>',
+        });
+      };
+    });
+
+    qsa('[data-stage-publish]', node).forEach(button => {
+      if (button.dataset.wired) return;
+      button.dataset.wired = '1';
+      button.onclick = () => {
+        const version = String((candidate || {}).app_version || '');
+        if (!window.confirm('Опубликовать ' + version + '?' + '\n\n'
+          + 'В Production будет продвинут тот же проверенный artifact. Пересборки не будет.')) return;
+        return runStagedAction(button.closest('[data-stage-env]'), node, msg, {
+          plan: PUBLISH_STAGES,
+          label: 'Опубликовать в Production',
+          working: 'Публикую…',
+          done: 'Опубликовано в Production',
+          again,
+          request: () => API.http.releasePublish(button.dataset.stagePublish, releaseKey()),
+          failure: detail => {
+            const deployed = detail.production_deployed;
+            return '<div class="pub-outcome ' + (deployed ? 'is-deployed' : 'is-failed') + '">'
+              + (deployed ? 'Production развёрнут, validation failed' : 'Публикация не выполнена')
+              + (detail.failed_stage ? ' · этап: ' + esc(detail.failed_stage) : '') + '</div>'
+              + (detail.closeout_blocked
+                ? '<div class="cab-sub">Closeout заблокирован до устранения причины.</div>' : '')
+              + (deployed && detail.rollback && detail.rollback.available
+                ? '<div class="cab-sub">Откат — штатным действием «rollback-production».</div>' : '');
+          },
+        });
+      };
+    });
+  }
+
   const RELEASE_ORDER = ['development', 'canary', 'production'];
 
-  function stageStatusHtml(target, candidate) {
+  // One scale for every load figure on this screen, so the same colour always
+  // means the same thing. Defined once rather than per metric: three different
+  // notions of "high" on one card is how a panel stops being read.
+  const LOAD_THRESHOLDS = { elevated: 60, high: 80, critical: 92 };
+
+  function loadLevel(percent) {
+    const value = Number(percent);
+    if (!isFinite(value)) return 'unknown';
+    if (value >= LOAD_THRESHOLDS.critical) return 'critical';
+    if (value >= LOAD_THRESHOLDS.high) return 'high';
+    if (value >= LOAD_THRESHOLDS.elevated) return 'elevated';
+    return 'normal';
+  }
+
+  function loadGaugeHtml(label, percent, valueText) {
+    // A figure the environment did not report is named, not drawn as zero.
+    if (percent == null || !isFinite(Number(percent))) {
+      return '<div class="load-gauge is-unknown"><span class="load-name">' + esc(label) + '</span>'
+        + '<span class="load-track"></span><span class="load-value">нет данных</span></div>';
+    }
+    const value = Math.max(0, Math.min(100, Number(percent)));
+    return '<div class="load-gauge is-' + loadLevel(value) + '">'
+      + '<span class="load-name">' + esc(label) + '</span>'
+      + '<span class="load-track"><span class="load-fill" style="width:' + value.toFixed(0) + '%"></span></span>'
+      + '<span class="load-value">' + esc(valueText || (value.toFixed(0) + '%')) + '</span></div>';
+  }
+
+  // First level: CPU, RAM and disk. Everything else is diagnosis, not notice.
+  function gaugesHtml(host) {
+    const measured = host && typeof host === 'object' ? host : {};
+    const known = ['cpu_percent', 'memory_percent', 'disk_percent']
+      .some(key => measured[key] != null);
+    if (!known) return '<div class="env-load-none">Данные недоступны</div>';
+    return loadGaugeHtml('CPU', measured.cpu_percent)
+      + loadGaugeHtml('RAM', measured.memory_percent)
+      + loadGaugeHtml('Диск', measured.disk_percent);
+  }
+
+  function technicalHtml(target) {
+    const admission = (target.health_metrics && target.health_metrics.admission) || null;
+    const rows = [
+      ['Commit', (target.commit || '').slice(0, 12) || '—'],
+      ['Build', target.build_id || '—'],
+      ['Artifact', (target.artifact_sha256 || '').slice(0, 16) || '—'],
+      ['Канал', target.release_channel || '—'],
+      ['Готовность', target.readiness || '—'],
+      ['Последний отчёт', target.last_seen_at_utc || '—'],
+    ];
+    if (admission) {
+      const latency = admission.duration_ms || {};
+      const sockets = admission.websockets || {};
+      const ms = value => {
+        const number = Number(value);
+        if (!isFinite(number)) return '—';
+        return number >= 1000
+          ? (number / 1000).toFixed(number >= 10000 ? 0 : 1) + ' с'
+          : Math.round(number) + ' мс';
+      };
+      rows.push(['Активных запросов', String(admission.active != null ? admission.active : '—')
+        + (admission.max_inflight ? ' / ' + admission.max_inflight : '')]);
+      rows.push(['Задержка p50', ms(latency.p50)]);
+      rows.push(['Задержка p95', ms(latency.p95)]);
+      rows.push(['Задержка p99', ms(latency.p99)]);
+      rows.push(['Пик активных', String(admission.peak_active != null ? admission.peak_active : '—')]);
+      rows.push(['Принято', String(admission.accepted != null ? admission.accepted : '—')]);
+      rows.push(['Отклонено', String(admission.rejected != null ? admission.rejected : '—')]);
+      rows.push(['WebSocket', String(sockets.active != null ? sockets.active : '—')
+        + (sockets.max ? ' / ' + sockets.max : '')]);
+    }
+    return '<div class="admin-env-meta">' + rows.map(row =>
+      '<div><span>' + esc(row[0]) + '</span><strong class="mono">' + esc(row[1]) + '</strong></div>'
+    ).join('') + '</div>';
+  }
+
+  const ENV_PURPOSE = {
+    development: 'Локальная разработка',
+    canary: 'Проверочная среда',
+    production: 'Рабочая среда',
+  };
+
+  // Each card explains its own version. The same release on two stages may
+  // legitimately show the same words; what it must not do is leave a card
+  // unable to say what it is running.
+  function summaryHtml(target) {
+    const points = Array.isArray(target.summary) ? target.summary.slice(0, 3) : [];
+    if (!target.summary_title && !points.length) return '';
+    return (target.summary_title
+      ? '<div class="env-summary-title">' + esc(target.summary_title) + '</div>' : '')
+      + (points.length ? '<ul class="env-summary">' + points.map(row =>
+        '<li>' + esc(row) + '</li>').join('') + '</ul>' : '');
+  }
+
+  function statusHtml(target, candidate) {
     const env = String(target.environment || '');
     const state = String((candidate || {}).state || '');
     if (env === 'canary' && state === 'canary_passed') {
@@ -4943,150 +5145,119 @@
     if (offline && env === 'development') {
       return '<div class="stage-status is-idle">Локальный сервер не запущен</div>';
     }
+    if (health === 'unreachable') {
+      // The reason the probe gave, not a generic word: "недоступен" alone
+      // sends the reader to the logs to find out what actually failed.
+      return '<div class="stage-status is-fail">Недоступен'
+        + (target.probe_error ? ' · ' + esc(target.probe_error) : '') + '</div>';
+    }
     return '<div class="stage-status ' + (health === 'reachable' ? 'is-ok' : 'is-idle') + '">'
       + (health === 'reachable' ? 'На связи' : 'Состояние неизвестно') + '</div>';
   }
 
-  // Exactly one action per stage: the next thing that can happen here.
-  function stageActionHtml(target, candidate, promotion) {
+  // Identity, not the version string: two environments can report the same
+  // version and run different builds, which is exactly the mistake the release
+  // ledger exists to prevent.
+  function sameArtifact(a, b) {
+    const build = String((a || {}).build_id || '');
+    const other = String((b || {}).build_id || '');
+    if (build && other) return build === other;
+    const sha = String((a || {}).artifact_sha256 || '');
+    const otherSha = String((b || {}).artifact_sha256 || '');
+    return !!sha && sha === otherSha;
+  }
+
+  function actionsHtml(target, targets, candidate, promotion) {
     const env = String(target.environment || '');
     const state = String((candidate || {}).state || '');
     const id = String((candidate || {}).candidate_id || '');
-    const blocked = !(promotion || {}).allowed;
     if (env === 'development') {
       if (!hasAdminCapability('releases.deploy_canary')) return '';
-      // No candidate is not a dead end: the whole point of this card is that
-      // reaching Canary starts here. The system creates the candidate, builds
-      // the artifact, verifies it and deploys — the owner does not fill in a
-      // version and a commit the repository already knows.
-      if (!id || ['production_live', 'rolled_back', 'superseded', 'cancelled'].indexOf(state) >= 0) {
-        return '<button class="btn primary stage-action" data-stage-deliver="1"'
-          + ' title="Создать кандидата из текущего commit, собрать artifact,'
-          + ' проверить и развернуть в Canary">Отправить в Canary</button>';
-      }
-      const ready = ['draft', 'built', 'signed', 'build_failed', 'canary_failed'].indexOf(state) >= 0;
-      const why = ready ? 'Собрать и развернуть кандидата в Canary'
-        : 'Состояние «' + state + '» не допускает развёртывание';
-      return '<button class="btn primary stage-action" data-stage-deploy="' + esc(id) + '"'
-        + (ready ? '' : ' disabled') + ' title="' + esc(why) + '">Развернуть в Canary</button>';
+      return '<button class="btn primary stage-action" data-stage-deliver="1"'
+        + ' title="Создать кандидата из текущего commit, собрать artifact,'
+        + ' проверить и развернуть в Canary">Отправить в Canary</button>';
     }
     if (env === 'canary') {
-      if (state === 'canary_checking' && hasAdminCapability('releases.deploy_canary')) {
-        return '<button class="btn primary stage-action" data-stage-accept="' + esc(id) + '">Принять Canary</button>';
+      if (!hasAdminCapability('releases.promote_production')) return '';
+      const production = (targets || []).find(row => row.environment === 'production');
+      // Nothing to publish when Production already runs this exact artifact.
+      if (sameArtifact(target, production)) {
+        return '<div class="stage-done">✓ Уже опубликовано в Production</div>';
       }
-      if (state === 'canary_passed' && hasAdminCapability('releases.promote_production')) {
-        const why = blocked ? ((promotion || {}).reason || 'Промоушен недоступен')
-          : 'Опубликовать проверенный artifact в Production';
-        // A disabled button with the reason only in a tooltip reads as broken.
-        return '<button class="btn primary stage-action" data-stage-publish="' + esc(id) + '"'
-          + (blocked ? ' disabled' : '') + ' title="' + esc(why) + '">Опубликовать в Production</button>'
-          + (blocked ? '<div class="stage-blocked">Недоступно: ' + esc(why) + '</div>' : '');
-      }
+      if (state !== 'canary_passed' || !id) return '';
+      const blocked = !(promotion || {}).allowed;
+      const why = blocked ? ((promotion || {}).reason || 'Промоушен недоступен')
+        : 'Опубликовать проверенный artifact в Production';
+      return '<button class="btn primary stage-action" data-stage-publish="' + esc(id) + '"'
+        + (blocked ? ' disabled' : '') + ' title="' + esc(why) + '">Опубликовать в Production</button>'
+        + (blocked ? '<div class="stage-blocked">Недоступно: ' + esc(why) + '</div>' : '');
     }
     return '';
   }
 
-  // One scale for every load figure on this screen, so the same colour always
-  // means the same thing. Defined once here rather than per metric: three
-  // different notions of "high" on one card is how a panel stops being read.
-  const LOAD_THRESHOLDS = { elevated: 60, high: 80, critical: 92 };
-
-  function loadLevel(percent) {
-    const value = Number(percent);
-    if (!isFinite(value)) return 'unknown';
-    if (value >= LOAD_THRESHOLDS.critical) return 'critical';
-    if (value >= LOAD_THRESHOLDS.high) return 'high';
-    if (value >= LOAD_THRESHOLDS.elevated) return 'elevated';
-    return 'normal';
-  }
-
-  function loadGaugeHtml(label, percent) {
-    // A figure the environment did not report is named, not drawn as zero.
-    if (percent == null || !isFinite(Number(percent))) {
-      return '<div class="load-gauge is-unknown"><span class="load-name">' + esc(label) + '</span>'
-        + '<span class="load-track"></span>'
-        + '<span class="load-value">нет данных</span></div>';
-    }
-    const value = Math.max(0, Math.min(100, Number(percent)));
-    return '<div class="load-gauge is-' + loadLevel(value) + '">'
-      + '<span class="load-name">' + esc(label) + '</span>'
-      + '<span class="load-track"><span class="load-fill" style="width:' + value.toFixed(0) + '%"></span></span>'
-      + '<span class="load-value">' + value.toFixed(0) + '%</span></div>';
-  }
-
-  // First level: what an owner reads at a glance. Everything diagnostic lives
-  // behind the disclosure below it.
-  function loadChartHtml(host, health) {
-    const measured = host && typeof host === 'object' ? host : {};
-    const known = ['cpu_percent', 'memory_percent', 'disk_percent']
-      .some(key => measured[key] != null);
-    const admission = (health && health.admission) || null;
-    const active = admission && admission.active != null ? Number(admission.active) : null;
-    const limit = admission && Number(admission.max_inflight) || 0;
-    const activePct = (active != null && limit) ? (active / limit) * 100 : null;
-
-    if (!known && !admission) {
-      return '<div class="env-load"><div class="env-load-none">Данные недоступны</div></div>';
-    }
-
-    const gauges = loadGaugeHtml('CPU', measured.cpu_percent)
-      + loadGaugeHtml('RAM', measured.memory_percent)
-      + loadGaugeHtml('Диск', measured.disk_percent)
-      + (activePct != null
-        ? '<div class="load-gauge is-' + loadLevel(activePct) + '">'
-          + '<span class="load-name">Запросы</span>'
-          + '<span class="load-track"><span class="load-fill" style="width:'
-          + Math.max(0, Math.min(100, activePct)).toFixed(0) + '%"></span></span>'
-          + '<span class="load-value">' + active + ' / ' + limit + '</span></div>'
-        : '');
-    return '<div class="env-load">' + gauges + technicalMetricsHtml(admission) + '</div>';
-  }
-
-  // Kept, but off the first level: p50/p95/p99, websockets and the admission
-  // counters are how a problem is diagnosed, not how it is noticed.
-  function technicalMetricsHtml(admission) {
-    if (!admission) return '';
-    const latency = admission.duration_ms || {};
-    const sockets = admission.websockets || {};
-    const ms = value => {
-      const number = Number(value);
-      if (!isFinite(number)) return '—';
-      return number >= 1000
-        ? (number / 1000).toFixed(number >= 10000 ? 0 : 1) + ' с'
-        : Math.round(number) + ' мс';
-    };
-    const rows = [
-      ['Задержка p50', ms(latency.p50)],
-      ['Задержка p95', ms(latency.p95)],
-      ['Задержка p99', ms(latency.p99)],
-      ['Пик активных', String(admission.peak_active != null ? admission.peak_active : '—')],
-      ['Принято', String(admission.accepted != null ? admission.accepted : '—')],
-      ['Отклонено', String(admission.rejected != null ? admission.rejected : '—')],
-      ['WebSocket', String(sockets.active != null ? sockets.active : '—')
-        + (sockets.max ? ' / ' + sockets.max : '')],
-    ];
-    return '<details class="env-tech"><summary>Технические данные / Метрики</summary>'
+  // What acceptance actually checked, in one line, with the detail folded away.
+  function checksHtml(checks) {
+    const rows = Array.isArray(checks) ? checks : [];
+    if (!rows.length) return '';
+    return '<div class="stage-checks">' + rows.map(row =>
+      '<span class="stage-check ' + (row.ok ? 'ok' : 'fail') + '">'
+      + (row.ok ? '✓' : '✕') + ' ' + esc(row.label || row.name) + '</span>').join('')
+      + '</div><details class="env-tech"><summary>Детали проверки</summary>'
       + '<div class="admin-env-meta">' + rows.map(row =>
-        '<div><span>' + esc(row[0]) + '</span><strong>' + esc(row[1]) + '</strong></div>').join('')
+        '<div><span>' + esc(row.label || row.name) + '</span><strong>'
+        + esc(row.detail || (row.ok ? 'пройдено' : 'не пройдено')) + '</strong></div>').join('')
       + '</div></details>';
   }
 
-  function stageCardHtml(target, index, candidate, promotion) {
+  function stageCardSkeleton(target, index) {
     const env = String(target.environment || '');
-    const origin = target.current ? location.origin : (target.origin || '');
     return '<section class="cab-card stage-card" data-env-card="' + index + '" data-stage-env="' + esc(env) + '">'
       + '<div class="stage-head">'
-      + '<span class="badge ' + (target.current ? 'live' : (target.configured ? 'pending' : 'archived')) + '">'
-      + esc(env.toUpperCase()) + '</span>'
-      + (target.current ? '<span class="cab-sub">текущая</span>' : '')
-      + '<span class="mono cab-sub stage-origin">' + esc(origin || 'origin не задан') + '</span>'
+      + '<span class="badge" data-slot="badge">' + esc(env.toUpperCase()) + '</span>'
+      + '<span class="cab-sub" data-slot="current"></span>'
+      + '<span class="mono cab-sub stage-origin" data-slot="origin"></span>'
       + '</div>'
-      + '<div data-env-meta>' + environmentMetaHtml(target) + '</div>'
-      + stageStatusHtml(target, candidate)
-      + '<div data-env-load>' + loadChartHtml(target.host, target.health_metrics) + '</div>'
-      + '<div class="stage-actions">' + stageActionHtml(target, candidate, promotion) + '</div>'
+      + '<div class="env-line"><strong class="env-version" data-slot="version"></strong>'
+      + '<span class="cab-sub" data-slot="purpose"></span></div>'
+      + '<div data-slot="summary"></div>'
+      + '<div data-slot="status"></div>'
+      + '<div class="env-load" data-slot="gauges"></div>'
+      + '<details class="env-tech"><summary>Технические данные / Метрики</summary>'
+      + '<div data-slot="tech"></div></details>'
+      + '<div data-slot="checks"></div>'
+      + '<div class="stage-actions" data-slot="actions"></div>'
       + '<div data-stage-progress></div>'
       + '</section>';
+  }
+
+  // Updating in place, field by field. Replacing the panel's innerHTML on every
+  // poll closed whatever the reader had opened, threw away the scroll position
+  // and made the screen flash like a reload every few seconds.
+  function patchSlot(card, name, html) {
+    const slot = qs('[data-slot="' + name + '"]', card);
+    if (slot && slot.innerHTML !== html) slot.innerHTML = html;
+  }
+
+  function patchCard(card, target, targets, candidate, promotion) {
+    const badge = qs('[data-slot="badge"]', card);
+    if (badge) {
+      const cls = 'badge ' + (target.current ? 'live' : (target.configured ? 'pending' : 'archived'));
+      if (badge.className !== cls) badge.className = cls;
+    }
+    patchSlot(card, 'current', target.current ? 'текущая' : '');
+    patchSlot(card, 'origin', esc(target.current
+      ? location.origin : (target.origin || 'origin не задан')));
+    patchSlot(card, 'version', esc(target.version || '—'));
+    patchSlot(card, 'purpose', esc(ENV_PURPOSE[String(target.environment || '')] || ''));
+    patchSlot(card, 'summary', summaryHtml(target));
+    patchSlot(card, 'status', statusHtml(target, candidate));
+    patchSlot(card, 'gauges', gaugesHtml(target.host));
+    patchSlot(card, 'tech', technicalHtml(target));
+    // Actions are left alone while an operation is running in this card, so a
+    // poll cannot replace the button under the pointer mid-run.
+    if (!card.dataset.busy) {
+      patchSlot(card, 'actions', actionsHtml(target, targets, candidate, promotion));
+    }
   }
 
   function renderEnvironmentTargets(node, payload, pipeline) {
@@ -5095,162 +5266,43 @@
     const doc = pipeline || {};
     const candidate = doc.candidate || {};
     const promotion = doc.promotion || {};
-    // The same release on all three stages repeated the same three bullets
-    // three times, which is noise, not information. State it once.
-    const versions = targets.map(t => String(t.version || '')).filter(Boolean);
-    const uniform = versions.length === targets.length && versions.length > 0
-      && versions.every(v => v === versions[0]);
-    const shared = uniform ? targets.find(t => t.summary_title) : null;
-    if (uniform) targets.forEach(t => { t.hide_summary = true; });
-    const sharedHtml = shared ? '<div class="stage-shared">'
-      + '<div class="env-summary-title">' + esc(shared.summary_title) + '</div>'
-      + ((shared.summary || []).length ? '<ul class="env-summary">' + shared.summary.map(row =>
-          '<li>' + esc(row) + '</li>').join('') + '</ul>' : '')
-      + '<div class="cab-sub">Все среды на версии ' + esc(versions[0]) + '.</div></div>' : '';
-    const cards = targets.map((target, index) =>
-      stageCardHtml(target, index, candidate, promotion)).join('<div class="stage-arrow">→</div>');
 
-    node.innerHTML = sharedHtml + '<div class="stage-flow">' + cards + '</div>'
-      + '<div class="cab-sub stage-note" id="stage-msg"></div>'
-      + '<details class="card-details" id="env-diagnostics"><summary>Технические данные / Диагностика</summary>'
-      + '<div class="finance-note">Каждая среда открывается на своём origin в новой вкладке. Токены, cookies, CSRF и localStorage не переносятся.</div>'
-      + '<div data-env-compare></div>'
-      + '<div class="flex gap-sm wrap" style="margin-top:10px">'
-      + '<button class="btn sm ghost" id="env-refresh">Обновить данные</button>'
-      + '<button class="btn sm ghost" id="admin-env-compare">Открыть Canary и Production во вкладках</button>'
-      + '</div></details>';
-
-    const msg = qs('#stage-msg', node);
-    const again = () => renderEnvironmentSwitcherInto(node);
-
-    function stagesHtml(stages) {
-      const icon = { passed: '✓', failed: '✕', not_started: '·' };
-      return '<div class="pub-stages">' + (stages || []).map(row =>
-        '<span class="pub-stage is-' + esc(row.state) + '">' + (icon[row.state] || '·') + ' ' + esc(row.label) + '</span>'
-      ).join('<span class="pub-sep">→</span>') + '</div>';
+    if (!qs('.stage-flow', node)) {
+      node.innerHTML = '<div class="stage-flow">'
+        + targets.map((target, index) => stageCardSkeleton(target, index))
+          .join('<div class="stage-arrow">→</div>')
+        + '</div><div class="cab-sub stage-note" id="stage-msg"></div>'
+        + '<details class="card-details" id="env-diagnostics">'
+        + '<summary>Технические данные / Диагностика</summary>'
+        + '<div class="finance-note">Каждая среда открывается на своём origin в новой вкладке.'
+        + ' Токены, cookies, CSRF и localStorage не переносятся.</div>'
+        + '<div data-env-compare></div></details>';
+      renderEnvironmentCompareInto(qs('[data-env-compare]', node));
     }
 
-    const runStep = async (button, step, id, working) => {
-      const before = button.textContent;
-      button.disabled = true;
-      button.textContent = working;
-      if (msg) msg.textContent = '';
-      try {
-        const state = await pipeRunStep(id, step, String(candidate.state || ''));
-        toast('Состояние: ' + state);
-        await again();
-      } catch (e) {
-        if (msg) msg.textContent = (e && e.message) || String(e);
-        button.disabled = false;
-        button.textContent = before;
-      }
-    };
-
-    // Reaching Canary is one action: the server creates the candidate,
-    // builds, verifies and deploys, and reports the stages it ran.
-    qsa('[data-stage-deliver]', node).forEach(button => button.onclick = async () => {
-      const card = button.closest('[data-stage-env]');
-      const box = card && qs('[data-stage-progress]', card);
-      const before = button.textContent;
-      button.disabled = true;
-      button.textContent = 'Отправляю…';
-      if (msg) msg.textContent = '';
-      try {
-        const out = await API.http.releaseDeliverCanary(releaseKey());
-        if (box) box.innerHTML = stagesHtml(out.stages);
-        toast('Развёрнуто в Canary');
-        await again();
-      } catch (e) {
-        const detail = (e && e.payload) || {};
-        if (box) {
-          box.innerHTML = stagesHtml(detail.stages)
-            + '<div class="pub-outcome is-failed">Отправка остановлена'
-            + (detail.failed_stage ? ' · этап: ' + esc(detail.failed_stage) : '') + '</div>';
-        }
-        if (msg) msg.textContent = (e && e.message) || String(e);
-        button.disabled = false;
-        button.textContent = before;
-      }
+    const cards = qsa('.stage-card', node);
+    targets.forEach((target, index) => {
+      const card = cards[index];
+      if (card) patchCard(card, target, targets, candidate, promotion);
     });
 
-    qsa('[data-stage-deploy]', node).forEach(button => button.onclick = () =>
-      runStep(button, 'deploy-canary', button.dataset.stageDeploy, 'Разворачиваю…'));
-    qsa('[data-stage-accept]', node).forEach(button => button.onclick = () =>
-      runStep(button, 'acceptance', button.dataset.stageAccept, 'Принимаю…'));
+    const msg = qs('#stage-msg', node);
+    wireStageActions(node, targets, candidate, msg);
 
-    // Publication reports its stages inside the Canary card that started it.
-    qsa('[data-stage-publish]', node).forEach(button => button.onclick = async () => {
-      const version = String(candidate.app_version || '');
-      const question = 'Опубликовать ' + version + '?' + '\n\n'
-        + 'В Production будет продвинут тот же проверенный artifact. Пересборки не будет.';
-      if (!window.confirm(question)) return;
-      const card = button.closest('[data-stage-env]');
-      const box = card && qs('[data-stage-progress]', card);
-      const before = button.textContent;
-      button.disabled = true;
-      button.textContent = 'Публикую…';
-      if (msg) msg.textContent = '';
-      try {
-        const out = await API.http.releasePublish(button.dataset.stagePublish, releaseKey());
-        if (box) box.innerHTML = stagesHtml(out.stages);
-        toast('Опубликовано в Production');
-        await again();
-      } catch (e) {
-        const detail = (e && e.payload) || {};
-        if (box) {
-          const deployed = detail.production_deployed;
-          box.innerHTML = stagesHtml(detail.stages)
-            + '<div class="pub-outcome ' + (deployed ? 'is-deployed' : 'is-failed') + '">'
-            + (deployed ? 'Production развёрнут, validation failed' : 'Публикация не выполнена')
-            + (detail.failed_stage ? ' · этап: ' + esc(detail.failed_stage) : '') + '</div>'
-            + (detail.closeout_blocked ? '<div class="cab-sub">Closeout заблокирован до устранения причины.</div>' : '')
-            + (deployed && detail.rollback && detail.rollback.available
-              ? '<div class="cab-sub">Откат — штатным действием «rollback-production».</div>' : '');
-        }
-        if (msg) msg.textContent = (e && e.message) || String(e);
-        button.disabled = false;
-        button.textContent = before;
-      }
-    });
-
-    // Metadata arrives from the canonical registry, so no card ever sits on
-    // "неизвестно" waiting for a click. The probe still runs, silently and per
-    // target, to add live reachability on top of what an environment last
-    // reported; one slow or unreachable origin must not hold up the others.
-    const autoProbe = (target, index) => {
-      if (target.current || !target.origin) return Promise.resolve();
-      const card = qs('[data-env-card="' + index + '"]', node);
-      const meta = card && qs('[data-env-meta]', card);
-      // The status line lives outside the metadata block, so a probe that
-      // changes reachability has to refresh it too; otherwise a card shows a
-      // known version next to "Состояние неизвестно".
-      const restate = () => {
-        const status = card && qs('.stage-status', card);
-        if (!status) return;
-        const holder = document.createElement('div');
-        holder.innerHTML = stageStatusHtml(target, candidate);
-        const fresh = holder.firstElementChild;
-        if (fresh) status.replaceWith(fresh);
-      };
-      return probeEnvironmentTarget(target, card).then(restate).catch(e => {
+    // Probes add live reachability on top of what an environment last
+    // reported; one slow origin must not hold up the others.
+    targets.forEach((target, index) => {
+      if (target.current || !target.origin) return;
+      const card = cards[index];
+      probeEnvironmentTarget(target, card).then(() => {
+        if (card) patchSlot(card, 'status', statusHtml(target, candidate));
+      }).catch(e => {
         target.probe_ok = false;
         target.health = 'unreachable';
         target.probe_error = String((e && e.message) || e || 'endpoint недоступен');
-        if (meta) meta.innerHTML = environmentMetaHtml(target);
-        restate();
+        if (card) patchSlot(card, 'status', statusHtml(target, candidate));
       });
-    };
-    Promise.all(targets.map(autoProbe));
-
-    renderEnvironmentCompareInto(qs('[data-env-compare]', node));
-    const refresh = qs('#env-refresh', node);
-    if (refresh) refresh.onclick = () => again();
-    const compare = qs('#admin-env-compare', node);
-    if (compare) compare.onclick = () => {
-      const rows = targets.filter(target => ['canary', 'production'].includes(target.environment) && target.open_allowed);
-      if (!rows.length) { toast('Canary и Production origins не настроены.'); return; }
-      rows.forEach(openEnvironmentOrigin);
-    };
+    });
   }
 
   // ---- Environments and releases (one module) -------------------------------

@@ -94,7 +94,8 @@ def stage_progress(candidate: Dict[str, Any]) -> List[Dict[str, Any]]:
 def promotion_gates(candidate: Dict[str, Any],
                     registry: Optional[Dict[str, Any]] = None,
                     control: Optional[Dict[str, Any]] = None,
-                    registry_is_authoritative: bool = True) -> Dict[str, Any]:
+                    registry_is_authoritative: bool = True,
+                    provenance_check: Optional[Any] = None) -> Dict[str, Any]:
     """Why Production promotion is or is not allowed, in plain terms.
 
     Each gate is phrased as the thing that must be true, so a blocked promotion
@@ -108,6 +109,10 @@ def promotion_gates(candidate: Dict[str, Any],
     and passed in. LOCAL never rules on Canary from its own snapshot, and a
     missing decision is a refusal rather than an omission.
     """
+    if provenance_check is None:
+        from . import release_provenance
+
+        provenance_check = release_provenance.eligibility
     state = str(candidate.get("state") or "")
     artifact = _runtime_artifact_sha(candidate)
 
@@ -117,7 +122,20 @@ def promotion_gates(candidate: Dict[str, Any],
     canary_live = registry_rows.get(runtime_env.CANARY) or {}
     canary_reported = str(canary_live.get("artifact_sha256") or "")
 
+    # Provenance is decided by the backend and only reflected here; the panel
+    # must not form its own opinion about whether a build may be published.
+    # Asked unconditionally: a candidate with no commit at all is exactly the
+    # case the checker has to refuse, not one to skip the question for.
+    provenance = provenance_check(str(candidate.get("git_commit_sha") or ""))
+
     gates = [
+        {
+            "id": "approved_main",
+            "label": "Сборка сделана из утверждённого main",
+            "ok": bool(provenance.get("eligible")),
+            "detail": str(provenance.get("reason") or "")
+                      or "commit входит в origin/main и прошёл CI",
+        },
         {
             "id": "artifact_exists",
             "label": "Неизменяемый артефакт собран и подписан",

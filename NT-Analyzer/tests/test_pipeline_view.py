@@ -13,10 +13,22 @@ from __future__ import annotations
 
 import pytest
 
-from app import pipeline_view, runtime_env
+from app import pipeline_view, release_provenance, runtime_env
 
 ARTIFACT = "a" * 64
 OTHER = "b" * 64
+
+
+@pytest.fixture(autouse=True)
+def approved_provenance(monkeypatch):
+    """These tests are about artifact identity, not where the code came from.
+
+    Provenance is a separate gate with its own tests; left real it would reach
+    for git and CI on every synthetic candidate here.
+    """
+    monkeypatch.setattr(release_provenance, "eligibility", lambda sha: {
+        "eligible": True, "checks": [], "blocking": [], "reason": "", "commit": sha,
+    })
 
 
 def _candidate(state, artifact=ARTIFACT):

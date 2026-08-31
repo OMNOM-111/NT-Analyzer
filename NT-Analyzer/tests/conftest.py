@@ -182,3 +182,23 @@ def no_real_external_agent_routes(monkeypatch):
     # has dedicated integration tests that explicitly remove this flag.
     monkeypatch.setenv("NTA_TEST_BYPASS_AUTH", "1")
     monkeypatch.setattr(agent_router, "candidates", lambda *args, **kwargs: [])
+
+
+@pytest.fixture(autouse=True)
+def _approved_provenance(monkeypatch, request):
+    """Release-ledger tests work with synthetic candidates.
+
+    Provenance asks git and CI about a real commit, so left alone it would
+    refuse every made-up SHA and turn unrelated suites red. It is a gate with
+    its own tests: tests/test_release_provenance.py opts out and exercises the
+    real evaluation.
+    """
+    if request.node.get_closest_marker("real_provenance"):
+        return
+    if "test_release_provenance" in str(request.node.fspath):
+        return
+    from app import release_provenance
+
+    monkeypatch.setattr(release_provenance, "eligibility", lambda sha: {
+        "eligible": True, "checks": [], "blocking": [], "reason": "", "commit": sha,
+    })

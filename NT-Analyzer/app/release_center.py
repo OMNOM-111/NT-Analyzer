@@ -1196,6 +1196,17 @@ def approve_production(
             return cached
         if candidate.get("state") != STATE_CANARY_PASSED:
             raise ReleaseCenterError("Approval доступен только после canary_passed.", 409, code="invalid_transition")
+        # Where the code came from is a separate question from whether Canary is
+        # healthy. An artifact built from an unmerged branch passed acceptance
+        # and was one button away from Production; canary_passed cannot answer
+        # this and neither can the version string.
+        from . import release_provenance
+
+        provenance = release_provenance.eligibility(str(candidate.get("git_commit_sha") or ""))
+        if not provenance.get("eligible"):
+            raise ReleaseCenterError(
+                str(provenance.get("reason") or "Эта сборка не создана из утверждённого main."),
+                409, code="provenance_not_approved")
         artifact = _find(doc["artifacts"], "artifact_id", str(candidate.get("artifact_id") or ""))
         if not artifact:
             raise ReleaseCenterError("Artifact отсутствует.", 409, code="artifact_missing")

@@ -386,19 +386,25 @@ def test_one_broken_source_does_not_blank_the_dashboard():
 # only the current environment showed anything.
 # --------------------------------------------------------------------------- #
 def test_environment_switcher_probes_every_target_on_open():
-    assert "const autoProbe = (target, index) =>" in UI_JS
-    assert "Promise.all(targets.map(autoProbe))" in UI_JS
+    """No card waits for a click: identity comes from the canonical registry
+    and the probe adds live reachability on top of it."""
+    panel = UI_JS[UI_JS.index("function renderEnvironmentTargets("):]
+    assert "targets.forEach((target, index) =>" in panel
     # Independent probes: one slow or unreachable environment must not hold up
-    # the others, which a sequential await would do. Each probe handles its own
-    # outcome on its own promise; how it chains is not the contract.
-    assert "probeEnvironmentTarget(target, card).then(restate).catch(" in UI_JS
-    assert "await probeEnvironmentTarget" not in UI_JS.split("const autoProbe")[1][:600]
+    # the others, which a sequential await would do.
+    assert "probeEnvironmentTarget(target, card).then(" in panel
+    assert "await probeEnvironmentTarget" not in panel
 
 
 def test_environment_switcher_shows_a_concrete_failure_reason():
-    assert "target.probe_error = String((e && e.message) || e || 'endpoint недоступен')" in UI_JS
-    assert "target.health = 'unreachable'" in UI_JS
-    assert "${esc(target.probe_error)}" in UI_JS
+    panel = UI_JS[UI_JS.index("function renderEnvironmentTargets("):]
+    assert "target.probe_error = String((e && e.message) || e || 'endpoint недоступен')" in panel
+    assert "target.health = 'unreachable'" in panel
+    # The reason reaches the card through the status slot it repaints, and the
+    # status names it rather than saying only "недоступен".
+    assert "patchSlot(card, 'status', statusHtml(target, candidate))" in panel
+    status = UI_JS[UI_JS.index("function statusHtml("):UI_JS.index("function sameArtifact(")]
+    assert "esc(target.probe_error)" in status
 
 
 def test_environment_switcher_button_is_a_refresh_not_a_prerequisite():

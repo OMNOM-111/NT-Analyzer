@@ -4935,6 +4935,9 @@ class Handler(BaseHTTPRequestHandler):
                     actor=actor,
                     idempotency_key=str(body.get("idempotency_key") or ""),
                     step_up_challenge_id=str(body.get("step_up_challenge_id") or ""),
+                    canary_origin=str(
+                        os.environ.get("STRATFORGE_CANARY_ORIGIN")
+                        or _DEFAULT_ENVIRONMENT_ORIGINS.get(runtime_env.CANARY) or ""),
                 )
                 if not out.get("ok"):
                     self._json(HTTPStatus(int(out.get("status") or 409)), {
@@ -4944,6 +4947,7 @@ class Handler(BaseHTTPRequestHandler):
                         "stages": out.get("stages") or [],
                         "failed_stage": out.get("failed_stage") or "",
                         "candidate_id": out.get("candidate_id") or "",
+                        "checks": out.get("checks") or [],
                     })
                     return
                 self._json(HTTPStatus.OK, out)
