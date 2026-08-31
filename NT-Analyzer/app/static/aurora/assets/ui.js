@@ -4775,47 +4775,6 @@
     return !!(CURRENT_AUTH && (CURRENT_AUTH.is_owner || adminCapabilities()[capability] === true));
   }
 
-  const ENV_PURPOSE = {
-    development: 'Локальная разработка',
-    canary: 'Проверочная среда',
-    production: 'Рабочая среда',
-  };
-
-  // First level answers what an owner actually asks: what is this, what
-  // changed, is it checked, what can I do next. Commit/build/artifact/schema
-  // are audit material and live behind "Технические данные".
-  function environmentMetaHtml(target) {
-    const warnings = Array.isArray(target.warnings) ? target.warnings : [];
-    const env = String(target.environment || '');
-    const presence = String(target.presence || '');
-    const health = String(target.health || 'unknown');
-    const offline = health === 'offline' || presence === 'never_seen';
-    // "Локальный сервер не запущен" is a fact. A column of "неизвестно" is not.
-    const stateText = offline && env === 'development'
-      ? 'Локальный сервер не запущен'
-      : health === 'reachable' ? 'На связи'
-      : health === 'offline' ? 'Не отвечает'
-      : health === 'unreachable' ? 'Недоступен'
-      : 'Состояние неизвестно';
-    const summary = Array.isArray(target.summary) ? target.summary : [];
-    const checks = Array.isArray(target.checks) ? target.checks : [];
-    return `<div class="env-line"><strong class="env-version">${esc(target.version || '—')}</strong>
-        <span class="cab-sub">${esc(ENV_PURPOSE[env] || '')}</span></div>
-      ${target.summary_title ? `<div class="env-summary-title">${esc(target.summary_title)}</div>` : ''}
-      ${summary.length ? `<ul class="env-summary">${summary.map(row => `<li>${esc(row)}</li>`).join('')}</ul>` : ''}
-      <div class="env-state${offline ? ' is-offline' : ''}">${esc(stateText)}</div>
-      ${checks.length ? `<div class="env-checks">${checks.map(row => `<span class="env-check ${row.ok ? 'ok' : 'pending'}">${row.ok ? '✓' : '·'} ${esc(row.label)}</span>`).join('')}</div>` : ''}
-      <details class="env-tech"><summary>Технические данные</summary>
-        <div class="admin-env-meta">
-          <div><span>Commit</span><strong class="mono">${esc((target.commit || '').slice(0, 12) || '—')}</strong></div>
-          <div><span>Build</span><strong class="mono">${esc(target.build_id || '—')}</strong></div>
-          <div><span>Artifact</span><strong class="mono">${esc((target.artifact_sha256 || '').slice(0, 16) || '—')}</strong></div>
-          <div><span>Канал</span><strong>${esc(target.release_channel || '—')}</strong></div>
-          <div><span>Готовность</span><strong>${esc(target.readiness || '—')}</strong></div>
-          <div><span>Последний отчёт</span><strong class="mono">${esc(target.last_seen_at_utc || '—')}</strong></div>
-        </div>
-      </details>${target.probe_error ? `<div class="admin-env-warnings"><div>⚠ ${esc(target.probe_error)}</div></div>` : ''}${warnings.length ? `<div class="admin-env-warnings">${warnings.map(row => `<div>⚠ ${esc(row)}</div>`).join('')}</div>` : ''}`;
-  }
 
   // ---- Environment registry (Phase 5) ---------------------------------------
   // The probe path can only describe environments that answer an HTTP call
@@ -4907,11 +4866,9 @@
 
   async function probeEnvironmentTarget(target, card) {
     const data = await API.http.adminEnvironmentProbe(target.environment);
+    // Merged into the target the caller already holds; the card is repainted
+    // slot by slot afterwards, so nothing the reader opened is thrown away.
     Object.assign(target, data.target || {});
-    if (card) {
-      const meta = qs('[data-env-meta]', card); if (meta) meta.innerHTML = environmentMetaHtml(target);
-      const open = qs('[data-env-open]', card); if (open) open.disabled = false;
-    }
     return target;
   }
 
@@ -4923,78 +4880,429 @@
     window.open(origin + '/ui/', '_blank', 'noopener,noreferrer');
   }
 
-  function renderEnvironmentTargets(node, payload) {
-    const targets = (payload && payload.targets) || [];
-    node.innerHTML = `<div class="finance-note"><strong>Изолированный переход:</strong> каждая среда открывается на своём origin в новой вкладке. Токены, cookies, CSRF и localStorage не переносятся.</div>
-      <div data-env-compare></div>
-      <div class="admin-env-grid">${targets.map((target, index) => `<section class="cab-card admin-env-card" data-env-card="${index}">
-        <div class="admin-env-head"><div><span class="badge ${target.current ? 'live' : (target.configured ? 'pending' : 'archived')}">${esc(target.environment.toUpperCase())}</span>${target.current ? '<span class="cab-sub"> текущая</span>' : ''}</div><span class="mono cab-sub">${esc(target.current ? location.origin : (target.origin || 'origin не задан'))}</span></div>
-        <div data-env-meta>${environmentMetaHtml(target)}</div>
-        <div class="flex gap-sm wrap">
-          ${target.current ? '<button class="btn ghost" disabled>Открыта сейчас</button>' : `<button class="btn ghost" data-env-probe="${index}" ${target.origin ? '' : 'disabled'}>Обновить</button><button class="btn primary" data-env-review="${index}" ${target.open_allowed ? '' : 'disabled'}>Просмотреть переход</button>`}
-        </div><div data-env-confirm></div>
-      </section>`).join('')}</div>
-      <div class="flex gap-sm wrap"><button class="btn ghost" id="admin-env-compare">Сравнить Canary / Production в отдельных вкладках</button></div>`;
-    // Metadata loads by itself when the panel opens. Requiring a click meant
-    // Development and Canary sat on "неизвестно" while only the current
-    // environment showed anything. Each target is probed independently so a
-    // slow or unreachable one cannot hold up the others, and a failure shows
-    // its own reason on its own card.
-    const autoProbe = (target, index) => {
-      if (target.current || !target.origin) return Promise.resolve();
-      const card = qs(`[data-env-card="${index}"]`, node);
-      const meta = card && qs('[data-env-meta]', card);
-      if (meta) meta.classList.add('is-loading');
-      return probeEnvironmentTarget(target, card).then(() => {
-        const review = card && qs('[data-env-review]', card);
-        if (review) review.disabled = false;
+  // The Environment Switcher is the release control panel, not a list of links.
+  // It used to lead with a probe button, a "просмотреть переход" button and an
+  // engineering comparison table, so the owner had to assemble the workflow
+  // themselves. The three stages now read in the order they happen, each card
+  // carries the one action available at that stage, and the identifiers live
+  // behind a disclosure.
+  // The stages of each single action, and the ledger state that means the
+  // stage is currently running. Derived from what the release ledger reports,
+  // so the progress shown is the progress that happened.
+  const DELIVER_STAGES = [
+    { key: 'candidate', label: 'Создание кандидата', running: [''] },
+    { key: 'build', label: 'Сборка', running: ['draft', 'build_failed'] },
+    { key: 'verify', label: 'Проверка', running: ['built'] },
+    { key: 'deploy', label: 'Развёртывание', running: ['signed', 'canary_deploying', 'canary_failed'] },
+    { key: 'acceptance', label: 'Canary checks / acceptance', running: ['canary_checking'] },
+    { key: 'done', label: 'Готово', running: [] },
+  ];
+  const PUBLISH_STAGES = [
+    { key: 'approve', label: 'Подтверждение', running: ['canary_passed'] },
+    { key: 'deploy', label: 'Развёртывание', running: ['approved_for_production', 'production_scheduled', 'production_deploying'] },
+    { key: 'readiness', label: 'Readiness', running: [] },
+    { key: 'smoke', label: 'Smoke', running: [] },
+    { key: 'done', label: 'Готово', running: [] },
+  ];
+
+  function progressHtml(plan, activeKey, finished) {
+    const activeIndex = plan.findIndex(row => row.key === activeKey);
+    return '<div class="pub-stages">' + plan.map((row, index) => {
+      let state = 'not_started';
+      if (finished) state = 'passed';
+      else if (activeIndex >= 0 && index < activeIndex) state = 'passed';
+      else if (index === activeIndex) state = 'running';
+      return '<span class="pub-stage is-' + state + '">'
+        + (state === 'running' ? '<span class="spinner sm"></span> '
+          : (state === 'passed' ? '✓ ' : '· '))
+        + esc(row.label) + '</span>';
+    }).join('<span class="pub-sep">→</span>') + '</div>';
+  }
+
+  function finalStagesHtml(stages) {
+    const icon = { passed: '✓', failed: '✕', not_started: '·' };
+    return '<div class="pub-stages">' + (stages || []).map(row =>
+      '<span class="pub-stage is-' + esc(row.state) + '">' + (icon[row.state] || '·')
+      + ' ' + esc(row.label) + '</span>').join('<span class="pub-sep">→</span>') + '</div>';
+  }
+
+  // One user action, however many internal steps it takes. While it runs the
+  // card shows which step is happening rather than a frozen button, and the
+  // button is disabled so a second click cannot start a second run.
+  async function runStagedAction(card, node, msg, options) {
+    const box = qs('[data-stage-progress]', card);
+    const actions = qs('[data-slot="actions"]', card);
+    const button = actions && qs('button', actions);
+    card.dataset.busy = '1';
+    if (button) { button.disabled = true; button.textContent = options.working; }
+    if (msg) msg.textContent = '';
+    if (box) box.innerHTML = progressHtml(options.plan, options.plan[0].key, false);
+
+    let polling = true;
+    const advance = async () => {
+      while (polling) {
+        try {
+          const view = await API.http.adminPipeline();
+          const state = String(((view || {}).candidate || {}).state || '');
+          const stage = options.plan.find(row => row.running.indexOf(state) >= 0);
+          if (stage && box && polling) box.innerHTML = progressHtml(options.plan, stage.key, false);
+        } catch (e) { /* a poll that fails must not end the operation */ }
+        await new Promise(resolve => setTimeout(resolve, 2500));
+      }
+    };
+    advance();
+
+    try {
+      const out = await options.request();
+      polling = false;
+      if (box) {
+        box.innerHTML = finalStagesHtml(out.stages)
+          + (out.checks && out.checks.length ? checksHtml(out.checks) : '');
+      }
+      toast(options.done);
+      await options.again();
+    } catch (e) {
+      polling = false;
+      const detail = (e && e.payload) || {};
+      if (box) box.innerHTML = finalStagesHtml(detail.stages)
+        + (detail.checks && detail.checks.length ? checksHtml(detail.checks) : '')
+        + options.failure(detail);
+      if (msg) msg.textContent = (e && e.message) || String(e);
+      if (button) { button.disabled = false; button.textContent = options.label; }
+    } finally {
+      polling = false;
+      delete card.dataset.busy;
+    }
+  }
+
+  function wireStageActions(node, targets, candidate, msg) {
+    const again = () => renderEnvironmentSwitcherInto(node);
+
+    qsa('[data-stage-deliver]', node).forEach(button => {
+      if (button.dataset.wired) return;
+      button.dataset.wired = '1';
+      button.onclick = () => {
+        // Building and deploying to Canary from one click, with no statement of
+        // what is being built, is how an artifact from an unmerged branch
+        // reached Canary during beta.82. Still one decision, but a stated one.
+        const target = (targets || []).find(row => row.environment === 'development') || {};
+        if (!window.confirm('Отправить в Canary?' + '\n\n'
+          + 'Будет собран artifact из текущего commit ' + String(target.commit || '').slice(0, 12)
+          + ' и развёрнут в Canary с автоматической приёмкой.')) return;
+        return runStagedAction(button.closest('[data-stage-env]'), node, msg, {
+        plan: DELIVER_STAGES,
+        label: 'Отправить в Canary',
+        working: 'Отправляю…',
+        done: 'Развёрнуто в Canary и принято',
+        again,
+        request: () => API.http.releaseDeliverCanary(releaseKey()),
+        failure: detail => '<div class="pub-outcome is-failed">Отправка остановлена'
+          + (detail.failed_stage ? ' · этап: ' + esc(detail.failed_stage) : '') + '</div>',
+        });
+      };
+    });
+
+    qsa('[data-stage-publish]', node).forEach(button => {
+      if (button.dataset.wired) return;
+      button.dataset.wired = '1';
+      button.onclick = () => {
+        const version = String((candidate || {}).app_version || '');
+        if (!window.confirm('Опубликовать ' + version + '?' + '\n\n'
+          + 'В Production будет продвинут тот же проверенный artifact. Пересборки не будет.')) return;
+        return runStagedAction(button.closest('[data-stage-env]'), node, msg, {
+          plan: PUBLISH_STAGES,
+          label: 'Опубликовать в Production',
+          working: 'Публикую…',
+          done: 'Опубликовано в Production',
+          again,
+          request: () => API.http.releasePublish(button.dataset.stagePublish, releaseKey()),
+          failure: detail => {
+            const deployed = detail.production_deployed;
+            return '<div class="pub-outcome ' + (deployed ? 'is-deployed' : 'is-failed') + '">'
+              + (deployed ? 'Production развёрнут, validation failed' : 'Публикация не выполнена')
+              + (detail.failed_stage ? ' · этап: ' + esc(detail.failed_stage) : '') + '</div>'
+              + (detail.closeout_blocked
+                ? '<div class="cab-sub">Closeout заблокирован до устранения причины.</div>' : '')
+              + (deployed && detail.rollback && detail.rollback.available
+                ? '<div class="cab-sub">Откат — штатным действием «rollback-production».</div>' : '');
+          },
+        });
+      };
+    });
+  }
+
+  const RELEASE_ORDER = ['development', 'canary', 'production'];
+
+  // One scale for every load figure on this screen, so the same colour always
+  // means the same thing. Defined once rather than per metric: three different
+  // notions of "high" on one card is how a panel stops being read.
+  const LOAD_THRESHOLDS = { elevated: 60, high: 80, critical: 92 };
+
+  function loadLevel(percent) {
+    const value = Number(percent);
+    if (!isFinite(value)) return 'unknown';
+    if (value >= LOAD_THRESHOLDS.critical) return 'critical';
+    if (value >= LOAD_THRESHOLDS.high) return 'high';
+    if (value >= LOAD_THRESHOLDS.elevated) return 'elevated';
+    return 'normal';
+  }
+
+  function loadGaugeHtml(label, percent, valueText) {
+    // A figure the environment did not report is named, not drawn as zero.
+    if (percent == null || !isFinite(Number(percent))) {
+      return '<div class="load-gauge is-unknown"><span class="load-name">' + esc(label) + '</span>'
+        + '<span class="load-track"></span><span class="load-value">нет данных</span></div>';
+    }
+    const value = Math.max(0, Math.min(100, Number(percent)));
+    return '<div class="load-gauge is-' + loadLevel(value) + '">'
+      + '<span class="load-name">' + esc(label) + '</span>'
+      + '<span class="load-track"><span class="load-fill" style="width:' + value.toFixed(0) + '%"></span></span>'
+      + '<span class="load-value">' + esc(valueText || (value.toFixed(0) + '%')) + '</span></div>';
+  }
+
+  // First level: CPU, RAM and disk. Everything else is diagnosis, not notice.
+  function gaugesHtml(host) {
+    const measured = host && typeof host === 'object' ? host : {};
+    const known = ['cpu_percent', 'memory_percent', 'disk_percent']
+      .some(key => measured[key] != null);
+    if (!known) return '<div class="env-load-none">Данные недоступны</div>';
+    return loadGaugeHtml('CPU', measured.cpu_percent)
+      + loadGaugeHtml('RAM', measured.memory_percent)
+      + loadGaugeHtml('Диск', measured.disk_percent);
+  }
+
+  function technicalHtml(target) {
+    const admission = (target.health_metrics && target.health_metrics.admission) || null;
+    const rows = [
+      ['Commit', (target.commit || '').slice(0, 12) || '—'],
+      ['Build', target.build_id || '—'],
+      ['Artifact', (target.artifact_sha256 || '').slice(0, 16) || '—'],
+      ['Канал', target.release_channel || '—'],
+      ['Готовность', target.readiness || '—'],
+      ['Последний отчёт', target.last_seen_at_utc || '—'],
+    ];
+    if (admission) {
+      const latency = admission.duration_ms || {};
+      const sockets = admission.websockets || {};
+      const ms = value => {
+        const number = Number(value);
+        if (!isFinite(number)) return '—';
+        return number >= 1000
+          ? (number / 1000).toFixed(number >= 10000 ? 0 : 1) + ' с'
+          : Math.round(number) + ' мс';
+      };
+      rows.push(['Активных запросов', String(admission.active != null ? admission.active : '—')
+        + (admission.max_inflight ? ' / ' + admission.max_inflight : '')]);
+      rows.push(['Задержка p50', ms(latency.p50)]);
+      rows.push(['Задержка p95', ms(latency.p95)]);
+      rows.push(['Задержка p99', ms(latency.p99)]);
+      rows.push(['Пик активных', String(admission.peak_active != null ? admission.peak_active : '—')]);
+      rows.push(['Принято', String(admission.accepted != null ? admission.accepted : '—')]);
+      rows.push(['Отклонено', String(admission.rejected != null ? admission.rejected : '—')]);
+      rows.push(['WebSocket', String(sockets.active != null ? sockets.active : '—')
+        + (sockets.max ? ' / ' + sockets.max : '')]);
+    }
+    return '<div class="admin-env-meta">' + rows.map(row =>
+      '<div><span>' + esc(row[0]) + '</span><strong class="mono">' + esc(row[1]) + '</strong></div>'
+    ).join('') + '</div>';
+  }
+
+  const ENV_PURPOSE = {
+    development: 'Локальная разработка',
+    canary: 'Проверочная среда',
+    production: 'Рабочая среда',
+  };
+
+  // Each card explains its own version. The same release on two stages may
+  // legitimately show the same words; what it must not do is leave a card
+  // unable to say what it is running.
+  function summaryHtml(target) {
+    const points = Array.isArray(target.summary) ? target.summary.slice(0, 3) : [];
+    if (!target.summary_title && !points.length) return '';
+    return (target.summary_title
+      ? '<div class="env-summary-title">' + esc(target.summary_title) + '</div>' : '')
+      + (points.length ? '<ul class="env-summary">' + points.map(row =>
+        '<li>' + esc(row) + '</li>').join('') + '</ul>' : '');
+  }
+
+  function statusHtml(target, candidate) {
+    const env = String(target.environment || '');
+    const state = String((candidate || {}).state || '');
+    if (env === 'canary' && state === 'canary_passed') {
+      return '<div class="stage-status is-pass">✓ Canary PASS · приёмка пройдена</div>';
+    }
+    if (env === 'canary' && state === 'canary_checking') {
+      return '<div class="stage-status is-progress">Идут проверки Canary</div>';
+    }
+    if (env === 'canary' && state === 'canary_failed') {
+      return '<div class="stage-status is-fail">Canary не принят</div>';
+    }
+    if (env === 'production' && state === 'production_live') {
+      return '<div class="stage-status is-pass">✓ Активная версия</div>';
+    }
+    const health = String(target.health || 'unknown');
+    const offline = health === 'offline' || String(target.presence || '') === 'never_seen';
+    if (offline && env === 'development') {
+      return '<div class="stage-status is-idle">Локальный сервер не запущен</div>';
+    }
+    if (health === 'unreachable') {
+      // The reason the probe gave, not a generic word: "недоступен" alone
+      // sends the reader to the logs to find out what actually failed.
+      return '<div class="stage-status is-fail">Недоступен'
+        + (target.probe_error ? ' · ' + esc(target.probe_error) : '') + '</div>';
+    }
+    return '<div class="stage-status ' + (health === 'reachable' ? 'is-ok' : 'is-idle') + '">'
+      + (health === 'reachable' ? 'На связи' : 'Состояние неизвестно') + '</div>';
+  }
+
+  // Identity, not the version string: two environments can report the same
+  // version and run different builds, which is exactly the mistake the release
+  // ledger exists to prevent.
+  function sameArtifact(a, b) {
+    const build = String((a || {}).build_id || '');
+    const other = String((b || {}).build_id || '');
+    if (build && other) return build === other;
+    const sha = String((a || {}).artifact_sha256 || '');
+    const otherSha = String((b || {}).artifact_sha256 || '');
+    return !!sha && sha === otherSha;
+  }
+
+  function actionsHtml(target, targets, candidate, promotion) {
+    const env = String(target.environment || '');
+    const state = String((candidate || {}).state || '');
+    const id = String((candidate || {}).candidate_id || '');
+    if (env === 'development') {
+      if (!hasAdminCapability('releases.deploy_canary')) return '';
+      return '<button class="btn primary stage-action" data-stage-deliver="1"'
+        + ' title="Создать кандидата из текущего commit, собрать artifact,'
+        + ' проверить и развернуть в Canary">Отправить в Canary</button>';
+    }
+    if (env === 'canary') {
+      if (!hasAdminCapability('releases.promote_production')) return '';
+      const production = (targets || []).find(row => row.environment === 'production');
+      // Nothing to publish when Production already runs this exact artifact.
+      if (sameArtifact(target, production)) {
+        return '<div class="stage-done">✓ Уже опубликовано в Production</div>';
+      }
+      if (state !== 'canary_passed' || !id) return '';
+      const blocked = !(promotion || {}).allowed;
+      const why = blocked ? ((promotion || {}).reason || 'Промоушен недоступен')
+        : 'Опубликовать проверенный artifact в Production';
+      return '<button class="btn primary stage-action" data-stage-publish="' + esc(id) + '"'
+        + (blocked ? ' disabled' : '') + ' title="' + esc(why) + '">Опубликовать в Production</button>'
+        + (blocked ? '<div class="stage-blocked">Недоступно: ' + esc(why) + '</div>' : '');
+    }
+    return '';
+  }
+
+  // What acceptance actually checked, in one line, with the detail folded away.
+  function checksHtml(checks) {
+    const rows = Array.isArray(checks) ? checks : [];
+    if (!rows.length) return '';
+    return '<div class="stage-checks">' + rows.map(row =>
+      '<span class="stage-check ' + (row.ok ? 'ok' : 'fail') + '">'
+      + (row.ok ? '✓' : '✕') + ' ' + esc(row.label || row.name) + '</span>').join('')
+      + '</div><details class="env-tech"><summary>Детали проверки</summary>'
+      + '<div class="admin-env-meta">' + rows.map(row =>
+        '<div><span>' + esc(row.label || row.name) + '</span><strong>'
+        + esc(row.detail || (row.ok ? 'пройдено' : 'не пройдено')) + '</strong></div>').join('')
+      + '</div></details>';
+  }
+
+  function stageCardSkeleton(target, index) {
+    const env = String(target.environment || '');
+    return '<section class="cab-card stage-card" data-env-card="' + index + '" data-stage-env="' + esc(env) + '">'
+      + '<div class="stage-head">'
+      + '<span class="badge" data-slot="badge">' + esc(env.toUpperCase()) + '</span>'
+      + '<span class="cab-sub" data-slot="current"></span>'
+      + '<span class="mono cab-sub stage-origin" data-slot="origin"></span>'
+      + '</div>'
+      + '<div class="env-line"><strong class="env-version" data-slot="version"></strong>'
+      + '<span class="cab-sub" data-slot="purpose"></span></div>'
+      + '<div data-slot="summary"></div>'
+      + '<div data-slot="status"></div>'
+      + '<div class="env-load" data-slot="gauges"></div>'
+      + '<details class="env-tech"><summary>Технические данные / Метрики</summary>'
+      + '<div data-slot="tech"></div></details>'
+      + '<div data-slot="checks"></div>'
+      + '<div class="stage-actions" data-slot="actions"></div>'
+      + '<div data-stage-progress></div>'
+      + '</section>';
+  }
+
+  // Updating in place, field by field. Replacing the panel's innerHTML on every
+  // poll closed whatever the reader had opened, threw away the scroll position
+  // and made the screen flash like a reload every few seconds.
+  function patchSlot(card, name, html) {
+    const slot = qs('[data-slot="' + name + '"]', card);
+    if (slot && slot.innerHTML !== html) slot.innerHTML = html;
+  }
+
+  function patchCard(card, target, targets, candidate, promotion) {
+    const badge = qs('[data-slot="badge"]', card);
+    if (badge) {
+      const cls = 'badge ' + (target.current ? 'live' : (target.configured ? 'pending' : 'archived'));
+      if (badge.className !== cls) badge.className = cls;
+    }
+    patchSlot(card, 'current', target.current ? 'текущая' : '');
+    patchSlot(card, 'origin', esc(target.current
+      ? location.origin : (target.origin || 'origin не задан')));
+    patchSlot(card, 'version', esc(target.version || '—'));
+    patchSlot(card, 'purpose', esc(ENV_PURPOSE[String(target.environment || '')] || ''));
+    patchSlot(card, 'summary', summaryHtml(target));
+    patchSlot(card, 'status', statusHtml(target, candidate));
+    patchSlot(card, 'gauges', gaugesHtml(target.host));
+    patchSlot(card, 'tech', technicalHtml(target));
+    // Actions are left alone while an operation is running in this card, so a
+    // poll cannot replace the button under the pointer mid-run.
+    if (!card.dataset.busy) {
+      patchSlot(card, 'actions', actionsHtml(target, targets, candidate, promotion));
+    }
+  }
+
+  function renderEnvironmentTargets(node, payload, pipeline) {
+    const targets = ((payload && payload.targets) || []).slice().sort(
+      (a, b) => RELEASE_ORDER.indexOf(a.environment) - RELEASE_ORDER.indexOf(b.environment));
+    const doc = pipeline || {};
+    const candidate = doc.candidate || {};
+    const promotion = doc.promotion || {};
+
+    if (!qs('.stage-flow', node)) {
+      node.innerHTML = '<div class="stage-flow">'
+        + targets.map((target, index) => stageCardSkeleton(target, index))
+          .join('<div class="stage-arrow">→</div>')
+        + '</div><div class="cab-sub stage-note" id="stage-msg"></div>'
+        + '<details class="card-details" id="env-diagnostics">'
+        + '<summary>Технические данные / Диагностика</summary>'
+        + '<div class="finance-note">Каждая среда открывается на своём origin в новой вкладке.'
+        + ' Токены, cookies, CSRF и localStorage не переносятся.</div>'
+        + '<div data-env-compare></div></details>';
+      renderEnvironmentCompareInto(qs('[data-env-compare]', node));
+    }
+
+    const cards = qsa('.stage-card', node);
+    targets.forEach((target, index) => {
+      const card = cards[index];
+      if (card) patchCard(card, target, targets, candidate, promotion);
+    });
+
+    const msg = qs('#stage-msg', node);
+    wireStageActions(node, targets, candidate, msg);
+
+    // Probes add live reachability on top of what an environment last
+    // reported; one slow origin must not hold up the others.
+    targets.forEach((target, index) => {
+      if (target.current || !target.origin) return;
+      const card = cards[index];
+      probeEnvironmentTarget(target, card).then(() => {
+        if (card) patchSlot(card, 'status', statusHtml(target, candidate));
       }).catch(e => {
         target.probe_ok = false;
         target.health = 'unreachable';
         target.probe_error = String((e && e.message) || e || 'endpoint недоступен');
-        if (meta) meta.innerHTML = environmentMetaHtml(target);
-      }).finally(() => {
-        if (meta) meta.classList.remove('is-loading');
+        if (card) patchSlot(card, 'status', statusHtml(target, candidate));
       });
-    };
-    Promise.all(targets.map(autoProbe));
-
-    qsa('[data-env-probe]', node).forEach(button => button.onclick = async () => {
-      const target = targets[Number(button.dataset.envProbe)];
-      const card = button.closest('[data-env-card]');
-      button.disabled = true;
-      try {
-        await probeEnvironmentTarget(target, card);
-        const review = qs('[data-env-review]', card); if (review) review.disabled = false;
-        toast(`Endpoint ${target.environment} доступен`);
-      } catch (e) {
-        target.probe_ok = false;
-        const review = qs('[data-env-review]', card);
-        if (review && target.environment === 'development') review.disabled = true;
-        reportError(new Error(`Endpoint ${target.environment} недоступен: ${e.message || e}`));
-      } finally { button.disabled = false; }
     });
-    qsa('[data-env-review]', node).forEach(button => button.onclick = () => {
-      const target = targets[Number(button.dataset.envReview)];
-      const card = button.closest('[data-env-card]');
-      const confirmNode = qs('[data-env-confirm]', card);
-      if (target.environment === 'development' && !target.probe_ok) {
-        toast('Local DEV можно открыть только после успешной проверки endpoint.');
-        return;
-      }
-      confirmNode.innerHTML = `<div class="admin-env-confirm"><strong>Перед переходом</strong>${environmentMetaHtml(target)}<p class="cab-sub">В новой вкладке потребуется отдельная аутентификация.</p><button class="btn primary" data-env-open="1">Открыть ${esc(target.environment.toUpperCase())} в новой вкладке</button></div>`;
-      const open = qs('[data-env-open]', confirmNode); if (open) open.onclick = () => openEnvironmentOrigin(target);
-    });
-    // The registry panel loads independently of the per-target probes: it is
-    // the only source that can describe LOCAL, so a probe failure elsewhere
-    // must not take it down with it.
-    renderEnvironmentCompareInto(qs('[data-env-compare]', node));
-    const compare = qs('#admin-env-compare', node);
-    if (compare) compare.onclick = () => {
-      const rows = targets.filter(target => ['canary', 'production'].includes(target.environment) && target.open_allowed);
-      if (!rows.length) { toast('Canary и Production origins не настроены.'); return; }
-      rows.forEach(openEnvironmentOrigin);
-    };
   }
 
   // ---- Environments and releases (one module) -------------------------------
@@ -5456,10 +5764,38 @@
     });
   }
 
+  // Both payloads describe the same three environments: targets carries the
+  // origins and the release summary, the pipeline carries the candidate and the
+  // promotion gates. The panel needs both to show one action per stage, and a
+  // failure to reach the pipeline must not blank the environments.
+  let ENV_PANEL_TIMER = 0;
+
   async function renderEnvironmentSwitcherInto(node) {
-    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка environments…</div>';
-    try { renderEnvironmentTargets(node, await API.http.adminEnvironmentTargets()); }
-    catch (e) { renderError(node, e, () => renderEnvironmentSwitcherInto(node)); }
+    if (!node.querySelector('.stage-flow')) {
+      node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка environments…</div>';
+    }
+    try {
+      const targets = await API.http.adminEnvironmentTargets();
+      // Load figures come from /api/health, which is authenticated per
+      // origin: this session can read them for the environment it is signed
+      // in to and for no other. The rest render as unavailable.
+      const current = ((targets && targets.targets) || []).find(t => t.current);
+      if (current) {
+        try { current.health_metrics = await API.http.health(); }
+        catch (e) { current.health_metrics = null; }
+      }
+      let pipeline = null;
+      try { pipeline = await API.http.adminPipeline(); } catch (e) { pipeline = null; }
+      renderEnvironmentTargets(node, targets, pipeline);
+      // The panel keeps itself current; the owner should not have to press a
+      // button to find out what an environment is running.
+      if (ENV_PANEL_TIMER) clearTimeout(ENV_PANEL_TIMER);
+      ENV_PANEL_TIMER = setTimeout(() => {
+        if (document.body.contains(node)) renderEnvironmentSwitcherInto(node);
+      }, 20000);
+    } catch (e) {
+      renderError(node, e, () => renderEnvironmentSwitcherInto(node));
+    }
   }
 
   async function showEnvironmentSwitcher() {

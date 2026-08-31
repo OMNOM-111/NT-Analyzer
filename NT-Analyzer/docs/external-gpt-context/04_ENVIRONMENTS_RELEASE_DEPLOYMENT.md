@@ -38,49 +38,54 @@ flowchart LR
 The Environment Switcher opens the selected origin and never carries session
 or browser storage between origins.
 
-## Current beta.80 release
+## Current beta.83 release
 
 | Field | Value |
 | --- | --- |
-| Candidate | `rc_9fa9fa0933dc4343b31f33a0b0df5810` |
-| Artifact | `art_ddd72f5f4f7a49139b306760c86b0d34` |
-| Version / Git SHA | `0.10.0-beta.80` / `36128ae4301f1d6ba17441dfbf7fba7000a49070` |
-| Build ID | `sf-0.10.0-beta.80-36128ae4301f-20260831T001943Z` |
-| Archive SHA256 | `B4E4E20502AA8AEA0A18C64271088C0A51563101690A957FE0CCAD957A058F10` |
-| Manifest SHA256 | `DD55B6DAB9B121E58EF53CEDA13E8F961CAC08E52584442715EA3FDC63E8CBC5` |
+| Candidate | rc_e35e934fc2d74aa6b8f0170d1afd7d82 |
+| Artifact | art_edfeb143e27e4790bc851a0e61fe3410 |
+| Version / Git SHA | 0.10.0-beta.83 / 03ddf47bb2e657d66d414985976448538ff99743 |
+| Build ID | sf-0.10.0-beta.83-03ddf47bb2e6-20260831T140855Z |
+| Archive SHA256 | BE8F46427C758EEDB76A1D3D8FD2F671499051DEDFE43E3424F0258F4263FF30 |
 | Signature / worktree | verified / clean |
 
-Canary accepted the beta.80 release and Production was promoted to the exact
-same artifact without rebuild: both deployments record artifact
-`art_ddd72f5f4f7a49139b306760c86b0d34`, the same archive SHA256 and the same
-build ID.
+Canary accepted beta.83 and Production received the exact same artifact without
+rebuild. live_trading_allowed stays false. The beta.81 and beta.82 cycles are
+recorded in their changelog entries.
 
 | Environment | State | Ready |
 | --- | --- | --- |
 | Canary | live | PASS |
 | Production | live | PASS |
 
-Both live endpoints report the same Git SHA and build ID. Production readiness
-covers config, data root, signing key, object storage, database, connector
-control, Telegram consumer and queue; `live_trading_allowed` stays `false`.
+### A build reaches Production only from approved main
 
-### What this release contains
+Promotion is gated on the provenance of the candidate commit, independently of
+acceptance: the branch is main, the worktree is clean, HEAD equals origin/main
+with no ahead or behind, the commit is an ancestor of origin/main, and that
+exact SHA passed the required CI. The gate runs inside approve_production,
+after the canary_passed check, so a healthy Canary cannot carry a build past
+it. A CI status that cannot be read blocks the promotion rather than being
+assumed.
 
-- Unified legal package with the structured onboarding user agreement.
-- All nine public legal documents readable before registration through a
-  registry allowlist; owner-only and internal files answer `404`.
-- AI Provenance Policy and Release Governance Policy, including the rule that
-  repository-wide governance scans run from the repository root.
-- Retired `STRATFORGE_INTERNAL_AMENDMENT` markers and manual AI self-signatures.
+Canary is not gated: a branch build can still be deployed there for diagnosis.
 
-### Acceptance evidence
+Proven on a real case. During beta.82 an artifact built from an unmerged branch
+commit reached Canary and passed acceptance; the gate refused it for Production
+on commit_on_origin_main, and a build from clean synchronised main replaced it.
 
-Canary acceptance was recorded check by check in the Release Center ledger:
-artifact identity, readiness, pre-auth access to all nine legal documents,
-resolution of every agreement link, the deployed UI using the public legal
-route, and `404` for owner/internal identifiers including percent-encoded
-traversal. Production smoke repeated the same probes against the live
-environment.
+### The panel is the release control
+
+Both transitions of the beta.83 cycle were run by pressing the panel buttons,
+not by backend calls: delivery to Canary named the commit it would build and
+ran six stages, and publication ran five. Acceptance recorded readiness,
+artifact identity and smoke as separate checks.
+
+### Starting Local
+
+Start through start.ps1. It loads data/secrets/environment-registry.env, which
+carries the peer list and signing key the promotion gate needs, and it leaves
+the worktree clean -- both conditions the panel actions require.
 
 ## Promotion authority
 
