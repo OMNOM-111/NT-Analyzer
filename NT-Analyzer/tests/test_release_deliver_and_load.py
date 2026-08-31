@@ -131,33 +131,105 @@ def test_the_panel_offers_delivery_without_another_screen() -> None:
 
 # ---- load charts ------------------------------------------------------------
 
-def test_load_is_charted_only_from_reported_figures() -> None:
-    block = UI[UI.index("function loadChartHtml("):UI.index("function stageCardHtml(")]
+def test_first_level_shows_the_four_figures_an_owner_reads() -> None:
+    block = UI[UI.index("function loadChartHtml("):UI.index("function technicalMetricsHtml(")]
+    for label in ("CPU", "RAM", "Диск", "Запросы"):
+        assert label in block
     assert "Данные недоступны" in block
-    for invented in ("cpu", "CPU", "RAM", "memory"):
-        assert invented not in block, f"{invented} is not measured anywhere"
-    for real in ("duration_ms", "websockets", "accepted", "rejected", "storage"):
-        assert real in block
-    assert ".env-bar-fill" in CSS
 
 
-def test_health_reports_measured_storage(tmp_path, monkeypatch) -> None:
-    """Pinned to a directory that exists: other suites relocate the data root."""
-    from app import runtime_env, server as server_mod
+def test_diagnostics_leave_the_first_level_but_are_not_removed() -> None:
+    technical = UI[UI.index("function technicalMetricsHtml("):UI.index("function stageCardHtml(")]
+    assert "Технические данные / Метрики" in technical
+    for kept in ("p50", "p95", "p99", "WebSocket", "Принято", "Отклонено"):
+        assert kept in technical
+    # Slice to the comment that introduces the diagnostics block: prose about
+    # what moved is not the same as the markup still rendering it.
+    first_level = UI[UI.index("function loadChartHtml("):UI.index("  // Kept, but off the first level")]
+    for moved in ("p95", "WebSocket", "Отклонено"):
+        assert moved not in first_level
 
-    monkeypatch.setattr(runtime_env, "data_root", lambda: tmp_path)
-    storage = server_mod._data_root_storage()
-    assert set(storage) >= {"free_mb", "total_mb", "used_mb"}
-    assert storage["total_mb"] > 0
-    assert storage["free_mb"] <= storage["total_mb"]
+
+def test_one_threshold_scale_defined_once() -> None:
+    assert "const LOAD_THRESHOLDS = { elevated: 60, high: 80, critical: 92 };" in UI
+    level = UI[UI.index("function loadLevel("):UI.index("function loadGaugeHtml(")]
+    for name in ("critical", "high", "elevated", "normal"):
+        assert name in level
+    # Every gauge must classify through the one function, not its own numbers.
+    block = UI[UI.index("function loadGaugeHtml("):UI.index("function technicalMetricsHtml(")]
+    assert block.count("loadLevel(") >= 2
+    for colour in ("is-normal", "is-elevated", "is-high", "is-critical"):
+        assert ".load-gauge." + colour in CSS
 
 
-def test_storage_is_absent_rather_than_guessed(monkeypatch) -> None:
-    from app import server as server_mod
+def test_a_figure_that_was_not_measured_is_named_not_drawn() -> None:
+    gauge = UI[UI.index("function loadGaugeHtml("):UI.index("function loadChartHtml(")]
+    assert "нет данных" in gauge
+    assert "percent == null" in gauge
 
-    monkeypatch.setattr(server_mod.shutil, "disk_usage",
-                        lambda path: (_ for _ in ()).throw(OSError("no such path")))
-    assert server_mod._data_root_storage() == {}
+
+def test_host_metrics_are_measured_or_absent() -> None:
+    from app import host_metrics
+
+    reading = host_metrics.sample(".")
+    for key in ("cpu_percent", "memory_percent", "disk_percent"):
+        if key in reading:
+            assert 0.0 <= reading[key] <= 100.0
+    # Nothing is ever filled in with a placeholder.
+    assert None not in reading.values()
+
+
+def test_host_metrics_report_nothing_on_an_unsupported_platform(monkeypatch) -> None:
+    from app import host_metrics
+
+    monkeypatch.setattr(host_metrics.sys, "platform", "sunos5")
+    monkeypatch.setattr(host_metrics, "_CACHE", None)
+    assert host_metrics.cpu_percent() is None
+    assert host_metrics.memory_percent() is None
+    assert host_metrics.source() == ""
+
+
+def test_reported_host_load_is_validated_before_it_is_stored() -> None:
+    from app import environment_registry as registry
+
+    clean = registry._normalize_host({
+        "cpu_percent": 42.4, "memory_percent": 0, "disk_percent": 100,
+        "source": "proc",
+    })
+    assert clean == {"cpu_percent": 42.4, "memory_percent": 0.0,
+                     "disk_percent": 100.0, "source": "proc"}
+    # A peer sends this over the network: anything out of range or not a number
+    # is dropped rather than clamped, so nonsense cannot pass as a reading.
+    rejected = registry._normalize_host({
+        "cpu_percent": 140, "memory_percent": -3, "disk_percent": "80",
+    })
+    assert rejected == {}
+    assert registry._normalize_host({"cpu_percent": True}) == {}
+    assert registry._normalize_host("nonsense") == {}
+
+
+def test_an_environment_reports_its_own_load() -> None:
+    from app import environment_registry as registry
+
+    heartbeat = registry.self_heartbeat()
+    assert "host" in heartbeat
+    row = registry.public_row(dict(heartbeat, last_seen_at=registry._now()))
+    assert isinstance(row["host"], dict)
+
+
+def test_the_registry_can_store_what_the_heartbeat_reports() -> None:
+    """The failure 0017 documents: a field reported but with no column."""
+    from pathlib import Path
+
+    core = (Path(release_deliver.__file__).resolve().parent
+            / "production_storage" / "core.py").read_text(encoding="utf-8")
+    block = core[core.index("INSERT INTO sf_environment_registry"):]
+    block = block[:block.index("RETURNING")]
+    assert "host" in block
+    assert "host=EXCLUDED.host" in block
+    migrations = (Path(release_deliver.__file__).resolve().parent
+                  / "production_storage" / "migrations")
+    assert any("host" in path.name for path in migrations.iterdir())
 
 
 # ---- one summary ------------------------------------------------------------

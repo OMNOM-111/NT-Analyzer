@@ -1417,9 +1417,9 @@ class EnvironmentRegistryRepository:
                 INSERT INTO sf_environment_registry(
                   environment,app_version,git_commit_sha,build_id,artifact_sha256,
                   release_channel,schema_version,readiness,market_data,connector,
-                  details,first_seen_at,last_seen_at,heartbeat_count
+                  details,host,first_seen_at,last_seen_at,heartbeat_count
                 )
-                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
                        clock_timestamp(),clock_timestamp(),1)
                 ON CONFLICT(environment) DO UPDATE SET
                   app_version=EXCLUDED.app_version,
@@ -1432,6 +1432,7 @@ class EnvironmentRegistryRepository:
                   market_data=EXCLUDED.market_data,
                   connector=EXCLUDED.connector,
                   details=EXCLUDED.details,
+                  host=EXCLUDED.host,
                   last_seen_at=clock_timestamp(),
                   heartbeat_count=sf_environment_registry.heartbeat_count + 1
                 RETURNING *
@@ -1448,6 +1449,7 @@ class EnvironmentRegistryRepository:
                     str(heartbeat.get("market_data") or ""),
                     str(heartbeat.get("connector") or ""),
                     _jsonb(heartbeat.get("details") or {}),
+                    _jsonb(heartbeat.get("host") or {}),
                 ),
             ).fetchone()
         return dict(row) if row else {}

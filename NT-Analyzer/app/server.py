@@ -68,6 +68,7 @@ if __package__ is None or __package__ == "":
     from app import release_summary  # type: ignore[no-redef]
     from app import release_publish  # type: ignore[no-redef]
     from app import release_deliver  # type: ignore[no-redef]
+    from app import host_metrics  # type: ignore[no-redef]
     from app import personal_nt_security  # type: ignore[no-redef]
     from app import ninjatrader_resources  # type: ignore[no-redef]
     from app import agent_allocation  # type: ignore[no-redef]
@@ -169,6 +170,7 @@ else:
     from . import release_summary
     from . import release_publish
     from . import release_deliver
+    from . import host_metrics
     from . import personal_nt_security
     from . import ninjatrader_resources
     from . import agent_allocation
@@ -1279,6 +1281,15 @@ def _admin_environment_targets() -> Dict[str, Any]:
             or (str(deployment.get("build_id") or "") if current else ""),
             "artifact_sha256": str(row.get("artifact_sha256") or ""),
             "last_seen_at_utc": str(row.get("last_seen_at_utc") or ""),
+            # Reported by the environment itself; absent keys mean it did
+            # not measure that figure.
+            # This environment measures itself directly; the registry copy can
+            # lag a heartbeat, and a peer running an older build strips the
+            # field entirely. Other environments are never measured from here.
+            "host": (
+                host_metrics.sample(runtime_env.data_root()) if current
+                else (row.get("host") if isinstance(row.get("host"), dict) else {})
+            ),
             "release_channel": str(row.get("release_channel") or "")
             or (str(deployment.get("release_channel") or "") if current else ""),
             "summary_title": summary.get("title") or "",

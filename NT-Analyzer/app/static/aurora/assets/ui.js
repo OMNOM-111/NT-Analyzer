@@ -4986,54 +4986,89 @@
     return '';
   }
 
-  // Load is charted only from figures an environment actually reports.
-  // /api/health is authenticated per origin, so this session can read it for
-  // the environment it is signed in to and for no other. The rest say the data
-  // is unavailable; a plausible-looking CPU bar nobody measured would be worse
-  // than an empty panel, because it would be believed.
-  function loadChartHtml(health) {
-    if (!health) {
+  // One scale for every load figure on this screen, so the same colour always
+  // means the same thing. Defined once here rather than per metric: three
+  // different notions of "high" on one card is how a panel stops being read.
+  const LOAD_THRESHOLDS = { elevated: 60, high: 80, critical: 92 };
+
+  function loadLevel(percent) {
+    const value = Number(percent);
+    if (!isFinite(value)) return 'unknown';
+    if (value >= LOAD_THRESHOLDS.critical) return 'critical';
+    if (value >= LOAD_THRESHOLDS.high) return 'high';
+    if (value >= LOAD_THRESHOLDS.elevated) return 'elevated';
+    return 'normal';
+  }
+
+  function loadGaugeHtml(label, percent) {
+    // A figure the environment did not report is named, not drawn as zero.
+    if (percent == null || !isFinite(Number(percent))) {
+      return '<div class="load-gauge is-unknown"><span class="load-name">' + esc(label) + '</span>'
+        + '<span class="load-track"></span>'
+        + '<span class="load-value">нет данных</span></div>';
+    }
+    const value = Math.max(0, Math.min(100, Number(percent)));
+    return '<div class="load-gauge is-' + loadLevel(value) + '">'
+      + '<span class="load-name">' + esc(label) + '</span>'
+      + '<span class="load-track"><span class="load-fill" style="width:' + value.toFixed(0) + '%"></span></span>'
+      + '<span class="load-value">' + value.toFixed(0) + '%</span></div>';
+  }
+
+  // First level: what an owner reads at a glance. Everything diagnostic lives
+  // behind the disclosure below it.
+  function loadChartHtml(host, health) {
+    const measured = host && typeof host === 'object' ? host : {};
+    const known = ['cpu_percent', 'memory_percent', 'disk_percent']
+      .some(key => measured[key] != null);
+    const admission = (health && health.admission) || null;
+    const active = admission && admission.active != null ? Number(admission.active) : null;
+    const limit = admission && Number(admission.max_inflight) || 0;
+    const activePct = (active != null && limit) ? (active / limit) * 100 : null;
+
+    if (!known && !admission) {
       return '<div class="env-load"><div class="env-load-none">Данные недоступны</div></div>';
     }
-    const admission = health.admission || {};
+
+    const gauges = loadGaugeHtml('CPU', measured.cpu_percent)
+      + loadGaugeHtml('RAM', measured.memory_percent)
+      + loadGaugeHtml('Диск', measured.disk_percent)
+      + (activePct != null
+        ? '<div class="load-gauge is-' + loadLevel(activePct) + '">'
+          + '<span class="load-name">Запросы</span>'
+          + '<span class="load-track"><span class="load-fill" style="width:'
+          + Math.max(0, Math.min(100, activePct)).toFixed(0) + '%"></span></span>'
+          + '<span class="load-value">' + active + ' / ' + limit + '</span></div>'
+        : '');
+    return '<div class="env-load">' + gauges + technicalMetricsHtml(admission) + '</div>';
+  }
+
+  // Kept, but off the first level: p50/p95/p99, websockets and the admission
+  // counters are how a problem is diagnosed, not how it is noticed.
+  function technicalMetricsHtml(admission) {
+    if (!admission) return '';
     const latency = admission.duration_ms || {};
     const sockets = admission.websockets || {};
-    const storage = health.storage || {};
-    const bars = [
-      { label: 'p50', value: Number(latency.p50) || 0 },
-      { label: 'p95', value: Number(latency.p95) || 0 },
-      { label: 'p99', value: Number(latency.p99) || 0 },
-    ];
-    const peak = Math.max.apply(null, bars.map(b => b.value).concat([1]));
-    const ms = value => value >= 1000
-      ? (value / 1000).toFixed(value >= 10000 ? 0 : 1) + ' с'
-      : Math.round(value) + ' мс';
-    const chart = bars.map(bar => '<div class="env-bar-row">'
-      + '<span class="env-bar-label">' + bar.label + '</span>'
-      + '<span class="env-bar-track"><span class="env-bar-fill" style="width:'
-      + Math.max(2, Math.round((bar.value / peak) * 100)) + '%"></span></span>'
-      + '<span class="env-bar-value">' + esc(ms(bar.value)) + '</span></div>').join('');
-    const counters = [
-      ['Активных', String(admission.active != null ? admission.active : '—')
-        + (admission.max_inflight ? ' / ' + admission.max_inflight : '')],
-      ['Пик', String(admission.peak_active != null ? admission.peak_active : '—')],
-      ['Запросов', String(admission.accepted != null ? admission.accepted : '—')],
+    const ms = value => {
+      const number = Number(value);
+      if (!isFinite(number)) return '—';
+      return number >= 1000
+        ? (number / 1000).toFixed(number >= 10000 ? 0 : 1) + ' с'
+        : Math.round(number) + ' мс';
+    };
+    const rows = [
+      ['Задержка p50', ms(latency.p50)],
+      ['Задержка p95', ms(latency.p95)],
+      ['Задержка p99', ms(latency.p99)],
+      ['Пик активных', String(admission.peak_active != null ? admission.peak_active : '—')],
+      ['Принято', String(admission.accepted != null ? admission.accepted : '—')],
       ['Отклонено', String(admission.rejected != null ? admission.rejected : '—')],
       ['WebSocket', String(sockets.active != null ? sockets.active : '—')
         + (sockets.max ? ' / ' + sockets.max : '')],
     ];
-    // Disk is charted only when the service measured it.
-    if (storage.free_mb != null && storage.total_mb) {
-      const freeGb = (Number(storage.free_mb) / 1024).toFixed(1);
-      const usedPct = Math.round((Number(storage.used_mb) / Number(storage.total_mb)) * 100);
-      counters.push(['Диск', freeGb + ' ГБ свободно · занято ' + usedPct + '%']);
-    }
-    return '<div class="env-load">'
-      + '<div class="env-load-title">Нагрузка · задержка ответа</div>'
-      + '<div class="env-bars">' + chart + '</div>'
-      + '<div class="env-counters">' + counters.map(row =>
+    return '<details class="env-tech"><summary>Технические данные / Метрики</summary>'
+      + '<div class="admin-env-meta">' + rows.map(row =>
         '<div><span>' + esc(row[0]) + '</span><strong>' + esc(row[1]) + '</strong></div>').join('')
-      + '</div></div>';
+      + '</div></details>';
   }
 
   function stageCardHtml(target, index, candidate, promotion) {
@@ -5048,7 +5083,7 @@
       + '</div>'
       + '<div data-env-meta>' + environmentMetaHtml(target) + '</div>'
       + stageStatusHtml(target, candidate)
-      + '<div data-env-load>' + loadChartHtml(target.health_metrics) + '</div>'
+      + '<div data-env-load>' + loadChartHtml(target.host, target.health_metrics) + '</div>'
       + '<div class="stage-actions">' + stageActionHtml(target, candidate, promotion) + '</div>'
       + '<div data-stage-progress></div>'
       + '</section>';
