@@ -38,52 +38,54 @@ flowchart LR
 The Environment Switcher opens the selected origin and never carries session
 or browser storage between origins.
 
-## Current beta.81 release
+## Current beta.83 release
 
 | Field | Value |
 | --- | --- |
-| Candidate | `rc_b886226b4ae04a3b9cba9105a6de7c5f` |
-| Artifact | `art_2a97e2ba143641afaad40b59610d3bc0` |
-| Version / Git SHA | `0.10.0-beta.81` / `2f726d6b094e6a7c4248e935424e632bc7699324` |
-| Build ID | `sf-0.10.0-beta.81-2f726d6b094e-20260831T030814Z` |
-| Archive SHA256 | `5F546F4A97C8070509ED5BFF6478A2706D788D577E4C6FD73B259A19B84E6C39` |
-| Manifest SHA256 | `3028354E1C92897B74ED1F99928C6CE8...` |
+| Candidate | rc_e35e934fc2d74aa6b8f0170d1afd7d82 |
+| Artifact | art_edfeb143e27e4790bc851a0e61fe3410 |
+| Version / Git SHA | 0.10.0-beta.83 / 03ddf47bb2e657d66d414985976448538ff99743 |
+| Build ID | sf-0.10.0-beta.83-03ddf47bb2e6-20260831T140855Z |
+| Archive SHA256 | BE8F46427C758EEDB76A1D3D8FD2F671499051DEDFE43E3424F0258F4263FF30 |
 | Signature / worktree | verified / clean |
 
-Canary accepted beta.81 and Production received the exact same artifact without
-rebuild: both deployments record `art_2a97e2ba143641afaad40b59610d3bc0`, the
-same archive SHA256 and the same build ID.
+Canary accepted beta.83 and Production received the exact same artifact without
+rebuild. live_trading_allowed stays false. The beta.81 and beta.82 cycles are
+recorded in their changelog entries.
 
 | Environment | State | Ready |
 | --- | --- | --- |
 | Canary | live | PASS |
 | Production | live | PASS |
 
-`live_trading_allowed` stays `false`. Production readiness covers config, data
-root, signing key, object storage, database, connector control, Telegram
-consumer and queue.
+### A build reaches Production only from approved main
 
-### What this release contains
+Promotion is gated on the provenance of the candidate commit, independently of
+acceptance: the branch is main, the worktree is clean, HEAD equals origin/main
+with no ahead or behind, the commit is an ancestor of origin/main, and that
+exact SHA passed the required CI. The gate runs inside approve_production,
+after the canary_passed check, so a healthy Canary cannot carry a build past
+it. A CI status that cannot be read blocks the promotion rather than being
+assumed.
 
-- The Environment Switcher is the release control panel: three stages in order,
-  one action per stage, identifiers behind a disclosure.
-- One canonical environment state for the whole screen.
-- «Что изменилось» read from the release's own changelog entry.
-- Publication as one backend operation reporting real stages.
+Canary is not gated: a branch build can still be deployed there for diagnosis.
 
-### Promotion was driven through the new operation
+Proven on a real case. During beta.82 an artifact built from an unmerged branch
+commit reached Canary and passed acceptance; the gate refused it for Production
+on commit_on_origin_main, and a build from clean synchronised main replaced it.
 
-Production was promoted with `POST /api/admin/releases/<id>/publish-production`
-— the same call the panel's button makes — and all five stages reported passed:
-Подтверждение, Развёртывание, Readiness, Smoke, Готово.
+### The panel is the release control
 
-### Control plane configuration is what enables the button
+Both transitions of the beta.83 cycle were run by pressing the panel buttons,
+not by backend calls: delivery to Canary named the commit it would build and
+ran six stages, and publication ran five. Acceptance recorded readiness,
+artifact identity and smoke as separate checks.
 
-The promotion gate answers `allowed` only when the deciding peer is reachable.
-A Development process started without `data/secrets/environment-registry.env`
-has no peer list and no signing key, so the panel's publish button is disabled
-with «Control plane не настроен». Started through `start.ps1`, which loads that
-file, the gate returns `allowed` with `decided_by: canary` and the button works.
+### Starting Local
+
+Start through start.ps1. It loads data/secrets/environment-registry.env, which
+carries the peer list and signing key the promotion gate needs, and it leaves
+the worktree clean -- both conditions the panel actions require.
 
 ## Promotion authority
 
