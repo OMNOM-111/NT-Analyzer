@@ -140,7 +140,12 @@ def test_publish_surfaces_a_release_center_refusal(monkeypatch) -> None:
 
 
 def test_publish_without_a_production_origin_does_not_claim_success(monkeypatch) -> None:
-    """An unverifiable deployment must not render as a green run."""
+    """An unverifiable deployment must not render as a green run.
+
+    Promotion has already happened by this point, so the run reports a deployed
+    Production that could not be validated -- not a publication that never took
+    place.
+    """
     monkeypatch.setattr(release_center, "get_release",
                         lambda cid: _summary(release_center.STATE_CANARY_PASSED))
     out = release_publish.publish(
@@ -149,7 +154,10 @@ def test_publish_without_a_production_origin_does_not_claim_success(monkeypatch)
     )
     assert out["ok"] is False
     assert out["failed_stage"] == release_publish.STAGE_READINESS
-    assert out["code"] == "production_origin_missing"
+    assert out["production_deployed"] is True
+    assert out["outcome"] == "deployed_validation_failed"
+    assert out["closeout_blocked"] is True
+    assert "Origin Production не настроен" in out["reason"]
 
 
 def test_smoke_rejects_a_different_build_than_the_one_published(monkeypatch) -> None:
@@ -172,3 +180,73 @@ def test_ui_offers_publication_only_for_a_canary_passed_candidate() -> None:
     assert "Пересборки не будет" in ui
     for label in ("Подтверждение", "Развёртывание", "Readiness", "Smoke", "Готово"):
         assert label in ui or label in str(release_publish.STAGES)
+
+
+def test_validation_failure_after_deploy_is_not_reported_as_not_published(monkeypatch) -> None:
+    """Production is already switched over; saying otherwise misdirects the owner."""
+    monkeypatch.setattr(release_center, "get_release",
+                        lambda cid: _summary(release_center.STATE_CANARY_PASSED))
+    monkeypatch.setattr(release_publish, "_readiness", lambda origin: {"ok": True, "deployment": {}})
+    out = release_publish.publish(
+        actor={"is_owner": True}, candidate_id="rc_x", idempotency_key="k" * 20,
+        production_origin="https://example.invalid",
+        approve=lambda **kw: None, promote=lambda **kw: None,
+        smoke=lambda origin, build: {"ok": False, "reason": "/ui/ вернул 502."},
+    )
+    assert out["ok"] is False
+    assert out["production_deployed"] is True
+    assert out["outcome"] == "deployed_validation_failed"
+    assert out["code"] == "validation_failed_after_deploy"
+    assert out["reason"].startswith("Production развёрнут, validation failed")
+    assert "502" in out["reason"]
+    assert out["failed_stage"] == release_publish.STAGE_SMOKE
+    assert out["closeout_blocked"] is True
+    # Recovery points at the existing contract rather than a new mechanism.
+    assert out["rollback"]["action"] == "rollback-production"
+    assert "step_up" in out["rollback"]["requires"]
+
+
+def test_failure_before_deploy_still_reports_nothing_was_published(monkeypatch) -> None:
+    monkeypatch.setattr(release_center, "get_release",
+                        lambda cid: _summary(release_center.STATE_CANARY_PASSED))
+
+    def refuse(**kwargs):
+        raise release_center.ReleaseCenterError("нет прав", 403, code="owner_required")
+
+    out = release_publish.publish(
+        actor={"is_owner": False}, candidate_id="rc_x", idempotency_key="k" * 20,
+        production_origin="https://example.invalid", approve=refuse,
+        promote=lambda **kw: pytest.fail("must not deploy"),
+    )
+    assert out["production_deployed"] is False
+    assert out["outcome"] == "not_published"
+    assert out["closeout_blocked"] is True
+    assert "rollback" not in out
+    assert not out["reason"].startswith("Production развёрнут")
+
+
+def test_successful_publication_does_not_block_closeout(monkeypatch) -> None:
+    monkeypatch.setattr(release_center, "get_release",
+                        lambda cid: _summary(release_center.STATE_CANARY_PASSED))
+    monkeypatch.setattr(release_publish, "_readiness", lambda origin: {"ok": True, "deployment": {}})
+    out = release_publish.publish(
+        actor={"is_owner": True}, candidate_id="rc_x", idempotency_key="k" * 20,
+        production_origin="https://example.invalid",
+        approve=lambda **kw: None, promote=lambda **kw: None,
+        smoke=lambda origin, build: {"ok": True},
+    )
+    assert out["ok"] is True
+    assert out["outcome"] == "published"
+    assert out["closeout_blocked"] is False
+
+
+def test_ui_distinguishes_a_deployed_but_unvalidated_run() -> None:
+    from pathlib import Path
+
+    ui = (Path(release_publish.__file__).resolve().parents[1]
+          / "app" / "static" / "aurora" / "assets" / "ui.js").read_text(encoding="utf-8")
+    assert "Production развёрнут, validation failed" in ui
+    assert "Публикация не выполнена" in ui
+    assert "production_deployed" in ui
+    assert "Closeout заблокирован" in ui
+    assert "rollback-production" in ui

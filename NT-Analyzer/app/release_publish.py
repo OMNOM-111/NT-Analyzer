@@ -11,6 +11,13 @@ authorisation stays where it was — capability, owner, step-up and the
 `canary_passed` state are all enforced by release_center, and this adds no way
 around them. The first failing stage stops the run and carries a short reason;
 later stages are reported as not started rather than silently missing.
+
+Failing after the deploy stage is reported differently from failing before it.
+Once promotion succeeds Production is already serving the new artifact, so a
+readiness or smoke failure is "deployed, validation failed" and not "nothing
+happened" -- the second reading sends the owner looking for a deployment that
+is live. Either way closeout stays blocked. Recovery uses the Release Center's
+existing rollback contract; no new mechanism is introduced here.
 """
 from __future__ import annotations
 
@@ -111,12 +118,36 @@ def publish(
     stages: List[Dict[str, Any]] = [_stage_row(key, label) for key, label in STAGES]
     by_key = {row["stage"]: row for row in stages}
 
+    # Once the deploy stage passes, Production is already switched over. A
+    # later validation failure is not "the publication did not happen" -- the
+    # new artifact is serving traffic and saying otherwise sends the owner
+    # looking for a deployment that is already live.
+    deployed = {"value": False}
+
     def fail(stage: str, reason: str, *, status: int = 409, code: str = "publish_failed"):
         by_key[stage]["state"] = "failed"
         by_key[stage]["reason"] = reason
+        if not deployed["value"]:
+            return {
+                "ok": False, "stages": stages, "failed_stage": stage,
+                "reason": reason, "status": status, "code": code,
+                "outcome": "not_published", "production_deployed": False,
+                "closeout_blocked": True,
+            }
         return {
             "ok": False, "stages": stages, "failed_stage": stage,
-            "reason": reason, "status": status, "code": code,
+            "reason": f"Production развёрнут, validation failed: {reason}",
+            "status": status, "code": "validation_failed_after_deploy",
+            "outcome": "deployed_validation_failed", "production_deployed": True,
+            "closeout_blocked": True,
+            # Recovery uses the Release Center's existing contract; nothing new
+            # is introduced here. It needs owner + step-up and only accepts an
+            # artifact previously deployed to Production.
+            "rollback": {
+                "available": True,
+                "action": "rollback-production",
+                "requires": ["owner", "step_up", "previously_deployed_artifact"],
+            },
         }
 
     summary = release_center.get_release(str(candidate_id or "")).get("summary") or {}
@@ -147,6 +178,7 @@ def publish(
     except release_center.ReleaseCenterError as exc:
         return fail(STAGE_DEPLOY, str(exc), status=exc.status, code=exc.code)
     by_key[STAGE_DEPLOY]["state"] = "passed"
+    deployed["value"] = True
 
     origin = str(production_origin or "").strip()
     if not origin:
@@ -169,4 +201,5 @@ def publish(
 
     final = release_center.get_release(str(candidate_id or "")).get("summary") or {}
     return {"ok": True, "stages": stages, "failed_stage": "", "reason": "",
-            "summary": final}
+            "outcome": "published", "production_deployed": True,
+            "closeout_blocked": False, "summary": final}

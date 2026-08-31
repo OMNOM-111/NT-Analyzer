@@ -5396,9 +5396,8 @@
       const candidate = doc.candidate || {};
       const version = String(candidate.app_version || '');
       if (!window.confirm(
-        'Опубликовать ' + version + '?
-
-' +
+        'Опубликовать ' + version + '?' +
+        '\n\n' +
         'В Production будет продвинут тот же проверенный artifact. Пересборки не будет.')) return;
       const box = qs('#pipe-publish-progress', node);
       const before = button.textContent;
@@ -5413,7 +5412,22 @@
       } catch (e) {
         // The failure carries how far the run got; show that, not just the text.
         const detail = (e && e.payload) || {};
-        if (box) box.innerHTML = publishStagesHtml(detail.stages);
+        if (box) {
+          // A failure after the deploy stage means Production is already
+          // switched over. Saying "публикация не состоялась" there would send
+          // the owner looking for a deployment that is live.
+          const deployed = detail.production_deployed;
+          box.innerHTML = publishStagesHtml(detail.stages) +
+            `<div class="pub-outcome ${deployed ? 'is-deployed' : 'is-failed'}">${
+              deployed
+                ? 'Production развёрнут, validation failed'
+                : 'Публикация не выполнена'}${
+              detail.failed_stage ? ' · этап: ' + esc(detail.failed_stage) : ''}</div>` +
+            (detail.closeout_blocked ? '<div class="cab-sub">Closeout заблокирован до устранения причины.</div>' : '') +
+            (deployed && detail.rollback && detail.rollback.available
+              ? '<div class="cab-sub">Откат — штатным действием «rollback-production» в разделе «Все действия».</div>'
+              : '');
+        }
         if (msg) msg.textContent = (e && e.message) || String(e);
         button.disabled = false;
         button.textContent = before;

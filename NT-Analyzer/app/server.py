@@ -4998,6 +4998,13 @@ class Handler(BaseHTTPRequestHandler):
                     "code": out.get("code") or "publish_failed",
                     "stages": out.get("stages") or [],
                     "failed_stage": out.get("failed_stage") or "",
+                    # Whether Production was switched over before the failure.
+                    # Reporting a validation failure as "not published" would
+                    # send the owner looking for a deployment that is live.
+                    "outcome": out.get("outcome") or "not_published",
+                    "production_deployed": bool(out.get("production_deployed")),
+                    "closeout_blocked": bool(out.get("closeout_blocked", True)),
+                    "rollback": out.get("rollback") or {},
                 })
                 return
             self._json(HTTPStatus.OK, out)
