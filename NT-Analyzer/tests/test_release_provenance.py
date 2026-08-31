@@ -150,3 +150,101 @@ def test_diagnosing_on_canary_stays_possible() -> None:
     body = open(release_center.__file__, encoding="utf-8").read()
     deploy = body[body.index("def deploy_canary("):body.index("def record_canary_check(")]
     assert "release_provenance" not in deploy
+
+
+# --------------------------------------------------------------------------- #
+# Publishing moves Production forward. Going back is a rollback.
+# --------------------------------------------------------------------------- #
+def test_a_candidate_behind_production_cannot_be_published(monkeypatch) -> None:
+    """The audit case: Production on a new main SHA, a canary_passed candidate
+    from an older main SHA. It passes provenance — an old commit on main is as
+    approved as a new one — and must still be refused."""
+    old, new = "a" * 40, "b" * 40
+
+    def ancestry(*args, **kwargs):
+        # `is-ancestor <live> <candidate>` is false: live is newer.
+        if args[0] == "merge-base":
+            return 1, ""
+        return 0, ""
+
+    monkeypatch.setattr(release_provenance, "_git", ancestry)
+    verdict = release_provenance.forward_only(
+        old, {"state": "known", "commit": new})
+    assert verdict["ok"] is False
+    assert verdict["code"] == "candidate_not_ahead_of_production"
+    assert "старее текущего Production" in verdict["reason"]
+    assert "Rollback" in verdict["reason"]
+
+
+def test_a_candidate_ahead_of_production_is_allowed(monkeypatch) -> None:
+    monkeypatch.setattr(release_provenance, "_git", lambda *a, **k: (0, ""))
+    assert release_provenance.forward_only(
+        "b" * 40, {"state": "known", "commit": "a" * 40})["ok"] is True
+
+
+def test_the_same_commit_is_allowed_without_asking_git(monkeypatch) -> None:
+    """Re-publishing the live release is not a rollback."""
+    def refuse(*args, **kwargs):
+        raise AssertionError("git must not be consulted for an identical commit")
+
+    monkeypatch.setattr(release_provenance, "_git", refuse)
+    assert release_provenance.forward_only(
+        "a" * 40, {"state": "known", "commit": "a" * 40})["ok"] is True
+
+
+def test_no_production_at_all_permits_a_first_publication(monkeypatch) -> None:
+    monkeypatch.setattr(release_provenance, "_git", lambda *a, **k: (1, ""))
+    identity = release_provenance.production_identity({}, {})
+    assert identity["state"] == release_provenance.PRODUCTION_ABSENT
+    assert release_provenance.forward_only("a" * 40, identity)["ok"] is True
+
+
+def test_a_production_whose_identity_cannot_be_read_blocks_publication() -> None:
+    """Absent and undeterminable are different states, and only one of them is
+    safe to publish into without comparing. A Production that exists but cannot
+    be identified is a question that failed, not an empty slot."""
+    from_environment = release_provenance.production_identity(
+        {"environments": [{"environment": "production", "git_commit_sha": ""}]}, {})
+    assert from_environment["state"] == release_provenance.PRODUCTION_UNKNOWN
+    refused = release_provenance.forward_only("a" * 40, from_environment)
+    assert refused["ok"] is False
+    assert refused["code"] == "production_identity_unknown"
+    assert "до восстановления identity" in refused["reason"]
+
+    # Deployment history alone is enough evidence that Production exists.
+    from_ledger = release_provenance.production_identity(
+        {}, {"releases": [{"state": "production_live", "git_commit_sha": ""}]})
+    assert from_ledger["state"] == release_provenance.PRODUCTION_UNKNOWN
+    assert release_provenance.forward_only("a" * 40, from_ledger)["ok"] is False
+
+
+def test_approval_enforces_it_and_rollback_is_untouched() -> None:
+    body = open(release_center.__file__, encoding="utf-8").read()
+    approve = body[body.index("def approve_production("):body.index("def schedule_production(")]
+    assert "forward_only" in approve
+    assert "candidate_not_ahead_of_production" in approve
+    # Ordered after provenance, which is itself after the canary_passed check.
+    assert approve.index("release_provenance.eligibility") < approve.index("forward_only")
+    rollback = body[body.index("def rollback_production("):]
+    assert "forward_only" not in rollback, (
+        "going back is what rollback is for and must not be gated by this")
+
+
+def test_the_panel_renders_the_refusal_it_did_not_decide() -> None:
+    gates = pipeline_view.promotion_gates(
+        {"state": "canary_passed", "git_commit_sha": "a" * 40,
+         "manifest_sha256": "a" * 64},
+        {"environments": [{"environment": "production", "git_commit_sha": "b" * 40}]},
+        provenance_check=lambda sha: {
+            "eligible": True, "reason": "", "checks": [], "blocking": [], "commit": sha},
+        identity_check=lambda registry, releases: {
+            "state": "known", "commit": "b" * 40, "source": "environment"},
+        forward_check=lambda candidate, live: {
+            "ok": False, "code": "candidate_not_ahead_of_production",
+            "reason": "Эта сборка старее текущего Production (bbbbbbbbbbbb). "
+                      "Для возврата используй Rollback."},
+    )
+    row = next(g for g in gates["gates"] if g["id"] == "forward_only")
+    assert row["ok"] is False
+    assert "Rollback" in row["detail"]
+    assert gates["allowed"] is False

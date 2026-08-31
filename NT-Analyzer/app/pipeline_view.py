@@ -95,7 +95,10 @@ def promotion_gates(candidate: Dict[str, Any],
                     registry: Optional[Dict[str, Any]] = None,
                     control: Optional[Dict[str, Any]] = None,
                     registry_is_authoritative: bool = True,
-                    provenance_check: Optional[Any] = None) -> Dict[str, Any]:
+                    provenance_check: Optional[Any] = None,
+                    forward_check: Optional[Any] = None,
+                    identity_check: Optional[Any] = None,
+                    candidates: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """Why Production promotion is or is not allowed, in plain terms.
 
     Each gate is phrased as the thing that must be true, so a blocked promotion
@@ -113,6 +116,14 @@ def promotion_gates(candidate: Dict[str, Any],
         from . import release_provenance
 
         provenance_check = release_provenance.eligibility
+    if forward_check is None:
+        from . import release_provenance
+
+        forward_check = release_provenance.forward_only
+    if identity_check is None:
+        from . import release_provenance
+
+        identity_check = release_provenance.production_identity
     state = str(candidate.get("state") or "")
     artifact = _runtime_artifact_sha(candidate)
 
@@ -127,6 +138,10 @@ def promotion_gates(candidate: Dict[str, Any],
     # Asked unconditionally: a candidate with no commit at all is exactly the
     # case the checker has to refuse, not one to skip the question for.
     provenance = provenance_check(str(candidate.get("git_commit_sha") or ""))
+    # Same rule the backend enforces, rendered rather than re-decided.
+    forward = forward_check(
+        str(candidate.get("git_commit_sha") or ""),
+        identity_check(registry, {"releases": candidates or []}))
 
     gates = [
         {
@@ -135,6 +150,13 @@ def promotion_gates(candidate: Dict[str, Any],
             "ok": bool(provenance.get("eligible")),
             "detail": str(provenance.get("reason") or "")
                       or "commit входит в origin/main и прошёл CI",
+        },
+        {
+            "id": "forward_only",
+            "label": "Сборка не старее текущего Production",
+            "ok": bool(forward.get("ok")),
+            "detail": str(forward.get("reason") or "")
+                      or "commit кандидата совпадает с Production или впереди него",
         },
         {
             "id": "artifact_exists",
@@ -523,7 +545,8 @@ def assemble(*, registry: Optional[Dict[str, Any]], releases: Optional[Dict[str,
         "stages": stage_progress(candidate),
         "promotion": promotion_gates(
             candidate, registry, control=control,
-            registry_is_authoritative=registry_is_authoritative),
+            registry_is_authoritative=registry_is_authoritative,
+            candidates=candidates),
         "compare": compare(cards),
         "overall": overall_status(cards, accepted,
                                   registry_known=registry_known,

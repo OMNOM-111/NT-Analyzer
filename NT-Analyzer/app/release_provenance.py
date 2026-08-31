@@ -159,6 +159,90 @@ def evaluate(commit_sha: str = "", *, ci: Optional[Any] = None) -> Dict[str, Any
     }
 
 
+# Production has three states, and only one of them permits a comparison-free
+# publication. "No Production yet" is a genuine first deployment. "Production
+# exists but its identity could not be read" is a question we failed to answer,
+# and answering it optimistically is how a rollback gets published by accident.
+PRODUCTION_ABSENT = "absent"
+PRODUCTION_KNOWN = "known"
+PRODUCTION_UNKNOWN = "unknown"
+
+_DEPLOYED_STATES = frozenset({"production_live", "production_deploying", "rolled_back"})
+
+
+def production_identity(registry: Any = None, releases: Any = None) -> Dict[str, Any]:
+    """What Production is running, and whether that could be determined at all.
+
+    Preferred source is what Production reports about itself; the release
+    ledger's deployment history is the fallback for the window before an
+    environment has checked in. Evidence that Production exists is kept
+    separate from the commit itself, so an unreadable identity cannot be
+    mistaken for an empty one.
+    """
+    rows = [row for row in ((registry or {}).get("environments") or [])
+            if str(row.get("environment") or "") == "production"]
+    history = [row for row in ((releases or {}).get("releases") or [])
+               if str(row.get("state") or "") in _DEPLOYED_STATES]
+
+    for row in rows:
+        sha = str(row.get("git_commit_sha") or "").strip().lower()
+        if _SHA_RE.match(sha):
+            return {"state": PRODUCTION_KNOWN, "commit": sha, "source": "environment"}
+    for row in history:
+        sha = str(row.get("git_commit_sha") or "").strip().lower()
+        if _SHA_RE.match(sha):
+            return {"state": PRODUCTION_KNOWN, "commit": sha, "source": "ledger"}
+    if rows or history:
+        return {"state": PRODUCTION_UNKNOWN, "commit": "", "source": ""}
+    return {"state": PRODUCTION_ABSENT, "commit": "", "source": ""}
+
+
+def forward_only(candidate_sha: str, production: Any) -> Dict[str, Any]:
+    """Whether publishing this candidate would move Production forward.
+
+    Provenance asks where the code came from; it cannot tell a current release
+    from a superseded one, because an old commit on main is every bit as
+    approved as a new one. A candidate built from an earlier main commit
+    therefore passes provenance while publishing it would silently roll
+    Production back -- which is what an audit found sitting one click away.
+
+    Going back is a rollback, and rollback has its own contract, its own owner
+    gate and its own artifact rules. It is not this button.
+    """
+    candidate = str(candidate_sha or "").strip().lower()
+    identity = (production if isinstance(production, dict)
+                else production_identity({"environments": [
+                    {"environment": "production", "git_commit_sha": str(production or "")}]}
+                    if production else None, None))
+    state = str(identity.get("state") or PRODUCTION_UNKNOWN)
+    live = str(identity.get("commit") or "").strip().lower()
+
+    if not _SHA_RE.match(candidate):
+        return {"ok": False, "reason": "Commit кандидата неизвестен.",
+                "code": "candidate_commit_unknown", "production": identity}
+    if state == PRODUCTION_ABSENT:
+        # Genuinely nothing deployed: there is nothing to be older than.
+        return {"ok": True, "reason": "", "code": "", "production": identity}
+    if state != PRODUCTION_KNOWN or not _SHA_RE.match(live):
+        return {
+            "ok": False, "production": identity,
+            "code": "production_identity_unknown",
+            "reason": ("Не удалось определить текущую версию Production. "
+                       "Публикация запрещена до восстановления identity."),
+        }
+    if candidate == live:
+        return {"ok": True, "reason": "", "code": "", "production": identity}
+    code, _ = _git("merge-base", "--is-ancestor", live, candidate)
+    if code == 0:
+        return {"ok": True, "reason": "", "code": "", "production": identity}
+    return {
+        "ok": False, "production": identity,
+        "code": "candidate_not_ahead_of_production",
+        "reason": ("Эта сборка старее текущего Production "
+                   f"({live[:12]}). Для возврата используй Rollback."),
+    }
+
+
 # The panel asks on every poll, and the answer costs a fetch and a CI query.
 # Cached briefly per commit: ancestry does not change second to second, and a
 # stale-by-a-minute refusal is safe while a stale approval is not -- so only
