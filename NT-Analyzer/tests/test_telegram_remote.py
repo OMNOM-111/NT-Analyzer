@@ -170,7 +170,7 @@ def test_audit_contains_required_identity_and_tunnel_fields(isolated) -> None:
     assert row["timestamp"].endswith("Z")
 
 
-def test_public_host_requires_init_data_and_accepts_whitelisted_user(isolated, monkeypatch) -> None:
+def test_public_host_rejects_retired_init_data_even_for_whitelisted_user(isolated, monkeypatch) -> None:
     monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
     monkeypatch.setenv("NTA_TELEGRAM_BOT_TOKEN", TOKEN)
     telegram_remote._write({
@@ -187,8 +187,10 @@ def test_public_host_requires_init_data_and_accepts_whitelisted_user(isolated, m
             "Host": "stratforge.example.com",
             telegram_remote.INIT_DATA_HEADER: _init_data(42),
         })
-        with urllib.request.urlopen(good, timeout=5) as response:
-            assert response.status == 200
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(good, timeout=5)
+        assert exc.value.code == 410
+        assert json.loads(exc.value.read().decode("utf-8"))["code"] == "telegram_mini_app_isolated"
 
         missing = urllib.request.Request(url, headers={"Host": "stratforge.example.com"})
         with pytest.raises(urllib.error.HTTPError) as exc:
@@ -282,15 +284,17 @@ def test_browser_session_merge_requires_matching_canonical_uuid(
         assert "nt_elevated_until" not in request._remote_context
 
 
-def test_aurora_bundle_carries_init_data_and_mobile_contract() -> None:
+def test_aurora_bundle_excludes_miniapp_and_keeps_current_login_contract() -> None:
     root = server_mod.STATIC_DIR / "aurora"
     api = (root / "assets" / "api.js").read_text(encoding="utf-8")
     css = (root / "assets" / "theme.css").read_text(encoding="utf-8")
     ui = (root / "assets" / "ui.js").read_text(encoding="utf-8")
-    assert "X-Telegram-Init-Data" in api
-    assert "telegramRemoteMe" in api
-    assert "telegram-mini-app" in css
+    assert "X-Telegram-Init-Data" not in api
+    assert "telegramRemoteMe" not in api
+    assert "telegram-mini-app" not in css
+    assert "authLoginStart" in api
+    assert "telegramStatus" in api
     assert "новый пользователь автоматически получает полный пробный доступ к продукту на 7 дней" in ui
     assert "Живые графики используют только разрешённый для аккаунта источник market data" in ui
     assert "Новый аккаунт активируется только вашим подтверждением" not in ui
-    assert "https://web.telegram.org" in server_mod.STATIC_CSP
+    assert "https://web.telegram.org" not in server_mod.STATIC_CSP

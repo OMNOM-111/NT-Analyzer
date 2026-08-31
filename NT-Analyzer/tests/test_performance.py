@@ -288,8 +288,8 @@ def t02(tmp: Path) -> None:
 
 @case("t03: static Performance Center page and API route are wired")
 def t03(tmp: Path) -> None:
-    html = (ROOT / "app" / "static" / "performance.html").read_text(encoding="utf-8")
-    js = (ROOT / "app" / "static" / "performance.js").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "performance.html").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "performance.js").read_text(encoding="utf-8")
     server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
     assert "ЦЕНТР ДОХОДНОСТИ" in html
     assert "Скачать все сделки" in html

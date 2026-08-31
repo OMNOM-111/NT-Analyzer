@@ -1,7 +1,7 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
-- Last verified UTC: 2026-08-30T02:05:00Z
+- Last verified UTC: 2026-08-31T00:00:00Z
 - Verified against Git SHA: 1279645e48e32000978364b38fb20d3dcd303843
 - Verified deployed artifact Git SHA: `1a1d54aa728d487203bb8342ecf142752610f4cd`
 - Current Production version/build/artifact when known: `0.10.0-beta.79`; `sf-0.10.0-beta.79-1a1d54aa728d-20260829T234541Z`; live release dir `0.10.0-beta.79-1a1d54aa728d`
@@ -23,6 +23,7 @@
 | Subsystem | Status | Current fact | Remaining limit |
 | --- | --- | --- | --- |
 | Auth / owner identity | `BETA` | One canonical owner UUID is preserved across isolated environments; Telegram QR/one-tap confirmation uses the shared environment-routed bot flow. Post-revoke Google OAuth and Resend smoke passed on Canary and Production | Platform secrets have a canonical external storage contract; three older platform secrets still legally remain in `production-app.env` until separately migrated |
+| Legacy UI / Telegram Mini App | `DEPRECATED` | Development current runtime serves Aurora only; legacy UI, Mini App, remote-access and tunnel routes fail with HTTP 410. Classic assets are available only in a separate localhost read-only Legacy Viewer | not deployed to Canary/Production; historical snapshots remain until owner review |
 | User entry and trial access | `BETA` | Anonymous preview access is removed. A verified new account receives one full seven-day product trial; owner extension records actor, reason and before/after history | Product access does not grant third-party market-data redistribution rights |
 | Admin / Release Center | `BETA` | Development creates one signed immutable artifact, Canary records acceptance and Production promotes the same artifact through the server-authoritative control plane | any application change starts a new artifact cycle |
 | Test isolation | `AVAILABLE` | Full beta.79 closeout regression passed `2327 passed, 32 skipped, 0 failed`; live data roots are excluded from test fixtures | real-PostgreSQL groups require their explicit test DSNs |

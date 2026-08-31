@@ -729,17 +729,11 @@ def _remote_config() -> Dict[str, Any]:
 
 
 def auth_required() -> bool:
-    # Mandatory Telegram verification for every login (owner included). This is a
-    # security invariant that must NOT depend on a mutable flag which can be reset
-    # in the config file. Once the public Mini App is exposed (remote_enabled),
-    # authentication is ALWAYS required; disabling it there would let any Telegram
-    # visitor inherit access. With no remote access configured it still defaults
-    # to required. Only the explicit test bypass turns it off.
+    # Authentication remains fail-closed, but the retired Mini App flag no longer
+    # participates in the current product's security decision.
     if os.environ.get("NTA_TEST_BYPASS_AUTH") == "1":
         return False
     config = _remote_config()
-    if config.get("remote_enabled"):
-        return True
     return bool(config.get("desktop_auth_required", True))
 
 

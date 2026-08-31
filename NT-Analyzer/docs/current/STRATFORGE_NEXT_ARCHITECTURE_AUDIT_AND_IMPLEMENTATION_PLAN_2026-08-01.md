@@ -389,7 +389,9 @@ CREATE TABLE sf_document_revisions (
 - Telegram webhook endpoint exists: `POST /api/telegram/webhook` in `app/server.py:5973`.
 - Connector v1 endpoints exist: `app/server.py:1647-1653`, `app/server.py:6000`.
 - Owner operations endpoint exists: `GET /api/owner/operations` in `app/server.py:3514-3521`.
-- Mini App auth header is enforced in `_authorize_api()`. Evidence: `app/server.py:1485-1618`.
+- Historical pre-isolation state: Mini App auth header was enforced in
+  `_authorize_api()`. Since 2026-08-31 the current runtime rejects this transport
+  with HTTP 410 before normal API authorization.
 
 ### 6.2 New/changed API contracts
 
@@ -824,7 +826,7 @@ Recommended model: средняя reasoning-модель for file moves, сил�
 | Migration | UUID backfill, dual-write compatibility, FK migration, RLS policies, restore from backup into isolated DB. | Existing Telegram users retain sessions/profile/workspaces/dialogs/entitlements/connectors/audit mapping. |
 | Auth/account linking | Telegram first login, Google first login, email OTP first login, linking/unlinking, duplicate provider subject, email collision. | No auto-merge by email; unlink cannot remove last login method; every link has audit and notification. |
 | Multi-device | New pending device, approval, rejection, revoke, session invalidation, connector device. | Pending device cannot become trusted without step-up; revoked device sessions die immediately. |
-| Permissions | Owner, developer with explicit grants, ordinary user, beginner/professional product modes, Mini App restrictions. | Admin and release endpoints are server-denied without capability, not only hidden in UI. |
+| Permissions | Owner, developer with explicit grants, ordinary user, beginner/professional product modes; Mini App is deprecated and HTTP 410. | Admin and release endpoints are server-denied without capability, not only hidden in UI. |
 | Environment isolation | Cookie names, CSRF keys, local-storage namespaces, DB IDs, queue IDs, storage IDs, host/origin checks. | Canary cannot read/write Production data and cannot reuse Production session/token/CSRF. |
 | Telegram separation | Separate bot token/config per env, webhook secret, update dedupe, outbox dedupe, conversation key migration. | DEV/CANARY messages are marked and never enter Production bot queues/conversations. |
 | Connector pairing | P-256 enrollment, signed challenge/hello, workspace mismatch, capability mismatch, idempotency conflict, canary contour. | Connector sessions are environment-bound; personal pairing requires Telegram + verified email. |

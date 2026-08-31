@@ -150,6 +150,7 @@ if __package__ is None or __package__ == "":
     from app import demo_backtest  # type: ignore[no-redef]
     from app import practice_trading  # type: ignore[no-redef]
     from app import community  # type: ignore[no-redef]
+    from app import legacy_boundary  # type: ignore[no-redef]
     from app.ai_lab import ai_ratings as ai_ratings  # type: ignore[no-redef]
 else:
     from . import jobqueue
@@ -252,6 +253,7 @@ else:
     from . import demo_backtest
     from . import practice_trading
     from . import community
+    from . import legacy_boundary
     from .ai_lab import ai_ratings as ai_ratings
 
 _local_secrets.apply()
@@ -295,14 +297,12 @@ def _emit_financial_ledger_event(change: Dict[str, Any], *, source: str) -> None
         dedupe_seconds=24 * 3600,
     )
 
-# Uniform Content-Security-Policy for all served static UI (new Aurora + legacy).
-# Both UIs externalize JS and use no inline <script>/onclick, so `script-src 'self'`
-# blocks injected inline script while inline style attributes remain allowed.
+# Content-Security-Policy for the current Aurora UI.
 STATIC_CSP = (
     "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
     "script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; media-src 'self' blob:; "
     "base-uri 'none'; form-action 'self'; "
-    "object-src 'none'; frame-ancestors 'self' https://web.telegram.org https://*.telegram.org"
+    "object-src 'none'; frame-ancestors 'self'"
 )
 
 _SELF_SERVICE_POSTS = {
@@ -2350,6 +2350,7 @@ def _asset_build_stamp() -> str:
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "NTAnalyzer/0.1"
+    static_dir = STATIC_DIR
 
     # silence default access log
     def log_message(self, fmt: str, *args: Any) -> None:
@@ -5351,10 +5352,11 @@ class Handler(BaseHTTPRequestHandler):
         # Directory requests (e.g. "legacy/") serve the folder's index.html.
         if rel.endswith("/"):
             rel += "index.html"
-        # Disallow path traversal: resolve and ensure inside STATIC_DIR.
-        target = (STATIC_DIR / rel).resolve()
+        static_dir = Path(self.static_dir).resolve()
+        # Disallow path traversal: resolve and ensure inside this handler's bundle.
+        target = (static_dir / rel).resolve()
         try:
-            target.relative_to(STATIC_DIR.resolve())
+            target.relative_to(static_dir)
         except ValueError:
             self._err(HTTPStatus.FORBIDDEN, "path traversal blocked")
             return
@@ -5362,7 +5364,7 @@ class Handler(BaseHTTPRequestHandler):
             if target.suffix == "":
                 html_target = target.with_suffix(".html")
                 try:
-                    html_target.relative_to(STATIC_DIR.resolve())
+                    html_target.relative_to(static_dir)
                 except ValueError:
                     self._err(HTTPStatus.FORBIDDEN, "path traversal blocked")
                     return
@@ -5559,6 +5561,18 @@ class Handler(BaseHTTPRequestHandler):
         self._err(status, "request rejected by deployment edge policy", code=decision.code)
         return False
 
+    def _reject_isolated_legacy_surface(self) -> bool:
+        surface = legacy_boundary.retired_surface(self.path, self.headers)
+        if not surface:
+            return False
+        self.close_connection = True
+        self._err(
+            HTTPStatus.GONE,
+            "This legacy surface is isolated from the current StratForge runtime.",
+            code=f"{surface}_isolated",
+        )
+        return True
+
     def do_GET(self) -> None:  # noqa: N802
         self._begin_request_observation()
         self._response_started = False
@@ -5571,6 +5585,8 @@ class Handler(BaseHTTPRequestHandler):
         self._extra_headers = []
         try:
             if not self._check_deployment_edge():
+                return
+            if self._reject_isolated_legacy_surface():
                 return
             self._route_get()
         except Exception:
@@ -5591,6 +5607,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if not self._check_deployment_edge():
                 return
+            if self._reject_isolated_legacy_surface():
+                return
             self._route_post()
         except Exception:
             self._handle_unexpected("POST")
@@ -5610,6 +5628,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if not self._check_deployment_edge():
                 return
+            if self._reject_isolated_legacy_surface():
+                return
             self._route_delete()
         except Exception:
             self._handle_unexpected("DELETE")
@@ -5621,7 +5641,7 @@ class Handler(BaseHTTPRequestHandler):
         path = url.path
         qs = urllib.parse.parse_qs(url.query)
 
-        if path in {"/api/live", "/api/health/live"}:
+        if path in {"/live", "/api/live", "/api/health/live"}:
             deployment = getattr(self.server, "deployment_config", None)
             if deployment is None:
                 deployment = runtime_env.deployment_config()
@@ -5631,7 +5651,7 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        if path in {"/api/ready", "/api/health/ready"}:
+        if path in {"/ready", "/api/ready", "/api/health/ready"}:
             deployment = getattr(self.server, "deployment_config", None)
             if deployment is None:
                 deployment = runtime_env.deployment_config()
@@ -6068,10 +6088,6 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Location", "/ui" + new_rel + suffix)
                 self.end_headers()
                 return
-            # Legacy (classic) UI lives at app/static/<file>; serve it under /ui/legacy/.
-            if rel == "/legacy" or rel.startswith("/legacy/"):
-                self._serve_static(rel[len("/legacy"):] or "/")
-                return
             # New Aurora UI is primary: its pages + assets are served from app/static/aurora/.
             _new_pages = {
                 "/", "/index.html", "/backtesting.html", "/trading.html",
@@ -6082,8 +6098,7 @@ class Handler(BaseHTTPRequestHandler):
             if rel in _new_pages or rel.startswith("/assets/") or rel.startswith("/brand/"):
                 self._serve_static("aurora/mode-entry.html" if rel == "/" else "aurora" + rel)
                 return
-            # Fallback: any other path resolves against the static root (legacy-named files).
-            self._serve_static(rel)
+            self._err(HTTPStatus.NOT_FOUND, f"current UI route not found: {rel}")
             return
 
         if path == "/api/health":

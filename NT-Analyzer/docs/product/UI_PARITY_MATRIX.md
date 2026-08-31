@@ -1,12 +1,13 @@
 # Aurora functional parity matrix
 
 This matrix compares active operator capabilities, not pixel-for-pixel layout.
-Classic remains available for rollback/reference, but normal work starts in Aurora.
+Aurora is the only current product UI. Classic is retained temporarily in a
+separate read-only Legacy Viewer for historical report reference.
 
 | Area | Aurora capability | Status |
 |---|---|---|
 | Shell | PT date/time, CME market state/countdown, NinjaTrader/Bridge/LM status, selected account, global search | Complete |
-| Routing | Aurora default, classic fallback, canonical redirects, bidirectional single switch | Complete |
+| Routing | Aurora-only current runtime, canonical redirects, retired legacy/Mini App routes return HTTP 410 | Complete |
 | Backtesting | grouped instruments, profile/coverage drilldowns, dynamic parameters, single/batch submit, server filters/sorting/hierarchy, period/frequency/confidence, favorites, queue/cancel/delete, nested metrics/trades, semantic P&L, entry/exit/draw markers, resizable/full drawer | Complete |
 | Trading control | real accounts, paper-only start/stop, positions/orders/executions/errors, command queue and command-status tracking | Complete |
 | Trading audit | runtime sessions, start dates, lifecycle events, launch parameters, operator journal, hidden-class restore | Complete |
@@ -33,5 +34,5 @@ Classic remains available for rollback/reference, but normal work starts in Auro
   most important operator context remains visible at tablet width.
 - Account funding is never inferred from balance direction. Unknown historical
   movements stay unknown; this is stricter than displaying balance growth as P&L.
-- Classic is not deleted. It is a safe fallback at `/ui/legacy/`, but not required
-  to access the endpoint families used by normal operation.
+- Classic assets are preserved outside the current static root. The isolated
+  Legacy Viewer is reference-only and is not a fallback runtime.

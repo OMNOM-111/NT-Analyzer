@@ -1148,7 +1148,7 @@ def t_lmstudio_default_base_url_uses_ipv4_loopback() -> None:
 
 
 def t_ai_strategy_ui_preserves_ready_state_during_background_probe() -> None:
-    js = (Path(__file__).resolve().parents[1] / "app" / "static" / "ai-strategy.js").read_text(
+    js = (Path(__file__).resolve().parents[1] / "legacy_viewer" / "static" / "ai-strategy.js").read_text(
         encoding="utf-8"
     )
     assert "previousLm?.run_allowed === true" in js
@@ -1161,7 +1161,7 @@ def t_ai_strategy_ui_preserves_ready_state_during_background_probe() -> None:
 
 
 def t_ai_strategy_ui_hides_terminal_heartbeat() -> None:
-    js = (Path(__file__).resolve().parents[1] / "app" / "static" / "ai-strategy.js").read_text(
+    js = (Path(__file__).resolve().parents[1] / "legacy_viewer" / "static" / "ai-strategy.js").read_text(
         encoding="utf-8"
     )
     assert "appendActivity(data.entries || [], { showHeartbeat: !data.terminal })" in js
@@ -1275,8 +1275,8 @@ def t_bootstrap_never_autostarts_ninjatrader_without_env_opt_in() -> None:
 
 def t_ai_strategy_ui_has_bootstrap_controls() -> None:
     root = Path(__file__).resolve().parents[1]
-    html = (root / "app" / "static" / "ai-strategy.html").read_text(encoding="utf-8")
-    js = (root / "app" / "static" / "ai-strategy.js").read_text(encoding="utf-8")
+    html = (root / "legacy_viewer" / "static" / "ai-strategy.html").read_text(encoding="utf-8")
+    js = (root / "legacy_viewer" / "static" / "ai-strategy.js").read_text(encoding="utf-8")
     assert 'id="ai-bootstrap-btn"' in html
     assert 'id="ai-unload-lm-btn"' in html
     assert 'id="ai-bootstrap-wrap"' in html

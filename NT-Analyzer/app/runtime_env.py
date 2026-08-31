@@ -1069,6 +1069,8 @@ def session_cookie_name() -> str:
     suite are unaffected. Production is not yet deployed, so naming it explicitly
     does not break any existing session migration.
     """
+    if str(os.environ.get("STRATFORGE_LEGACY_VIEWER") or "").strip() == "1":
+        return "sf_legacy_viewer_session"
     if environment_explicit():
         env = deployment_environment()
         if env == CANARY:
@@ -1089,6 +1091,8 @@ def local_storage_namespace() -> str:
     implicit / unset environment — local development and the test suite — keeps
     bare keys (unchanged).
     """
+    if str(os.environ.get("STRATFORGE_LEGACY_VIEWER") or "").strip() == "1":
+        return "legacy-viewer"
     if environment_explicit():
         env = deployment_environment()
         if env == CANARY:
