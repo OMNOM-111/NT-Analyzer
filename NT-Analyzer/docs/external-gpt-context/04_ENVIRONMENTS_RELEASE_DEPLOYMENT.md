@@ -38,52 +38,39 @@ flowchart LR
 The Environment Switcher opens the selected origin and never carries session
 or browser storage between origins.
 
-## Current beta.81 release
+## Current beta.82 release
 
 | Field | Value |
 | --- | --- |
-| Candidate | `rc_b886226b4ae04a3b9cba9105a6de7c5f` |
-| Artifact | `art_2a97e2ba143641afaad40b59610d3bc0` |
-| Version / Git SHA | `0.10.0-beta.81` / `2f726d6b094e6a7c4248e935424e632bc7699324` |
-| Build ID | `sf-0.10.0-beta.81-2f726d6b094e-20260831T030814Z` |
-| Archive SHA256 | `5F546F4A97C8070509ED5BFF6478A2706D788D577E4C6FD73B259A19B84E6C39` |
-| Manifest SHA256 | `3028354E1C92897B74ED1F99928C6CE8...` |
+| Candidate | rc_be264bfe71984c4995d373e63b14cbd8 |
+| Artifact | art_7f7157c916654d39a1105cdf5e7e6be2 |
+| Version / Git SHA | 0.10.0-beta.82 / 796ebc82c1bc7239f8a403422bd6a33aab298742 |
+| Build ID | sf-0.10.0-beta.82-796ebc82c1bc-20260831T044201Z |
+| Archive SHA256 | EDDB5C67428B578E07862A7466B2A96840F2F3049A7132278FF1AD09F9A30FDC |
 | Signature / worktree | verified / clean |
 
-Canary accepted beta.81 and Production received the exact same artifact without
-rebuild: both deployments record `art_2a97e2ba143641afaad40b59610d3bc0`, the
-same archive SHA256 and the same build ID.
+Canary accepted beta.82 and Production received the exact same artifact without
+rebuild. live_trading_allowed stays false.
 
 | Environment | State | Ready |
 | --- | --- | --- |
 | Canary | live | PASS |
 | Production | live | PASS |
 
-`live_trading_allowed` stays `false`. Production readiness covers config, data
-root, signing key, object storage, database, connector control, Telegram
-consumer and queue.
+### Driven entirely through the owner-facing scenario
 
-### What this release contains
+Canary was reached with the deliver-canary operation the Development card
+button calls, and Production with the publish-production operation the Canary
+card button calls. No separate Release Center screen and no manual sequence of
+backend steps was used at any point.
 
-- The Environment Switcher is the release control panel: three stages in order,
-  one action per stage, identifiers behind a disclosure.
-- One canonical environment state for the whole screen.
-- «Что изменилось» read from the release's own changelog entry.
-- Publication as one backend operation reporting real stages.
+### Host load now reported by every environment
 
-### Promotion was driven through the new operation
-
-Production was promoted with `POST /api/admin/releases/<id>/publish-production`
-— the same call the panel's button makes — and all five stages reported passed:
-Подтверждение, Развёртывание, Readiness, Smoke, Готово.
-
-### Control plane configuration is what enables the button
-
-The promotion gate answers `allowed` only when the deciding peer is reachable.
-A Development process started without `data/secrets/environment-registry.env`
-has no peer list and no signing key, so the panel's publish button is disabled
-with «Control plane не настроен». Started through `start.ps1`, which loads that
-file, the gate returns `allowed` with `decided_by: canary` and the button works.
+All three environments publish measured CPU, memory and disk on their heartbeat
+and the figures survive the storage round trip: Development through kernel32,
+Canary and Production through /proc. Migration 0019 added the column; without
+it the values were reported on every beat and dropped on the way back, which is
+the failure 0017 documents for market_data and connector.
 
 ## Promotion authority
 
