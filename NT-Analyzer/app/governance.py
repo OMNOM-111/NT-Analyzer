@@ -25,9 +25,19 @@ PROJECT_OWNER = "Черевко Дмитро"
 # This is an API boundary, not just a navigation preference. Documents absent
 # from this set remain available to owner/docs administrators but cannot be
 # enumerated or fetched by an ordinary account through /api/governance/*.
+# Documents the product serves to a user. Everything listed here has to travel
+# with the artifact: a public document whose file is not shipped opens empty in
+# a deployed environment, which is how docs/legal and docs/agents were found.
+#
+# The four legacy-* documents were removed from this set. They are the owner's
+# project-rules material -- development rules, an application registry, a
+# Research Hub deployment note and a yearly plan -- kept outside the product
+# tree, marked category "legacy" and carrying no audience. They were never
+# product documentation, and being advertised to users by this allowlist while
+# living where no release can reach them was the contradiction. The owner still
+# reaches them through the privileged documents path.
 PUBLIC_DOCUMENT_IDS = frozenset({
     "project-overview", "charter", "laws", "local-ai-laws", "sync-map",
-    "legacy-rules", "legacy-registry", "legacy-hub-deploy", "legacy-family-plan",
     "risk-profile", "ai-lab-run-controls", "ai-lab-quality",
     "ai-lab-cloud-agents", "ai-lab-competitive-feedback",
     "ai-staff-index", "ai-staff-vitek", "ai-staff-chief", "ai-staff-dialogue",

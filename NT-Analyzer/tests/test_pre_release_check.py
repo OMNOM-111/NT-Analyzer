@@ -144,9 +144,37 @@ def test_public_agent_documents_are_shipped(bundle) -> None:
         assert target.read_text(encoding="utf-8-sig").strip()
 
 
-def test_documents_that_cannot_ship_are_stated_not_hidden() -> None:
-    """Four legacy documents live outside the shipment root entirely. No file
-    selection can include them, so they are reported rather than failed."""
-    rows = pre_release_check.accepted_exclusions()
-    assert rows, "an exclusion nobody can see is an exclusion nobody reviews"
-    assert all(".." in row for row in rows)
+def test_a_public_document_outside_the_shipment_root_is_a_failure() -> None:
+    """Being unreachable by any release is a contradiction, not an exemption.
+
+    Four legacy-* documents were advertised to users by the public allowlist
+    while living outside the product tree, where no file selection could ever
+    include them. They are no longer public; if one were re-advertised, this
+    must refuse it rather than record it as accepted.
+    """
+    from app import governance
+
+    shipped = {path.as_posix() for path in release_bundle._selected_files(release_bundle.ROOT)}
+    original = governance.PUBLIC_DOCUMENT_IDS
+    governance.PUBLIC_DOCUMENT_IDS = frozenset(set(original) | {"legacy-rules"})
+    try:
+        errors = pre_release_check._check_runtime_reads(release_bundle.ROOT, shipped)
+    finally:
+        governance.PUBLIC_DOCUMENT_IDS = original
+    assert any("legacy-rules" in row and "outside the shipment root" in row
+               for row in errors)
+    assert not pre_release_check._check_runtime_reads(release_bundle.ROOT, shipped)
+
+
+def test_legacy_project_documents_are_not_advertised_to_users() -> None:
+    """Owner project-rules material, kept outside the product and superseded."""
+    from app import governance
+
+    for doc_id in ("legacy-rules", "legacy-registry", "legacy-hub-deploy",
+                   "legacy-family-plan"):
+        row = next(r for r in governance.DEFAULT_DOCUMENTS["documents"]
+                   if r["id"] == doc_id)
+        assert not governance.document_is_public(row), (
+            f"{doc_id} is served to users but no release can carry it")
+        # Still registered, so the owner reaches it through the privileged path.
+        assert row.get("path")

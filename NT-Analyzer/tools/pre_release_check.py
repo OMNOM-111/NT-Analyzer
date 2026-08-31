@@ -63,9 +63,10 @@ def _check_runtime_reads(bundle: Path, shipped: set[str]) -> list[str]:
     imported, so nothing failed until a deployed environment tried to read it
     and served an empty page.
 
-    A document whose path leaves the shipment root cannot ship at all; those
-    are reported as accepted exclusions rather than failures, because no change
-    to the file selection could satisfy them.
+    Being outside the shipment root is not an excuse. A public document that no
+    release can reach is a contradiction to resolve -- move the file in, or stop
+    advertising it to users -- not an exemption to record, so it fails here like
+    any other unshipped public document.
     """
     errors: list[str] = []
     sys.path.insert(0, str(ROOT))
@@ -78,10 +79,16 @@ def _check_runtime_reads(bundle: Path, shipped: set[str]) -> list[str]:
         path = str(row.get("path") or "")
         if not path or not governance.document_is_public(row):
             continue
-        if path.startswith("..") or Path(path).is_absolute():
-            continue                      # outside the shipment root by design
+        outside = path.startswith("..") or Path(path).is_absolute()
+        if outside:
+            errors.append(
+                f"public document {row.get('id')} lives outside the shipment "
+                f"root and can never be shipped: {path}")
+            continue
         if not (ROOT / path).is_file():
-            continue                      # absent from the repository too
+            errors.append(
+                f"public document {row.get('id')} has no source file: {path}")
+            continue
         if path not in shipped:
             errors.append(
                 f"public document {row.get('id')} is not shipped: {path} "
@@ -103,21 +110,6 @@ def _check_runtime_reads(bundle: Path, shipped: set[str]) -> list[str]:
                 f"release summary for {version} does not resolve inside the artifact; "
                 "the card would show no «Что изменилось»")
     return errors
-
-
-def accepted_exclusions() -> list[str]:
-    """Registry documents that can never ship, stated rather than hidden."""
-    sys.path.insert(0, str(ROOT))
-    try:
-        from app import governance
-    except Exception:  # pragma: no cover - import guard
-        return []
-    rows = []
-    for row in governance.DEFAULT_DOCUMENTS["documents"]:
-        path = str(row.get("path") or "")
-        if path.startswith("..") or (path and Path(path).is_absolute()):
-            rows.append(f"{row.get('id')} -> {path}")
-    return rows
 
 
 def _check_python_compiles(bundle: Path) -> list[str]:
@@ -174,7 +166,6 @@ def check(root: Path = ROOT, *, keep: bool = False) -> dict:
             "bundle": str(bundle) if keep else "",
             "gates": gates,
             "failed_gates": sorted(failures),
-            "accepted_exclusions": accepted_exclusions(),
         }
     finally:
         if not keep:
@@ -198,8 +189,6 @@ def main() -> int:
         print(f"{'OK  ' if not rows else 'FAIL'} {name}")
         for row in rows[:20]:
             print(f"      {row}")
-    for row in result.get("accepted_exclusions") or []:
-        print(f"     accepted exclusion: {row}")
     if result["bundle"]:
         print(f"bundle kept at: {result['bundle']}")
     print("PRE-RELEASE PASS" if result["ok"] else "PRE-RELEASE FAIL")
