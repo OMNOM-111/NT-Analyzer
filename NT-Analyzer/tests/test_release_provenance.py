@@ -168,7 +168,8 @@ def test_a_candidate_behind_production_cannot_be_published(monkeypatch) -> None:
         return 0, ""
 
     monkeypatch.setattr(release_provenance, "_git", ancestry)
-    verdict = release_provenance.forward_only(old, new)
+    verdict = release_provenance.forward_only(
+        old, {"state": "known", "commit": new})
     assert verdict["ok"] is False
     assert verdict["code"] == "candidate_not_ahead_of_production"
     assert "старее текущего Production" in verdict["reason"]
@@ -177,7 +178,8 @@ def test_a_candidate_behind_production_cannot_be_published(monkeypatch) -> None:
 
 def test_a_candidate_ahead_of_production_is_allowed(monkeypatch) -> None:
     monkeypatch.setattr(release_provenance, "_git", lambda *a, **k: (0, ""))
-    assert release_provenance.forward_only("b" * 40, "a" * 40)["ok"] is True
+    assert release_provenance.forward_only(
+        "b" * 40, {"state": "known", "commit": "a" * 40})["ok"] is True
 
 
 def test_the_same_commit_is_allowed_without_asking_git(monkeypatch) -> None:
@@ -186,27 +188,34 @@ def test_the_same_commit_is_allowed_without_asking_git(monkeypatch) -> None:
         raise AssertionError("git must not be consulted for an identical commit")
 
     monkeypatch.setattr(release_provenance, "_git", refuse)
-    assert release_provenance.forward_only("a" * 40, "a" * 40)["ok"] is True
+    assert release_provenance.forward_only(
+        "a" * 40, {"state": "known", "commit": "a" * 40})["ok"] is True
 
 
-def test_nothing_deployed_means_nothing_to_be_older_than(monkeypatch) -> None:
+def test_no_production_at_all_permits_a_first_publication(monkeypatch) -> None:
     monkeypatch.setattr(release_provenance, "_git", lambda *a, **k: (1, ""))
-    assert release_provenance.forward_only("a" * 40, "")["ok"] is True
+    identity = release_provenance.production_identity({}, {})
+    assert identity["state"] == release_provenance.PRODUCTION_ABSENT
+    assert release_provenance.forward_only("a" * 40, identity)["ok"] is True
 
 
-def test_production_commit_comes_from_production_first() -> None:
-    registry = {"environments": [
-        {"environment": "canary", "git_commit_sha": "c" * 40},
-        {"environment": "production", "git_commit_sha": "e" * 40},
-    ]}
-    assert release_provenance.live_production_commit(registry, {}) == "e" * 40
-    # Falls back to the ledger before an environment has checked in.
-    releases = {"releases": [
-        {"state": "canary_passed", "git_commit_sha": "c" * 40},
-        {"state": "production_live", "git_commit_sha": "d" * 40},
-    ]}
-    assert release_provenance.live_production_commit({}, releases) == "d" * 40
-    assert release_provenance.live_production_commit({}, {}) == ""
+def test_a_production_whose_identity_cannot_be_read_blocks_publication() -> None:
+    """Absent and undeterminable are different states, and only one of them is
+    safe to publish into without comparing. A Production that exists but cannot
+    be identified is a question that failed, not an empty slot."""
+    from_environment = release_provenance.production_identity(
+        {"environments": [{"environment": "production", "git_commit_sha": ""}]}, {})
+    assert from_environment["state"] == release_provenance.PRODUCTION_UNKNOWN
+    refused = release_provenance.forward_only("a" * 40, from_environment)
+    assert refused["ok"] is False
+    assert refused["code"] == "production_identity_unknown"
+    assert "до восстановления identity" in refused["reason"]
+
+    # Deployment history alone is enough evidence that Production exists.
+    from_ledger = release_provenance.production_identity(
+        {}, {"releases": [{"state": "production_live", "git_commit_sha": ""}]})
+    assert from_ledger["state"] == release_provenance.PRODUCTION_UNKNOWN
+    assert release_provenance.forward_only("a" * 40, from_ledger)["ok"] is False
 
 
 def test_approval_enforces_it_and_rollback_is_untouched() -> None:
@@ -228,6 +237,8 @@ def test_the_panel_renders_the_refusal_it_did_not_decide() -> None:
         {"environments": [{"environment": "production", "git_commit_sha": "b" * 40}]},
         provenance_check=lambda sha: {
             "eligible": True, "reason": "", "checks": [], "blocking": [], "commit": sha},
+        identity_check=lambda registry, releases: {
+            "state": "known", "commit": "b" * 40, "source": "environment"},
         forward_check=lambda candidate, live: {
             "ok": False, "code": "candidate_not_ahead_of_production",
             "reason": "Эта сборка старее текущего Production (bbbbbbbbbbbb). "

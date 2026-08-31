@@ -1225,7 +1225,7 @@ def approve_production(
         # its own gate and its own artifact rules.
         forward = release_provenance.forward_only(
             str(candidate.get("git_commit_sha") or ""),
-            release_provenance.live_production_commit(
+            release_provenance.production_identity(
                 _live_environment_rows(),
                 {"releases": [_candidate_summary(doc, row) for row in doc["candidates"]]}),
         )

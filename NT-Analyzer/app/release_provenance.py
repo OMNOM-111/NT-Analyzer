@@ -159,29 +159,45 @@ def evaluate(commit_sha: str = "", *, ci: Optional[Any] = None) -> Dict[str, Any
     }
 
 
-def live_production_commit(registry: Any = None, releases: Any = None) -> str:
-    """The commit Production is actually running.
+# Production has three states, and only one of them permits a comparison-free
+# publication. "No Production yet" is a genuine first deployment. "Production
+# exists but its identity could not be read" is a question we failed to answer,
+# and answering it optimistically is how a rollback gets published by accident.
+PRODUCTION_ABSENT = "absent"
+PRODUCTION_KNOWN = "known"
+PRODUCTION_UNKNOWN = "unknown"
+
+_DEPLOYED_STATES = frozenset({"production_live", "production_deploying", "rolled_back"})
+
+
+def production_identity(registry: Any = None, releases: Any = None) -> Dict[str, Any]:
+    """What Production is running, and whether that could be determined at all.
 
     Preferred source is what Production reports about itself; the release
-    ledger's last production_live candidate is the fallback for the window
-    before an environment has checked in.
+    ledger's deployment history is the fallback for the window before an
+    environment has checked in. Evidence that Production exists is kept
+    separate from the commit itself, so an unreadable identity cannot be
+    mistaken for an empty one.
     """
-    for row in ((registry or {}).get("environments") or []):
-        if str(row.get("environment") or "") != "production":
-            continue
+    rows = [row for row in ((registry or {}).get("environments") or [])
+            if str(row.get("environment") or "") == "production"]
+    history = [row for row in ((releases or {}).get("releases") or [])
+               if str(row.get("state") or "") in _DEPLOYED_STATES]
+
+    for row in rows:
         sha = str(row.get("git_commit_sha") or "").strip().lower()
         if _SHA_RE.match(sha):
-            return sha
-    for row in ((releases or {}).get("releases") or []):
-        if str(row.get("state") or "") != "production_live":
-            continue
+            return {"state": PRODUCTION_KNOWN, "commit": sha, "source": "environment"}
+    for row in history:
         sha = str(row.get("git_commit_sha") or "").strip().lower()
         if _SHA_RE.match(sha):
-            return sha
-    return ""
+            return {"state": PRODUCTION_KNOWN, "commit": sha, "source": "ledger"}
+    if rows or history:
+        return {"state": PRODUCTION_UNKNOWN, "commit": "", "source": ""}
+    return {"state": PRODUCTION_ABSENT, "commit": "", "source": ""}
 
 
-def forward_only(candidate_sha: str, production_sha: str) -> Dict[str, Any]:
+def forward_only(candidate_sha: str, production: Any) -> Dict[str, Any]:
     """Whether publishing this candidate would move Production forward.
 
     Provenance asks where the code came from; it cannot tell a current release
@@ -194,21 +210,33 @@ def forward_only(candidate_sha: str, production_sha: str) -> Dict[str, Any]:
     gate and its own artifact rules. It is not this button.
     """
     candidate = str(candidate_sha or "").strip().lower()
-    live = str(production_sha or "").strip().lower()
+    identity = (production if isinstance(production, dict)
+                else production_identity({"environments": [
+                    {"environment": "production", "git_commit_sha": str(production or "")}]}
+                    if production else None, None))
+    state = str(identity.get("state") or PRODUCTION_UNKNOWN)
+    live = str(identity.get("commit") or "").strip().lower()
+
     if not _SHA_RE.match(candidate):
         return {"ok": False, "reason": "Commit кандидата неизвестен.",
-                "code": "candidate_commit_unknown"}
-    if not _SHA_RE.match(live):
-        # Nothing is deployed, so nothing can be older than it.
-        return {"ok": True, "reason": "", "code": "", "production_commit": ""}
+                "code": "candidate_commit_unknown", "production": identity}
+    if state == PRODUCTION_ABSENT:
+        # Genuinely nothing deployed: there is nothing to be older than.
+        return {"ok": True, "reason": "", "code": "", "production": identity}
+    if state != PRODUCTION_KNOWN or not _SHA_RE.match(live):
+        return {
+            "ok": False, "production": identity,
+            "code": "production_identity_unknown",
+            "reason": ("Не удалось определить текущую версию Production. "
+                       "Публикация запрещена до восстановления identity."),
+        }
     if candidate == live:
-        return {"ok": True, "reason": "", "code": "", "production_commit": live}
+        return {"ok": True, "reason": "", "code": "", "production": identity}
     code, _ = _git("merge-base", "--is-ancestor", live, candidate)
     if code == 0:
-        return {"ok": True, "reason": "", "code": "", "production_commit": live}
+        return {"ok": True, "reason": "", "code": "", "production": identity}
     return {
-        "ok": False,
-        "production_commit": live,
+        "ok": False, "production": identity,
         "code": "candidate_not_ahead_of_production",
         "reason": ("Эта сборка старее текущего Production "
                    f"({live[:12]}). Для возврата используй Rollback."),
