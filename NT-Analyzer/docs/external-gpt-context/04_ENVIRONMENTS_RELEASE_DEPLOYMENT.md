@@ -38,54 +38,49 @@ flowchart LR
 The Environment Switcher opens the selected origin and never carries session
 or browser storage between origins.
 
-## Current beta.83 release
+## Current beta.84 release
 
 | Field | Value |
 | --- | --- |
-| Candidate | rc_e35e934fc2d74aa6b8f0170d1afd7d82 |
-| Artifact | art_edfeb143e27e4790bc851a0e61fe3410 |
-| Version / Git SHA | 0.10.0-beta.83 / 03ddf47bb2e657d66d414985976448538ff99743 |
-| Build ID | sf-0.10.0-beta.83-03ddf47bb2e6-20260831T140855Z |
-| Archive SHA256 | BE8F46427C758EEDB76A1D3D8FD2F671499051DEDFE43E3424F0258F4263FF30 |
+| Candidate | rc_9853e8e082594431b12af589211a6afc |
+| Artifact | art_edbfc143e7494527bca83d81fff6a488 |
+| Version / Git SHA | 0.10.0-beta.84 / 2438459dcd0dccbad7afa38363828a333b6df532 |
+| Build ID | sf-0.10.0-beta.84-2438459dcd0d-20260831T160722Z |
+| Archive SHA256 | 1088E359462AA217DF3806133F2052E05DDF625B34C256EAA83267C0B5E34219 |
 | Signature / worktree | verified / clean |
 
-Canary accepted beta.83 and Production received the exact same artifact without
-rebuild. live_trading_allowed stays false. The beta.81 and beta.82 cycles are
-recorded in their changelog entries.
+Canary accepted beta.84 and Production received the exact same artifact without
+rebuild. live_trading_allowed stays false. Earlier cycles are recorded in their
+changelog entries.
 
-| Environment | State | Ready |
-| --- | --- | --- |
-| Canary | live | PASS |
-| Production | live | PASS |
+### The shipment has a gate of its own
 
-### A build reaches Production only from approved main
+`python tools/pre_release_check.py` assembles the exact production file set and
+runs four gates inside it: the static scan as the signer runs it, the runtime
+reads (every public registry document and the changelog the release summary
+resolves), Python compilation and JavaScript syntax. The selection lives in
+tools/release_bundle.py and is imported by the builder, so the check and the
+signer cannot disagree about what a release contains.
 
-Promotion is gated on the provenance of the candidate commit, independently of
-acceptance: the branch is main, the worktree is clean, HEAD equals origin/main
-with no ahead or behind, the commit is an ancestor of origin/main, and that
-exact SHA passed the required CI. The gate runs inside approve_production,
-after the canary_passed check, so a healthy Canary cannot carry a build past
-it. A CI status that cannot be read blocks the promotion rather than being
-assumed.
+A public document that no release can carry is a contradiction, not an
+exemption: the check fails on it. Four legacy-* documents that were advertised
+to users while living outside the product tree are no longer public.
 
-Canary is not gated: a branch build can still be deployed there for diagnosis.
+### CI is checked on the commit that reached main
 
-Proven on a real case. During beta.82 an artifact built from an unmerged branch
-commit reached Canary and passed acceptance; the gate refused it for Production
-on commit_on_origin_main, and a build from clean synchronised main replaced it.
+Promotion asks for green CI on the candidate's exact SHA. A squash merge
+creates a new commit, so a PR that was green does not make the merge commit
+green: beta.84's first promotion attempt was refused for exactly that reason and
+succeeded once CI on the merge commit finished. The five-check set runs on pull
+requests; a push to main runs the two checks in ci.yml, and the gate requires
+every check run that exists for the SHA to have succeeded.
 
-### The panel is the release control
+### Provenance answers where code came from, not whether it is current
 
-Both transitions of the beta.83 cycle were run by pressing the panel buttons,
-not by backend calls: delivery to Canary named the commit it would build and
-ran six stages, and publication ran five. Acceptance recorded readiness,
-artifact identity and smoke as separate checks.
-
-### Starting Local
-
-Start through start.ps1. It loads data/secrets/environment-registry.env, which
-carries the peer list and signing key the promotion gate needs, and it leaves
-the worktree clean -- both conditions the panel actions require.
+A candidate at canary_passed built from an old but legitimate main commit passes
+provenance. One such candidate (0.10.0-beta.27) was found during the audit,
+one click from rolling Production back, and was cancelled. Candidates left in
+canary_checking cannot be promoted, because publication requires canary_passed.
 
 ## Promotion authority
 
