@@ -178,7 +178,7 @@ def case(name: str):
 
 @case("t01: backtest page (index.html) still served and not broken")
 def t01(tmp):
-    static = ROOT / "app" / "static" / "index.html"
+    static = ROOT / "legacy_viewer" / "static" / "index.html"
     assert static.is_file(), "index.html must exist"
     text = static.read_text(encoding="utf-8")
     # the renamed title must be present, and the old workbench markup intact
@@ -212,12 +212,12 @@ def t02(tmp):
 
 @case("t03: /ui/trading.html is served and contains 'Торговля онлайн'")
 def t03(tmp):
-    static = ROOT / "app" / "static" / "trading.html"
+    static = ROOT / "legacy_viewer" / "static" / "trading.html"
     assert static.is_file(), "trading.html must exist"
     text = static.read_text(encoding="utf-8")
     assert "Торговля онлайн" in text, "trading.html must contain 'Торговля онлайн'"
     assert 'src="trading.js' in text, "trading.html must reference trading.js"
-    assert "/api/ops/runtime/accounts" in (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8"), \
+    assert "/api/ops/runtime/accounts" in (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8"), \
         "trading.js must call /api/ops/runtime/accounts"
 
 
@@ -366,7 +366,7 @@ def t12(tmp):
 
 @case("t13: index.html top-nav has NO 'Контроль стратегий' link")
 def t13(tmp):
-    txt = (ROOT / "app" / "static" / "index.html").read_text(encoding="utf-8")
+    txt = (ROOT / "legacy_viewer" / "static" / "index.html").read_text(encoding="utf-8")
     # The top nav must only contain Бэктестирование + Торговля онлайн
     assert "Бэктестирование" in txt
     assert "Торговля онлайн" in txt
@@ -377,7 +377,7 @@ def t13(tmp):
 
 @case("t14: trading.html exposes real online launch (no monitoring banner, no Control Center)")
 def t14(tmp):
-    txt = (ROOT / "app" / "static" / "trading.html").read_text(encoding="utf-8")
+    txt = (ROOT / "legacy_viewer" / "static" / "trading.html").read_text(encoding="utf-8")
     assert "Торговля онлайн" in txt
     # Forbidden phrases — must not appear anywhere
     for bad in ("режиме мониторинга", "Control Center",
@@ -396,7 +396,7 @@ def t14(tmp):
 
 @case("t15: trading.js uses /api/catalog (not registry) for strategy dropdown")
 def t15(tmp):
-    txt = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    txt = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     assert "/api/catalog" in txt, "trading.js must call /api/catalog"
     # Must not depend on /api/scc/strategies or registry as the strategy source
     assert "/api/scc/strategies" not in txt, \
@@ -410,7 +410,7 @@ def t15(tmp):
 
 @case("t16: trading.js posts enable/disable to /api/ops/runtime/command")
 def t16(tmp):
-    txt = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    txt = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     # Must call the runtime command endpoint
     assert "/api/ops/runtime/command" in txt, \
         "trading.js must POST to /api/ops/runtime/command"
@@ -557,7 +557,7 @@ def t21(tmp):
 
 @case("t22: index.html (Бэктестирование) still has 'Запустить бэктест' button")
 def t22(tmp):
-    txt = (ROOT / "app" / "static" / "index.html").read_text(encoding="utf-8")
+    txt = (ROOT / "legacy_viewer" / "static" / "index.html").read_text(encoding="utf-8")
     assert "Запустить бэктест" in txt, \
         "index.html (backtest tab) must keep its 'Запустить бэктест' button"
 
@@ -577,7 +577,7 @@ def t23(tmp):
 
 @case("t24: trading.js supports catalog instrument field named 'instrument'")
 def t24(tmp):
-    txt = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    txt = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     assert "i.instrument" in txt, \
         "trading.js must read catalog items with the 'instrument' field"
     assert "instrumentName" in txt, \
@@ -590,8 +590,8 @@ def t24(tmp):
 
 @case("t25: trading.html / trading.js have no 'Control Center' text")
 def t25(tmp):
-    html = (ROOT / "app" / "static" / "trading.html").read_text(encoding="utf-8").lower()
-    js   = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8").lower()
+    html = (ROOT / "legacy_viewer" / "static" / "trading.html").read_text(encoding="utf-8").lower()
+    js   = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8").lower()
     assert "control center" not in html, \
         "trading.html must NOT contain 'Control Center' (case-insensitive)"
     assert "control center" not in js, \
@@ -600,15 +600,15 @@ def t25(tmp):
 
 @case("t26: trading.html exposes command status bar element id")
 def t26(tmp):
-    html = (ROOT / "app" / "static" / "trading.html").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "trading.html").read_text(encoding="utf-8")
     assert 'id="cmd-status-bar"' in html, \
         "trading.html must include #cmd-status-bar element for live command status"
 
 
 @case("t26a: trading UI exposes reconnect modeling control")
 def t26a(tmp):
-    html = (ROOT / "app" / "static" / "trading.html").read_text(encoding="utf-8")
-    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "trading.html").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     assert 'id="btn-reconnect-sim"' in html, "trading.html must expose the reconnect button"
     assert 'command: "reconnect_account"' in js, "trading.js must queue reconnect_account"
     assert 'confirmed_connected' in js, "trading.js must render reconnect confirmation state"
@@ -616,7 +616,7 @@ def t26a(tmp):
 
 @case("t27: trading.html exposes paper-status block")
 def t27(tmp):
-    html = (ROOT / "app" / "static" / "trading.html").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "trading.html").read_text(encoding="utf-8")
     assert 'id="paper-status"' in html, "trading.html must include #paper-status"
     assert "Paper status" in html, \
         "trading.html must label the block with 'Paper status'"
@@ -679,8 +679,8 @@ def t31(tmp):
 
 @case("t32: trading UI exposes persistent hide + strategy history")
 def t32(tmp):
-    html = (ROOT / "app" / "static" / "trading.html").read_text(encoding="utf-8")
-    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "trading.html").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     assert 'id="chk-show-hidden"' in html, "missing show-hidden toggle"
     assert 'id="pane-history"' not in html, "strategy history must be hidden from bottom tabs"
     assert "/api/ops/runtime/strategy-display" in js, "missing display prefs endpoint"
@@ -691,10 +691,10 @@ def t32(tmp):
 
 @case("t33: strategies page is served and wired to profile/coverage/runtime data")
 def t33(tmp):
-    html = (ROOT / "app" / "static" / "strategies.html").read_text(encoding="utf-8")
-    js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
-    index = (ROOT / "app" / "static" / "index.html").read_text(encoding="utf-8")
-    trading = (ROOT / "app" / "static" / "trading.html").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "strategies.html").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "strategies.js").read_text(encoding="utf-8")
+    index = (ROOT / "legacy_viewer" / "static" / "index.html").read_text(encoding="utf-8")
+    trading = (ROOT / "legacy_viewer" / "static" / "trading.html").read_text(encoding="utf-8")
     assert "Стратегии" in html, "strategies.html must contain the new section title"
     assert 'id="strategies-page"' in html, "strategies page root must exist"
     assert 'src="strategies.js' in html, "strategies.html must reference strategies.js"
@@ -838,9 +838,9 @@ def t36(tmp):
 
 @case("t37: strategies UI removes x10 header and renders cell identifiers")
 def t37(tmp):
-    html = (ROOT / "app" / "static" / "strategies.html").read_text(encoding="utf-8")
-    js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
-    css = (ROOT / "app" / "static" / "style.css").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "strategies.html").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "strategies.js").read_text(encoding="utf-8")
+    css = (ROOT / "legacy_viewer" / "static" / "style.css").read_text(encoding="utf-8")
 
     assert "Инструменты x 10 стратегий" not in html, "old x10 matrix heading must be removed"
     assert "portfolioCellId" in js, "strategies.js must compute deterministic cell ids"
@@ -854,9 +854,9 @@ def t37(tmp):
 
 @case("t38: strategies slot assignment guards against duplicate family placement")
 def t38(tmp):
-    js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
-    css = (ROOT / "app" / "static" / "style.css").read_text(encoding="utf-8")
-    html = (ROOT / "app" / "static" / "strategies.html").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "strategies.js").read_text(encoding="utf-8")
+    css = (ROOT / "legacy_viewer" / "static" / "style.css").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "strategies.html").read_text(encoding="utf-8")
 
     assert "const assignedKeys = new Set();" in js, "slot assignment must track already placed families"
     assert "assignedKeys.has(family.key)" in js, "slot assignment must skip already placed families"
@@ -866,8 +866,8 @@ def t38(tmp):
 
 @case("t39: strategies UI documents a compact canonical profile naming rule")
 def t39(tmp):
-    html = (ROOT / "app" / "static" / "strategies.html").read_text(encoding="utf-8")
-    js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "strategies.html").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "strategies.js").read_text(encoding="utf-8")
 
     assert "<code>ИмяСтратегии Инструмент Таймфрейм vN cNNN</code>" in html, \
         "strategies page must show the full naming template including cell suffix"
@@ -975,7 +975,7 @@ def t40(tmp):
 
 @case("t41: strategies online state is not gated by catalog membership")
 def t41(tmp):
-    js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "strategies.js").read_text(encoding="utf-8")
     assert "if (!cls || !catalogHasClass(cls)) return false;" not in js, \
         "runtime rows for approved profiles must not depend on catalog membership"
     assert "const sid = String(row?.strategy_id || runtimeRecord(row)?.strategy_id || \"\").trim().toLowerCase();" in js, \
@@ -986,9 +986,9 @@ def t41(tmp):
 
 @case("t42: strategies top panel renders approved backtest research statistics")
 def t42(tmp):
-    html = (ROOT / "app" / "static" / "strategies.html").read_text(encoding="utf-8")
-    js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
-    css = (ROOT / "app" / "static" / "style.css").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "strategies.html").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "strategies.js").read_text(encoding="utf-8")
+    css = (ROOT / "legacy_viewer" / "static" / "style.css").read_text(encoding="utf-8")
 
     assert 'id="strategies-research-panel"' in html, "strategies page must expose the research panel container"
     assert 'id="strategies-research-body"' in html, "strategies page must expose a research panel body"
@@ -1011,7 +1011,7 @@ def t42(tmp):
 
 @case("t43: strategies infer runtime root from strategy metadata when instrument field lags")
 def t43(tmp):
-    js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "strategies.js").read_text(encoding="utf-8")
     assert "function runtimeRootCandidates" in js, "strategies.js must derive runtime root candidates"
     assert "r.strategy_name" in js and "r.strategy_id" in js and "r.strategy_class" in js, \
         "runtime root inference must consider strategy metadata, not just instrument field"
@@ -1021,9 +1021,9 @@ def t43(tmp):
 
 @case("t44: strategies page exposes horizontal top-bottom resizer")
 def t44(tmp):
-    html = (ROOT / "app" / "static" / "strategies.html").read_text(encoding="utf-8")
-    js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
-    css = (ROOT / "app" / "static" / "style.css").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "strategies.html").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "strategies.js").read_text(encoding="utf-8")
+    css = (ROOT / "legacy_viewer" / "static" / "style.css").read_text(encoding="utf-8")
 
     assert 'id="strategies-top-resizer"' in html, "strategies page must expose a horizontal top resizer"
     assert 'aria-orientation="horizontal"' in html, "top resizer must announce horizontal orientation"
@@ -1036,8 +1036,8 @@ def t44(tmp):
 
 @case("t45: strategies research period uses readable Russian dates and denser metrics layout")
 def t45(tmp):
-    js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
-    css = (ROOT / "app" / "static" / "style.css").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "strategies.js").read_text(encoding="utf-8")
+    css = (ROOT / "legacy_viewer" / "static" / "style.css").read_text(encoding="utf-8")
 
     assert "const RU_DATE_FORMATTER = new Intl.DateTimeFormat(\"ru-RU\"" in js, \
         "strategies.js must format research periods via a Russian date formatter"
@@ -1054,8 +1054,8 @@ def t45(tmp):
 
 @case("t46: strategies research panel keeps chart fixed and exposes inner width resizer")
 def t46(tmp):
-    js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
-    css = (ROOT / "app" / "static" / "style.css").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "strategies.js").read_text(encoding="utf-8")
+    css = (ROOT / "legacy_viewer" / "static" / "style.css").read_text(encoding="utf-8")
 
     assert "function applyResearchChartWidth" in js, \
         "strategies.js must support resizing the research chart width"
@@ -1159,9 +1159,9 @@ def t47(tmp):
 
 @case("t48: strategies page keeps reserved research cells visible without counting them as approved slots")
 def t48(tmp):
-    html = (ROOT / "app" / "static" / "strategies.html").read_text(encoding="utf-8")
-    js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
-    css = (ROOT / "app" / "static" / "style.css").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "strategies.html").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "strategies.js").read_text(encoding="utf-8")
+    css = (ROOT / "legacy_viewer" / "static" / "style.css").read_text(encoding="utf-8")
 
     assert "Исследовательские версии с закрепленной ячейкой" in html, \
         "strategies page must explain that reserved research cells stay visible"
@@ -1177,7 +1177,7 @@ def t48(tmp):
 
 @case("t48b: strategies matrix can hide explicitly closed cells without renumbering live slots")
 def t48b(tmp):
-    js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "strategies.js").read_text(encoding="utf-8")
 
     assert "if (profile.matrix_hidden) return false;" in js, \
         "matrix must allow explicitly removed profiles to stop occupying their reserved cell"
@@ -1240,7 +1240,7 @@ def t48d(tmp):
 
 @case("t49: trading UI reads locked params from runtime-backed profile data")
 def t49(tmp):
-    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
 
     assert "function strategyConfigForView" in js, \
         "trading.js must derive strategy launch config from the selected runtime view"
@@ -1301,8 +1301,8 @@ def t50(tmp):
 
 @case("t51: trading UI exposes account overview and per-strategy analytics tabs")
 def t51(tmp):
-    html = (ROOT / "app" / "static" / "trading.html").read_text(encoding="utf-8")
-    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "trading.html").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     assert 'id="account-overview-band"' not in html, "central account overview band must stay removed"
     assert 'id="acct-pnl-chart"' in html and "<canvas" in html, "All-time equity curve must live in Performance Center as canvas"
     assert "Доход по инструментам с 13.05" in html, "instrument income panel must be in Performance Center"
@@ -1418,7 +1418,7 @@ def t54(tmp):
 
 @case("t55: trading calendar does not trust zero account RealizedPnL over nonzero closed executions")
 def t55(tmp):
-    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     assert "function reliableAccountRealizedPnl" in js, \
         "trading.js must distinguish provider-zero RealizedPnL from authoritative account PnL"
     assert "function accountEquityDeltaPnl" in js, \
@@ -1441,7 +1441,7 @@ def t55(tmp):
 
 @case("t56: trading UI warns when bridge is older than execution strategy-mapping exporter")
 def t56(tmp):
-    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     assert "function versionLt" in js, "bridge version comparison must be numeric, not string-based"
     assert 'versionLt(ev, "1.3.0")' in js, \
         "bridge < 1.3.0 must be flagged because it can miss cycle/cell attribution fields in executions/orders"
@@ -1451,7 +1451,7 @@ def t56(tmp):
 
 @case("t57: account headline re-renders without deleting its currency node")
 def t57(tmp):
-    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     assert "const setBalance = (amountHtml, currencyText = \"\") =>" in js, \
         "account headline must recreate ah-currency whenever ah-balance innerHTML is replaced"
     assert "if (!elMode || !elName || !elConn || !elBal || !elSub || !elWarn) return;" in js, \
@@ -1461,7 +1461,7 @@ def t57(tmp):
 
 @case("t58: trading UI groups PnL by strategy lot key and shows signal columns")
 def t58(tmp):
-    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     assert "function executionLotKey" in js, \
         "FIFO PnL must not pair executions from different strategies on the same instrument"
     assert "executionStrategyIdentity(row)" in js
@@ -1474,8 +1474,8 @@ def t58(tmp):
 
 @case("t59: selected calendar day trades render inside session details")
 def t59(tmp):
-    html = (ROOT / "app" / "static" / "trading.html").read_text(encoding="utf-8")
-    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "trading.html").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
 
     details_pos = html.find('<div class="session-details">')
     trades_pos = html.find('id="session-day-trades"')
@@ -1494,8 +1494,8 @@ def t59(tmp):
 
 @case("t63: backtest reports use server-sorted 50-row pagination")
 def t63_reports_server_sorted_pagination(tmp):
-    js = (ROOT / "app" / "static" / "app.js").read_text(encoding="utf-8")
-    html = (ROOT / "app" / "static" / "index.html").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "app.js").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "index.html").read_text(encoding="utf-8")
     assert "const REPORTS_PAGE_SIZE = 50;" in js
     assert "const REPORTS_RESET_PAGE_SIZE = 50;" in js
     assert "function _reportsQuery(offset, limit)" in js
@@ -1509,8 +1509,8 @@ def t63_reports_server_sorted_pagination(tmp):
 
 @case("t64: selected calendar day shows all orders with cancelled/rejected statuses")
 def t64_selected_day_orders_are_visible(tmp):
-    html = (ROOT / "app" / "static" / "trading.html").read_text(encoding="utf-8")
-    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "trading.html").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     assert "day-orders-table-wrap" in html, "selected-day order table must be styled"
     assert "day-order-cancelled" in html and "day-order-rejected" in html, \
         "cancelled/rejected daily orders must have muted row styles"
@@ -1527,7 +1527,7 @@ def t64_selected_day_orders_are_visible(tmp):
 
 @case("t65: account-level PnL can pair unmapped exits without attributing them to strategies")
 def t65_account_level_fifo_handles_unmapped_exits(tmp):
-    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     assert "function executionAccountLotKey" in js, \
         "account-level FIFO must be able to pair fills by account+instrument"
     assert "function executionHasLegacyAttribution" in js
@@ -1558,7 +1558,7 @@ def t65_account_level_fifo_handles_unmapped_exits(tmp):
 
 @case("t66: strategies selection reveals the active matrix cell and planner bar")
 def t66_strategies_selection_reveals_matrix_cell(tmp):
-    js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "strategies.js").read_text(encoding="utf-8")
     assert "function requestSelectedStrategyReveal" in js
     assert "function revealSelectedStrategyIfNeeded" in js
     assert "STATE.selectedKey = families[0].key;" in js, \
@@ -1676,7 +1676,7 @@ def t68_closed_trade_inherits_entry_strategy_when_exit_unmapped(tmp):
     assert entry["strategy_class"] == "NTAMnqLiquiditySweepReversalC015", rows
     assert exit_row["strategy_id"] == "Short" and not exit_row.get("strategy_class"), rows
 
-    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     assert "function effectiveStrategyField" in js, \
         "UI must have one helper for exit-or-entry strategy fields"
     assert "function isClosedTradeUnmapped" in js, \
@@ -1698,8 +1698,8 @@ def t68_closed_trade_inherits_entry_strategy_when_exit_unmapped(tmp):
 @case("t69: Performance Center stays all-time while strategy panes use selected day")
 def t69_performance_center_all_time_selected_day_tabs(tmp):
     _ = tmp
-    html = (ROOT / "app" / "static" / "trading.html").read_text(encoding="utf-8")
-    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "trading.html").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     assert 'aria-label="Весь период"' in html, \
         "Performance Center account chart block must not be labelled as a selected-day widget"
     assert "const allTime = accountAllTimeStats(m);" in js, \
@@ -1723,7 +1723,7 @@ def t69_performance_center_all_time_selected_day_tabs(tmp):
 
 @case("t61: strategy metrics must not attribute unmapped instrument fills")
 def t61_no_instrument_fill_fallback(tmp):
-    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     assert "best-effort attribution when classSet matched nothing" not in js, \
         "instrument-only fallback must not inflate per-strategy fill metrics"
     assert "unmappedFills" in js and "paramsMismatchBadgeTitle" in js
@@ -1732,7 +1732,7 @@ def t61_no_instrument_fill_fallback(tmp):
 
 @case("t62: per-strategy PnL must not treat unmapped rows as strategy PnL")
 def t62_unmapped_excluded_from_strategy_pnl(tmp):
-    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     assert "unmappedRows.length ? null : numOrNull(rt.realized_pnl)" not in js
     assert "ambiguous ? \"unmapped\"" not in js
 
@@ -1740,8 +1740,8 @@ def t62_unmapped_excluded_from_strategy_pnl(tmp):
 @case("t60: trading UI shows entry window column and PT window logic")
 def t60_trade_windows_ui(tmp):
     _ = tmp
-    html = (ROOT / "app" / "static" / "trading.html").read_text(encoding="utf-8")
-    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "trading.html").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     assert "Окно входа" in html, "active strategies table must have entry-window column"
     assert "strategy-in-window" in html and "strategy-out-window" in html, \
         "trading.html must style in-window vs out-of-window rows"
@@ -1756,7 +1756,7 @@ def t60_trade_windows_ui(tmp):
 @case("t70: strategies day planner keeps the full exchange session")
 def t70_strategies_day_planner_full_session(tmp):
     _ = tmp
-    js = (ROOT / "app" / "static" / "strategies.js").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "strategies.js").read_text(encoding="utf-8")
     assert 'MNQ: { start: 1500, end: 1400, label: "Биржевая сессия" }' in js, \
         "planner must show the full CME-style exchange session, not just the RTH morning block"
     assert "if (minute === 0) return 60;" in js, \
@@ -1768,8 +1768,8 @@ def t70_strategies_day_planner_full_session(tmp):
 @case("t71: runtime strategies table has all-time PnL and sortable headers")
 def t71_runtime_table_all_time_pnl_and_sorting(tmp):
     _ = tmp
-    html = (ROOT / "app" / "static" / "trading.html").read_text(encoding="utf-8")
-    js = (ROOT / "app" / "static" / "trading.js").read_text(encoding="utf-8")
+    html = (ROOT / "legacy_viewer" / "static" / "trading.html").read_text(encoding="utf-8")
+    js = (ROOT / "legacy_viewer" / "static" / "trading.js").read_text(encoding="utf-8")
     assert "PnL за всё время" in html, "runtime strategies table must show all-time strategy PnL"
     assert "Работает" in html and 'data-trading-sort="runtime_duration"' in html, \
         "runtime strategies table must show total strategy work time after Last update"

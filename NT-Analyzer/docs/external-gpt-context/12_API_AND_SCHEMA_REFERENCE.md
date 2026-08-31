@@ -1,7 +1,7 @@
 # 12. API and Schema Reference
 
 - Context Pack document: 12_API_AND_SCHEMA_REFERENCE.md
-- Last verified UTC: 2026-08-23T02:27:02Z
+- Last verified UTC: 2026-08-31T00:00:00Z
 - Verified against Git SHA: 1279645e48e32000978364b38fb20d3dcd303843
 - Scope: Compact index of important endpoint families, entities and capability names
 - Status: DONE
@@ -21,7 +21,8 @@
 | Release control | `/api/environments/release-control` | signed, replay-protected authoritative Canary/Production promotion decision |
 | Admin integrations | `/api/admin/connectors`, `/api/admin/operations` | bounded status cards for gateway/providers, Telegram, Worker and Connector |
 | News / integrations | `/api/news`, `/api/news/live`, `/api/topstep/status`, `/api/integrations/status` | read-only provider/news status |
-| Telegram | `/api/telegram/*` | pair, status, settings, test and notification flows |
+| Telegram current | `/api/telegram/pair`, `/api/telegram/status`, settings/test/notification routes | login, bot and notification flows |
+| Telegram retired | Mini App registration, `/api/telegram/remote*`, `/api/telegram/tunnel*` | HTTP 410; no current runtime capability |
 | Documents / governance | governance/document routes plus documents UI contracts | global docs, revisions, rendered/current documents |
 
 ## Important schema / entity groups

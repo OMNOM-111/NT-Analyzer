@@ -1,7 +1,7 @@
 # 03. Architecture and Data Model
 
 - Context Pack document: 03_ARCHITECTURE_AND_DATA_MODEL.md
-- Last verified UTC: 2026-08-23T02:27:02Z
+- Last verified UTC: 2026-08-31T00:00:00Z
 - Verified against Git SHA: 1279645e48e32000978364b38fb20d3dcd303843
 - Scope: Current components, trust boundaries, entities and key flows
 - Status: DONE
@@ -12,8 +12,9 @@
 flowchart LR
   subgraph ClientSurface
     Browser[Aurora UI]
-    Telegram[Telegram / Mini App]
+    Telegram[Telegram login / bot / notifications]
     Connector[StratForge Connector]
+    Legacy[Local read-only Legacy Viewer]
   end
 
   subgraph StratForgeApp
@@ -35,6 +36,7 @@ flowchart LR
   Browser --> API
   Telegram --> API
   Connector --> API
+  Legacy -. isolated snapshot .-> Local
   API --> Agents
   API --> Docs
   API --> MD
@@ -51,6 +53,7 @@ flowchart LR
 | Component | Role | Current authority |
 | --- | --- | --- |
 | Aurora UI | user-facing shell for runtime, strategies, AI, docs and admin surfaces | presentation only; authorization stays server-side |
+| Legacy Viewer | temporary localhost-only classic report viewer over an isolated snapshot | read-only reference surface; no current API, workers, Telegram, trading or release authority |
 | Python backend | API routing, permissions, orchestration, jobs, docs, release logic | main control plane |
 | NinjaTrader 8 | compile/backtest/trade/runtime execution | authoritative for fills, trades, metrics and runtime state |
 | StratForge Connector | signed device bridge between backend and NinjaTrader machine | authoritative only for authenticated Connector telemetry and bounded commands |
@@ -64,6 +67,8 @@ flowchart LR
 
 - Browser and Telegram clients are untrusted presentation surfaces; hiding UI is
   not authorization.
+- Telegram Mini App and mirrored classic UI are retired current-product surfaces;
+  the server rejects them before normal routing with HTTP 410.
 - Connector trust comes from device-owned P-256 key material, nonce signing,
   workspace binding and short-lived sessions, not from IP or JSON claims.
 - Market-data display and order execution are intentionally separate boundaries.

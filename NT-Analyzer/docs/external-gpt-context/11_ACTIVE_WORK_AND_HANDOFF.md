@@ -1,12 +1,23 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-08-30T02:05:00Z
+- Last verified UTC: 2026-08-31T00:00:00Z
 - Verified against Git SHA: 1279645e48e32000978364b38fb20d3dcd303843
 - Verified deployed artifact Git SHA: `1a1d54aa728d487203bb8342ecf142752610f4cd`
 - Current Production version/build/artifact when known: `0.10.0-beta.79`; `sf-0.10.0-beta.79-1a1d54aa728d-20260829T234541Z`; live release dir `0.10.0-beta.79-1a1d54aa728d`
-- Scope: Final repository housekeeping after beta.79 closeout
-- Status: DONE
+- Scope: Final legacy isolation and repository housekeeping after beta.79 closeout
+- Status: IN DEVELOPMENT
+
+## Development checkpoint - legacy isolation
+
+- Current Aurora has no classic UI or Telegram Mini App navigation/transport.
+- Retired legacy, Mini App, remote-access and tunnel routes return HTTP 410.
+- Classic assets run only in a localhost-only read-only Legacy Viewer using an
+  isolated snapshot; current Telegram login, identity, bot and notifications
+  remain supported.
+- No historical report, audit record or user identity was deleted. Canary and
+  Production were not changed; their release identity below remains historical
+  operational truth until a separately approved promotion.
 
 ## Current checkpoint
 

@@ -1,4 +1,9 @@
-# Telegram Mini App
+# Telegram Mini App (archived)
+
+Status: `DEPRECATED` since 2026-08-31. This document is historical evidence,
+not a current setup guide. The launcher, tunnel controls, mirrored UI and remote
+routes described below are absent or HTTP 410 in the current runtime. Current
+Telegram login, identity, bot and notifications remain supported.
 
 Aurora UI обслуживается тем же локальным backend на `127.0.0.1:8765`. Наружу
 публикуется только HTTPS-туннель; backend не начинает слушать `0.0.0.0`.

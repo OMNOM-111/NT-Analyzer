@@ -1,9 +1,8 @@
 """Cutover / production-integration tests for the new Aurora UI.
 
-These assert that the new UI is wired to real backend endpoints, ships no mock
-data, that the server routes /ui/ to the Aurora UI and /ui/legacy/ to the classic
-UI (with back-compat redirects + a uniform CSP header), that every legacy page
-offers a one-click switch to the new UI, and that the launchers open the new UI.
+These assert that Aurora is wired to real backend endpoints, ships no mock data,
+that the current server isolates /ui/legacy/, and that frozen classic assets are
+available only in the separate read-only Legacy Viewer.
 
 Pytest collects these `test_*` functions directly (no @case harness needed).
 """
@@ -14,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 STATIC = ROOT / "app" / "static"
 AURORA = STATIC / "aurora"
+LEGACY_STATIC = ROOT / "legacy_viewer" / "static"
 
 NEW_PAGES = [
     "index.html", "backtesting.html", "trading.html", "performance.html",
@@ -86,17 +86,16 @@ def test_admin_operations_dashboard_uses_capability_contract():
     assert "['operations'," not in cabinet
 
 
-def test_server_routes_aurora_primary_and_legacy():
+def test_server_routes_aurora_primary_and_isolates_legacy():
     server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
     # The explicit mode choice is the root before either Aurora contour; the
     # professional shell remains available at /ui/index.html.
     assert '"aurora/mode-entry.html" if rel == "/" else "aurora" + rel' in server, \
         "server must serve the mode entry at /ui/ and Aurora pages below it"
-    # Classic UI preserved under /ui/legacy/.
-    assert 'rel == "/legacy" or rel.startswith("/legacy/")' in server, \
-        "server must serve the legacy UI under /ui/legacy/"
-    # Directory-index so /ui/legacy/ resolves to index.html.
-    assert 'rel.endswith("/")' in server, "server must add a directory index"
+    assert "_reject_isolated_legacy_surface" in server
+    boundary = (ROOT / "app" / "legacy_boundary.py").read_text(encoding="utf-8")
+    assert 'LEGACY_UI_PREFIX = "/ui/legacy"' in boundary
+    assert 'path.startswith(LEGACY_UI_PREFIX + "/")' in boundary
     # Back-compat redirects for old page URLs.
     assert '"/ai-strategy.html": "/ui/ai-lab.html"' in server
     assert '"/ops.html": "/ui/trading.html"' in server
@@ -108,13 +107,15 @@ def test_server_routes_aurora_primary_and_legacy():
     assert 'self.send_header("Content-Security-Policy", STATIC_CSP)' in server
 
 
-def test_legacy_pages_offer_new_ui_switch():
+def test_legacy_pages_load_read_only_viewer_banner():
     for page in LEGACY_PAGES:
-        html = (STATIC / page).read_text(encoding="utf-8")
+        html = (LEGACY_STATIC / page).read_text(encoding="utf-8")
         assert "legacy_switch.js" in html, \
-            f"legacy {page} must include the 'Новый интерфейс' switch"
-    switch = (STATIC / "legacy_switch.js").read_text(encoding="utf-8")
-    assert "/ui/" in switch and "Новый интерфейс" in switch
+            f"legacy {page} must include the read-only viewer marker"
+    switch = (LEGACY_STATIC / "legacy_switch.js").read_text(encoding="utf-8")
+    assert "READ ONLY SNAPSHOT" in switch
+    assert "api.post = blocked" in switch and "api.delete = blocked" in switch
+    assert "Новый интерфейс" not in switch
 
 
 def test_legacy_navigation_stays_in_legacy_namespace():
@@ -124,7 +125,7 @@ def test_legacy_navigation_stays_in_legacy_namespace():
         "/ui/ops.html",
     }
     for page in LEGACY_PAGES:
-        html = (STATIC / page).read_text(encoding="utf-8")
+        html = (LEGACY_STATIC / page).read_text(encoding="utf-8")
         for target in primary_pages:
             assert f'href="{target}"' not in html, \
                 f"legacy {page} must not navigate into Aurora via {target}"
@@ -133,12 +134,12 @@ def test_legacy_navigation_stays_in_legacy_namespace():
                 f"legacy {page} navigation must stay under /ui/legacy/"
 
     for script_name in ("app.js", "trading.js", "strategies.js"):
-        script = (STATIC / script_name).read_text(encoding="utf-8")
+        script = (LEGACY_STATIC / script_name).read_text(encoding="utf-8")
         for target in primary_pages:
             assert target not in script, \
                 f"legacy {script_name} deep links must not target {target}"
 
-    prefetch = (STATIC / "page-prefetch.js").read_text(encoding="utf-8")
+    prefetch = (LEGACY_STATIC / "page-prefetch.js").read_text(encoding="utf-8")
     assert '"/ui/legacy/index.html"' in prefetch
     assert '"/ui/legacy/trading.html"' in prefetch
 

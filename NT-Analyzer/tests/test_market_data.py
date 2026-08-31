@@ -396,13 +396,13 @@ def test_bars_batch_allows_https_tunnel_same_origin(tmp_path: Path, monkeypatch)
     monkeypatch.setenv("NTA_TOPSTEPX_REDISTRIBUTION_AUTHORIZED", "1")
     _write_snapshot(tmp_path, close=100, high=101, low=99)
 
-    # Production posture: remote Mini App enabled, desktop auth off.
+    # Stale Mini App state is ignored by the current desktop auth decision.
     telegram_remote._write({
         "remote_enabled": True, "desktop_auth_required": False,
         "public_url": "https://app.stratforges.com", "users": [], "pairings": [],
     })
     assert account_auth.auth_required() is False
-    # A whitelisted read-only viewer (charts are read-only observation).
+    # A formerly whitelisted viewer cannot use the retired Mini App transport.
     account_auth._write_doc({
         "version": 1,
         "users": [{"user_id": 42, "first_name": "View", "last_name": "Er", "email": "v@e.com",
@@ -421,8 +421,8 @@ def test_bars_batch_allows_https_tunnel_same_origin(tmp_path: Path, monkeypatch)
         status, out = _batch_status(base, origin="https://app.stratforges.com",
                                     host="app.stratforges.com", xfh="app.stratforges.com",
                                     init_data=viewer)
-        assert status == 200, out
-        assert out["series"][0]["bars"]
+        assert status == 410, out
+        assert out["code"] == "telegram_mini_app_isolated"
 
         # Unauthenticated remote tunnel POST is denied — no owner bypass. This is
         # the core of the fix: with desktop auth disabled, a tunnel request with

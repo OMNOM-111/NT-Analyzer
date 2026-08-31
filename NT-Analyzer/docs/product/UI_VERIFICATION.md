@@ -13,7 +13,7 @@ Status: Aurora, Victor/Vitek and Orchestrator production integration re-audited 
 - `dotnet build bridge\NTAnalyzerBridge.csproj -c Debug`: 0 warnings,
   0 errors.
 - CSP scan: no inline `<script>` and no HTML `onclick=` in Aurora pages.
-- HTTP contract tests cover `/ui/`, `/ui/legacy/`, CSP, GET trade pagination,
+- HTTP contract tests cover `/ui/`, retired `/ui/legacy/` HTTP 410, CSP, GET trade pagination,
   nested job details, runtime adapters, PT market phases, immutable cells,
   account-ledger accounting rules, AI model telemetry, Telegram auth, workspace
   isolation, scoped chat migration, Vitek events and real yes/no decisions.
@@ -76,8 +76,9 @@ Verified against the running backend at `127.0.0.1:8765`:
   compile heartbeats and finished without interruption. Model audit contains
   3,581 requests across four models and 12 roles. Environment bootstrap started
   NinjaTrader/LM Studio server and loaded the judge/coder models.
-- New -> classic -> new routing exposes exactly one switch in each direction.
-  All classic tabs and classic deep links stay under `/ui/legacy/`.
+- The classic-switch acceptance below is historical evidence and is superseded
+  by the 2026-08-31 isolation contract: current navigation has no legacy link,
+  `/ui/legacy/*` returns HTTP 410, and classic assets run only in Legacy Viewer.
 - Responsive 390 px acceptance has no document-level horizontal overflow;
   wide tables retain intentional internal scrolling. Prior 760/1024/1280/1440
   checks remain covered by the responsive contract and browser audit.

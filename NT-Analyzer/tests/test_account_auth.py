@@ -598,14 +598,16 @@ def test_record_login_history_and_throttle(auth_store) -> None:
     assert len(account_auth.user_detail(999, 42)["user"]["login_history"]) == 1
 
 
-def test_auth_required_forced_on_when_remote_enabled(auth_store, monkeypatch) -> None:
+def test_auth_required_ignores_retired_remote_enabled_flag(auth_store, monkeypatch) -> None:
     monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
     cfg = auth_store / "data" / "integrations" / "telegram.remote-access.json"
     cfg.parent.mkdir(parents=True, exist_ok=True)
-    # Public Mini App exposed but desktop flag reset to false -> auth STILL required.
+    # Stale Mini App state cannot alter the current desktop auth contour.
     cfg.write_text(json.dumps({"remote_enabled": True, "desktop_auth_required": False}), encoding="utf-8")
+    assert account_auth.auth_required() is False
+    cfg.write_text(json.dumps({"remote_enabled": True, "desktop_auth_required": True}), encoding="utf-8")
     assert account_auth.auth_required() is True
-    # No remote access configured -> still defaults to required.
+    # With no explicit desktop setting, authentication still defaults to required.
     cfg.write_text(json.dumps({"remote_enabled": False}), encoding="utf-8")
     assert account_auth.auth_required() is True
     # The test bypass is the only way off.

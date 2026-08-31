@@ -508,15 +508,9 @@
   function qs(s, r) { return (r || document).querySelector(s); }
   function qsa(s, r) { return Array.from((r || document).querySelectorAll(s)); }
 
-  // Open an external link. Inside the Telegram Mini App plain anchors are
-  // unreliable, so route through Telegram.WebApp.openLink when available.
   function openExternal(url) {
     const u = String(url || '').trim();
     if (!u) return;
-    try {
-      const wa = window.Telegram && window.Telegram.WebApp;
-      if (wa && typeof wa.openLink === 'function') { wa.openLink(u); return; }
-    } catch (e) { /* fall through to window.open */ }
     window.open(u, '_blank', 'noopener');
   }
   function bindExternalLinks(root) {
@@ -854,32 +848,6 @@
     onLeave(() => clearInterval(timer));
   }
 
-  function withMiniAppContext(href) {
-    if (!href || !window.API || !API.withTelegramContext) return href;
-    return API.withTelegramContext(href);
-  }
-
-  function patchMiniAppLinks(scope) {
-    if (!window.API || !API.config.miniApp) return;
-    qsa('a[href]', scope || document).forEach(anchor => {
-      const href = anchor.getAttribute('href') || '';
-      const next = withMiniAppContext(href);
-      if (next && next !== href) anchor.setAttribute('href', next);
-    });
-  }
-
-  function wireMiniAppNavigation() {
-    if (!window.API || !API.config.miniApp) return;
-    patchMiniAppLinks(document);
-    document.addEventListener('click', (e) => {
-      const anchor = e.target && e.target.closest ? e.target.closest('a[href]') : null;
-      if (!anchor) return;
-      const href = anchor.getAttribute('href') || '';
-      const next = withMiniAppContext(href);
-      if (next && next !== href) anchor.setAttribute('href', next);
-    }, true);
-  }
-
   // ---- shell ------------------------------------------------------------------
   function buildShell() {
     const page = document.body.dataset.page;
@@ -904,7 +872,6 @@
         <div class="search-results" id="search-results" hidden></div>
       </div>
       <div class="tb-right">
-        ${window.API && API.config.miniApp ? '<span class="chip ok mini-app-chip" id="mini-app-chip"><span class="dot"></span>Telegram</span>' : ''}
         <button class="chip ok user-chip" id="chip-user" type="button" hidden title="Мой кабинет"><span class="avatar avatar-sm" id="chip-avatar">·</span><span id="chip-user-name">Пользователь</span></button>
         <button class="chip ok" id="chip-workspace" type="button" hidden><span class="dot"></span><span id="chip-workspace-name">Workspace</span></button>
         <span class="tb-page-actions" id="page-actions"></span>
@@ -943,7 +910,6 @@
 
     wireDelegatedActions();
     wireA11y();
-    wireMiniAppNavigation();
     wireRailResize(rail, app);
     renderDevPreviewBanner();
     requestAnimationFrame(() => { authenticateAndStart(newsStrip); });
@@ -961,7 +927,7 @@
     return clamped;
   }
   function wireRailResize(rail, app) {
-    if (!rail || !app || document.documentElement.classList.contains('telegram-mini-app')) return;
+    if (!rail || !app) return;
     // Restore saved width
     try {
       const saved = parseInt(localStorage.getItem(RAIL_W_KEY) || '', 10);
@@ -1066,8 +1032,6 @@
       chipWorkspace.onclick = () => openCabinet('workspaces');
       chipWorkspace.title = activeWorkspace.uses_owner_runtime ? 'Учебный контур владельца' : 'Личный контур пользователя';
     }
-    const miniChip = qs('#mini-app-chip');
-    if (miniChip) miniChip.innerHTML = `<span class="dot"></span>${CURRENT_AUTH.role === 'read_only' ? 'Только чтение' : 'Управление'}`;
     maybeRefreshAvatar(user);
     if (user.needs_ux_mode || CURRENT_AUTH.ux_pending) {
       // The initial choice must precede the Aurora shell.  A direct deep link
@@ -1778,10 +1742,6 @@
     try {
       const params = new URLSearchParams(location.search);
       code = params.get('ref') || '';
-      if (!code && window.Telegram && Telegram.WebApp && Telegram.WebApp.initDataUnsafe) {
-        const sp = String(Telegram.WebApp.initDataUnsafe.start_param || '');
-        if (sp.indexOf('ref_') === 0) code = sp.slice(4);
-      }
       code = code.replace(/[^A-Za-z0-9-]/g, '').slice(0, 40);
       if (code) localStorage.setItem(REF_KEY, code);
     } catch (e) { /* ignore */ }
@@ -2090,7 +2050,7 @@
       <div class="finance-note support-privacy-note">${esc(data.telemetry_note || '')} Снимок возможен только после согласия пользователя и системного выбора экрана; хранится зашифрованным не более ${esc(data.screenshot_retention_hours || 24)} часов.</div>
       ${alerts.length ? `<div class="support-alerts">${alerts.map(alert => `<div class="support-alert ${alert.severity === 'critical' ? 'critical' : ''}">⚠ ${esc(alert.message)}</div>`).join('')}</div>` : '<div class="support-ok">Критических превышений сейчас нет.</div>'}
       <div class="section-title">Живая телеметрия вкладок</div>${liveCards || '<div class="empty-state">Пользователь не передаёт телеметрию: приложение закрыто или ещё не обновлено.</div>'}
-      <div class="section-title">Активные браузерные сессии</div><div class="list">${authCards || '<div class="empty-state">Активных cookie-сессий нет. Mini App можно остановить блокировкой аккаунта.</div>'}</div>
+      <div class="section-title">Активные браузерные сессии</div><div class="list">${authCards || '<div class="empty-state">Активных cookie-сессий нет.</div>'}</div>
       <div class="section-title">Запросы снимков</div><div class="support-shots">${shotCards || '<div class="empty-state">Снимки ещё не запрашивались.</div>'}</div>`;
   }
   async function refreshUserSupport(container, uid) {
@@ -2623,7 +2583,7 @@
       ${inv.web ? `<div class="cab-kv"><span class="k">Ссылка Web</span><span class="v"><a href="${esc(inv.web)}" target="_blank" rel="noopener">${esc(inv.web)}</a> <button class="btn sm ghost" data-copy="${esc(inv.web)}">Копировать</button></span></div>` : ''}
       ${render.text ? `<div class="cab-kv"><span class="k">Текст</span><span class="v"><button class="btn sm ghost" data-copy="${esc(render.text)}">Копировать текст</button></span></div>` : (inv.message ? `<div class="cab-kv"><span class="k">Текст</span><span class="v"><button class="btn sm ghost" data-copy="${esc(inv.message)}">Копировать приглашение</button></span></div>` : '')}
       <div class="dchart-actions" style="justify-content:flex-start">${sendBtn}${render.image_data_url ? `<a class="btn ghost" href="${esc(render.image_data_url)}" download="invite.png">Скачать картинку</a>` : ''}</div>
-      ${(!inv.telegram && !inv.web) ? '<div class="cab-sub">Ссылка появится после настройки бота/Mini App URL в разделе Telegram. Промокод уже работает.</div>' : ''}</div>`;
+      ${(!inv.telegram && !inv.web) ? '<div class="cab-sub">Ссылка появится после настройки бота или web URL. Промокод уже работает.</div>' : ''}</div>`;
     qsa('[data-copy]', node).forEach(b => b.onclick = () => { try { navigator.clipboard.writeText(b.dataset.copy); toast('Скопировано'); } catch (e) { reportError(e); } });
     const send = qs('#inv-send', node);
     if (send) send.onclick = async () => {
@@ -4215,59 +4175,21 @@
       }
       check(challengeId);
     };
-    const renderMiniAppRegister = (message) => {
-      stopPolling();
-      const tg = (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initDataUnsafe && window.Telegram.WebApp.initDataUnsafe.user) || {};
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Регистрация</h1><p>Telegram уже подтвердил личность. Заполните профиль — полный пробный доступ на 7 дней включится автоматически.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<form id="auth-mini-form" class="auth-form"><div class="field"><label for="mini-first">Имя</label><input id="mini-first" required maxlength="80" value="${esc(tg.first_name || '')}"></div><div class="field"><label for="mini-last">Фамилия</label><input id="mini-last" required maxlength="80" value="${esc(tg.last_name || '')}"></div><div class="field"><label for="mini-email">E-mail</label><input id="mini-email" type="email" required maxlength="254" placeholder="you@example.com"></div><label class="auth-terms"><input type="checkbox" id="mini-accept"> <span>Я соглашаюсь с <button type="button" class="linklike" id="mini-terms-link">договором StratForge AI</button> и беру все риски на себя.</span></label><button class="btn primary auth-main-action" type="submit">Зарегистрироваться</button></form><button class="btn ghost" id="auth-back-welcome" style="margin-top:10px">Назад</button>`);
-      const form = qs('#auth-mini-form', content);
-      const link = qs('#mini-terms-link', form); if (link) link.onclick = () => showTermsModal();
-      const back = qs('#auth-back-welcome', content);
-      if (back) back.onclick = () => {
-        try { sessionStorage.removeItem('stratforge.welcome.dismissed'); } catch (e) { /* ignore */ }
-        location.href = 'index.html';
-      };
-      form.onsubmit = async (event) => {
-        event.preventDefault();
-        if (!(qs('#mini-accept', form) || {}).checked) { toast('Подтвердите согласие'); return; }
-        const submit = form.querySelector('button[type="submit"]'); submit.disabled = true;
-        try {
-          const out = await API.http.miniappRegister({
-            first_name: qs('#mini-first', form).value,
-            last_name: qs('#mini-last', form).value,
-            email: qs('#mini-email', form).value,
-            accept_terms: true,
-          });
-          if (out && out.authenticated) { toast('Доступ открыт'); location.reload(); return; }
-          if (out && out.status === 'pending_owner' && out.challenge_id) {
-            renderWaiting({ challenge_id: out.challenge_id }, { status: 'pending_owner' });
-            return;
-          }
-          throw new Error('Регистрация подтверждена, но сессия не активирована. Повторите вход.');
-        } catch (error) { submit.disabled = false; renderMiniAppRegister(error.message || String(error)); }
-      };
-    };
-    // Mini App: Telegram identity is already proven — show profile form.
-    // Desktop: offer Telegram, Google and the explicitly configured e-mail backend.
-    // The welcome/promo screen is shown BEFORE this function is called.
-    if (window.API && API.config && API.config.miniApp) {
-      renderMiniAppRegister(initialMessage);
-    } else {
-      let callbackChallenge = '';
-      try {
-        const params = new URLSearchParams(location.search || '');
-        callbackChallenge = String(params.get('auth_challenge') || '');
-        if (callbackChallenge) {
-          params.delete('auth_challenge');
-          history.replaceState({}, '', location.pathname + (params.toString() ? '?' + params.toString() : '') + location.hash);
-        }
-      } catch (e) { callbackChallenge = ''; }
-      if (callbackChallenge) renderWaiting({ challenge_id: callbackChallenge }, { status: 'pending_owner' });
-      else renderStart(initialMessage);
-      API.http.authProviders({ retries: 0 }).then((out) => {
-        providers = (out && out.providers) || providers;
-        if (!callbackChallenge && qs('#auth-provider-start', content)) renderStart(initialMessage);
-      }).catch(() => { /* Telegram remains available as compatibility fallback. */ });
-    }
+    let callbackChallenge = '';
+    try {
+      const params = new URLSearchParams(location.search || '');
+      callbackChallenge = String(params.get('auth_challenge') || '');
+      if (callbackChallenge) {
+        params.delete('auth_challenge');
+        history.replaceState({}, '', location.pathname + (params.toString() ? '?' + params.toString() : '') + location.hash);
+      }
+    } catch (e) { callbackChallenge = ''; }
+    if (callbackChallenge) renderWaiting({ challenge_id: callbackChallenge }, { status: 'pending_owner' });
+    else renderStart(initialMessage);
+    API.http.authProviders({ retries: 0 }).then((out) => {
+      providers = (out && out.providers) || providers;
+      if (!callbackChallenge && qs('#auth-provider-start', content)) renderStart(initialMessage);
+    }).catch(() => { /* configured current providers remain available */ });
   }
 
   async function runReady() {
@@ -4493,7 +4415,7 @@
               <div class="row-val">${o[0] === cur ? icon('check') : ''}</div>
             </button>`).join('')}</div>
         </div>`;
-      }).join('') + `<div class="settings-note">Настройки сохраняются в этом браузере и действуют на всех страницах. Анимированный фон — самый задний слой; на слабых устройствах и в Telegram Mini App он автоматически облегчается, а при сворачивании вкладки останавливается.</div>`;
+      }).join('') + `<div class="settings-note">Настройки сохраняются в этом браузере и действуют на всех страницах. Анимированный фон автоматически облегчается на слабых устройствах и останавливается при сворачивании вкладки.</div>`;
       qsa('[data-opt]', body).forEach(b => b.addEventListener('click', () => {
         groups[+b.dataset.group].set(b.dataset.opt);
         toast('Настройка применена');
@@ -4512,13 +4434,9 @@
       try {
         const status = await API.http.telegramStatus();
         let group = null;
-        let remote = null;
         let accounts = null;
-        let tunnel = null;
         if (status.token_configured) { try { group = await API.http.telegramGroupStatus(); } catch (e) { group = null; } }
-        try { remote = await API.http.telegramRemoteAccess(); } catch (e) { remote = null; }
         try { accounts = await API.http.authUsers(); } catch (e) { accounts = null; }
-        try { tunnel = await API.http.telegramTunnelStatus(); } catch (e) { tunnel = null; }
         const connectionLabel = status.configured ? 'подключён' : status.token_configured ? 'нужно подключить чат' : 'не настроен';
         const botLabel = status.bot_username ? `@${status.bot_username}` : (status.bot_name || 'бот не проверен');
         const settingRows = (status.setting_definitions || []).map(item => {
@@ -4579,34 +4497,6 @@
           </section>` : ''}
 
           <section class="telegram-card">
-            <div class="flex between"><div><div class="section-title">Telegram Mini App</div><div class="row-sub">HTTPS-туннель → 127.0.0.1:8765</div></div><span class="badge ${tunnel && tunnel.ready ? 'live' : tunnel && (tunnel.cloudflared && tunnel.cloudflared.running) ? 'pending' : remote && remote.remote_enabled ? 'pending' : 'archived'}"><span class="dot"></span>${tunnel && tunnel.ready ? 'готов к работе' : tunnel && tunnel.cloudflared && tunnel.cloudflared.running ? 'туннель запущен' : remote && remote.remote_enabled ? 'удалённый доступ включён' : 'выключен'}</span></div>
-            ${tunnel ? `<div class="list" style="margin:8px 0">
-              ${telegramRightRow('Backend', tunnel.backend && tunnel.backend.listening)}
-              ${telegramRightRow('Cloudflared', tunnel.cloudflared && tunnel.cloudflared.running)}
-              ${telegramRightRow('Публичный URL', tunnel.public && tunnel.public.reachable)}
-              ${telegramRightRow('Удалённый доступ', remote && remote.remote_enabled)}
-            </div>
-            <div class="row-sub">${esc(tunnel.message_ru || '')}${tunnel.public_url ? ` · <a href="${esc(tunnel.public_url)}/ui/" target="_blank" rel="noopener">${esc(tunnel.public_url)}</a>` : ''}</div>
-            <div class="flex wrap gap-sm" style="margin-top:10px">
-              <button class="btn primary" id="telegram-tunnel-launch">${tunnel.ready ? 'Перезапустить Mini App' : 'Запустить Mini App'}</button>
-              <button class="btn" id="telegram-tunnel-stop" ${tunnel.cloudflared && tunnel.cloudflared.running ? '' : 'disabled'}>Остановить туннель</button>
-              <button class="btn" id="telegram-tunnel-refresh">Обновить статус</button>
-            </div>
-            <div class="finance-note">Кнопка запускает cloudflared, включает удалённый доступ и проверяет <code>app.stratforges.com</code>. Backend и NinjaTrader должны уже работать на этом ПК.</div>` : ''}
-            ${remote ? `
-              <label class="telegram-setting">
-                <span class="telegram-setting-copy"><strong>Удалённый доступ</strong><small>Мгновенно блокирует все Mini App API-запросы при выключении.</small></span>
-                <input type="checkbox" id="telegram-remote-enabled" ${remote.remote_enabled ? 'checked' : ''}>
-                <span class="telegram-switch" aria-hidden="true"></span>
-              </label>
-              <div class="field"><label for="telegram-public-url">Публичный HTTPS URL туннеля</label><input id="telegram-public-url" type="url" value="${esc(remote.public_url || '')}" placeholder="https://stratforge.example.com"></div>
-              <div class="field"><label for="telegram-owner-phone">Номер владельца для дополнительной проверки (необязательно)</label><input id="telegram-owner-phone" type="tel" autocomplete="off" placeholder="${remote.owner_phone_configured ? 'Настроен — оставьте пустым без изменения' : '+1 555 000 0000'}"></div>
-              <div class="flex wrap gap-sm"><button class="btn primary" id="telegram-remote-save">Сохранить настройки</button><button class="btn" id="telegram-menu-button" ${remote.public_url && status.token_configured ? '' : 'disabled'}>Настроить Menu Button</button></div>
-              <div class="finance-note"><strong>Инварианты:</strong> каждый API-запрос проверяет HMAC initData и актуальный whitelist; live-торговля и live unlock запрещены; paper/demo сохраняет обязательное подтверждение backend.</div>
-            ` : '<div class="finance-note telegram-error">Не удалось загрузить настройки удалённого доступа.</div>'}
-          </section>
-
-          <section class="telegram-card">
             <div class="flex between"><div><div class="section-title">Аккаунты и вход</div><div class="row-sub">${accounts ? `${(accounts.users || []).filter(user => user.status === 'active').length} активных · ${(accounts.users || []).filter(user => user.status === 'pending').length} ожидают` : 'статус недоступен'}</div></div><button class="btn" id="telegram-open-users">Управление пользователями</button></div>
             <div class="finance-note"><strong>Новый порядок:</strong> пользователь нажимает «Войти через Telegram», подтверждает свой контакт и заполняет имя, фамилию и e-mail. После подтверждения личности аккаунт активируется автоматически с полным пробным доступом на 7 дней.</div>
           </section>
@@ -4616,7 +4506,6 @@
             <div class="telegram-settings">${settingRows}</div>
           </section>
 
-          <div class="finance-note"><strong>Удалённые действия:</strong> разрешены только активным whitelist-пользователям. Все запросы пишутся в аудит с source=telegram_mini_app, Telegram user id, IP туннеля и UTC timestamp.</div>
           <div class="flex wrap gap-sm">${status.configured ? '<button class="btn primary" id="telegram-test">Отправить тест</button>' : ''}</div>`;
 
         const saveToken = qs('#telegram-save-token', body);
@@ -4662,72 +4551,8 @@
           catch (error) { reportError(error); groupConnect.disabled = false; }
         };
 
-        const remoteSave = qs('#telegram-remote-save', body);
-        if (remoteSave) remoteSave.onclick = async () => {
-          const ownerPhone = (qs('#telegram-owner-phone', body).value || '').trim();
-          const changes = {
-            remote_enabled: !!qs('#telegram-remote-enabled', body).checked,
-            public_url: (qs('#telegram-public-url', body).value || '').trim(),
-          };
-          if (ownerPhone) changes.owner_phone = ownerPhone;
-          remoteSave.disabled = true;
-          try { await API.http.telegramRemoteSettings(changes); toast('Настройки Mini App сохранены'); await refresh(); }
-          catch (error) { reportError(error); remoteSave.disabled = false; }
-        };
-        const menuButton = qs('#telegram-menu-button', body);
-        if (menuButton) menuButton.onclick = async () => {
-          menuButton.disabled = true;
-          try { await API.http.telegramRemoteMenuButton(); toast('Menu Button Web App настроена'); }
-          catch (error) { reportError(error); menuButton.disabled = false; }
-        };
-        const tunnelLaunch = qs('#telegram-tunnel-launch', body);
-        if (tunnelLaunch) tunnelLaunch.onclick = async () => {
-          tunnelLaunch.disabled = true;
-          try {
-            const result = await API.http.telegramTunnelLaunch({ enable_remote: true });
-            toast(result.ready ? 'Mini App готов к работе' : (result.message_ru || 'Туннель запускается'));
-            await refresh();
-          } catch (error) { reportError(error); tunnelLaunch.disabled = false; }
-        };
-        const tunnelStop = qs('#telegram-tunnel-stop', body);
-        if (tunnelStop) tunnelStop.onclick = async () => {
-          if (!confirm('Остановить cloudflared-туннель? Mini App из Telegram перестанет открываться.')) return;
-          tunnelStop.disabled = true;
-          try { await API.http.telegramTunnelStop(); toast('Туннель остановлен'); await refresh(); }
-          catch (error) { reportError(error); tunnelStop.disabled = false; }
-        };
-        const tunnelRefresh = qs('#telegram-tunnel-refresh', body);
-        if (tunnelRefresh) tunnelRefresh.onclick = async () => {
-          tunnelRefresh.disabled = true;
-          try { await refresh(); toast('Статус обновлён'); }
-          catch (error) { reportError(error); }
-          finally { tunnelRefresh.disabled = false; }
-        };
         const openUsers = qs('#telegram-open-users', body);
         if (openUsers) openUsers.onclick = () => { closeDrawer(); openAdminPanel('users'); };
-        const accessPair = qs('#telegram-access-pair', body);
-        if (accessPair) accessPair.onclick = async () => {
-          accessPair.disabled = true;
-          try {
-            const pair = await API.http.telegramRemotePairStart({
-              role: qs('#telegram-access-role', body).value,
-              expected_user_id: (qs('#telegram-access-user-id', body).value || '').trim(),
-              require_phone: !!qs('#telegram-access-phone', body).checked,
-            });
-            qs('#telegram-access-pair-result', body).innerHTML = `<div class="telegram-pair"><div>Одноразовый код: <strong>${esc(pair.code)}</strong></div><a class="btn primary" href="${esc(pair.bot_url)}" target="_blank" rel="noopener">Открыть привязку в Telegram</a><div class="row-sub">После проверки контакта владелец должен нажать «Разрешить доступ» в личном чате бота.</div></div>`;
-          } catch (error) { reportError(error); accessPair.disabled = false; }
-        };
-        qsa('[data-remote-role]', body).forEach(select => select.onchange = async () => {
-          select.disabled = true;
-          try { await API.http.telegramRemoteSetRole(select.dataset.remoteRole, select.value); toast('Роль обновлена'); await refresh(); }
-          catch (error) { reportError(error); select.disabled = false; }
-        });
-        qsa('[data-remote-revoke]', body).forEach(button => button.onclick = async () => {
-          if (!confirm(`Отозвать удалённый доступ у Telegram user id ${button.dataset.remoteRevoke}?`)) return;
-          button.disabled = true;
-          try { await API.http.telegramRemoteRevoke(button.dataset.remoteRevoke); toast('Доступ отозван'); await refresh(); }
-          catch (error) { reportError(error); button.disabled = false; }
-        });
         const groupRecheck = qs('#telegram-group-recheck', body);
         if (groupRecheck) groupRecheck.onclick = async () => { groupRecheck.disabled = true; try { await refresh(); } catch (e) { groupRecheck.disabled = false; } };
         const groupDisconnect = qs('#telegram-group-disconnect', body);
@@ -6304,7 +6129,6 @@
         ...(hasAdminCapability('admin.view') ? [{ icon: 'cpu', label: 'Панель администратора', onClick: () => openAdminPanel() }] : []),
         ...(devPreviewAvailable() ? [{ icon: 'eye', label: 'Developer Preview', onClick: () => openDevPreviewPanel() }] : []),
         { icon: 'palette', label: 'Настройки дизайна', onClick: () => showDesignSettings() },
-        { icon: 'back', label: 'Перейти в старый интерфейс', onClick: () => { window.location.href = (window.API && API.config && API.config.legacyUrl) || '/ui/legacy/'; } },
         { divider: true },
         { icon: 'back', label: 'Выйти из аккаунта', onClick: async () => { try { await API.http.authLogout(); location.reload(); } catch (error) { reportError(error); } } },
       ];
@@ -6395,7 +6219,6 @@
       items = index.filter(e => e.label.toLowerCase().includes(q) || (e.sub || '').toLowerCase().includes(q)).slice(0, 8);
       if (!items.length) { box.innerHTML = `<div class="search-empty">Ничего не найдено по «${esc(q)}»</div>`; box.hidden = false; return; }
       box.innerHTML = items.map((e, i) => `<a class="search-item ${i === 0 ? 'active' : ''}" href="${e.href}">${icon(e.icon)}<span class="si-main"><span class="si-label">${esc(e.label)}</span><span class="si-sub">${esc(e.sub)}</span></span></a>`).join('');
-      patchMiniAppLinks(box);
       box.hidden = false;
     }
     async function run(raw) {
@@ -6408,7 +6231,7 @@
     input.addEventListener('input', () => run(input.value));
     input.addEventListener('focus', () => { ensureIndex(); if (input.value) run(input.value); });
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && items.length) { e.preventDefault(); window.location.href = withMiniAppContext(items[0].href); }
+      if (e.key === 'Enter' && items.length) { e.preventDefault(); window.location.href = items[0].href; }
       else if (e.key === 'Escape') { close(); input.blur(); }
     });
     document.addEventListener('click', (e) => { if (!e.target.closest('.tb-search-wrap')) close(); });
@@ -6665,7 +6488,7 @@
         if (!command) return;
         await API.http.ackChartCommand(command.id, 'done', { ok: true, navigation: 'desktop.html' });
         try { sessionStorage.setItem('stratforge.desktop.auto-open', command.id || '1'); } catch (e) { /* ignore */ }
-        window.location.href = withMiniAppContext('desktop.html');
+        window.location.href = 'desktop.html';
       } catch (e) {
         // Best-effort background bridge: never surface entitlement/transient
         // errors as toasts or console noise.

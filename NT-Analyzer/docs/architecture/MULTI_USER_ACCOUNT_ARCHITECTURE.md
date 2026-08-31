@@ -19,7 +19,7 @@
 - Runtime endpoints получают активный workspace из сессии. Owner-training
   читает `data/runtime/*`; personal workspace читает только
   `data/tenants/<workspace_id>/runtime` после pairing.
-- Mini App намеренно запрещает live-действия. Paper/demo действия проходят через
+- Retired Mini App routes fail with HTTP 410. Current browser paper/demo actions pass through
   отдельные backend gates.
 - AI-диалоги изолированы по `user_id + workspace_id + conversation_id`.
   Старые неразмеченные диалоги владельца мигрируются идемпотентно при первом

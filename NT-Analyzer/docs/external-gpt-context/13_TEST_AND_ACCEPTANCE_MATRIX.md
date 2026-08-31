@@ -30,6 +30,7 @@ without their explicit test DSNs and one Windows bash-syntax check.
 | --- | --- |
 | Auth / permissions | identity, capabilities and owner/global governance gates stay fail-closed |
 | Environment isolation | DEV/CANARY/PRODUCTION do not share writable state or browser namespace by accident |
+| Legacy isolation | current UI has no legacy/Mini App link, retired routes return HTTP 410, Legacy Viewer is loopback/read-only and leaves no background process after exit |
 | Connector | protocol v1 signatures, nonces, capabilities and command/result safety remain intact |
 | Market data | TopstepX-first read-only charts, provenance labels and fallback behavior stay honest |
 | Release Center | immutable artifact identity, approval binding and blue-green step logic remain coherent |

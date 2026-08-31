@@ -11,8 +11,9 @@
 Run `start.ps1`. The launcher opens `/ui/`, where the user first chooses the
 beginner or professional contour. Unauthenticated users then see Sign in /
 Register (Telegram, Google, email). Promo code / donation is optional and must
-not replace that primary account flow. The classic UI remains available at
-`/ui/legacy/`; it has one `Новый интерфейс` link back to `/ui/`.
+not replace that primary account flow. The current runtime has no classic UI or
+Telegram Mini App navigation. Historical classic reports are available only in
+the separate read-only Legacy Viewer; see `../architecture/LEGACY_VIEWER.md`.
 
 The top bar is shared by every page:
 

@@ -10,6 +10,8 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 
+import pytest
+
 from app import server as server_mod
 from app import portfolio_registry
 from app import account_ledger
@@ -349,7 +351,6 @@ def test_live_static_handler_routes_csp_and_assets():
     try:
         for path, marker in (
             ("/ui/", "Обзор"),
-            ("/ui/legacy/", "Бэктестирование"),
             ("/ui/assets/domain.js", "AuroraDomain"),
         ):
             with urllib.request.urlopen(base + path, timeout=5) as response:
@@ -358,6 +359,11 @@ def test_live_static_handler_routes_csp_and_assets():
                 assert marker in body
                 assert "script-src 'self'" in response.headers["Content-Security-Policy"]
                 assert "http://127.0.0.1:*" in response.headers["Content-Security-Policy"]
+
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(base + "/ui/legacy/", timeout=5)
+        assert exc.value.code == 410
+        assert json.loads(exc.value.read().decode("utf-8"))["code"] == "legacy_ui_isolated"
 
         with urllib.request.urlopen(base + "/api/runtime/env", timeout=5) as response:
             runtime = json.loads(response.read().decode("utf-8"))
@@ -508,15 +514,14 @@ def test_admin_panel_replaces_system_actions_in_personal_menu_and_cabinet() -> N
     assert "hasAdminCapability('admin.view')" in menu
     assert "label: 'Панель администратора'" in menu
     # System OPERATIONS actions moved to the Admin Panel → Operations module.
-    # The legacy-interface switch is navigation and stays in the menu (restored
-    # per owner request in the Phase 11 final integration pass).
     for legacy_action in (
         "Запустить всё окружение",
         "Диагностика системы",
         "Перезапустить backend",
     ):
         assert legacy_action not in menu
-    assert "Перейти в старый интерфейс" in menu
+    assert "Перейти в старый интерфейс" not in menu
+    assert "/ui/legacy/" not in menu
 
     cabinet = ui.split("function renderCabinet", 1)[1].split("async function renderAiRatingsInto", 1)[0]
     # 'card' is the canonical user card -- self-service, fed by the same

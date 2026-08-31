@@ -125,4 +125,4 @@ Backend остался жив. Поэтому пункты выше остают
 систему, не открывая браузер. Состояние доступно через `GET /api/health`, лог —
 `logs/vitek-background.log`. Основные инструкции:
 [Витёк](../VITEK.md), [операции Aurora](../operations/UI_OPERATIONS.md),
-[Telegram Mini App](../architecture/TELEGRAM_MINI_APP.md).
+[Telegram Mini App (archived)](TELEGRAM_MINI_APP.md).
