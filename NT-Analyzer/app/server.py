@@ -28,6 +28,7 @@ import json
 import math
 import os
 import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -66,6 +67,8 @@ if __package__ is None or __package__ == "":
     from app import pipeline_view  # type: ignore[no-redef]
     from app import release_summary  # type: ignore[no-redef]
     from app import release_publish  # type: ignore[no-redef]
+    from app import release_deliver  # type: ignore[no-redef]
+    from app import host_metrics  # type: ignore[no-redef]
     from app import personal_nt_security  # type: ignore[no-redef]
     from app import ninjatrader_resources  # type: ignore[no-redef]
     from app import agent_allocation  # type: ignore[no-redef]
@@ -166,6 +169,8 @@ else:
     from . import pipeline_view
     from . import release_summary
     from . import release_publish
+    from . import release_deliver
+    from . import host_metrics
     from . import personal_nt_security
     from . import ninjatrader_resources
     from . import agent_allocation
@@ -1176,6 +1181,25 @@ def _server_environment_explicit() -> bool:
     )
 
 
+def _data_root_storage() -> Dict[str, Any]:
+    """Free and total space where this environment keeps its data.
+
+    Measured, not estimated: when the path cannot be read the caller receives
+    nothing and the panel says the figure is unavailable.
+    """
+    try:
+        root = runtime_env.data_root()
+        usage = shutil.disk_usage(str(root))
+    except Exception:
+        return {}
+    mb = 1024 * 1024
+    return {
+        "free_mb": int(usage.free // mb),
+        "total_mb": int(usage.total // mb),
+        "used_mb": int((usage.total - usage.free) // mb),
+    }
+
+
 def _canonical_environment_rows() -> Dict[str, Dict[str, Any]]:
     """What each environment reports about itself, from the one registry.
 
@@ -1257,6 +1281,15 @@ def _admin_environment_targets() -> Dict[str, Any]:
             or (str(deployment.get("build_id") or "") if current else ""),
             "artifact_sha256": str(row.get("artifact_sha256") or ""),
             "last_seen_at_utc": str(row.get("last_seen_at_utc") or ""),
+            # Reported by the environment itself; absent keys mean it did
+            # not measure that figure.
+            # This environment measures itself directly; the registry copy can
+            # lag a heartbeat, and a peer running an older build strips the
+            # field entirely. Other environments are never measured from here.
+            "host": (
+                host_metrics.sample(runtime_env.data_root()) if current
+                else (row.get("host") if isinstance(row.get("host"), dict) else {})
+            ),
             "release_channel": str(row.get("release_channel") or "")
             or (str(deployment.get("release_channel") or "") if current else ""),
             "summary_title": summary.get("title") or "",
@@ -4889,6 +4922,32 @@ class Handler(BaseHTTPRequestHandler):
                     idempotency_key=str(body.get("idempotency_key") or ""),
                 ))
                 return
+            if path == "/api/admin/releases/deliver-canary":
+                # One action instead of a sequence the owner had to know, and
+                # instead of a separate screen whose only job was to retype the
+                # version and commit the repository already knows. Both
+                # capabilities are required because both kinds of step run.
+                if not self._require_release_capability(context, "releases.create"):
+                    return
+                if not self._require_release_capability(context, "releases.deploy_canary"):
+                    return
+                out = release_deliver.deliver(
+                    actor=actor,
+                    idempotency_key=str(body.get("idempotency_key") or ""),
+                    step_up_challenge_id=str(body.get("step_up_challenge_id") or ""),
+                )
+                if not out.get("ok"):
+                    self._json(HTTPStatus(int(out.get("status") or 409)), {
+                        "ok": False,
+                        "error": out.get("reason") or "Отправка в Canary остановлена.",
+                        "code": out.get("code") or "deliver_failed",
+                        "stages": out.get("stages") or [],
+                        "failed_stage": out.get("failed_stage") or "",
+                        "candidate_id": out.get("candidate_id") or "",
+                    })
+                    return
+                self._json(HTTPStatus.OK, out)
+                return
             # /api/admin/releases/{id}/{action}
             if len(parts) != 2:
                 self._err(HTTPStatus.NOT_FOUND, "no release route", code="release_route_not_found")
@@ -6062,6 +6121,10 @@ class Handler(BaseHTTPRequestHandler):
                     self.server.admission_metrics()
                     if callable(getattr(self.server, "admission_metrics", None)) else {}
                 ),
+                # Real free space for the data root, from the stdlib. The panel
+                # charts what the service actually reports; a figure it cannot
+                # measure is shown as unavailable rather than estimated.
+                "storage": _data_root_storage(),
                 "vitek": vitek.status(),
             }
             # Absolute local paths are useful to the private developer but

@@ -47,6 +47,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+from . import host_metrics
 from . import runtime_env
 
 
@@ -281,6 +282,36 @@ def _normalize_details(raw: Any) -> Dict[str, str]:
     return out
 
 
+# Host load, as the environment measured it. Percentages only: an absent key
+# means the environment did not measure that figure, and the panel says so
+# rather than showing a number nobody took.
+_HOST_KEYS = ("cpu_percent", "memory_percent", "disk_percent")
+
+
+def _normalize_host(raw: Any) -> Dict[str, Any]:
+    """Accept only percentages in range; anything else is treated as absent.
+
+    This arrives over the network from a peer, so a value that is not a number
+    between 0 and 100 is dropped rather than clamped: a clamped nonsense figure
+    would be indistinguishable from a real reading.
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: Dict[str, Any] = {}
+    for key in _HOST_KEYS:
+        value = raw.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        number = float(value)
+        if number != number or number < 0.0 or number > 100.0:
+            continue
+        out[key] = round(number, 1)
+    origin = _text(raw.get("source"), 32)
+    if origin:
+        out["source"] = origin
+    return out
+
+
 def normalize_heartbeat(payload: Any) -> Dict[str, Any]:
     """Validate a reported runtime identity into exactly the stored shape."""
     if not isinstance(payload, dict):
@@ -335,6 +366,7 @@ def normalize_heartbeat(payload: Any) -> Dict[str, Any]:
         # Connector control plane is answering.
         "market_data": market_data,
         "connector": connector,
+        "host": _normalize_host(payload.get("host")),
         "details": _normalize_details(payload.get("details")),
     }
 
@@ -410,6 +442,11 @@ def public_row(row: Dict[str, Any], *, now: Optional[float] = None) -> Dict[str,
         "readiness": str(row.get("readiness") or ""),
         "market_data": str(row.get("market_data") or ""),
         "connector": str(row.get("connector") or ""),
+        # Load as the environment measured it. Not blanked when it goes
+        # quiet, for the same reason the build is not: a stale reading with
+        # a timestamp beats no reading at all, and metadata_is_current says
+        # which it is.
+        "host": row.get("host") if isinstance(row.get("host"), dict) else {},
         "details": row.get("details") if isinstance(row.get("details"), dict) else {},
         "metadata_is_current": live["state"] == STATE_LIVE,
         "metadata_known": known,
@@ -424,6 +461,7 @@ def empty_row(environment: str) -> Dict[str, Any]:
     """
     return {
         "environment": environment,
+        "host": {},
         "app_version": "",
         "git_commit_sha": "",
         "build_id": "",
@@ -629,6 +667,10 @@ def self_heartbeat(*, readiness: Optional[Any] = None) -> Dict[str, Any]:
         "readiness": _readiness(readiness),
         "market_data": _market_data_state(),
         "connector": _connector_state(),
+        # Measured by this environment about itself; peers never compute it for
+        # each other, so a card either shows what the environment reported or
+        # says the data is unavailable.
+        "host": host_metrics.sample(runtime_env.data_root()),
         "details": {
             "runtime_profile": deployment.get("runtime_profile"),
             "region": deployment.get("region"),

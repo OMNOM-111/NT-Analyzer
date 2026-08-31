@@ -4793,8 +4793,8 @@
     const checks = Array.isArray(target.checks) ? target.checks : [];
     return `<div class="env-line"><strong class="env-version">${esc(target.version || '—')}</strong>
         <span class="cab-sub">${esc(ENV_PURPOSE[env] || '')}</span></div>
-      ${target.summary_title ? `<div class="env-summary-title">${esc(target.summary_title)}</div>` : ''}
-      ${summary.length ? `<ul class="env-summary">${summary.map(row => `<li>${esc(row)}</li>`).join('')}</ul>` : ''}
+      ${(target.summary_title && !target.hide_summary) ? `<div class="env-summary-title">${esc(target.summary_title)}</div>` : ''}
+      ${(summary.length && !target.hide_summary) ? `<ul class="env-summary">${summary.map(row => `<li>${esc(row)}</li>`).join('')}</ul>` : ''}
 
       ${checks.length ? `<div class="env-checks">${checks.map(row => `<span class="env-check ${row.ok ? 'ok' : 'pending'}">${row.ok ? '✓' : '·'} ${esc(row.label)}</span>`).join('')}</div>` : ''}
       <details class="env-tech"><summary>Технические данные</summary>
@@ -4955,7 +4955,15 @@
     const blocked = !(promotion || {}).allowed;
     if (env === 'development') {
       if (!hasAdminCapability('releases.deploy_canary')) return '';
-      if (!id) return '<div class="cab-sub">Активного релиз-кандидата нет.</div>';
+      // No candidate is not a dead end: the whole point of this card is that
+      // reaching Canary starts here. The system creates the candidate, builds
+      // the artifact, verifies it and deploys — the owner does not fill in a
+      // version and a commit the repository already knows.
+      if (!id || ['production_live', 'rolled_back', 'superseded', 'cancelled'].indexOf(state) >= 0) {
+        return '<button class="btn primary stage-action" data-stage-deliver="1"'
+          + ' title="Создать кандидата из текущего commit, собрать artifact,'
+          + ' проверить и развернуть в Canary">Отправить в Canary</button>';
+      }
       const ready = ['draft', 'built', 'signed', 'build_failed', 'canary_failed'].indexOf(state) >= 0;
       const why = ready ? 'Собрать и развернуть кандидата в Canary'
         : 'Состояние «' + state + '» не допускает развёртывание';
@@ -4978,6 +4986,91 @@
     return '';
   }
 
+  // One scale for every load figure on this screen, so the same colour always
+  // means the same thing. Defined once here rather than per metric: three
+  // different notions of "high" on one card is how a panel stops being read.
+  const LOAD_THRESHOLDS = { elevated: 60, high: 80, critical: 92 };
+
+  function loadLevel(percent) {
+    const value = Number(percent);
+    if (!isFinite(value)) return 'unknown';
+    if (value >= LOAD_THRESHOLDS.critical) return 'critical';
+    if (value >= LOAD_THRESHOLDS.high) return 'high';
+    if (value >= LOAD_THRESHOLDS.elevated) return 'elevated';
+    return 'normal';
+  }
+
+  function loadGaugeHtml(label, percent) {
+    // A figure the environment did not report is named, not drawn as zero.
+    if (percent == null || !isFinite(Number(percent))) {
+      return '<div class="load-gauge is-unknown"><span class="load-name">' + esc(label) + '</span>'
+        + '<span class="load-track"></span>'
+        + '<span class="load-value">нет данных</span></div>';
+    }
+    const value = Math.max(0, Math.min(100, Number(percent)));
+    return '<div class="load-gauge is-' + loadLevel(value) + '">'
+      + '<span class="load-name">' + esc(label) + '</span>'
+      + '<span class="load-track"><span class="load-fill" style="width:' + value.toFixed(0) + '%"></span></span>'
+      + '<span class="load-value">' + value.toFixed(0) + '%</span></div>';
+  }
+
+  // First level: what an owner reads at a glance. Everything diagnostic lives
+  // behind the disclosure below it.
+  function loadChartHtml(host, health) {
+    const measured = host && typeof host === 'object' ? host : {};
+    const known = ['cpu_percent', 'memory_percent', 'disk_percent']
+      .some(key => measured[key] != null);
+    const admission = (health && health.admission) || null;
+    const active = admission && admission.active != null ? Number(admission.active) : null;
+    const limit = admission && Number(admission.max_inflight) || 0;
+    const activePct = (active != null && limit) ? (active / limit) * 100 : null;
+
+    if (!known && !admission) {
+      return '<div class="env-load"><div class="env-load-none">Данные недоступны</div></div>';
+    }
+
+    const gauges = loadGaugeHtml('CPU', measured.cpu_percent)
+      + loadGaugeHtml('RAM', measured.memory_percent)
+      + loadGaugeHtml('Диск', measured.disk_percent)
+      + (activePct != null
+        ? '<div class="load-gauge is-' + loadLevel(activePct) + '">'
+          + '<span class="load-name">Запросы</span>'
+          + '<span class="load-track"><span class="load-fill" style="width:'
+          + Math.max(0, Math.min(100, activePct)).toFixed(0) + '%"></span></span>'
+          + '<span class="load-value">' + active + ' / ' + limit + '</span></div>'
+        : '');
+    return '<div class="env-load">' + gauges + technicalMetricsHtml(admission) + '</div>';
+  }
+
+  // Kept, but off the first level: p50/p95/p99, websockets and the admission
+  // counters are how a problem is diagnosed, not how it is noticed.
+  function technicalMetricsHtml(admission) {
+    if (!admission) return '';
+    const latency = admission.duration_ms || {};
+    const sockets = admission.websockets || {};
+    const ms = value => {
+      const number = Number(value);
+      if (!isFinite(number)) return '—';
+      return number >= 1000
+        ? (number / 1000).toFixed(number >= 10000 ? 0 : 1) + ' с'
+        : Math.round(number) + ' мс';
+    };
+    const rows = [
+      ['Задержка p50', ms(latency.p50)],
+      ['Задержка p95', ms(latency.p95)],
+      ['Задержка p99', ms(latency.p99)],
+      ['Пик активных', String(admission.peak_active != null ? admission.peak_active : '—')],
+      ['Принято', String(admission.accepted != null ? admission.accepted : '—')],
+      ['Отклонено', String(admission.rejected != null ? admission.rejected : '—')],
+      ['WebSocket', String(sockets.active != null ? sockets.active : '—')
+        + (sockets.max ? ' / ' + sockets.max : '')],
+    ];
+    return '<details class="env-tech"><summary>Технические данные / Метрики</summary>'
+      + '<div class="admin-env-meta">' + rows.map(row =>
+        '<div><span>' + esc(row[0]) + '</span><strong>' + esc(row[1]) + '</strong></div>').join('')
+      + '</div></details>';
+  }
+
   function stageCardHtml(target, index, candidate, promotion) {
     const env = String(target.environment || '');
     const origin = target.current ? location.origin : (target.origin || '');
@@ -4990,6 +5083,7 @@
       + '</div>'
       + '<div data-env-meta>' + environmentMetaHtml(target) + '</div>'
       + stageStatusHtml(target, candidate)
+      + '<div data-env-load>' + loadChartHtml(target.host, target.health_metrics) + '</div>'
       + '<div class="stage-actions">' + stageActionHtml(target, candidate, promotion) + '</div>'
       + '<div data-stage-progress></div>'
       + '</section>';
@@ -5001,10 +5095,22 @@
     const doc = pipeline || {};
     const candidate = doc.candidate || {};
     const promotion = doc.promotion || {};
+    // The same release on all three stages repeated the same three bullets
+    // three times, which is noise, not information. State it once.
+    const versions = targets.map(t => String(t.version || '')).filter(Boolean);
+    const uniform = versions.length === targets.length && versions.length > 0
+      && versions.every(v => v === versions[0]);
+    const shared = uniform ? targets.find(t => t.summary_title) : null;
+    if (uniform) targets.forEach(t => { t.hide_summary = true; });
+    const sharedHtml = shared ? '<div class="stage-shared">'
+      + '<div class="env-summary-title">' + esc(shared.summary_title) + '</div>'
+      + ((shared.summary || []).length ? '<ul class="env-summary">' + shared.summary.map(row =>
+          '<li>' + esc(row) + '</li>').join('') + '</ul>' : '')
+      + '<div class="cab-sub">Все среды на версии ' + esc(versions[0]) + '.</div></div>' : '';
     const cards = targets.map((target, index) =>
       stageCardHtml(target, index, candidate, promotion)).join('<div class="stage-arrow">→</div>');
 
-    node.innerHTML = '<div class="stage-flow">' + cards + '</div>'
+    node.innerHTML = sharedHtml + '<div class="stage-flow">' + cards + '</div>'
       + '<div class="cab-sub stage-note" id="stage-msg"></div>'
       + '<details class="card-details" id="env-diagnostics"><summary>Технические данные / Диагностика</summary>'
       + '<div class="finance-note">Каждая среда открывается на своём origin в новой вкладке. Токены, cookies, CSRF и localStorage не переносятся.</div>'
@@ -5039,6 +5145,33 @@
         button.textContent = before;
       }
     };
+
+    // Reaching Canary is one action: the server creates the candidate,
+    // builds, verifies and deploys, and reports the stages it ran.
+    qsa('[data-stage-deliver]', node).forEach(button => button.onclick = async () => {
+      const card = button.closest('[data-stage-env]');
+      const box = card && qs('[data-stage-progress]', card);
+      const before = button.textContent;
+      button.disabled = true;
+      button.textContent = 'Отправляю…';
+      if (msg) msg.textContent = '';
+      try {
+        const out = await API.http.releaseDeliverCanary(releaseKey());
+        if (box) box.innerHTML = stagesHtml(out.stages);
+        toast('Развёрнуто в Canary');
+        await again();
+      } catch (e) {
+        const detail = (e && e.payload) || {};
+        if (box) {
+          box.innerHTML = stagesHtml(detail.stages)
+            + '<div class="pub-outcome is-failed">Отправка остановлена'
+            + (detail.failed_stage ? ' · этап: ' + esc(detail.failed_stage) : '') + '</div>';
+        }
+        if (msg) msg.textContent = (e && e.message) || String(e);
+        button.disabled = false;
+        button.textContent = before;
+      }
+    });
 
     qsa('[data-stage-deploy]', node).forEach(button => button.onclick = () =>
       runStep(button, 'deploy-canary', button.dataset.stageDeploy, 'Разворачиваю…'));
@@ -5591,6 +5724,14 @@
     }
     try {
       const targets = await API.http.adminEnvironmentTargets();
+      // Load figures come from /api/health, which is authenticated per
+      // origin: this session can read them for the environment it is signed
+      // in to and for no other. The rest render as unavailable.
+      const current = ((targets && targets.targets) || []).find(t => t.current);
+      if (current) {
+        try { current.health_metrics = await API.http.health(); }
+        catch (e) { current.health_metrics = null; }
+      }
       let pipeline = null;
       try { pipeline = await API.http.adminPipeline(); } catch (e) { pipeline = null; }
       renderEnvironmentTargets(node, targets, pipeline);

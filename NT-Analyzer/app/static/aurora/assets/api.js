@@ -368,6 +368,8 @@
     adminRelease: (id, o) => getJSON('/api/admin/releases/' + encodeURIComponent(id), o),
     adminReleaseCreate: (body) => send('/api/admin/releases/candidates', 'POST', body || {}),
     adminReleaseAction: (id, action, body) => send('/api/admin/releases/' + encodeURIComponent(id) + '/' + action, 'POST', body || {}),
+    // One call: create the candidate, build, verify and deploy to Canary.
+    releaseDeliverCanary: (key) => send('/api/admin/releases/deliver-canary', 'POST', { idempotency_key: key }),
     // One call: approve, promote and verify, with the stages reported back.
     releasePublish: (id, key) => send('/api/admin/releases/' + encodeURIComponent(id) + '/publish-production', 'POST', { idempotency_key: key }),
     adminReleaseRehearse: (id, body) => send('/api/admin/releases/' + encodeURIComponent(id) + '/rehearse-bluegreen', 'POST', body || {}),
