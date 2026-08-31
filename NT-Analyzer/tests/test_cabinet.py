@@ -689,7 +689,7 @@ def test_owner_row_exposes_details_and_support_bridge() -> None:
     assert "ownerSupportDeviceName" in ui
 
 
-def test_miniapp_verified_registration_activates_initial_trial(cabinet_store, monkeypatch) -> None:
+def test_miniapp_registration_is_isolated_from_current_runtime(cabinet_store, monkeypatch) -> None:
     monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
     token = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_123456"
     monkeypatch.setenv(telegram_service.TOKEN_ENV, token)
@@ -714,51 +714,18 @@ def test_miniapp_verified_registration_activates_initial_trial(cabinet_store, mo
     tunnel = {"Host": "app.stratforges.com", "X-Forwarded-Host": "app.stratforges.com",
               "Origin": "https://app.stratforges.com"}
     try:
-        # Before registration a stranger cannot use the app.
         stranger = _init_data(777, token=token)
         with pytest.raises(urllib.error.HTTPError) as exc:
             _request(base, "/api/auth/me", extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
-        assert exc.value.code == 403
+        assert exc.value.code == 410
+        assert json.loads(exc.value.read().decode("utf-8"))["code"] == "telegram_mini_app_isolated"
 
-        # Verified Mini App registration activates immediately and mints the
-        # account's one bounded initial trial.
-        out = _request(base, "/api/auth/miniapp/register", method="POST",
-                       body={"email": "s@e.com", "first_name": "Sam", "last_name": "Lee", "accept_terms": True},
-                       extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
-        assert out["ok"] is True and out["authenticated"] is True
-        assert out["status"] == "active" and out["challenge_id"] == ""
-
-        # Registration without accepting the terms is rejected.
-        other = _init_data(778, token=token)
         with pytest.raises(urllib.error.HTTPError) as exc:
             _request(base, "/api/auth/miniapp/register", method="POST",
-                     body={"email": "x@e.com", "accept_terms": False},
-                     extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: other})
-        assert exc.value.code == 400
-
-        me = _request(base, "/api/auth/me", extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
-        assert me["is_owner"] is False and me["free_preview"] is False
-        assert me["plan_id"] == subscriptions.TRIAL_PLAN_ID
-        assert me["trial_access"]["state"] == "active"
-        assert me["ux_mode"] == "professional" and me["ux_pending"] is False
-        assert me["features"]["docs"] is True
-        # Product trial and market-data redistribution are separate. Without
-        # explicit policy authorization this account is prompted for BYOMD.
-        assert me["market_data_access"]["allowed"] is False
-        assert me["market_data_access"]["reason"] == "redistribution_not_authorized"
-
-        # Public access options are readable without auth (welcome screen).
-        access = _request(base, "/api/billing/access-options", extra_headers=tunnel)
-        assert "tiers" in access
-
-        # Re-registering the same verified identity never restarts the clock.
-        first_expiry = me["trial_access"]["expires_at_utc"]
-        replay = _request(base, "/api/auth/miniapp/register", method="POST",
-                          body={"email": "s@e.com", "first_name": "Sam", "last_name": "Lee", "accept_terms": True},
-                          extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
-        assert replay["authenticated"] is True
-        me_again = _request(base, "/api/auth/me", extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
-        assert me_again["trial_access"]["expires_at_utc"] == first_expiry
+                     body={"email": "s@e.com", "first_name": "Sam", "last_name": "Lee", "accept_terms": True},
+                     extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
+        assert exc.value.code == 410
+        assert len(account_auth._read_doc()["users"]) == 1
     finally:
         server.shutdown()
         server.server_close()
@@ -814,21 +781,13 @@ def test_invite_lifecycle_and_send_endpoints(cabinet_store, monkeypatch) -> None
         server.server_close()
 
 
-def test_disabled_desktop_auth_never_grants_owner_to_remote(cabinet_store, monkeypatch) -> None:
-    """Regression for the 'instant access' hole.
-
-    With desktop auth disabled (``desktop_auth_required = False``) but the public
-    Mini App tunnel enabled, a remote Telegram request MUST still be authenticated
-    against the approved-account allowlist. A stranger must never inherit the
-    local-owner context, while genuine local desktop calls stay owner and the
-    owner's own Mini App keeps working.
-    """
+def test_retired_remote_state_never_reenables_miniapp_access(cabinet_store, monkeypatch) -> None:
+    """Stale remote-access state cannot reopen the isolated Mini App surface."""
     monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
     token = "123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ_123456"
     monkeypatch.setenv(telegram_service.TOKEN_ENV, token)
 
-    # Public Mini App exposed. Even with the desktop flag reset to false, auth is
-    # FORCED on (remote_enabled) so nobody can inherit owner without Telegram auth.
+    # Retired remote state no longer changes the explicit localhost auth setting.
     telegram_remote._write({
         "remote_enabled": True,
         "desktop_auth_required": False,
@@ -836,7 +795,7 @@ def test_disabled_desktop_auth_never_grants_owner_to_remote(cabinet_store, monke
         "users": [],
         "pairings": [],
     })
-    assert account_auth.auth_required() is True
+    assert account_auth.auth_required() is False
 
     # Only the owner is a registered active account.
     account_auth._write_doc({
@@ -856,11 +815,11 @@ def test_disabled_desktop_auth_never_grants_owner_to_remote(cabinet_store, monke
     try:
         tunnel = {"Host": "app.stratforges.com", "X-Forwarded-Host": "app.stratforges.com"}
 
-        # A stranger's Mini App request (valid signature, not whitelisted) is 403.
+        # Signed initData is retired before allowlist or owner resolution.
         stranger = _init_data(777, token=token)
         with pytest.raises(urllib.error.HTTPError) as exc:
             _request(base, "/api/auth/me", extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: stranger})
-        assert exc.value.code == 403
+        assert exc.value.code == 410
 
         # A remote request over the tunnel with no credentials is unauthorized —
         # NOT silently promoted to owner.
@@ -868,19 +827,15 @@ def test_disabled_desktop_auth_never_grants_owner_to_remote(cabinet_store, monke
             _request(base, "/api/auth/me", extra_headers=tunnel)
         assert exc.value.code in (401, 403)
 
-        # The owner's own Mini App request still resolves to the owner profile.
+        # Owner initData is isolated too; there is no privileged compatibility path.
         owner_init = _init_data(999, token=token)
-        me = _request(base, "/api/auth/me", extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: owner_init})
-        assert me["is_owner"] is True
-        assert me["user"]["email"] == "owner@example.com"
-        assert me["features"]["practice"] is False
-        assert all(value for name, value in me["features"].items() if name != "practice")
-
-        # A local desktop request with NO Telegram auth is now also rejected
-        # (mandatory verification for everyone, no local bypass).
         with pytest.raises(urllib.error.HTTPError) as exc:
-            _request(base, "/api/auth/me")
-        assert exc.value.code in (401, 403)
+            _request(base, "/api/auth/me", extra_headers={**tunnel, telegram_remote.INIT_DATA_HEADER: owner_init})
+        assert exc.value.code == 410
+
+        # The explicit localhost setting remains independent of retired state.
+        local = _request(base, "/api/auth/me")
+        assert local["is_owner"] is True
     finally:
         server.shutdown()
         server.server_close()

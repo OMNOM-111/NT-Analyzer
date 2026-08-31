@@ -1,17 +1,16 @@
 # Aurora UI architecture
 
-Актуально на 2026-07-13.
+Актуально на 2026-08-31.
 
 ## Layout
 
-`/ui/` обслуживает `app/static/aurora/`. Classic UI физически остаётся в
-`app/static/` и доступен через `/ui/legacy/`. Такой route-level cutover не
-дублирует production-логику и не требует копирования classic-файлов.
+`/ui/` обслуживает только `app/static/aurora/`. Classic UI удалён из текущего
+static/runtime contour: `/ui/legacy/*` возвращает HTTP 410. Его frozen assets
+находятся в `legacy_viewer/static/` и доступны только через отдельный
+localhost-only процесс `app.legacy_viewer`.
 
 ```text
 app/static/
-  index.html, trading.html, ...   classic UI
-  legacy_switch.js               classic -> Aurora
   aurora/
     *.html                       CSP-safe page shells
     assets/theme.css             design system and responsive rules
@@ -20,6 +19,7 @@ app/static/
     assets/domain.js             pure response/finance/time adapters
     assets/charts.js             dependency-free canvas charts
     assets/pages/*.js            page controllers
+legacy_viewer/static/            frozen classic UI, separate process only
 ```
 
 ## Backend additions
@@ -33,8 +33,10 @@ app/static/
   breakdowns and paginated canonical closed trades.
 - `ai_lab/read_model.py`: experiment/model/role telemetry over the append-only
   LM request audit.
-- `server.py`: primary/classic static routing, CSP headers, portfolio and account
-  history endpoints.
+- `server.py`: Aurora static routing, retired-surface HTTP 410 guards, CSP
+  headers, portfolio and account history endpoints.
+- `legacy_viewer.py`: localhost-only read-only classic viewer without current
+  workers, Telegram, trading or release automation.
 
 ## Shared shell
 
@@ -42,8 +44,7 @@ app/static/
 - Market state and countdown are DST-safe and tested.
 - Selected runtime account is shared through `localStorage` and
   `nt-account-change`.
-- The classic switch exists once in Aurora's system menu. Classic pages inject
-  exactly one `#nta-new-ui-switch`.
+- Current navigation contains no classic UI switch or Mini App controls.
 - At 1024 px market, account and PT date remain visible; technical chips/search
   collapse first. At phone width the rail becomes bottom navigation.
 
@@ -51,6 +52,7 @@ app/static/
 
 - `script-src 'self'`; no inline `<script>` or HTML `onclick`.
 - HTML also carries CSP meta; server sends the uniform CSP header.
+- Current CSP does not authorize Telegram Web framing.
 - `UI.ready`, abort signals and polling cleanup prevent work after page unload.
 - Async blocks have loading/empty/error states. Independent requests are loaded
   concurrently where one failure must not blank unrelated data.

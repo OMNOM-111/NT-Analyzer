@@ -86,20 +86,26 @@ def test_no_aurora_html_meta_csp_has_invalid_ipv6_source():
 
 
 # --------------------------------------------------------------------------- #
-# Legacy interface switch (both directions).
+# Legacy interface isolation.
 # --------------------------------------------------------------------------- #
-def test_new_ui_has_legacy_switch_menu_item():
-    assert "Перейти в старый интерфейс" in UI_JS
-    assert "legacyUrl" in UI_JS
-    assert "/ui/legacy/" in UI_JS
+def test_new_ui_has_no_legacy_switch_menu_item():
+    assert "Перейти в старый интерфейс" not in UI_JS
+    assert "legacyUrl" not in UI_JS
+    assert "/ui/legacy/" not in UI_JS
 
 
-def test_legacy_reverse_switch_exists():
-    legacy_switch = ROOT / "app" / "static" / "legacy_switch.js"
+def test_legacy_viewer_read_only_marker_exists():
+    legacy_switch = ROOT / "legacy_viewer" / "static" / "legacy_switch.js"
     assert legacy_switch.is_file()
     text = legacy_switch.read_text(encoding="utf-8")
-    assert "Новый интерфейс" in text
-    assert "/ui/" in text
+    assert "READ ONLY SNAPSHOT" in text
+    assert "api.post = blocked" in text and "api.delete = blocked" in text
+
+
+def _telegram_waiting_block():
+    return UI_JS.split("const renderWaiting = (login, knownState)", 1)[1].split(
+        "let callbackChallenge", 1,
+    )[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -142,8 +148,7 @@ def test_admin_panel_has_no_fake_placeholder_shell():
 # never demands a contact, and keeps the manual /login command as Advanced only.
 # --------------------------------------------------------------------------- #
 def test_telegram_login_shows_a_qr_and_opens_no_popup():
-    waiting = UI_JS.split("const renderWaiting = (login, knownState)", 1)[1]
-    waiting = waiting.split("const renderMiniAppRegister", 1)[0]
+    waiting = _telegram_waiting_block()
     assert "login.qr_svg" in waiting, "the waiting screen renders the server QR"
     assert 'class="auth-qr"' in waiting
     # The popup window is gone: it stole focus, and browsers blocked it.
@@ -155,15 +160,13 @@ def test_telegram_login_shows_a_qr_and_opens_no_popup():
 
 
 def test_login_screen_promises_no_contact_upload():
-    waiting = UI_JS.split("const renderWaiting = (login, knownState)", 1)[1]
-    waiting = waiting.split("const renderMiniAppRegister", 1)[0]
+    waiting = _telegram_waiting_block()
     assert "Отправлять контакт не нужно" in waiting
     assert "отправьте контакт" not in waiting.lower()
 
 
 def test_expired_qr_is_replaced_in_place():
-    waiting = UI_JS.split("const renderWaiting = (login, knownState)", 1)[1]
-    waiting = waiting.split("const renderMiniAppRegister", 1)[0]
+    waiting = _telegram_waiting_block()
     assert "login.expires_in_sec" in waiting
     assert "API.http.authLoginStart()" in waiting, "a lapsed QR refreshes itself"
     # The refresh timer must die with the screen, or it would re-render the
@@ -425,8 +428,7 @@ def test_environment_probe_reports_the_artifact_digest():
 # the web only when the app did not take over.
 # --------------------------------------------------------------------------- #
 def test_open_button_tries_the_telegram_app_before_the_web():
-    waiting = UI_JS.split("const renderWaiting = (login, knownState)", 1)[1]
-    waiting = waiting.split("const renderMiniAppRegister", 1)[0]
+    waiting = _telegram_waiting_block()
     assert "login.app_url" in waiting
     # tg: first...
     assert "location.href = appUrl;" in waiting
@@ -437,8 +439,7 @@ def test_open_button_tries_the_telegram_app_before_the_web():
 
 
 def test_app_handover_is_detected_rather_than_assumed():
-    waiting = UI_JS.split("const renderWaiting = (login, knownState)", 1)[1]
-    waiting = waiting.split("const renderMiniAppRegister", 1)[0]
+    waiting = _telegram_waiting_block()
     # A tg: scheme that goes nowhere fires no error, so the handover is
     # detected by the page going away/hidden instead.
     for signal in ("pagehide", "blur", "visibilitychange", "visibilityState"):
@@ -447,15 +448,13 @@ def test_app_handover_is_detected_rather_than_assumed():
 
 
 def test_no_popup_window_is_used_for_the_handover():
-    waiting = UI_JS.split("const renderWaiting = (login, knownState)", 1)[1]
-    waiting = waiting.split("const renderMiniAppRegister", 1)[0]
+    waiting = _telegram_waiting_block()
     assert "window.open" not in waiting
     assert 'target="_blank"' not in waiting
 
 
 def test_qr_offers_a_visible_web_fallback_under_it():
-    waiting = UI_JS.split("const renderWaiting = (login, knownState)", 1)[1]
-    waiting = waiting.split("const renderMiniAppRegister", 1)[0]
+    waiting = _telegram_waiting_block()
     # The QR payload is a custom scheme, so the page must show a way out for
     # a phone without Telegram or an OS that refused the scheme.
     assert "login.web_fallback_url" in waiting

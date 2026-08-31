@@ -9,7 +9,7 @@
 | `/ui/news.html` | официальный экономический календарь, live-источники, фильтры, критические предупреждения и нижняя лента |
 | `/ui/topstep.html` | read-only TopStep integration status |
 | `/ui/assets/*` | Aurora assets |
-| `/ui/legacy/`, `/ui/legacy/<file>` | classic UI from `app/static/` |
+| `/ui/legacy/`, `/ui/legacy/<file>` | HTTP 410; classic UI isolated from current runtime |
 | `/ui/ai-strategy.html` | redirect to Aurora AI Lab |
 | `/ui/ops.html` | redirect to Aurora Trading |
 | `/ui/docs.html` | redirect to Aurora Documents |
@@ -17,14 +17,16 @@
 
 `start.ps1` opens `/ui/`. `start-ai-lab.ps1` opens `/ui/ai-lab.html`.
 Restarting the application therefore opens Aurora by default.
-Classic page tabs and deep links remain under `/ui/legacy/`; they do not cross
-into Aurora until the operator clicks `Новый интерфейс`.
+Classic page tabs and deep links are absent from the current server. Historical
+reports are inspected through the separate Legacy Viewer described in
+`LEGACY_VIEWER.md`.
 
-## Switches
+## Legacy boundary
 
-- Aurora: `Системные действия -> Перейти в старый интерфейс`.
-- Classic: fixed `Новый интерфейс` link from `legacy_switch.js`.
-- There is no second visible classic button in the Aurora topbar.
+- Aurora has no navigation or switch to the classic UI.
+- Retired Mini App, remote-access and tunnel routes return HTTP 410.
+- `Start StratForge Legacy.cmd` starts a separate localhost-only viewer on port
+  8876 by default; it does not share current cookies or writable data.
 
 ## Backup
 

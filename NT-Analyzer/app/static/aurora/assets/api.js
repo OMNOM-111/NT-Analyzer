@@ -7,74 +7,13 @@
    ===================================================================== */
 (function () {
   const isFile = location.protocol === 'file:';
-  const INIT_DATA_KEY = 'stratforge.telegram.initData';
-  const INIT_DATA_QUERY_KEY = 'tgWebAppData';
-
-  function readTelegramInitDataFromLocation() {
-    for (const source of [location.hash.slice(1), location.search.slice(1)]) {
-      if (!source) continue;
-      const params = new URLSearchParams(source);
-      const raw = String(params.get(INIT_DATA_QUERY_KEY) || '');
-      if (raw) return raw;
-    }
-    return '';
-  }
-
-  function readTelegramInitDataFromStorage() {
-    try { return String(sessionStorage.getItem(INIT_DATA_KEY) || ''); }
-    catch (e) { return ''; }
-  }
-
-  function persistTelegramInitData(raw) {
-    try {
-      if (raw) sessionStorage.setItem(INIT_DATA_KEY, raw);
-    } catch (e) { /* storage can be disabled inside hardened WebViews */ }
-  }
-
-  function discoverTelegramInitData() {
-    const sdkValue = window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.initData;
-    let raw = String(sdkValue || '');
-    if (!raw) raw = readTelegramInitDataFromLocation();
-    if (!raw) raw = readTelegramInitDataFromStorage();
-    persistTelegramInitData(raw);
-    return raw;
-  }
-
-  let telegramInitData = '';
-  function refreshTelegramInitData() {
-    const raw = discoverTelegramInitData();
-    if (raw) {
-      telegramInitData = raw;
-      document.documentElement.classList.add('telegram-mini-app');
-    }
-    return telegramInitData;
-  }
-
-  function withTelegramContext(path) {
-    const raw = refreshTelegramInitData();
-    if (!raw || !path) return path;
-    let url;
-    try { url = new URL(path, location.href); }
-    catch (e) { return path; }
-    if (url.origin !== location.origin || url.pathname.indexOf('/api/') === 0) return path;
-    if (!url.searchParams.has(INIT_DATA_QUERY_KEY)) url.searchParams.set(INIT_DATA_QUERY_KEY, raw);
-    return url.pathname + (url.search || '') + (url.hash || '');
-  }
-
-  const miniApp = !!refreshTelegramInitData();
   let csrfToken = '';
-  if (miniApp) document.documentElement.classList.add('telegram-mini-app');
 
   function requestHeaders(values) {
     const headers = Object.assign({}, values || {});
-    const initData = refreshTelegramInitData();
-    if (initData) headers['X-Telegram-Init-Data'] = initData;
     if (csrfToken) headers['X-CSRF-Token'] = csrfToken;
     return headers;
   }
-
-  // "Старый интерфейс" target: served by backend → /ui/legacy/.
-  const legacyUrl = '/ui/legacy/';
 
   // ---- real async HTTP layer over the actual endpoints --------------------
   class HttpError extends Error {
@@ -293,7 +232,6 @@
     authEmailVerify: (body) => send('/api/auth/email/verify', 'POST', body || {}),
     authEmailLinkStart: (body) => send('/api/auth/email/link/start', 'POST', body || {}),
     authEmailLinkVerify: (body) => send('/api/auth/email/link/verify', 'POST', body || {}),
-    miniappRegister: (body) => send('/api/auth/miniapp/register', 'POST', body || {}),
     legalTerms: (o) => getJSON('/api/legal/terms', o),
     legalDocuments: (o) => getJSON('/api/legal/documents', o),
     legalDocument: (id, o) => getJSON('/api/legal/documents/' + encodeURIComponent(id), o),
@@ -442,17 +380,6 @@
     northStar: (o) => getJSON('/api/governance/north-star', o),
     integrationsStatus: (o) => getJSON('/api/integrations/status', o),
     telegramStatus: (o) => getJSON('/api/telegram/status', o),
-    telegramRemoteMe: (o) => getJSON('/api/telegram/remote/me', o),
-    telegramRemoteAccess: (o) => getJSON('/api/telegram/remote/access', o),
-    telegramRemoteSettings: (body) => send('/api/telegram/remote/settings', 'POST', body),
-    telegramRemotePairStart: (body) => send('/api/telegram/remote/pair/start', 'POST', body),
-    telegramRemoteSetRole: (id, role) => send('/api/telegram/remote/users/' + encodeURIComponent(id) + '/role', 'POST', { role }),
-    telegramRemoteRevoke: (id) => send('/api/telegram/remote/users/' + encodeURIComponent(id) + '/revoke', 'POST', {}),
-    telegramRemoteMenuButton: () => send('/api/telegram/remote/menu-button', 'POST', {}),
-    telegramTunnelStatus: (o) => getJSON('/api/telegram/tunnel/status', o),
-    telegramTunnelLaunch: (body) => send('/api/telegram/tunnel/launch', 'POST', body || {}),
-    telegramTunnelStart: () => send('/api/telegram/tunnel/start', 'POST', {}),
-    telegramTunnelStop: () => send('/api/telegram/tunnel/stop', 'POST', {}),
     telegramSaveToken: (token) => send('/api/telegram/token', 'POST', { token }),
     telegramPairStart: () => send('/api/telegram/pair/start', 'POST', {}),
     telegramPairComplete: () => send('/api/telegram/pair/complete', 'POST', {}),
@@ -681,10 +608,6 @@
     }
   }
   const authReady = refreshAuth();
-  const config = { legacyUrl, offline: isFile };
-  Object.defineProperties(config, {
-    miniApp: { enumerable: true, get: () => !!refreshTelegramInitData() },
-    telegramInitData: { enumerable: true, get: () => refreshTelegramInitData() },
-  });
-  window.API = { config, http, HttpError, authReady, refreshAuth, getTelegramInitData: refreshTelegramInitData, withTelegramContext };
+  const config = { offline: isFile };
+  window.API = { config, http, HttpError, authReady, refreshAuth };
 })();

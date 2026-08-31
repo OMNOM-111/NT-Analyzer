@@ -1,7 +1,7 @@
 # 08. UI, UX and Product Contracts
 
 - Context Pack document: 08_UI_UX_AND_PRODUCT_CONTRACTS.md
-- Last verified UTC: 2026-08-23T02:27:02Z
+- Last verified UTC: 2026-08-31T00:00:00Z
 - Verified against Git SHA: 1279645e48e32000978364b38fb20d3dcd303843
 - Scope: Major UI areas, visibility rules and important UX contracts
 - Status: DONE
@@ -19,6 +19,7 @@
 | AI Agents / API Keys | owner + allowed operators | `PARTIAL` | local provider configuration, role routes, budgets, masked secrets only |
 | News | ordinary user + owner | `DONE` | calendar events, live headlines, provider status |
 | Telegram / auth entry | ordinary user + owner | `PARTIAL` | login, profile, pairing, notifications, session revoke |
+| Legacy Viewer | owner local reference | `AVAILABLE` | separate localhost-only read-only classic viewer over an isolated data snapshot |
 | Documents | ordinary user + owner | `PARTIAL` | governance/public docs with actor/reason aware saves and revisions |
 | Environment Switcher | owner / developer / admin | `PARTIAL` | separate-origin navigation by capability, not an in-place backend swap |
 | Release Center | owner / explicitly permitted operator | `BETA` | real clean-candidate/build/sign/Canary/check/rollback workflow; Production promotion remains a separate owner gate |
@@ -37,7 +38,8 @@
    `BETA` and stable Production are not interchangeable.
 2. Environment Switcher opens the target origin in a new tab and should not
    carry browser storage/credentials across environments.
-3. Mini App / Telegram does not imply live-trading permission.
+3. Telegram Mini App and mirrored UI are `DEPRECATED`; current navigation and
+   transport contain no Mini App entry. Telegram login/bot/notifications remain.
 4. Save/update actions in documents should record actor and reason.
 5. The first product explanation should start from product purpose and current
    capabilities, not from internal owner or amendment mechanics.
@@ -61,6 +63,8 @@
   separate owner decision, not a functional blocker.
 - Documents UI uses a mission-led CHARTER, legal DRAFT badges and compact
   red/green semantic revisions with details collapsed.
+- Aurora is the only current UI. `/ui/legacy/*` returns HTTP 410; Legacy Viewer
+  is not a rollback or current-product fallback.
 
 ## Canonical evidence
 

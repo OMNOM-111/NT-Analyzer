@@ -1,7 +1,7 @@
 # 05. Auth, Users and Security
 
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
-- Last verified UTC: 2026-08-23T21:36:03Z
+- Last verified UTC: 2026-08-31T00:00:00Z
 - Verified against Git SHA: 1279645e48e32000978364b38fb20d3dcd303843
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: PARTIAL
@@ -24,6 +24,11 @@
 | Email | `EXTERNAL BLOCKED` | code path exists, but Production transactional email provider is not accepted live yet; DEV test auth is not Production email acceptance |
 
 ## Account linking rules
+
+Telegram Mini App is `DEPRECATED` and is not a login/session transport for the
+current runtime. This does not deprecate Telegram provider login, identity, bot
+or notifications. Stale `remote_enabled` state cannot change current desktop
+auth; explicit desktop auth remains fail-closed by default.
 
 - Matching email is **not** enough for automatic merge.
 - Linking requires fresh proof of control over both auth methods.
