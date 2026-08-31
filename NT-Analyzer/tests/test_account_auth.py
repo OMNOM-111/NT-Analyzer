@@ -248,6 +248,61 @@ def test_plain_start_gets_actionable_login_help(auth_store) -> None:
     assert any("/login" in text and "одноразовая" in text for text in texts)
 
 
+def _plain_start_markup(calls) -> dict:
+    for method, payload in calls:
+        if method == "sendMessage" and "/login" in str(payload.get("text") or ""):
+            return payload.get("reply_markup") or {}
+    raise AssertionError("plain /start reply not sent")
+
+
+def test_plain_start_offers_a_plain_url_button_not_a_mini_app(auth_store, monkeypatch) -> None:
+    monkeypatch.setattr(account_auth, "_app_open_url", lambda: "https://app.stratforges.com/")
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+
+    assert account_auth.process_update({"message": {
+        "text": "/start",
+        "from": {"id": 42, "first_name": "Ada"},
+        "chat": {"id": 42, "type": "private"},
+    }}, api_call=api, owner_chat_id="999")
+
+    button = _plain_start_markup(calls)["inline_keyboard"][0][0]
+    assert button["url"] == "https://app.stratforges.com/"
+    assert "StratForge" in button["text"]
+    # The retired Mini App container must not come back through the bot.
+    assert "web_app" not in button
+    assert "/ui/" not in button["url"]
+
+
+def test_plain_start_has_no_button_in_development(auth_store, monkeypatch) -> None:
+    monkeypatch.setenv("DEPLOYMENT_ENV", "development")
+    monkeypatch.setenv("STRATFORGE_ENV", "development")
+    account_auth.ensure_owner(999)
+    calls, api = _api_recorder()
+
+    assert account_auth.process_update({"message": {
+        "text": "/start",
+        "from": {"id": 42, "first_name": "Ada"},
+        "chat": {"id": 42, "type": "private"},
+    }}, api_call=api, owner_chat_id="999")
+
+    # Development has no public origin; Telegram would reject a loopback URL.
+    assert _plain_start_markup(calls) == {}
+
+
+def test_app_open_url_per_environment(monkeypatch) -> None:
+    for env, expected in (
+        ("production", "https://app.stratforges.com/"),
+        ("canary", "https://canary.stratforges.com/"),
+        ("development", ""),
+    ):
+        monkeypatch.setenv("DEPLOYMENT_ENV", env)
+        monkeypatch.setenv("STRATFORGE_ENV", env)
+        assert account_auth._app_open_url() == expected, env
+        # Never the retired Mini App entry point.
+        assert not account_auth._app_open_url().endswith("/ui/")
+
+
 def test_revocation_invalidates_all_sessions(auth_store) -> None:
     now = time.time()
     token = "x" * 64
