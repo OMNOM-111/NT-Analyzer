@@ -146,7 +146,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260812-final-acceptance2"}, versions
+    assert set(versions.values()) == {"20260901-community-chat1"}, versions
 
 
 def test_every_aurora_page_uses_current_theme_cache_version():
@@ -156,7 +156,7 @@ def test_every_aurora_page_uses_current_theme_cache_version():
         marker = 'href="assets/theme.css?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260823-trial-access1"}, versions
+    assert set(versions.values()) == {"20260901-community-chat1"}, versions
 
 
 def test_development_preview_is_rewired_after_async_build_identity():
@@ -272,7 +272,7 @@ def test_every_aurora_page_uses_current_ui_cache_version():
             continue
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
     assert versions
-    assert set(versions.values()) == {"20260823-trial-access1"}, versions
+    assert set(versions.values()) == {"20260901-community-chat1"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():
@@ -586,13 +586,15 @@ def test_aurora_trading_exposes_reconnect_modeling_control():
     assert "#ctrl-reconnect" in trading
 
 
-def test_vitek_chat_hides_internal_model_beside_message_time():
+def test_sf_chat_preserves_vitek_metadata_without_exposing_internal_model_beside_time():
     ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
     assert "orchFmtTime(row.timestamp_utc)" in ui
     assert "!isUser && row.model ? esc(row.model)" not in ui
-    assert "StratForge Orchestrator · Витёк" in ui
-    assert '<span class="orch-head-name">StratForge Orchestrator</span>' in ui
-    assert "Витёк · ваша правая рука" in ui
+    assert "SF Chat · люди и AI-помощники" in ui
+    assert '<span class="orch-head-name">SF Chat</span>' in ui
+    assert "AI · Виктор и агенты" in ui
+    assert "function openSFChat" in ui
+    assert "conversation_type === 'human'" in ui
     assert "Ваши чаты и данные сохранены" in ui
     assert "ORCH.conversations = []" not in ui
     assert "modelMeta" in ui and "модель:" in ui
@@ -649,7 +651,8 @@ def test_ai_lab_uses_conversational_orchestrator_not_literal_mission_form():
     assert "openOrchestrator" in ui
     assert "orch-fab" in ui
     assert "API.http.aiOrchestratorMessage" in ui
-    assert "aiOrchestratorConversations" in ui
+    assert "sfChatConversations" in ui
+    assert "aiOrchestratorConversations" in api
     assert "/api/ai-lab/orchestrator/message" in api
     assert "/api/ai-lab/orchestrator/conversations" in api
     assert "aiOrchestratorSpeak" in api and "/api/ai-lab/orchestrator/speak" in api
@@ -661,6 +664,25 @@ def test_ai_lab_uses_conversational_orchestrator_not_literal_mission_form():
     html = (AURORA / "ai-agents.html").read_text(encoding="utf-8")
     page = (AURORA / "assets" / "pages" / "ai-agents.js").read_text(encoding="utf-8")
     assert "staff-voice-grid" in html and "openVoiceSettings" in page
+
+
+def test_community_v2_and_unified_sf_chat_are_real_api_backed_surfaces():
+    html = (AURORA / "community.html").read_text(encoding="utf-8")
+    page = (AURORA / "assets" / "pages" / "community.js").read_text(encoding="utf-8")
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+    server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
+
+    for contract in ("community-feed", "community-composer-v2", "community-profile-modal", "community-channels-view"):
+        assert contract in html
+    assert "communityV2Feed" in page and "communityV2Post" in page
+    assert "sfChatStartConversation" in page and "UI.openSFChat" in page
+    assert "mock" not in page.lower()
+    assert "sfChatConversations" in ui and "sfChatConversation" in ui and "sfChatMessage" in ui
+    assert "NOTICE_MAX_VISIBLE = 1" in ui and "Открыть в чате" in ui
+    assert "/api/community/v2/feed" in api and "/api/sf-chat/conversations" in api
+    assert 'path == "/api/community/v2/feed"' in server
+    assert 'path == "/api/sf-chat/conversations"' in server
 
 
 def test_named_domain_agents_and_unified_finance_page_contract():

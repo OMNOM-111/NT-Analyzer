@@ -288,3 +288,79 @@ def test_reports_requests_and_image_attachment_are_private_to_workspace(communit
             attachments=[{"name": "bad.txt", "data_url": "data:text/plain;base64,Zm9v"}],
         )
     assert invalid.value.status == 400
+
+
+def test_social_feed_profile_privacy_and_interactions(community_store):
+    alice = community.ensure_social_profile(
+        42, display_name="Alice Trader", username="alice_trader",
+    )["profile"]
+    bob = community.ensure_social_profile(
+        99, display_name="Bob Quant", username="bob_quant",
+    )["profile"]
+    community.update_social_profile(
+        99, bio="Private research notes", profile_visibility="followers",
+        allow_messages="following",
+    )
+
+    restricted = community.social_profile(42, bob["profile_id"])["profile"]
+    assert restricted["bio"] == ""
+    assert restricted["details_visible"] is False
+    assert restricted["can_message"] is False
+    assert not ({"user_id", "user_uuid", "workspace_id", "email"} & restricted.keys())
+
+    community.follow_profile(99, alice["profile_id"])
+    visible = community.social_profile(42, bob["profile_id"])["profile"]
+    assert visible["can_message"] is True
+    community.follow_profile(42, bob["profile_id"])
+    visible = community.social_profile(42, bob["profile_id"])["profile"]
+    assert visible["bio"] == "Private research notes"
+
+    post = community.create_social_post(
+        99, text="Разбор #MNQ без инвестиционных обещаний", visibility="followers",
+        idempotency_key="post-1",
+    )["post"]
+    duplicate = community.create_social_post(
+        99, text="Разбор #MNQ без инвестиционных обещаний", visibility="followers",
+        idempotency_key="post-1",
+    )
+    assert duplicate["deduplicated"] is True
+    assert duplicate["post"]["post_id"] == post["post_id"]
+
+    feed = community.social_feed(42, scope="following", hashtag="mnq")
+    assert [row["post_id"] for row in feed["posts"]] == [post["post_id"]]
+    reacted = community.react_to_post(42, post["post_id"], reaction="insightful")["post"]
+    assert reacted["viewer_reaction"] == "insightful"
+    assert reacted["reactions"]["insightful"] == 1
+    commented = community.comment_on_post(42, post["post_id"], text="Полезный разбор")["post"]
+    assert commented["comment_count"] == 1
+    saved = community.bookmark_post(42, post["post_id"])["post"]
+    assert saved["bookmarked"] is True
+    assert community.social_feed(42, saved_only=True)["posts"][0]["post_id"] == post["post_id"]
+
+
+def test_social_block_removes_relationships_and_hides_content(community_store):
+    alice = community.ensure_social_profile(42, display_name="Alice", username="alice_42")["profile"]
+    bob = community.ensure_social_profile(99, display_name="Bob", username="bob_99")["profile"]
+    community.follow_profile(42, bob["profile_id"])
+    community.create_social_post(99, text="Bob post")
+    community.block_social_profile(42, bob["profile_id"])
+
+    assert community.social_feed(42)["posts"] == []
+    profiles = community.list_social_profiles(42)["profiles"]
+    assert all(row["profile_id"] != bob["profile_id"] for row in profiles)
+    with pytest.raises(community.CommunityError) as exc:
+        community.social_profile(42, bob["profile_id"])
+    assert exc.value.status == 404
+    stored = community._load()
+    assert not any({row.get("follower_profile_id"), row.get("target_profile_id")}
+                   == {alice["profile_id"], bob["profile_id"]}
+                   for row in stored["follows"])
+
+
+def test_social_objects_must_be_server_attested(community_store):
+    community.ensure_social_profile(42, display_name="Alice", username="alice_42")
+    with pytest.raises(community.CommunityError) as exc:
+        community.create_social_post(
+            42, text="raw result", object_snapshot={"kind": "backtest", "pnl": 999999},
+        )
+    assert exc.value.status == 403

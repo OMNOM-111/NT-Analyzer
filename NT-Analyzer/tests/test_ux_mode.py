@@ -186,6 +186,13 @@ def test_api_beginner_deny_and_practice_ok(http_server, ux_store) -> None:
 
     status, _ = _request(http_server, "/api/community/feed", token=token)
     assert status == 200
+    status, social = _request(http_server, "/api/community/v2/feed", token=token)
+    assert status == 200
+    assert social.get("viewer", {}).get("profile_id", "").startswith("sfp_")
+    assert "user_id" not in social.get("viewer", {})
+    status, chat = _request(http_server, "/api/sf-chat/conversations", token=token)
+    assert status == 200
+    assert chat.get("ai_available") is False
     status, _ = _request(http_server, "/api/ai-lab/summary", token=token)
     assert status == 403
     status, _ = _request(http_server, "/api/news", token=token)

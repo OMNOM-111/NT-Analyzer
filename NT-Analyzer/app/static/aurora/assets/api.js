@@ -90,6 +90,28 @@
     }
     return data;
   }
+  async function sendIdempotent(path, body, prefix) {
+    const requestId = mutationRequestId(prefix || 'mutation');
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: requestHeaders({
+        'Content-Type': 'application/json',
+        'Idempotency-Key': requestId,
+      }),
+      body: JSON.stringify(body || {}),
+    });
+    let data = null;
+    try { data = await res.json(); } catch (e) { /* empty */ }
+    if (!res.ok) {
+      const retryHeader = Number(res.headers.get('Retry-After') || 0);
+      throw new HttpError(
+        res.status, (data && data.error) || res.statusText, path,
+        retryHeader > 0 ? retryHeader * 1000 : 0,
+        (data && data.code) || '', data,
+      );
+    }
+    return data;
+  }
   // Orchestrator avatar TTS: returns either an audio Blob or a JSON fallback
   // signal `{ fallback: "browser" }` when OpenAI Speech is unavailable.
   async function orchestratorSpeak(payload) {
@@ -482,6 +504,23 @@
     communityPublishStrategy: (body) => send('/api/community/strategies', 'POST', body || {}),
     communityCopy: (body) => send('/api/community/copy', 'POST', body || {}),
     communityReport: (body) => send('/api/community/report', 'POST', body || {}),
+    communityV2Feed: (q, o) => getJSON('/api/community/v2/feed' + qs(q), o),
+    communityV2Saved: (q, o) => getJSON('/api/community/v2/saved' + qs(q), o),
+    communityV2Profiles: (q, o) => getJSON('/api/community/v2/profiles' + qs(q), o),
+    communityV2Profile: (id, q, o) => getJSON('/api/community/v2/profiles/' + encodeURIComponent(id) + qs(q), o),
+    communityV2UpdateProfile: (body) => send('/api/community/v2/profile', 'POST', body || {}),
+    communityV2Follow: (profileId, following) => send('/api/community/v2/follows', 'POST', { profile_id: profileId, following: following !== false }),
+    communityV2Post: (body) => sendIdempotent('/api/community/v2/posts', body || {}, 'community-post'),
+    communityV2Reaction: (postId, reaction) => send('/api/community/v2/posts/' + encodeURIComponent(postId) + '/reaction', 'POST', { reaction: reaction || '' }),
+    communityV2Comment: (postId, text) => send('/api/community/v2/posts/' + encodeURIComponent(postId) + '/comments', 'POST', { text: text || '' }),
+    communityV2Bookmark: (postId, bookmarked) => send('/api/community/v2/posts/' + encodeURIComponent(postId) + '/bookmark', 'POST', { bookmarked: bookmarked !== false }),
+    communityV2Block: (profileId, blocked) => send('/api/community/v2/blocks', 'POST', { profile_id: profileId, blocked: blocked !== false }),
+    communityV2Report: (body) => send('/api/community/v2/reports', 'POST', body || {}),
+    sfChatConversations: (o) => getJSON('/api/sf-chat/conversations', o),
+    sfChatConversation: (id, q, o) => getJSON('/api/sf-chat/conversations/' + encodeURIComponent(id) + qs(q), o),
+    sfChatStartConversation: (profileId) => send('/api/sf-chat/conversations/start', 'POST', { profile_id: profileId }),
+    sfChatMessage: (conversationId, text, attachments) => sendIdempotent('/api/sf-chat/messages', { conversation_id: conversationId, text: text || '', attachments: attachments || [] }, 'sf-chat'),
+    sfChatRead: (conversationId) => send('/api/sf-chat/read', 'POST', { conversation_id: conversationId }),
     aiStarRatings: (o) => getJSON('/api/ai-lab/ratings', o),
     createBatch: (body) => send('/api/batches', 'POST', body),
     cancelJob: (id) => send('/api/jobs/' + encodeURIComponent(id) + '/cancel', 'POST', {}),

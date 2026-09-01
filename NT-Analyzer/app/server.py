@@ -150,6 +150,7 @@ if __package__ is None or __package__ == "":
     from app import demo_backtest  # type: ignore[no-redef]
     from app import practice_trading  # type: ignore[no-redef]
     from app import community  # type: ignore[no-redef]
+    from app import sf_chat  # type: ignore[no-redef]
     from app import legacy_boundary  # type: ignore[no-redef]
     from app.ai_lab import ai_ratings as ai_ratings  # type: ignore[no-redef]
 else:
@@ -253,6 +254,7 @@ else:
     from . import demo_backtest
     from . import practice_trading
     from . import community
+    from . import sf_chat
     from . import legacy_boundary
     from .ai_lab import ai_ratings as ai_ratings
 
@@ -332,6 +334,7 @@ def _is_self_service_post(path: str) -> bool:
         or path.startswith("/api/support/")
         or path.startswith("/api/practice/")
         or path.startswith("/api/community/")
+        or path.startswith("/api/sf-chat/")
         or path.startswith("/api/auth/nt-confirm/")
         or path.startswith("/api/account/")
         or path.startswith("/api/ninjatrader/jobs")
@@ -3519,6 +3522,38 @@ class Handler(BaseHTTPRequestHandler):
             scope["user_uuid"] = user_uuid
         return scope
 
+    def _community_actor(self) -> Dict[str, Any]:
+        """Return the authenticated member as a narrow Community/SF Chat actor."""
+        context = getattr(self, "_remote_context", None) or {}
+        user = context.get("user") if isinstance(context.get("user"), dict) else {}
+        user_id = int(context.get("user_id") or 0)
+        if user_id <= 0:
+            raise community.CommunityError("Требуется вход.", 401)
+        user_uuid = str(user.get("user_uuid") or user.get("id") or context.get("user_uuid") or "").strip()
+        if not user_uuid:
+            user_uuid = account_auth.user_uuid_for_legacy_id(user_id)
+        display_name = " ".join(
+            str(user.get(key) or "").strip() for key in ("first_name", "last_name")
+        ).strip() or str(user.get("username") or "")
+        ux_mode = str(context.get("ux_mode") or user.get("ux_mode") or "").strip().lower()
+        role_label = "Владелец" if context.get("is_owner") else (
+            "Студент" if ux_mode == "beginner" else "Профессионал"
+        )
+        return {
+            "user_id": user_id,
+            "user_uuid": user_uuid,
+            "display_name": display_name,
+            "username": str(user.get("username") or ""),
+            "role_label": role_label,
+            "joined_at_utc": str(user.get("created_at_utc") or ""),
+            "has_avatar": bool(user.get("has_avatar")),
+        }
+
+    def _sf_chat_ai_allowed(self) -> bool:
+        context = getattr(self, "_remote_context", None) or {}
+        capabilities = context.get("capabilities") if isinstance(context.get("capabilities"), dict) else {}
+        return bool(context.get("is_owner") or capabilities.get("ai_lab"))
+
     def _auth_providers_payload(self) -> Dict[str, Any]:
         bot_username = telegram_service.bot_username()
         google = google_auth.status()
@@ -6036,6 +6071,67 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, self._admin_operations_payload())
             return
 
+        if path.startswith("/api/community/v2/profiles/") and path.endswith("/avatar"):
+            profile_id = path.split("/")[-2]
+            try:
+                actor = self._community_actor()
+                # Resolve the public profile first so blocks and visibility are
+                # enforced before account-backed avatar bytes are touched.
+                community.social_profile(
+                    actor["user_id"], profile_id,
+                    user_uuid=actor["user_uuid"], posts_limit=1,
+                )
+                avatar = community.social_avatar(profile_id)
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+                return
+            if avatar is None or not avatar.is_file():
+                self._err(HTTPStatus.NOT_FOUND, "Аватар не найден.")
+                return
+            try:
+                payload = avatar.read_bytes()
+            except OSError:
+                self._err(HTTPStatus.NOT_FOUND, "Аватар недоступен.")
+                return
+            suffix = avatar.suffix.lower()
+            mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}.get(suffix)
+            if not mime:
+                self._err(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Формат аватара не поддерживается.")
+                return
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "private, max-age=300")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+
+        if path.startswith("/api/sf-chat/attachments/"):
+            attachment_id = path.rsplit("/", 1)[-1]
+            try:
+                actor = self._community_actor()
+                row = sf_chat.attachment(
+                    actor["user_id"], attachment_id,
+                    user_uuid=actor["user_uuid"], display_name=actor["display_name"],
+                    username=actor["username"], role_label=actor["role_label"],
+                )
+                payload = row["path"].read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", row.get("mime_type") or "application/octet-stream")
+                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Cache-Control", "private, max-age=300")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                filename = urllib.parse.quote(str(row.get("name") or "image"))
+                self.send_header("Content-Disposition", "inline; filename*=UTF-8''" + filename)
+                self.end_headers()
+                self.wfile.write(payload)
+            except (sf_chat.SFChatError, community.CommunityError) as exc:
+                self._err(exc.status, str(exc))
+            except OSError:
+                self._err(HTTPStatus.NOT_FOUND, "Файл вложения недоступен.")
+            return
+
         if path.startswith("/api/community/attachment/"):
             context = getattr(self, "_remote_context", None) or {}
             attachment_id = path.rsplit("/", 1)[-1]
@@ -6608,6 +6704,128 @@ class Handler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, ai_ratings.tables(
                 workspace_id=str(context.get("workspace_id") or ""),
             ))
+            return
+
+        if path == "/api/community/v2/feed" or path == "/api/community/v2/saved":
+            try:
+                actor = self._community_actor()
+                community.ensure_social_profile(**actor)
+                self._json(HTTPStatus.OK, community.social_feed(
+                    actor["user_id"], user_uuid=actor["user_uuid"],
+                    scope=(qs.get("scope") or ["for-you"])[0],
+                    cursor=(qs.get("cursor") or [""])[0],
+                    limit=(qs.get("limit") or ["20"])[0],
+                    query=(qs.get("q") or [""])[0],
+                    hashtag=(qs.get("hashtag") or [""])[0],
+                    saved_only=(path.endswith("/saved")),
+                ))
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/community/v2/profiles" or path == "/api/community/v2/search":
+            try:
+                actor = self._community_actor()
+                community.ensure_social_profile(**actor)
+                self._json(HTTPStatus.OK, community.list_social_profiles(
+                    actor["user_id"], user_uuid=actor["user_uuid"],
+                    query=(qs.get("q") or [""])[0],
+                    limit=(qs.get("limit") or ["30"])[0],
+                ))
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path.startswith("/api/community/v2/profiles/"):
+            profile_id = path.rsplit("/", 1)[-1]
+            try:
+                actor = self._community_actor()
+                community.ensure_social_profile(**actor)
+                self._json(HTTPStatus.OK, community.social_profile(
+                    actor["user_id"], profile_id, user_uuid=actor["user_uuid"],
+                    posts_limit=(qs.get("posts_limit") or ["20"])[0],
+                ))
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/sf-chat/conversations":
+            try:
+                actor = self._community_actor()
+                community.ensure_social_profile(**actor)
+                human = sf_chat.list_conversations(
+                    actor["user_id"], user_uuid=actor["user_uuid"],
+                    display_name=actor["display_name"], username=actor["username"],
+                    role_label=actor["role_label"],
+                )
+                conversations = list(human.get("conversations") or [])
+                ai_available = self._sf_chat_ai_allowed()
+                if ai_available:
+                    notice_map = {}
+                    context = getattr(self, "_remote_context", None) or {}
+                    if context.get("is_owner"):
+                        try:
+                            notice_map = in_app_notifications.list_notices(
+                                unread_only=True, limit=200,
+                            ).get("unread_by_conversation") or {}
+                        except Exception:
+                            notice_map = {}
+                    for row in ai_chief_agent.list_conversations(scope=self._ai_conversation_scope()):
+                        item = dict(row)
+                        item["conversation_type"] = "ai"
+                        item["subtitle"] = "AI · Виктор и агенты"
+                        item["unread_count"] = max(0, int(notice_map.get(str(item.get("conversation_id") or ""), 0) or 0))
+                        conversations.append(item)
+                # Newest first inside each group, with pinned AI topics always
+                # before regular AI and human conversations.
+                conversations.sort(
+                    key=lambda item: str(item.get("updated_at_utc") or ""),
+                    reverse=True,
+                )
+                conversations.sort(key=lambda item: not bool(item.get("pinned")))
+                self._json(HTTPStatus.OK, {
+                    "ok": True,
+                    "conversations": conversations,
+                    "human_unread_count": int(human.get("unread_count") or 0),
+                    "unread_count": sum(int(item.get("unread_count") or 0) for item in conversations),
+                    "viewer_profile_id": str(human.get("viewer_profile_id") or ""),
+                    "ai_available": ai_available,
+                })
+            except (community.CommunityError, sf_chat.SFChatError, ai_chief_agent.ChiefAgentError) as exc:
+                self._err(getattr(exc, "status", HTTPStatus.BAD_REQUEST), str(exc))
+            return
+
+        if path.startswith("/api/sf-chat/conversations/"):
+            conversation_id = path.rsplit("/", 1)[-1]
+            try:
+                limit = int((qs.get("limit") or ["200"])[0])
+            except (TypeError, ValueError):
+                limit = 200
+            try:
+                actor = self._community_actor()
+                if conversation_id.startswith("sfh_"):
+                    out = sf_chat.conversation_messages(
+                        actor["user_id"], conversation_id,
+                        user_uuid=actor["user_uuid"], display_name=actor["display_name"],
+                        username=actor["username"], role_label=actor["role_label"],
+                        limit=limit,
+                    )
+                else:
+                    if not self._sf_chat_ai_allowed():
+                        raise sf_chat.SFChatError("AI-диалог недоступен.", 403)
+                    scope = self._ai_conversation_scope()
+                    messages = ai_chief_agent.conversation_messages(conversation_id, limit=limit, scope=scope)
+                    conversation = next((row for row in ai_chief_agent.list_conversations(scope=scope)
+                                         if str(row.get("conversation_id") or "") == conversation_id), None)
+                    if conversation is None:
+                        raise sf_chat.SFChatError("Диалог не найден.", 404)
+                    conversation = dict(conversation)
+                    conversation["conversation_type"] = "ai"
+                    conversation["subtitle"] = "AI · Виктор и агенты"
+                    out = {"ok": True, "conversation": conversation, "messages": messages}
+                self._json(HTTPStatus.OK, out)
+            except (community.CommunityError, sf_chat.SFChatError, ai_chief_agent.ChiefAgentError) as exc:
+                self._err(getattr(exc, "status", HTTPStatus.BAD_REQUEST), str(exc))
             return
 
         if path == "/api/community/feed":
@@ -9829,6 +10047,171 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 self._json(HTTPStatus.OK, out)
             except practice_trading.PracticeTradingError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/community/v2/profile":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            try:
+                actor = self._community_actor()
+                community.ensure_social_profile(**actor)
+                out = community.update_social_profile(
+                    actor["user_id"], user_uuid=actor["user_uuid"],
+                    display_name=body.get("display_name") if "display_name" in body else None,
+                    username=body.get("username") if "username" in body else None,
+                    bio=body.get("bio") if "bio" in body else None,
+                    profile_visibility=body.get("profile_visibility") if "profile_visibility" in body else None,
+                    allow_messages=body.get("allow_messages") if "allow_messages" in body else None,
+                )
+                self._json(HTTPStatus.OK, out)
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/community/v2/follows":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            try:
+                actor = self._community_actor()
+                community.ensure_social_profile(**actor)
+                self._json(HTTPStatus.OK, community.follow_profile(
+                    actor["user_id"], str(body.get("profile_id") or ""),
+                    following=bool(body.get("following", True)), user_uuid=actor["user_uuid"],
+                ))
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/community/v2/posts":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                actor = self._community_actor()
+                community.ensure_social_profile(**actor)
+                self._json(HTTPStatus.OK, community.create_social_post(
+                    actor["user_id"], text=str(body.get("text") or ""),
+                    attachments=body.get("attachments"),
+                    visibility=str(body.get("visibility") or "network"),
+                    workspace_id=str(context.get("workspace_id") or ""),
+                    user_uuid=actor["user_uuid"],
+                    idempotency_key=str(self.headers.get("Idempotency-Key") or ""),
+                ))
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        social_post_parts = [part for part in path.split("/") if part]
+        if (len(social_post_parts) == 6 and social_post_parts[:4] == ["api", "community", "v2", "posts"]
+                and social_post_parts[5] in {"reaction", "comments", "bookmark"}):
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            post_id = social_post_parts[4]
+            action = social_post_parts[5]
+            try:
+                actor = self._community_actor()
+                community.ensure_social_profile(**actor)
+                if action == "reaction":
+                    out = community.react_to_post(
+                        actor["user_id"], post_id,
+                        reaction=str(body.get("reaction") or ""), user_uuid=actor["user_uuid"],
+                    )
+                elif action == "comments":
+                    out = community.comment_on_post(
+                        actor["user_id"], post_id, text=str(body.get("text") or ""),
+                        user_uuid=actor["user_uuid"],
+                    )
+                else:
+                    out = community.bookmark_post(
+                        actor["user_id"], post_id,
+                        bookmarked=bool(body.get("bookmarked", True)), user_uuid=actor["user_uuid"],
+                    )
+                self._json(HTTPStatus.OK, out)
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/community/v2/blocks":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            try:
+                actor = self._community_actor()
+                community.ensure_social_profile(**actor)
+                self._json(HTTPStatus.OK, community.block_social_profile(
+                    actor["user_id"], str(body.get("profile_id") or ""),
+                    blocked=bool(body.get("blocked", True)), user_uuid=actor["user_uuid"],
+                ))
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/community/v2/reports":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            try:
+                actor = self._community_actor()
+                community.ensure_social_profile(**actor)
+                self._json(HTTPStatus.OK, community.report_social_target(
+                    actor["user_id"], str(body.get("target_id") or ""),
+                    target_type=str(body.get("target_type") or "post"),
+                    reason=str(body.get("reason") or ""), user_uuid=actor["user_uuid"],
+                ))
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/sf-chat/conversations/start":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            try:
+                actor = self._community_actor()
+                community.ensure_social_profile(**actor)
+                self._json(HTTPStatus.OK, sf_chat.start_conversation(
+                    actor["user_id"], str(body.get("profile_id") or ""),
+                    user_uuid=actor["user_uuid"], display_name=actor["display_name"],
+                    username=actor["username"], role_label=actor["role_label"],
+                ))
+            except (community.CommunityError, sf_chat.SFChatError) as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/sf-chat/messages":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            try:
+                actor = self._community_actor()
+                self._json(HTTPStatus.OK, sf_chat.send_message(
+                    actor["user_id"], str(body.get("conversation_id") or ""),
+                    text=str(body.get("text") or ""), attachments=body.get("attachments"),
+                    user_uuid=actor["user_uuid"], display_name=actor["display_name"],
+                    username=actor["username"], role_label=actor["role_label"],
+                    idempotency_key=str(self.headers.get("Idempotency-Key") or ""),
+                ))
+            except (community.CommunityError, sf_chat.SFChatError) as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/sf-chat/read":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            try:
+                actor = self._community_actor()
+                self._json(HTTPStatus.OK, sf_chat.mark_read(
+                    actor["user_id"], str(body.get("conversation_id") or ""),
+                    user_uuid=actor["user_uuid"], display_name=actor["display_name"],
+                    username=actor["username"], role_label=actor["role_label"],
+                ))
+            except (community.CommunityError, sf_chat.SFChatError) as exc:
                 self._err(exc.status, str(exc))
             return
 

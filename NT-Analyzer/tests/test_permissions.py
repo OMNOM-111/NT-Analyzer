@@ -190,6 +190,7 @@ def test_beginner_market_bars_require_explicit_market_admission() -> None:
     with pytest.raises(permissions.PermissionError):
         permissions.enforce("/api/ops/runtime/bars/batch", ctx)
     permissions.enforce("/api/community/feed", ctx)
+    permissions.enforce("/api/sf-chat/conversations", ctx)
     with pytest.raises(permissions.PermissionError):
         permissions.enforce("/api/governance/summary", ctx)
     with pytest.raises(permissions.PermissionError):
