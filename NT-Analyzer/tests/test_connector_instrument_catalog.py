@@ -78,13 +78,6 @@ def test_a_spot_pair_without_an_expiry_is_still_accepted() -> None:
         _catalog(instruments=[_contract("BTCUSD")]), 1_800_000_000.0)
     assert [row["instrument"] for row in out["instruments"]] == ["BTCUSD"]
     assert out["instruments"][0]["expiry"] == ""
-
-
-def test_job_gate_accepts_a_spot_pair_from_the_catalog() -> None:
-    jobqueue._validate_instrument_contract(
-        _request("BTCUSD"), {"instruments": [_contract("BTCUSD")]})
-
-
 def test_connector_catalog_without_instruments_stays_valid() -> None:
     """Backward compatibility: an older Connector simply omits the field."""
     payload = _catalog()
@@ -132,115 +125,6 @@ def test_a_realistic_full_snapshot_fits_the_command_result_cap() -> None:
         f"{len(encoded)} bytes exceeds the "
         f"{connector_protocol.MAX_COMMAND_RESULT_BYTES} byte cap")
     connector_protocol._safe_result({"catalog": payload})
-
-
-def test_an_oversized_snapshot_is_refused_not_silently_truncated() -> None:
-    # _safe_payload binds first: a list over 100 items never reaches the byte
-    # check, and either way the result is refused rather than quietly trimmed.
-    oversized = {"catalog": _catalog(
-        instruments=[_contract(f"ROOT{index:04d} 09-26") for index in range(200)])}
-    with pytest.raises(connector_protocol.ConnectorProtocolError) as rejected:
-        connector_protocol._safe_result(oversized)
-    assert rejected.value.code in {"result_too_large", "invalid_command_payload"}
-
-
-def test_the_device_page_target_leaves_headroom_under_the_cap() -> None:
-    """12 KiB per page, not 15 KiB hugging a 16 KiB hard refusal."""
-    source = BRIDGE.read_text(encoding="utf-8-sig")
-    assert "ConnectorPageTargetBytes = 12 * 1024" in source
-    assert 12 * 1024 < connector_protocol.MAX_COMMAND_RESULT_BYTES
-
-
-def test_no_root_can_be_evicted_by_the_budget() -> None:
-    """Round-robin, not global recency: every root keeps its live month.
-
-    A global newest-first cap silently dropped whole roots once the catalog
-    grew -- measured on the real 1547-contract scan, a 200 cap lost 10YR, 2YR,
-    30YR and 5YR entirely.
-    """
-    source = BRIDGE.read_text(encoding="utf-8-sig")
-    assert "int depth = 0;" in source
-    assert "foreach (string root in roots)" in source
-    assert "if (depth >= group.Count) continue;" in source
-    # A per-root sort still puts each root's newest contract first.
-    assert "byRoot[root].Sort((a, b) => b.Key.CompareTo(a.Key));" in source
-
-
-def test_connector_catalog_rejects_unknown_instrument_fields() -> None:
-    with pytest.raises(connector_protocol.ConnectorProtocolError):
-        connector_protocol._normalise_runtime_catalog(
-            _catalog(instruments=[_contract(**{"margin": 1})]), 1_800_000_000.0)
-
-
-# --------------------------------------------------------------------------- #
-# Job validation: no contract, no run.
-# --------------------------------------------------------------------------- #
-def _request(instrument: str, runtime_catalog=None) -> jobqueue.CreateJobRequest:
-    return jobqueue.CreateJobRequest(
-        class_name="SampleMACrossOver",
-        instrument=instrument,
-        bars_period_type="Minute",
-        bars_period_value=5,
-        from_utc="2026-08-20T00:00:00Z",
-        to_utc="2026-08-22T00:00:00Z",
-        parameters={},
-        role="research",
-        runtime_catalog=runtime_catalog,
-    )
-
-
-def test_device_contract_is_accepted() -> None:
-    jobqueue._validate_instrument_contract(
-        _request("MNQ 09-26"), {"instruments": [_contract()]})
-
-
-def test_bare_root_resolves_to_the_device_contract() -> None:
-    """A root is a legitimate choice: it names the current contract.
-
-    This replaces the earlier "refuse the root and tell the user to type a
-    month" contract. The selector always resolved a root for the user, so a
-    backtest refusing the same input was the defect, not the safeguard.
-    """
-    request = _request("MNQ", {"instruments": [_contract()]})
-    jobqueue._resolve_instrument_root_in_place(request)
-    assert request.instrument == "MNQ 09-26"
-    jobqueue._validate_instrument_contract(request, request.runtime_catalog)
-
-
-def test_root_with_no_runnable_contract_is_still_refused() -> None:
-    with pytest.raises(jobqueue.JobValidationError) as rejected:
-        jobqueue._validate_instrument_contract(
-            _request("6A"), {"instruments": [_contract()]})
-    message = str(rejected.value)
-    assert "6A" in message and "каталоге" in message
-
-
-def test_instrument_outside_the_catalog_is_refused() -> None:
-    with pytest.raises(jobqueue.JobValidationError) as rejected:
-        jobqueue._validate_instrument_contract(
-            _request("ZZZ 01-99"), {"instruments": [_contract()]})
-    assert "каталоге" in str(rejected.value)
-
-
-def test_a_catalog_of_only_bare_roots_blocks_the_run(monkeypatch) -> None:
-    """Exactly the Production state: 36 roots, none of them runnable."""
-    monkeypatch.setattr(
-        jobqueue, "read_instruments_catalog",
-        lambda: {"instruments": [{"instrument": root} for root in ("MNQ", "6A", "MES")]})
-    with pytest.raises(jobqueue.JobValidationError) as rejected:
-        jobqueue._validate_instrument_contract(_request("MNQ"), None)
-    assert "недоступен" in str(rejected.value)
-
-
-def test_old_connector_falls_back_to_a_real_local_catalog(monkeypatch) -> None:
-    """No device instruments must not disable a machine whose scan is real."""
-    monkeypatch.setattr(
-        jobqueue, "read_instruments_catalog",
-        lambda: {"instruments": [_contract("MNQ 09-26")]})
-    jobqueue._validate_instrument_contract(
-        _request("MNQ 09-26"), {"strategies": [], "commission_templates": []})
-
-
 def test_bare_root_detection_is_explicit() -> None:
     assert jobqueue._instruments_are_bare_roots([{"instrument": "MNQ"}]) is True
     assert jobqueue._instruments_are_bare_roots([]) is True

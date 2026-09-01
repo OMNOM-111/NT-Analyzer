@@ -7418,8 +7418,26 @@ class Handler(BaseHTTPRequestHandler):
             # Returns per-root current/all instruments for the Trading Online selector.
             # Each root entry has front_month (most recent), and all contracts.
             desktop = str((qs.get("desktop") or ["0"])[0]).lower() in {"1", "true", "yes"}
-            instr_doc = jobqueue.read_instruments_catalog() or {}
-            all_instr = instr_doc.get("instruments") or []
+            # The selector must see the instruments the backtest will run, so it
+            # reads the same assembled catalog /api/catalog serves. Reading only
+            # the local file scan was invisible beside NinjaTrader, where the two
+            # are the same list, and wrong on a server, where the file is a stale
+            # bare-root fallback and the real contracts arrive from the Connector.
+            # A root then had no front month and the UI put the bare root into
+            # the instrument field.
+            ops_context = getattr(self, "_remote_context", None) or {}
+            ops_context = owner_market_data_gateway.owner_scoped_context(ops_context)
+            ops_device_catalog = None
+            if (ops_context.get("user_id")
+                    and _connector_is_the_runtime_transport(qs)):
+                try:
+                    ops_device_catalog = _connector_runtime_catalog(ops_context)
+                except Exception:
+                    ops_device_catalog = None
+            all_instr = (
+                jobqueue.build_catalog_response(device_catalog=ops_device_catalog)
+                .get("instruments") or []
+            )
             root_map: dict = {}
             for ins in all_instr:
                 if not isinstance(ins, dict):
