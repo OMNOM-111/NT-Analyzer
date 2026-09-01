@@ -2,10 +2,10 @@
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
 - Last verified UTC: 2026-09-01T00:00:00Z
-- Verified against Git SHA: 22ed7097b4ac9e863304197e118b1d3ce5109e8a
-- Verified deployed artifact Git SHA: `22ed7097b4ac9e863304197e118b1d3ce5109e8a`
-- Current Production version/build/artifact when known: `0.10.0-beta.86`; `sf-0.10.0-beta.86-22ed7097b4ac-20260901T005018Z`; exact hashes are in the beta.86 changelog
-- Current live release: `0.10.0-beta.86`, accepted Canary and Production
+- Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
+- Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
+- Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
+- Current live release: `0.10.0-beta.87`, accepted Canary and Production
 - Scope: Current factual subsystem snapshot only
 - Status: PARTIAL
 
@@ -44,7 +44,7 @@
 Both environments run the same accepted beta.86 immutable artifact
 `art_e627d14a2dbb49fdaf98a0cc9847e8c2`, promoted to Production without a
 rebuild. The exact archive and manifest SHA256 are recorded in the canonical
-beta.86 changelog closeout.
+beta.87 changelog closeout.
 
 ## Deprecated current-state claims
 

@@ -2,13 +2,13 @@
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-01T00:00:00Z
-- Verified against Git SHA: 22ed7097b4ac9e863304197e118b1d3ce5109e8a
-- Verified deployed artifact Git SHA: `22ed7097b4ac9e863304197e118b1d3ce5109e8a`
-- Current Production version/build/artifact when known: `0.10.0-beta.86`; `sf-0.10.0-beta.86-22ed7097b4ac-20260901T005018Z`
-- Scope: beta.86 Legacy Isolation + Telegram Bot Cleanup release
+- Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
+- Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
+- Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`
+- Scope: beta.87 Owner Backtest Demo Gate Fix release
 - Status: DONE
 
-## Release closeout - beta.86 live
+## Release closeout - beta.87 live
 
 - Current Aurora has no classic UI or Telegram Mini App navigation/transport.
 - Retired legacy, Mini App, remote-access and tunnel routes return HTTP 410.
@@ -26,18 +26,18 @@
 
 | Field | Value |
 | --- | --- |
-| Current Git SHA | `22ed7097b4ac9e863304197e118b1d3ce5109e8a`; deployed artifact is the same SHA |
+| Current Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b`; deployed artifact is the same SHA |
 | Code change | PR #254 legacy isolation; PR #255 Telegram `/start` URL flow; PR #256 release-record visibility and gate |
-| Release | Production `0.10.0-beta.86`, state `production_live` |
-| Build | live `sf-0.10.0-beta.86-22ed7097b4ac-20260901T005018Z`; artifact `art_e627d14a2dbb49fdaf98a0cc9847e8c2` |
-| Archive / runtime hashes | archive `8052B7A5...BABE7D`, manifest `0E95CF8B...BCA4`; full values in the beta.86 changelog |
-| Canary | beta.86 accepted/ready |
-| Production | beta.86 same immutable artifact without rebuild, live/ready |
-| Release parity | Canary and Production report the same beta.86 artifact SHA256 |
+| Release | Production `0.10.0-beta.87`, state `production_live` |
+| Build | live `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; artifact `art_9ce9dbcb9a7a4fee9df6a54d40f29806` |
+| Archive / runtime hashes | archive `8052B7A5...BABE7D`, manifest `0E95CF8B...BCA4`; full values in the beta.87 changelog |
+| Canary | beta.87 accepted/ready |
+| Production | beta.87 same immutable artifact without rebuild, live/ready |
+| Release parity | Canary and Production report the same beta.87 artifact SHA256 |
 | Worker concurrency | `interactive_ai=4`, `chart=4`, `telemetry=2`, `maintenance=1` |
 | Canary idle result | CPU `83.711% → 4.839%`; total DB TX/s `155.378 → 28.700`; pickup p50/max `1.372/1.455 s` |
 | Production idle result | worker CPU `83.778% → 5.522%`; worker-attributable TX/s about `69.002 → 5.822`; pickup p50/max `1.392/1.468 s` |
-| Tests | legacy-isolation full regression `2430 passed, 34 skipped`; PR #255 focused `94 passed`; both merged PRs mandatory CI GREEN; beta.86 checks pending |
+| Tests | legacy-isolation full regression `2430 passed, 34 skipped`; PR #255 focused `94 passed`; both merged PRs mandatory CI GREEN; beta.87 full suite `2449 passed, 32 skipped` |
 | Market-data and Connector baseline | preserved; accepted TopstepX and Connector functional paths remain current |
 | Secret rotation | completed for the two Google Client Secrets and two Resend keys; three older platform secrets remain in env until their separate migration |
 
@@ -68,7 +68,7 @@
 
 ## Next development boundary
 
-The active task is the beta.86 release. Complete its release-record PR and
+The active task is the beta.87 release. Complete its closeout record and
 final-main CI, build one signed immutable artifact, accept it on Canary and
 promote that exact artifact to Production. Preserve the accepted Connector and
 market-data baselines.
