@@ -52,6 +52,18 @@ MAX_COMMAND_TTL_SEC = 5 * 60
 RUNTIME_CATALOG_FRESH_SEC = 24 * 60 * 60
 MAX_RUNTIME_CATALOG_STRATEGIES = 160
 MAX_RUNTIME_CATALOG_TEMPLATES = 160
+# Per page, not per catalog. Two independent limits bind a command result and
+# both are real: `_safe_payload` refuses any list over 100 items and
+# `_safe_result` refuses the whole result over MAX_COMMAND_RESULT_BYTES. The
+# full catalog is delivered as several signed pages instead of being truncated,
+# because dropping valid contracts is what made the backtest unusable.
+MAX_RUNTIME_CATALOG_INSTRUMENTS_PER_PAGE = 80
+MAX_RUNTIME_CATALOG_PAGES = 16
+# A page targets this; the hard refusal is MAX_COMMAND_RESULT_BYTES.
+RUNTIME_CATALOG_PAGE_TARGET_BYTES = 12 * 1024
+# A command result above this is refused outright, not truncated: an oversized
+# catalog snapshot is dropped and the server silently keeps its stale roots.
+MAX_COMMAND_RESULT_BYTES = 16 * 1024
 MAX_ACTIVE_INSTALLATIONS_PER_WORKSPACE = 10
 MAX_ACTIVE_ENROLLMENTS_PER_USER = 5
 MAX_MARKET_DATA_BARS = 64
@@ -1156,11 +1168,23 @@ def issue_challenge(payload: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _next_missing_catalog_page(installation: Mapping[str, Any]) -> int:
+    staging = installation.get("runtime_catalog_staging")
+    if not isinstance(staging, Mapping):
+        return 0
+    pages = staging.get("pages") or {}
+    for index in range(int(staging.get("page_count") or 1)):
+        if str(index) not in pages:
+            return index
+    return 0
+
+
 def _queue_runtime_catalog_snapshot(
     doc: Dict[str, Any],
     installation: Mapping[str, Any],
     session: Mapping[str, Any],
     now: float,
+    page_index: int = 0,
 ) -> Dict[str, Any]:
     """Queue one bounded catalog snapshot for this signed session.
 
@@ -1169,12 +1193,16 @@ def _queue_runtime_catalog_snapshot(
     sole execution authority and avoids a second catalog transport. A new
     signed hello gets one request; ordinary heartbeats do not create churn.
     """
-    payload = {"command": "snapshot_runtime"}
+    # page_index is omitted for the first page so the wire stays byte-identical
+    # for every Connector that predates paging.
+    payload: Dict[str, Any] = {"command": "snapshot_runtime"}
+    if int(page_index) > 0:
+        payload["page_index"] = int(page_index)
     installation_id = str(installation.get("installation_id") or "")
     workspace_id = str(installation.get("workspace_id") or "")
     connection_id = str(installation.get("connection_id") or "")
     session_id = str(session.get("session_id") or "")
-    key = f"runtime-catalog:{installation_id}:{session_id}"
+    key = f"runtime-catalog:{installation_id}:{session_id}:{int(page_index)}"
     clean_payload = _safe_payload(payload)
     _validate_command_capability("telemetry", clean_payload)
     envelope_hash = hashlib.sha256(_canonical_json({
@@ -1609,6 +1637,13 @@ _RUNTIME_CATALOG_ROOT_FIELDS = frozenset({
     "schema_version", "generated_at_utc", "strategies", "commission_templates",
     "strategy_count", "commission_template_count", "parameter_schemas_included",
     "truncated",
+    # Instruments arrived after the first bounded catalog. An older Connector
+    # simply omits them, which stays valid.
+    "instruments", "instrument_count", "instruments_scanned",
+    "instruments_truncated",
+    # Paging. Absent means "one complete page", which is exactly how an older
+    # Connector behaves, so its single result still activates a catalog.
+    "catalog_id", "total_count", "page_index", "page_count",
 })
 _RUNTIME_CATALOG_STRATEGY_FIELDS = frozenset({
     "class_name", "display_name", "stable_id",
@@ -1616,6 +1651,17 @@ _RUNTIME_CATALOG_STRATEGY_FIELDS = frozenset({
 _RUNTIME_CATALOG_TEMPLATE_FIELDS = frozenset({
     "name", "display", "supported",
 })
+_RUNTIME_CATALOG_INSTRUMENT_FIELDS = frozenset({
+    # Only what a server cannot derive. root and expiry come from the
+    # instrument name, so sending them again would just spend the 16 KiB
+    # command-result budget on data the server already has.
+    "instrument", "data_first", "data_last",
+    "tick_size", "point_value", "tick_value",
+})
+# A tradable name: "MNQ 09-26" for futures, "BTCUSD" for a spot pair. The
+# shape alone cannot separate a bare root from a spot symbol, so the real
+# check is the data range below -- a fallback root has none.
+_CONTRACT_INSTRUMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{1,39}$")
 
 
 def _catalog_text(value: Any, *, maximum: int, field: str,
@@ -1648,6 +1694,17 @@ def _normalise_runtime_catalog(value: Any, now: float) -> Dict[str, Any]:
     if not isinstance(templates_raw, list) or len(templates_raw) > MAX_RUNTIME_CATALOG_TEMPLATES:
         raise ConnectorProtocolError(
             "Runtime catalog содержит недопустимый список комиссий.",
+            400, "invalid_runtime_catalog",
+        )
+    instruments_raw = value.get("instruments")
+    if instruments_raw is None:
+        # Older Connector: no instruments in the bounded catalog. The server
+        # keeps working and simply has no device-backed contracts.
+        instruments_raw = []
+    if (not isinstance(instruments_raw, list)
+            or len(instruments_raw) > MAX_RUNTIME_CATALOG_INSTRUMENTS_PER_PAGE):
+        raise ConnectorProtocolError(
+            "Runtime catalog содержит недопустимый список инструментов.",
             400, "invalid_runtime_catalog",
         )
     if bool(value.get("parameter_schemas_included")):
@@ -1709,6 +1766,71 @@ def _normalise_runtime_catalog(value: Any, now: float) -> Dict[str, Any]:
             "supported": bool(raw.get("supported")),
         })
 
+    instruments = []
+    seen_instruments = set()
+    for raw in instruments_raw:
+        if not isinstance(raw, Mapping) or set(raw) - _RUNTIME_CATALOG_INSTRUMENT_FIELDS:
+            raise ConnectorProtocolError(
+                "Runtime catalog содержит некорректный инструмент.",
+                400, "invalid_runtime_catalog",
+            )
+        name = _catalog_text(
+            raw.get("instrument"), maximum=40, field="instrument", required=True,
+        )
+        if not _CONTRACT_INSTRUMENT_RE.match(name):
+            raise ConnectorProtocolError(
+                "Runtime catalog: instrument некорректен.",
+                400, "invalid_runtime_catalog",
+            )
+        data_first = _catalog_text(
+            raw.get("data_first"), maximum=10, field="data_first")
+        data_last = _catalog_text(
+            raw.get("data_last"), maximum=10, field="data_last")
+        # A bare root is exactly what this channel exists to replace. It is
+        # recognisable by having no scanned data range at all, which is true of
+        # "MNQ" and false of both "MNQ 09-26" and a spot pair like "BTCUSD".
+        if not data_first or not data_last:
+            raise ConnectorProtocolError(
+                "Runtime catalog: instrument без диапазона данных не является "
+                "конкретным контрактом.",
+                400, "invalid_runtime_catalog",
+            )
+        if name in seen_instruments:
+            continue
+        seen_instruments.add(name)
+
+        def number(field: str) -> Optional[float]:
+            item = raw.get(field)
+            if item is None or isinstance(item, bool):
+                return None
+            try:
+                parsed = float(item)
+            except (TypeError, ValueError):
+                raise ConnectorProtocolError(
+                    f"Runtime catalog: {field} некорректен.",
+                    400, "invalid_runtime_catalog",
+                ) from None
+            if parsed != parsed or parsed in (float("inf"), float("-inf")):
+                raise ConnectorProtocolError(
+                    f"Runtime catalog: {field} некорректен.",
+                    400, "invalid_runtime_catalog",
+                )
+            return parsed
+
+        root, _, expiry = name.partition(" ")
+        instruments.append({
+            "instrument": name,
+            "root": root,
+            "expiry": expiry,
+            "data_first": data_first,
+            "data_last": data_last,
+            "tick_size": number("tick_size"),
+            "point_value": number("point_value"),
+            "tick_value": number("tick_value"),
+            "has_minute_data": True,
+            "source": "connector_runtime_catalog",
+        })
+
     generated = _catalog_text(
         value.get("generated_at_utc"), maximum=40, field="generated_at_utc",
     )
@@ -1728,19 +1850,170 @@ def _normalise_runtime_catalog(value: Any, now: float) -> Dict[str, Any]:
             )
         return max(observed, value_count)
 
+    def bounded_int(field: str, *, minimum: int, maximum: int, default: int) -> int:
+        if field not in value or value.get(field) is None:
+            return default
+        raw_value = value.get(field)
+        if isinstance(raw_value, bool):
+            raise ConnectorProtocolError(
+                f"Runtime catalog: {field} некорректен.",
+                400, "invalid_runtime_catalog",
+            )
+        try:
+            parsed = int(raw_value)
+        except (TypeError, ValueError):
+            raise ConnectorProtocolError(
+                f"Runtime catalog: {field} некорректен.",
+                400, "invalid_runtime_catalog",
+            ) from None
+        if parsed < minimum or parsed > maximum:
+            raise ConnectorProtocolError(
+                f"Runtime catalog: {field} вне допустимого диапазона.",
+                400, "invalid_runtime_catalog",
+            )
+        return parsed
+
+    # Absent paging means one complete page, which is how an older Connector
+    # behaves. Its single result still activates a catalog.
+    page_count = bounded_int(
+        "page_count", minimum=1, maximum=MAX_RUNTIME_CATALOG_PAGES, default=1)
+    page_index = bounded_int(
+        "page_index", minimum=0, maximum=page_count - 1, default=0)
+    total_count = bounded_int(
+        "total_count", minimum=0,
+        maximum=MAX_RUNTIME_CATALOG_PAGES * MAX_RUNTIME_CATALOG_INSTRUMENTS_PER_PAGE,
+        default=len(instruments))
+    catalog_id = _catalog_text(
+        value.get("catalog_id"), maximum=64, field="catalog_id")
+    if page_count > 1 and not catalog_id:
+        raise ConnectorProtocolError(
+            "Runtime catalog: многостраничный snapshot обязан иметь catalog_id.",
+            400, "invalid_runtime_catalog",
+        )
+
     return {
         "schema_version": 1,
         "generated_at_utc": generated,
         "received_at_utc": _now_iso(now),
         "received_at": now,
+        "catalog_id": catalog_id,
+        "page_index": page_index,
+        "page_count": page_count,
+        "total_count": total_count,
         "strategies": strategies,
         "commission_templates": templates,
+        "instruments": instruments,
         "strategy_count": declared_count("strategy_count", len(strategies)),
         "commission_template_count": declared_count(
             "commission_template_count", len(templates)),
+        "instrument_count": declared_count("instrument_count", len(instruments)),
+        "instruments_scanned": declared_count(
+            "instruments_scanned", len(instruments)),
+        "instruments_truncated": bool(value.get("instruments_truncated")),
         "parameter_schemas_included": False,
         "truncated": bool(value.get("truncated")),
     }
+
+
+def _accept_runtime_catalog_page(
+    installation: Dict[str, Any], page: Dict[str, Any], now: float,
+) -> Tuple[bool, Dict[str, Any]]:
+    """Stage one page; activate the catalog only once every page has arrived.
+
+    A half-delivered snapshot must never replace a catalog that works. The
+    server keeps the last good catalog until the full set for one ``catalog_id``
+    is present, then swaps atomically.
+
+    Returns ``(activated, staging_state)``.
+    """
+    page_count = int(page.get("page_count") or 1)
+    catalog_id = str(page.get("catalog_id") or "")
+
+    if page_count == 1:
+        # Single page, including every older Connector: complete on arrival.
+        # Any half-delivered set is abandoned here rather than left to be
+        # completed by pages of a snapshot that no longer exists.
+        installation.pop("runtime_catalog_staging", None)
+        return True, dict(page)
+
+    staging = installation.get("runtime_catalog_staging")
+    if (not isinstance(staging, Mapping)
+            or str(staging.get("catalog_id") or "") != catalog_id
+            or int(staging.get("page_count") or 0) != page_count):
+        # A different snapshot started: drop the partial one, never the live one.
+        staging = {
+            "catalog_id": catalog_id,
+            "page_count": page_count,
+            "generated_at_utc": str(page.get("generated_at_utc") or ""),
+            "total_count": int(page.get("total_count") or 0),
+            "started_at": now,
+            "pages": {},
+        }
+    else:
+        staging = {
+            "catalog_id": staging.get("catalog_id"),
+            "page_count": int(staging.get("page_count") or 0),
+            "generated_at_utc": staging.get("generated_at_utc"),
+            "total_count": int(staging.get("total_count") or 0),
+            "started_at": float(staging.get("started_at") or now),
+            "pages": dict(staging.get("pages") or {}),
+        }
+
+    if str(page.get("generated_at_utc") or "") != str(staging["generated_at_utc"] or ""):
+        raise ConnectorProtocolError(
+            "Runtime catalog: страницы принадлежат разным snapshot.",
+            409, "runtime_catalog_page_mismatch",
+        )
+    staging["pages"][str(int(page.get("page_index") or 0))] = page
+    installation["runtime_catalog_staging"] = staging
+
+    if len(staging["pages"]) < page_count:
+        return False, staging
+
+    merged_instruments: List[Dict[str, Any]] = []
+    seen: set = set()
+    strategies: List[Dict[str, Any]] = []
+    templates: List[Dict[str, Any]] = []
+    for index in range(page_count):
+        part = staging["pages"].get(str(index))
+        if not isinstance(part, Mapping):
+            # A gap means the set is not complete; keep waiting.
+            return False, staging
+        for row in part.get("instruments") or []:
+            name = str(row.get("instrument") or "")
+            if name and name not in seen:
+                seen.add(name)
+                merged_instruments.append(row)
+        # Strategies and templates ride page 0 so the other pages stay small.
+        if part.get("strategies"):
+            strategies = list(part["strategies"])
+        if part.get("commission_templates"):
+            templates = list(part["commission_templates"])
+
+    declared = int(staging["total_count"] or 0)
+    if declared and len(merged_instruments) != declared:
+        raise ConnectorProtocolError(
+            "Runtime catalog: собранный snapshot не совпадает с total_count.",
+            409, "runtime_catalog_incomplete",
+        )
+
+    last = staging["pages"][str(page_count - 1)]
+    complete = dict(last)
+    complete.update({
+        "instruments": merged_instruments,
+        "instrument_count": len(merged_instruments),
+        "strategies": strategies,
+        "commission_templates": templates,
+        "strategy_count": len(strategies),
+        "commission_template_count": len(templates),
+        "page_index": page_count - 1,
+        "page_count": page_count,
+        "total_count": declared or len(merged_instruments),
+        "received_at": now,
+        "received_at_utc": _now_iso(now),
+    })
+    installation.pop("runtime_catalog_staging", None)
+    return True, complete
 
 
 def _cache_runtime_installation(row: Mapping[str, Any]) -> None:
@@ -2384,7 +2657,7 @@ def _safe_result(value: Any) -> Any:
     if value is None:
         return {}
     clean = _safe_payload(value if isinstance(value, Mapping) else {"message": str(value)})
-    if len(_canonical_json(clean)) > 16384:
+    if len(_canonical_json(clean)) > MAX_COMMAND_RESULT_BYTES:
         raise ConnectorProtocolError(
             "Command result превышает 16 KiB.", 413, "result_too_large",
         )
@@ -2488,16 +2761,31 @@ def submit_result(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
             and str(command_payload.get("command") or "") == "snapshot_runtime"
             and isinstance(result.get("catalog"), Mapping)
         ):
-            catalog = _normalise_runtime_catalog(result["catalog"], now)
-            catalog.update({
-                "installation_id": str(installation.get("installation_id") or ""),
-                "connection_id": str(installation.get("connection_id") or ""),
-                "workspace_id": str(installation.get("workspace_id") or ""),
-                "connector_version": str(installation.get("connector_version") or ""),
-                "nt_version": str(installation.get("nt_version") or ""),
-            })
-            installation["runtime_catalog"] = catalog
-            catalog_stored = True
+            page = _normalise_runtime_catalog(result["catalog"], now)
+            activated, assembled = _accept_runtime_catalog_page(
+                installation, page, now)
+            if activated:
+                catalog = assembled or page
+                catalog.update({
+                    "installation_id": str(installation.get("installation_id") or ""),
+                    "connection_id": str(installation.get("connection_id") or ""),
+                    "workspace_id": str(installation.get("workspace_id") or ""),
+                    "connector_version": str(installation.get("connector_version") or ""),
+                    "nt_version": str(installation.get("nt_version") or ""),
+                })
+                # Swapped only here, once the whole set is present: a partial
+                # snapshot leaves the previous working catalog untouched.
+                installation["runtime_catalog"] = catalog
+                catalog_stored = True
+            else:
+                # More pages are outstanding; ask for the next missing one on
+                # the same signed channel so a reconnect can finish delivery.
+                pending = _queue_runtime_catalog_snapshot(
+                    doc, installation, session, now,
+                    page_index=_next_missing_catalog_page(installation),
+                )
+                if pending:
+                    _COMMANDS_CHANGED.notify_all()
         doc["results"].append({
             "command_id": command_id,
             "workspace_id": command["workspace_id"],

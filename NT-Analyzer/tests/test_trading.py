@@ -811,6 +811,18 @@ def t36(tmp):
         ],
     }), encoding="utf-8")
 
+    # A backtest now requires a real contract catalog; without one the run is
+    # refused instead of failing later inside NinjaTrader.
+    (catalog_dir / "instruments.json").write_text(json.dumps({
+        "generated_at_utc": "2026-09-01T05:00:00Z",
+        "instruments": [{
+            "instrument": "MNQ 06-26",
+            "root": "MNQ",
+            "expiry": "06-26",
+            "has_minute_data": True,
+        }],
+    }), encoding="utf-8")
+
     profiles = jobqueue.read_strategy_profiles().get("profiles") or []
     by_id = {p.get("profile_id"): p for p in profiles}
     assert by_id["mgc_ready_v1"]["cell_id"] == "CELL-001"

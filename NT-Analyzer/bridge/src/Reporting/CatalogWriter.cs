@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -54,6 +54,17 @@ namespace NTAnalyzerBridge.Reporting
         public static JObject BuildConnectorCatalog(
             string ntUserDir, IReadOnlyList<Type> strategyTypes)
         {
+            return BuildConnectorCatalogPage(ntUserDir, strategyTypes, 0);
+        }
+
+        /// <summary>
+        /// One signed page of the runtime catalog. The server assembles the
+        /// pages of a single catalog_id and activates them atomically, so a
+        /// half-delivered snapshot never replaces a working catalog.
+        /// </summary>
+        public static JObject BuildConnectorCatalogPage(
+            string ntUserDir, IReadOnlyList<Type> strategyTypes, int pageIndex)
+        {
             JArray strategies = new JArray();
             foreach (Type type in (strategyTypes ?? new List<Type>()).OrderBy(t => t.Name))
             {
@@ -76,16 +87,48 @@ namespace NTAnalyzerBridge.Reporting
             List<string> notes = new List<string>();
             JArray commission = JArray.FromObject(
                 ScanCommissionTemplates(ntUserDir, notes, false));
+
+            // Concrete contracts, not bare roots. A server has no NinjaTrader
+            // database, so without these it can only offer "MNQ" and every
+            // backtest fails on an unresolvable contract month.
+            // Instruments get whatever the 16 KiB command result has left after
+            // the strategies and templates, so a large Strategies folder can
+            // never push the whole snapshot over the transport cap.
+            int scannedTotal;
+            List<JObject> ordered = BuildConnectorInstruments(ntUserDir, out scannedTotal);
+            string generatedAt = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
+            string catalogId = ComputeCatalogId(ordered, generatedAt);
+
+            // Page 0 carries strategies and templates so later pages stay small.
+            List<List<JObject>> pages = PaginateInstruments(
+                ordered,
+                strategies.ToString(Formatting.None).Length
+                + commission.ToString(Formatting.None).Length);
+            if (pages.Count == 0) pages.Add(new List<JObject>());
+            if (pageIndex < 0 || pageIndex >= pages.Count) pageIndex = 0;
+            bool first = pageIndex == 0;
+
+            JArray instruments = new JArray();
+            foreach (JObject row in pages[pageIndex]) instruments.Add(row);
+
             int strategyCount = strategies.Count;
             int templateCount = commission.Count;
             JObject doc = new JObject
             {
                 ["schema_version"] = 1,
-                ["generated_at_utc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                ["strategies"] = strategies,
-                ["commission_templates"] = commission,
-                ["strategy_count"] = strategyCount,
-                ["commission_template_count"] = templateCount,
+                ["generated_at_utc"] = generatedAt,
+                ["catalog_id"] = catalogId,
+                ["page_index"] = pageIndex,
+                ["page_count"] = pages.Count,
+                ["total_count"] = ordered.Count,
+                ["strategies"] = first ? strategies : new JArray(),
+                ["commission_templates"] = first ? commission : new JArray(),
+                ["instruments"] = instruments,
+                ["strategy_count"] = first ? strategyCount : 0,
+                ["commission_template_count"] = first ? templateCount : 0,
+                ["instrument_count"] = instruments.Count,
+                ["instruments_scanned"] = scannedTotal,
+                ["instruments_truncated"] = false,
                 ["parameter_schemas_included"] = false,
                 ["truncated"] = false,
             };
@@ -341,6 +384,137 @@ namespace NTAnalyzerBridge.Reporting
             return null;
         }
 
+        // Contracts the server may legitimately offer for a backtest: real
+        // minute data, recent enough that NinjaTrader still has bars.
+        //
+        // The command result this travels in is capped at 16 KiB by the server
+        // (`_safe_result`), so the selection is bounded by measured bytes, not
+        // by a row count that silently becomes wrong as the catalog grows.
+        // Roots are filled round-robin newest-first, so the budget can never
+        // evict an entire root -- every root gets its live month before any
+        // root gets a second contract.
+        // A page, not the catalog. The server refuses a result over 16 KiB and
+        // any list over 100 items, so the full 400-day set is delivered as
+        // several bounded pages rather than truncated: dropping valid contracts
+        // is what left the server offering bare roots.
+        internal const int ConnectorPageTargetBytes = 12 * 1024;
+        internal const int ConnectorInstrumentsPerPage = 80;
+        internal const int EnvelopeReserveBytes = 512;
+        internal const int ConnectorInstrumentMaxAgeDays = 400;
+
+        private static List<JObject> BuildConnectorInstruments(
+            string ntUserDir, out int scannedTotal)
+        {
+            int ok, fail;
+            List<Dictionary<string, object>> rows = ScanInstruments(ntUserDir, out ok, out fail);
+            scannedTotal = rows.Count;
+
+            DateTime cutoff = DateTime.UtcNow.Date.AddDays(-ConnectorInstrumentMaxAgeDays);
+            var byRoot = new Dictionary<string, List<KeyValuePair<DateTime, Dictionary<string, object>>>>();
+            foreach (Dictionary<string, object> row in rows)
+            {
+                if (!(row["has_minute_data"] is bool) || !(bool)row["has_minute_data"]) continue;
+                string lastText = Convert.ToString(row["data_last"]);
+                if (string.IsNullOrWhiteSpace(lastText)) continue;
+                DateTime last;
+                if (!DateTime.TryParse(lastText, System.Globalization.CultureInfo.InvariantCulture,
+                                       System.Globalization.DateTimeStyles.None, out last)) continue;
+                if (last < cutoff) continue;
+                string root = Convert.ToString(row["root"]);
+                if (string.IsNullOrWhiteSpace(root)) continue;
+                if (!byRoot.ContainsKey(root))
+                    byRoot[root] = new List<KeyValuePair<DateTime, Dictionary<string, object>>>();
+                byRoot[root].Add(new KeyValuePair<DateTime, Dictionary<string, object>>(last, row));
+            }
+
+            List<string> roots = byRoot.Keys.ToList();
+            roots.Sort(StringComparer.Ordinal);
+            foreach (string root in roots)
+                byRoot[root].Sort((a, b) => b.Key.CompareTo(a.Key));
+
+            // Round-robin: every root's live month lands on the earliest page,
+            // and the rest of the eligible set follows on later pages. Nothing
+            // eligible is discarded.
+            var ordered = new List<JObject>();
+            int depth = 0;
+            bool addedThisPass = true;
+            while (addedThisPass)
+            {
+                addedThisPass = false;
+                foreach (string root in roots)
+                {
+                    List<KeyValuePair<DateTime, Dictionary<string, object>>> group = byRoot[root];
+                    if (depth >= group.Count) continue;
+                    ordered.Add(ProjectConnectorInstrument(group[depth].Value));
+                    addedThisPass = true;
+                }
+                depth++;
+            }
+            return ordered;
+        }
+
+        // Stable identity for one snapshot, so the server can tell pages of the
+        // same catalog from a newer scan that started mid-delivery.
+        private static string ComputeCatalogId(List<JObject> ordered, string generatedAt)
+        {
+            var builder = new System.Text.StringBuilder(generatedAt);
+            foreach (JObject row in ordered)
+            {
+                builder.Append('|').Append(Convert.ToString(row["instrument"]));
+                builder.Append('@').Append(Convert.ToString(row["data_last"]));
+            }
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(
+                    System.Text.Encoding.UTF8.GetBytes(builder.ToString()));
+                return BitConverter.ToString(hash, 0, 16)
+                    .Replace("-", string.Empty).ToLowerInvariant();
+            }
+        }
+
+        // Split by measured serialized bytes and item count, never an estimate.
+        private static List<List<JObject>> PaginateInstruments(
+            List<JObject> ordered, int firstPageExtraBytes)
+        {
+            var pages = new List<List<JObject>>();
+            var current = new List<JObject>();
+            int used = 0;
+            int extra = firstPageExtraBytes;
+            foreach (JObject row in ordered)
+            {
+                int cost = row.ToString(Formatting.None).Length + 1;
+                bool full = current.Count >= ConnectorInstrumentsPerPage
+                            || used + cost + extra + EnvelopeReserveBytes
+                               > ConnectorPageTargetBytes;
+                if (full && current.Count > 0)
+                {
+                    pages.Add(current);
+                    current = new List<JObject>();
+                    used = 0;
+                    extra = 0;
+                }
+                current.Add(row);
+                used += cost;
+            }
+            if (current.Count > 0) pages.Add(current);
+            return pages;
+        }
+
+        // Only what a server cannot derive itself. root/expiry come from the
+        // instrument name; asset_class is classified server-side.
+        private static JObject ProjectConnectorInstrument(Dictionary<string, object> row)
+        {
+            return new JObject
+            {
+                ["instrument"] = Convert.ToString(row["instrument"]),
+                ["data_first"] = Convert.ToString(row["data_first"]),
+                ["data_last"] = Convert.ToString(row["data_last"]),
+                ["tick_size"] = row["tick_size"] == null ? null : new JValue(row["tick_size"]),
+                ["point_value"] = row["point_value"] == null ? null : new JValue(row["point_value"]),
+                ["tick_value"] = row["tick_value"] == null ? null : new JValue(row["tick_value"]),
+            };
+        }
+
         // ----- instruments.json -------------------------------------------
 
         // Cached lookup methods from NinjaTrader.Cbi.Instrument.GetInstrument(string).
@@ -352,9 +526,38 @@ namespace NTAnalyzerBridge.Reporting
 
         private static void WriteInstruments(string path, string ntUserDir)
         {
+            int enrichedOk, enrichedFail;
+            List<Dictionary<string, object>> rows =
+                ScanInstruments(ntUserDir, out enrichedOk, out enrichedFail);
+
+            BridgeLog.Info("CatalogWriter: instrument metadata enrichment ok=" +
+                           enrichedOk + " fail=" + enrichedFail);
+
+            var doc = new Dictionary<string, object>
+            {
+                ["generated_at_utc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                ["count"]            = rows.Count,
+                ["source"]           = @"scan: db\minute\* + Cbi.Instrument.GetInstrument",
+                ["enrichment"]       = new Dictionary<string, object>
+                {
+                    ["ok"]   = enrichedOk,
+                    ["fail"] = enrichedFail,
+                },
+                ["instruments"]      = rows,
+            };
+            AtomicFile.WriteAllText(path, JsonConvert.SerializeObject(doc, Formatting.Indented));
+        }
+
+        /// <summary>
+        /// One scan of db\minute\*, shared by instruments.json and the bounded
+        /// Connector snapshot so a server never has to guess a contract month.
+        /// </summary>
+        private static List<Dictionary<string, object>> ScanInstruments(
+            string ntUserDir, out int enrichedOk, out int enrichedFail)
+        {
             var rows = new List<Dictionary<string, object>>();
-            int enrichedOk   = 0;
-            int enrichedFail = 0;
+            enrichedOk   = 0;
+            enrichedFail = 0;
             try
             {
                 string minuteDir = Path.Combine(ntUserDir, "db", "minute");
@@ -417,24 +620,7 @@ namespace NTAnalyzerBridge.Reporting
                 BridgeLog.Warn("CatalogWriter.WriteInstruments scan failed: " + ex.Message);
             }
 
-            rows = rows.OrderBy(r => (string)r["instrument"]).ToList();
-
-            BridgeLog.Info("CatalogWriter: instrument metadata enrichment ok=" +
-                           enrichedOk + " fail=" + enrichedFail);
-
-            var doc = new Dictionary<string, object>
-            {
-                ["generated_at_utc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                ["count"]            = rows.Count,
-                ["source"]           = @"scan: db\minute\* + Cbi.Instrument.GetInstrument",
-                ["enrichment"]       = new Dictionary<string, object>
-                {
-                    ["ok"]   = enrichedOk,
-                    ["fail"] = enrichedFail,
-                },
-                ["instruments"]      = rows,
-            };
-            AtomicFile.WriteAllText(path, JsonConvert.SerializeObject(doc, Formatting.Indented));
+            return rows.OrderBy(r => (string)r["instrument"]).ToList();
         }
 
         // Try to resolve the instrument via NinjaTrader.Cbi.Instrument.GetInstrument
