@@ -1531,7 +1531,11 @@
     const uxMode = String(auth.ux_mode || user.ux_mode || (isOwner ? 'professional' : '')).toLowerCase();
     const features = auth.features || user.features || null;
     const caps = auth.capabilities || {};
-    const demoTier = !!(auth.demo_tier || (caps.demo_backtest && !caps.backtesting) || uxMode === 'beginner');
+    // The owner is never a demo tier. Stated explicitly rather than relying on
+    // the server always sending a complete payload: a partial or stale auth
+    // response would otherwise paint the owner's real data as a demo.
+    const demoTier = !isOwner
+      && !!(auth.demo_tier || (caps.demo_backtest && !caps.backtesting) || uxMode === 'beginner');
     document.body.dataset.demoTier = demoTier ? '1' : '0';
     document.body.dataset.uxMode = uxMode || '';
     document.documentElement.classList.toggle('demo-tier', demoTier);
