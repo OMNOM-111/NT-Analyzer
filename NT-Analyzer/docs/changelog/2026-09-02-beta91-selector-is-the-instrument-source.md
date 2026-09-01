@@ -1,7 +1,7 @@
 # beta.91 - The selector reads the catalog the backtest runs
 
 Release summary: Селектор инструментов на сервере читал только файловый скан NinjaTrader, а контракты от Connector — нет, поэтому у корня не было front month и в поле бэктеста попадал голый корень. Селектор переведён на тот же собранный каталог, что отдаёт `/api/catalog`, а серверные проверки инструмента и истории убраны: как и в Local, инструмент разрешает NinjaTrader.
-Release PRs: TBD
+Release PRs: #268
 Affected subsystems: instrument selector endpoint, backtest job validation
 Release impact: Выбор корня в Production даёт тот же конкретный контракт, что и в Local. Connector transport, signing/trust, auth, Release Center и market-data не затронуты.
 
