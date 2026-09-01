@@ -2785,9 +2785,7 @@ def _instruments_are_bare_roots(rows: Any) -> bool:
     items = [row for row in (rows or []) if isinstance(row, Mapping)]
     if not items:
         return True
-    return not any(
-        " " in str(row.get("instrument") or "").strip() for row in items
-    )
+    return not _concrete_contracts(items)
 
 
 def build_catalog_response(
@@ -3589,14 +3587,20 @@ def _risk_profile_param_is_placeholder(key: str, value: Any) -> bool:
 
 
 def _concrete_contracts(rows: Any) -> set:
-    """Instrument names that name an actual contract month."""
+    """Instruments NinjaTrader can actually resolve and run.
+
+    "MNQ 09-26" is runnable and so is a spot pair like "BTCUSD"; the bare root
+    "MNQ" is not. What separates them is a scanned data range, not the name.
+    """
     out = set()
     for row in (rows or []):
         if not isinstance(row, Mapping):
             continue
         name = str(row.get("instrument") or "").strip()
-        # "MNQ 09-26" is runnable; "MNQ" is a root NinjaTrader cannot resolve.
-        if name and " " in name:
+        if not name:
+            continue
+        has_range = bool(str(row.get("data_last") or "").strip())
+        if has_range or " " in name:
             out.add(name)
     return out
 

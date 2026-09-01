@@ -80,10 +80,16 @@ namespace NTAnalyzerBridge.Reporting
             // Concrete contracts, not bare roots. A server has no NinjaTrader
             // database, so without these it can only offer "MNQ" and every
             // backtest fails on an unresolvable contract month.
+            // Instruments get whatever the 16 KiB command result has left after
+            // the strategies and templates, so a large Strategies folder can
+            // never push the whole snapshot over the transport cap.
+            int headroom = strategies.ToString(Formatting.None).Length
+                           + commission.ToString(Formatting.None).Length
+                           + 512; // envelope keys, counts, flags
             int scannedTotal;
             bool instrumentsTruncated;
             JArray instruments = BuildConnectorInstruments(
-                ntUserDir, out scannedTotal, out instrumentsTruncated);
+                ntUserDir, headroom, out scannedTotal, out instrumentsTruncated);
 
             int strategyCount = strategies.Count;
             int templateCount = commission.Count;
@@ -355,14 +361,23 @@ namespace NTAnalyzerBridge.Reporting
         }
 
         // Contracts the server may legitimately offer for a backtest: real
-        // minute data, and recent enough that NinjaTrader still has bars. The
-        // window keeps the payload bounded without dropping a whole root --
-        // every root contributes its newest contracts first.
-        internal const int ConnectorInstrumentLimit = 400;
+        // minute data, recent enough that NinjaTrader still has bars.
+        //
+        // The command result this travels in is capped at 16 KiB by the server
+        // (`_safe_result`), so the selection is bounded by measured bytes, not
+        // by a row count that silently becomes wrong as the catalog grows.
+        // Roots are filled round-robin newest-first, so the budget can never
+        // evict an entire root -- every root gets its live month before any
+        // root gets a second contract.
+        internal const int ConnectorSnapshotByteBudget = 15 * 1024;
+        // The server's _safe_payload refuses any list over 100 items, so the
+        // count binds before the bytes do. Both are enforced here.
+        internal const int ConnectorInstrumentCountLimit = 100;
         internal const int ConnectorInstrumentMaxAgeDays = 400;
 
         private static JArray BuildConnectorInstruments(
-            string ntUserDir, out int scannedTotal, out bool truncated)
+            string ntUserDir, int bytesAlreadyUsed,
+            out int scannedTotal, out bool truncated)
         {
             int ok, fail;
             List<Dictionary<string, object>> rows = ScanInstruments(ntUserDir, out ok, out fail);
@@ -370,49 +385,77 @@ namespace NTAnalyzerBridge.Reporting
             truncated = false;
 
             DateTime cutoff = DateTime.UtcNow.Date.AddDays(-ConnectorInstrumentMaxAgeDays);
-            var eligible = new List<KeyValuePair<DateTime, Dictionary<string, object>>>();
+            var byRoot = new Dictionary<string, List<KeyValuePair<DateTime, Dictionary<string, object>>>>();
             foreach (Dictionary<string, object> row in rows)
             {
                 if (!(row["has_minute_data"] is bool) || !(bool)row["has_minute_data"]) continue;
-                DateTime last;
                 string lastText = Convert.ToString(row["data_last"]);
                 if (string.IsNullOrWhiteSpace(lastText)) continue;
+                DateTime last;
                 if (!DateTime.TryParse(lastText, System.Globalization.CultureInfo.InvariantCulture,
                                        System.Globalization.DateTimeStyles.None, out last)) continue;
                 if (last < cutoff) continue;
-                eligible.Add(new KeyValuePair<DateTime, Dictionary<string, object>>(last, row));
+                string root = Convert.ToString(row["root"]);
+                if (string.IsNullOrWhiteSpace(root)) continue;
+                if (!byRoot.ContainsKey(root))
+                    byRoot[root] = new List<KeyValuePair<DateTime, Dictionary<string, object>>>();
+                byRoot[root].Add(new KeyValuePair<DateTime, Dictionary<string, object>>(last, row));
             }
 
-            // Newest data first so a cap never silently drops the live month.
-            eligible.Sort((a, b) => b.Key.CompareTo(a.Key));
-            if (eligible.Count > ConnectorInstrumentLimit)
-            {
-                truncated = true;
-                eligible = eligible.GetRange(0, ConnectorInstrumentLimit);
-            }
+            List<string> roots = byRoot.Keys.ToList();
+            roots.Sort(StringComparer.Ordinal);
+            foreach (string root in roots)
+                byRoot[root].Sort((a, b) => b.Key.CompareTo(a.Key));
 
-            var projected = new List<Dictionary<string, object>>();
-            foreach (var pair in eligible) projected.Add(pair.Value);
-            projected = projected.OrderBy(r => Convert.ToString(r["instrument"])).ToList();
-
-            JArray outRows = new JArray();
-            foreach (Dictionary<string, object> row in projected)
+            int budget = ConnectorSnapshotByteBudget - bytesAlreadyUsed;
+            var selected = new List<Dictionary<string, object>>();
+            int used = 0;
+            int depth = 0;
+            bool addedThisPass = true;
+            while (addedThisPass)
             {
-                outRows.Add(new JObject
+                addedThisPass = false;
+                foreach (string root in roots)
                 {
-                    ["instrument"] = Convert.ToString(row["instrument"]),
-                    ["root"] = Convert.ToString(row["root"]),
-                    ["expiry"] = Convert.ToString(row["expiry"]),
-                    ["data_first"] = Convert.ToString(row["data_first"]),
-                    ["data_last"] = Convert.ToString(row["data_last"]),
-                    ["asset_class"] = Convert.ToString(row["asset_class"]),
-                    ["exchange"] = Convert.ToString(row["exchange"]),
-                    ["tick_size"] = row["tick_size"] == null ? null : new JValue(row["tick_size"]),
-                    ["point_value"] = row["point_value"] == null ? null : new JValue(row["point_value"]),
-                    ["tick_value"] = row["tick_value"] == null ? null : new JValue(row["tick_value"]),
-                });
+                    List<KeyValuePair<DateTime, Dictionary<string, object>>> group = byRoot[root];
+                    if (depth >= group.Count) continue;
+                    Dictionary<string, object> row = group[depth].Value;
+                    JObject projected = ProjectConnectorInstrument(row);
+                    int cost = projected.ToString(Formatting.None).Length + 1;
+                    if (used + cost > budget
+                        || selected.Count >= ConnectorInstrumentCountLimit)
+                    { truncated = true; return Finish(selected); }
+                    selected.Add(row);
+                    used += cost;
+                    addedThisPass = true;
+                }
+                depth++;
             }
+            return Finish(selected);
+        }
+
+        private static JArray Finish(List<Dictionary<string, object>> selected)
+        {
+            JArray outRows = new JArray();
+            foreach (Dictionary<string, object> row in
+                     selected.OrderBy(r => Convert.ToString(r["instrument"]), StringComparer.Ordinal))
+                outRows.Add(ProjectConnectorInstrument(row));
             return outRows;
+        }
+
+        // Only what a server cannot derive itself. root/expiry come from the
+        // instrument name; asset_class is classified server-side.
+        private static JObject ProjectConnectorInstrument(Dictionary<string, object> row)
+        {
+            return new JObject
+            {
+                ["instrument"] = Convert.ToString(row["instrument"]),
+                ["data_first"] = Convert.ToString(row["data_first"]),
+                ["data_last"] = Convert.ToString(row["data_last"]),
+                ["tick_size"] = row["tick_size"] == null ? null : new JValue(row["tick_size"]),
+                ["point_value"] = row["point_value"] == null ? null : new JValue(row["point_value"]),
+                ["tick_value"] = row["tick_value"] == null ? null : new JValue(row["tick_value"]),
+            };
         }
 
         // ----- instruments.json -------------------------------------------

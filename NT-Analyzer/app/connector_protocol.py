@@ -52,7 +52,15 @@ MAX_COMMAND_TTL_SEC = 5 * 60
 RUNTIME_CATALOG_FRESH_SEC = 24 * 60 * 60
 MAX_RUNTIME_CATALOG_STRATEGIES = 160
 MAX_RUNTIME_CATALOG_TEMPLATES = 160
-MAX_RUNTIME_CATALOG_INSTRUMENTS = 400
+# Two independent limits bind this list and both are real:
+# `_safe_payload` refuses any list over 100 items, and `_safe_result` refuses
+# the whole result over MAX_COMMAND_RESULT_BYTES. 100 slim contracts serialise
+# to ~13.7 KiB, so the count is the tighter of the two and the device caps on
+# it as well. Round-robin across roots means 100 slots still cover all 52 roots.
+MAX_RUNTIME_CATALOG_INSTRUMENTS = 100
+# A command result above this is refused outright, not truncated: an oversized
+# catalog snapshot is dropped and the server silently keeps its stale roots.
+MAX_COMMAND_RESULT_BYTES = 16 * 1024
 MAX_ACTIVE_INSTALLATIONS_PER_WORKSPACE = 10
 MAX_ACTIVE_ENROLLMENTS_PER_USER = 5
 MAX_MARKET_DATA_BARS = 64
@@ -1622,11 +1630,16 @@ _RUNTIME_CATALOG_TEMPLATE_FIELDS = frozenset({
     "name", "display", "supported",
 })
 _RUNTIME_CATALOG_INSTRUMENT_FIELDS = frozenset({
-    "instrument", "root", "expiry", "data_first", "data_last",
-    "asset_class", "exchange", "tick_size", "point_value", "tick_value",
+    # Only what a server cannot derive. root and expiry come from the
+    # instrument name, so sending them again would just spend the 16 KiB
+    # command-result budget on data the server already has.
+    "instrument", "data_first", "data_last",
+    "tick_size", "point_value", "tick_value",
 })
-# "MNQ 09-26" / "6A 12-26": a concrete contract, never a bare root.
-_CONTRACT_INSTRUMENT_RE = re.compile(r"^[A-Z0-9]{1,10} [A-Z0-9]{2,5}-?[0-9]{0,2}$")
+# A tradable name: "MNQ 09-26" for futures, "BTCUSD" for a spot pair. The
+# shape alone cannot separate a bare root from a spot symbol, so the real
+# check is the data range below -- a fallback root has none.
+_CONTRACT_INSTRUMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._-]{1,39}$")
 
 
 def _catalog_text(value: Any, *, maximum: int, field: str,
@@ -1742,11 +1755,22 @@ def _normalise_runtime_catalog(value: Any, now: float) -> Dict[str, Any]:
         name = _catalog_text(
             raw.get("instrument"), maximum=40, field="instrument", required=True,
         )
-        # A bare root is exactly what this channel exists to replace, so it is
-        # rejected here rather than surfacing as an unrunnable backtest.
         if not _CONTRACT_INSTRUMENT_RE.match(name):
             raise ConnectorProtocolError(
-                "Runtime catalog: instrument должен быть конкретным контрактом.",
+                "Runtime catalog: instrument некорректен.",
+                400, "invalid_runtime_catalog",
+            )
+        data_first = _catalog_text(
+            raw.get("data_first"), maximum=10, field="data_first")
+        data_last = _catalog_text(
+            raw.get("data_last"), maximum=10, field="data_last")
+        # A bare root is exactly what this channel exists to replace. It is
+        # recognisable by having no scanned data range at all, which is true of
+        # "MNQ" and false of both "MNQ 09-26" and a spot pair like "BTCUSD".
+        if not data_first or not data_last:
+            raise ConnectorProtocolError(
+                "Runtime catalog: instrument без диапазона данных не является "
+                "конкретным контрактом.",
                 400, "invalid_runtime_catalog",
             )
         if name in seen_instruments:
@@ -1771,17 +1795,13 @@ def _normalise_runtime_catalog(value: Any, now: float) -> Dict[str, Any]:
                 )
             return parsed
 
+        root, _, expiry = name.partition(" ")
         instruments.append({
             "instrument": name,
-            "root": _catalog_text(raw.get("root"), maximum=20, field="root"),
-            "expiry": _catalog_text(raw.get("expiry"), maximum=10, field="expiry"),
-            "data_first": _catalog_text(
-                raw.get("data_first"), maximum=10, field="data_first"),
-            "data_last": _catalog_text(
-                raw.get("data_last"), maximum=10, field="data_last"),
-            "asset_class": _catalog_text(
-                raw.get("asset_class"), maximum=40, field="asset_class"),
-            "exchange": _catalog_text(raw.get("exchange"), maximum=40, field="exchange"),
+            "root": root,
+            "expiry": expiry,
+            "data_first": data_first,
+            "data_last": data_last,
             "tick_size": number("tick_size"),
             "point_value": number("point_value"),
             "tick_value": number("tick_value"),
@@ -2469,7 +2489,7 @@ def _safe_result(value: Any) -> Any:
     if value is None:
         return {}
     clean = _safe_payload(value if isinstance(value, Mapping) else {"message": str(value)})
-    if len(_canonical_json(clean)) > 16384:
+    if len(_canonical_json(clean)) > MAX_COMMAND_RESULT_BYTES:
         raise ConnectorProtocolError(
             "Command result превышает 16 KiB.", 413, "result_too_large",
         )

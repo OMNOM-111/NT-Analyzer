@@ -19,12 +19,8 @@ BRIDGE = Path(__file__).resolve().parents[1] / "bridge" / "src" / "Reporting" / 
 def _contract(name: str = "MNQ 09-26", **over) -> dict:
     row = {
         "instrument": name,
-        "root": name.split(" ", 1)[0],
-        "expiry": name.split(" ", 1)[1] if " " in name else "",
         "data_first": "2026-05-01",
         "data_last": "2026-08-28",
-        "asset_class": "futures",
-        "exchange": "Globex",
         "tick_size": 0.25,
         "point_value": 2.0,
         "tick_value": 0.5,
@@ -52,6 +48,7 @@ def test_connector_catalog_accepts_concrete_contracts() -> None:
     out = connector_protocol._normalise_runtime_catalog(_catalog(), 1_800_000_000.0)
     assert [row["instrument"] for row in out["instruments"]] == ["MNQ 09-26"]
     row = out["instruments"][0]
+    # root/expiry are derived, not transmitted: the wire budget is 16 KiB.
     assert row["root"] == "MNQ" and row["expiry"] == "09-26"
     assert row["tick_size"] == 0.25 and row["point_value"] == 2.0
     assert row["source"] == "connector_runtime_catalog"
@@ -59,11 +56,33 @@ def test_connector_catalog_accepts_concrete_contracts() -> None:
 
 
 def test_connector_catalog_rejects_a_bare_root() -> None:
-    """The bare root is the defect this channel exists to remove."""
+    """The bare root is the defect this channel exists to remove.
+
+    Shaped exactly like Production's fallback: a root name and no scanned data
+    range at all.
+    """
+    bare = {"instrument": "MNQ", "data_first": "", "data_last": ""}
     with pytest.raises(connector_protocol.ConnectorProtocolError) as rejected:
         connector_protocol._normalise_runtime_catalog(
-            _catalog(instruments=[_contract("MNQ")]), 1_800_000_000.0)
+            _catalog(instruments=[bare]), 1_800_000_000.0)
     assert rejected.value.code == "invalid_runtime_catalog"
+
+
+def test_a_spot_pair_without_an_expiry_is_still_accepted() -> None:
+    """BTCUSD has no contract month and is still a real, runnable instrument.
+
+    The real 1547-contract scan contains BTCUSD and BCHEUR; a name-shape rule
+    would have silently dropped both.
+    """
+    out = connector_protocol._normalise_runtime_catalog(
+        _catalog(instruments=[_contract("BTCUSD")]), 1_800_000_000.0)
+    assert [row["instrument"] for row in out["instruments"]] == ["BTCUSD"]
+    assert out["instruments"][0]["expiry"] == ""
+
+
+def test_job_gate_accepts_a_spot_pair_from_the_catalog() -> None:
+    jobqueue._validate_instrument_contract(
+        _request("BTCUSD"), {"instruments": [_contract("BTCUSD")]})
 
 
 def test_connector_catalog_without_instruments_stays_valid() -> None:
@@ -81,6 +100,70 @@ def test_connector_catalog_bounds_the_instrument_list() -> None:
     with pytest.raises(connector_protocol.ConnectorProtocolError):
         connector_protocol._normalise_runtime_catalog(
             _catalog(instruments=too_many), 1_800_000_000.0)
+
+
+# --------------------------------------------------------------------------- #
+# The transport cap is real: a command result over 16 KiB is refused outright.
+# --------------------------------------------------------------------------- #
+def test_a_realistic_full_snapshot_fits_the_command_result_cap() -> None:
+    """What the device actually produces must survive `_safe_result` intact.
+
+    Measured against the real 1547-contract scan: filling the device budget
+    round-robin yields 100 contracts across all 52 roots. An oversized
+    result is not truncated -- it is refused, and the server silently keeps its
+    stale roots, which is the failure this whole channel exists to remove.
+    """
+    instruments = [
+        _contract(f"{root}{index:02d} 09-26")
+        for root in ("MNQQ", "MESS", "MGCC", "M2KK")
+        for index in range(25)
+    ]
+    assert len(instruments) == connector_protocol.MAX_RUNTIME_CATALOG_INSTRUMENTS
+    payload = _catalog(
+        instruments=instruments,
+        strategies=[{"class_name": f"Strategy{i:03d}",
+                     "display_name": f"Strategy {i:03d}", "stable_id": f"s{i:03d}"}
+                    for i in range(8)],
+        commission_templates=[{"name": f"Template {i}", "display": f"Template {i}",
+                               "supported": True} for i in range(8)],
+    )
+    encoded = connector_protocol._canonical_json({"catalog": payload})
+    assert len(encoded) <= connector_protocol.MAX_COMMAND_RESULT_BYTES, (
+        f"{len(encoded)} bytes exceeds the "
+        f"{connector_protocol.MAX_COMMAND_RESULT_BYTES} byte cap")
+    connector_protocol._safe_result({"catalog": payload})
+
+
+def test_an_oversized_snapshot_is_refused_not_silently_truncated() -> None:
+    # _safe_payload binds first: a list over 100 items never reaches the byte
+    # check, and either way the result is refused rather than quietly trimmed.
+    oversized = {"catalog": _catalog(
+        instruments=[_contract(f"ROOT{index:04d} 09-26") for index in range(200)])}
+    with pytest.raises(connector_protocol.ConnectorProtocolError) as rejected:
+        connector_protocol._safe_result(oversized)
+    assert rejected.value.code in {"result_too_large", "invalid_command_payload"}
+
+
+def test_the_device_budget_stays_under_the_server_cap() -> None:
+    """The device budget must leave room for the envelope, not equal the cap."""
+    source = BRIDGE.read_text(encoding="utf-8-sig")
+    assert "ConnectorSnapshotByteBudget = 15 * 1024" in source
+    assert 15 * 1024 < connector_protocol.MAX_COMMAND_RESULT_BYTES
+
+
+def test_no_root_can_be_evicted_by_the_budget() -> None:
+    """Round-robin, not global recency: every root keeps its live month.
+
+    A global newest-first cap silently dropped whole roots once the catalog
+    grew -- measured on the real 1547-contract scan, a 200 cap lost 10YR, 2YR,
+    30YR and 5YR entirely.
+    """
+    source = BRIDGE.read_text(encoding="utf-8-sig")
+    assert "int depth = 0;" in source
+    assert "foreach (string root in roots)" in source
+    assert "if (depth >= group.Count) continue;" in source
+    # A per-root sort still puts each root's newest contract first.
+    assert "byRoot[root].Sort((a, b) => b.Key.CompareTo(a.Key));" in source
 
 
 def test_connector_catalog_rejects_unknown_instrument_fields() -> None:
@@ -158,6 +241,8 @@ def test_connector_snapshot_source_sends_bounded_instruments() -> None:
     source = BRIDGE.read_text(encoding="utf-8-sig")
     assert '["instruments"] = instruments' in source
     assert "BuildConnectorInstruments" in source
-    assert "ConnectorInstrumentLimit = 400" in source
-    # Newest first, so a cap never drops the live month.
-    assert "eligible.Sort((a, b) => b.Key.CompareTo(a.Key));" in source
+    assert "ConnectorSnapshotByteBudget" in source
+    assert "ConnectorInstrumentCountLimit = 100" in source
+    # Per-root newest-first, so the budget never drops a live month.
+    assert "byRoot[root].Sort((a, b) => b.Key.CompareTo(a.Key));" in source
+    assert "ConnectorInstrumentMaxAgeDays = 400" in source
