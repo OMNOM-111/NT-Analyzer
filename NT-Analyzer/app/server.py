@@ -7433,63 +7433,11 @@ class Handler(BaseHTTPRequestHandler):
                 root_map.setdefault(root, []).append(ins)
             result = []
             for root, contracts in sorted(root_map.items()):
-                def _dl(c: dict) -> str:
-                    return str(c.get("data_last") or "")
-                contracts_sorted = sorted(contracts, key=_dl, reverse=True)
-                # Front month = the most-recently-active *unexpired* contract.
-                # Energy futures (and many others) expire during the preceding
-                # calendar month, so a pure "expiry month >= now.month" check
-                # wrongly keeps the expired contract for the whole calendar month.
-                # Robust rule:
-                # 1) among contracts with data in the last 30 days whose expiry
-                #    month is still current/future, pick the freshest data_last;
-                # 2) if only expired-month contracts are "live", prefer the
-                #    nearest future expiry when the catalog has one;
-                # 3) otherwise fall back to calendar-month proximity / freshest.
-                now = datetime.now()
-                def _days_since(c: dict) -> float:
-                    raw = str(c.get("data_last") or "")
-                    if not raw:
-                        return float("inf")
-                    try:
-                        from datetime import datetime as _dt  # noqa: F811
-                        return (now - _dt.strptime(raw[:10], "%Y-%m-%d")).days
-                    except (ValueError, TypeError):
-                        return float("inf")
-
-                def _expiry_key(c: dict):
-                    expiry = str(c.get("expiry") or "")
-                    try:
-                        month, year = expiry.split("-", 1)
-                        return (2000 + int(year), int(month))
-                    except (TypeError, ValueError):
-                        return None
-
-                future_contracts = []
-                for contract in contracts:
-                    key = _expiry_key(contract)
-                    if key is not None and key >= (now.year, now.month):
-                        future_contracts.append((key, contract))
-
-                # Contracts with data within last 30 days are considered "live".
-                live = [c for c in contracts if _days_since(c) <= 30]
-                active = [c for c in live if (_expiry_key(c) or (0, 0)) >= (now.year, now.month)]
-                def _front_rank(c: dict):
-                    # Freshest data first; on a tie prefer the nearer expiry month.
-                    key = _expiry_key(c) or (9999, 99)
-                    return (_days_since(c), key)
-
-                if active:
-                    front = min(active, key=_front_rank)
-                elif future_contracts:
-                    # Prefer a still-listed future month over a recently-expired
-                    # contract that still has bars within the 30-day window.
-                    front = min(future_contracts, key=lambda item: item[0])[1]
-                elif live:
-                    front = min(live, key=_front_rank)
-                else:
-                    front = min(future_contracts, key=lambda item: item[0])[1] if future_contracts else (
-                        contracts_sorted[0] if contracts_sorted else None)
+                contracts_sorted = sorted(
+                    contracts, key=lambda c: str(c.get("data_last") or ""), reverse=True)
+                # One rule, shared with the backtest so a root a user picks here
+                # resolves to the same contract a backtest would run.
+                front = jobqueue.resolve_front_month(contracts)
                 result.append({
                     "root": root,
                     "front_month": front,

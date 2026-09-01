@@ -194,12 +194,25 @@ def test_device_contract_is_accepted() -> None:
         _request("MNQ 09-26"), {"instruments": [_contract()]})
 
 
-def test_bare_root_is_refused_with_an_actionable_message() -> None:
+def test_bare_root_resolves_to_the_device_contract() -> None:
+    """A root is a legitimate choice: it names the current contract.
+
+    This replaces the earlier "refuse the root and tell the user to type a
+    month" contract. The selector always resolved a root for the user, so a
+    backtest refusing the same input was the defect, not the safeguard.
+    """
+    request = _request("MNQ", {"instruments": [_contract()]})
+    jobqueue._resolve_instrument_root_in_place(request)
+    assert request.instrument == "MNQ 09-26"
+    jobqueue._validate_instrument_contract(request, request.runtime_catalog)
+
+
+def test_root_with_no_runnable_contract_is_still_refused() -> None:
     with pytest.raises(jobqueue.JobValidationError) as rejected:
         jobqueue._validate_instrument_contract(
-            _request("MNQ"), {"instruments": [_contract()]})
+            _request("6A"), {"instruments": [_contract()]})
     message = str(rejected.value)
-    assert "MNQ" in message and "09-26" in message
+    assert "6A" in message and "каталоге" in message
 
 
 def test_instrument_outside_the_catalog_is_refused() -> None:

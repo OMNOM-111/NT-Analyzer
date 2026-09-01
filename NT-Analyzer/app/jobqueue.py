@@ -3605,6 +3605,118 @@ def _concrete_contracts(rows: Any) -> set:
     return out
 
 
+def _instrument_root(name: Any) -> str:
+    """The root of an instrument name: "MNQ 09-26" -> "MNQ", "BTCUSD" -> "BTCUSD"."""
+    text = str(name or "").strip()
+    return text.split(" ", 1)[0] if " " in text else text
+
+
+def _expiry_key(contract: Mapping) -> Optional[Tuple[int, int]]:
+    """(year, month) of a contract month, or None when there is no expiry."""
+    expiry = str(contract.get("expiry") or "").strip()
+    if not expiry:
+        name = str(contract.get("instrument") or "").strip()
+        expiry = name.split(" ", 1)[1] if " " in name else ""
+    try:
+        month, year = expiry.split("-", 1)
+        return (2000 + int(year), int(month))
+    except (TypeError, ValueError):
+        return None
+
+
+def _days_since_data(contract: Mapping, now: datetime) -> float:
+    raw = str(contract.get("data_last") or "").strip()
+    if not raw:
+        return float("inf")
+    try:
+        return (now - datetime.strptime(raw[:10], "%Y-%m-%d")).days
+    except (ValueError, TypeError):
+        return float("inf")
+
+
+def resolve_front_month(
+    contracts: Iterable[Mapping], now: Optional[datetime] = None,
+) -> Optional[Dict[str, Any]]:
+    """The contract a user means when they name a bare root.
+
+    This is the rule the Trading Online selector has always used, kept here so
+    the selector and the backtest resolve a root the same way instead of
+    drifting apart.
+
+    Front month = the most-recently-active *unexpired* contract. Energy futures
+    (and many others) expire during the preceding calendar month, so a pure
+    "expiry month >= now.month" check wrongly keeps the expired contract for the
+    whole calendar month. Robust rule:
+      1) among contracts with data in the last 30 days whose expiry month is
+         still current/future, pick the freshest data_last;
+      2) if only expired-month contracts are "live", prefer the nearest future
+         expiry when the catalog has one;
+      3) otherwise fall back to calendar-month proximity / freshest.
+
+    A spot instrument has no expiry, so it never enters the expiry-ranked sets
+    and simply resolves to itself through the "live"/freshest fallback.
+    """
+    rows = [row for row in (contracts or []) if isinstance(row, Mapping)]
+    if not rows:
+        return None
+    moment = now or datetime.now()
+    current = (moment.year, moment.month)
+
+    def _front_rank(contract: Mapping):
+        # Freshest data first; on a tie prefer the nearer expiry month.
+        return (_days_since_data(contract, moment), _expiry_key(contract) or (9999, 99))
+
+    future = [
+        (key, row) for row in rows
+        for key in [_expiry_key(row)]
+        if key is not None and key >= current
+    ]
+    live = [row for row in rows if _days_since_data(row, moment) <= 30]
+    active = [row for row in live if (_expiry_key(row) or (0, 0)) >= current]
+
+    if active:
+        return dict(min(active, key=_front_rank))
+    if future:
+        # Prefer a still-listed future month over a recently-expired contract
+        # that still has bars within the 30-day window.
+        return dict(min(future, key=lambda item: item[0])[1])
+    if live:
+        return dict(min(live, key=_front_rank))
+    ordered = sorted(rows, key=lambda c: str(c.get("data_last") or ""), reverse=True)
+    return dict(ordered[0]) if ordered else None
+
+
+def resolve_root_instrument(
+    instrument: Any, rows: Any, now: Optional[datetime] = None,
+) -> Optional[str]:
+    """Resolve a bare root to the concrete contract name, or None.
+
+    Returns None when the name is already concrete, when nothing in the catalog
+    shares that root, or when the root has no runnable contract -- the caller
+    then reports the catalog error it would have reported anyway.
+    """
+    name = str(instrument or "").strip()
+    if not name or " " in name:
+        return None
+    runnable = _concrete_contracts(rows)
+    if name in runnable:
+        # A spot pair like "BTCUSD" is already a contract; never add a month.
+        return None
+    root = name.upper()
+    candidates = [
+        row for row in (rows or [])
+        if isinstance(row, Mapping)
+        and str(row.get("instrument") or "").strip() in runnable
+        and (str(row.get("root") or "").strip().upper()
+             or _instrument_root(row.get("instrument")).upper()) == root
+    ]
+    front = resolve_front_month(candidates, now=now)
+    if not front:
+        return None
+    resolved = str(front.get("instrument") or "").strip()
+    return resolved or None
+
+
 def _validate_instrument_contract(
     req: "CreateJobRequest", runtime_catalog: Any = None,
 ) -> None:
@@ -3635,10 +3747,14 @@ def _validate_instrument_contract(
         )
     if instrument not in known:
         if " " not in instrument:
+            # A root reaches this point only when resolve_root_instrument found
+            # no runnable contract for it, so say that rather than ask the user
+            # for a month the catalog does not have.
             raise JobValidationError(
-                f"instrument '{instrument}' — это корень без контрактного "
-                f"месяца. Укажите конкретный контракт, например "
-                f"'{instrument} 09-26'."
+                f"instrument '{instrument}': в каталоге NinjaTrader "
+                f"({source}) нет ни одного контракта по этому корню с "
+                f"историей данных. Загрузите историю в NinjaTrader или "
+                f"выберите другой инструмент."
             )
         raise JobValidationError(
             f"instrument '{instrument}' отсутствует в каталоге NinjaTrader "
@@ -3874,8 +3990,34 @@ def stage2_backtest_requirements(req: "CreateJobRequest") -> Dict[str, Any]:
     }
 
 
+def _resolve_instrument_root_in_place(req: "CreateJobRequest") -> None:
+    """Let a user name a root and run the contract the selector would show.
+
+    The Trading Online selector has always turned "MNQ" into the current
+    contract for the user. A backtest refused it instead, so the same choice
+    worked in one place and failed in the other. This closes that gap using
+    resolve_front_month -- the selector's own rule -- and runs before the
+    parameter alignment so ContractName carries the resolved contract too.
+    """
+    instrument = str(req.instrument or "").strip()
+    if not instrument or " " in instrument:
+        return
+    catalog = getattr(req, "runtime_catalog", None)
+    rows = None
+    if isinstance(catalog, Mapping):
+        rows = catalog.get("instruments") or []
+        if not _concrete_contracts(rows):
+            rows = None
+    if rows is None:
+        rows = (read_instruments_catalog() or {}).get("instruments") or []
+    resolved = resolve_root_instrument(instrument, rows)
+    if resolved and resolved != instrument:
+        req.instrument = resolved
+
+
 def create_job(req: CreateJobRequest) -> Tuple[str, Path]:
     """Create a job in pending/. Returns (job_id, pending_job_dir)."""
+    _resolve_instrument_root_in_place(req)
     _apply_locked_strategy_parameters(req)
     _inject_research_accounting_parameters(req)
     _align_instrument_strategy_parameters(req)
