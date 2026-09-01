@@ -1,7 +1,7 @@
 # beta.86 - Legacy Isolation + Telegram Bot Cleanup
 
 Release summary: Текущий StratForge полностью отделён от legacy UI и Telegram Mini App, при этом исторические отчёты сохранены в отдельном read-only Legacy Viewer, а текущие Telegram login, confirmations и notifications остаются рабочими.
-Release PRs: #254, #255
+Release PRs: #254, #255, #256
 Affected subsystems: Aurora UI, Legacy Viewer, Telegram bot URL flow, Release Center, release governance
 Release impact: Удалён вход в legacy UI и Mini App из текущего продукта; добавлен понятный обязательный release/change record без изменения market data, Connector или trading execution.
 
@@ -9,7 +9,7 @@ Release impact: Удалён вход в legacy UI и Mini App из текуще
 
 - PR #254: legacy UI и исторические данные изолированы в localhost-only read-only Legacy Viewer; текущие legacy routes fail closed.
 - PR #255: Telegram `/start` открывает StratForge обычной URL-кнопкой без возврата Mini App/WebApp binding.
-- Release Center показывает название, описание, PR, SHA, build/artifact, этап, проверки, длительность и identity DEV/Canary/Production; Production блокируется без полного release/change record.
+- PR #256: Release Center показывает название, описание, PR, SHA, build/artifact, этап, проверки, длительность и identity DEV/Canary/Production; Production блокируется без полного release/change record.
 
 ## Сохранено
 

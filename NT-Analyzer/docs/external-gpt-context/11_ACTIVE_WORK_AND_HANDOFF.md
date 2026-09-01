@@ -27,7 +27,7 @@
 | Field | Value |
 | --- | --- |
 | Current Git SHA | `dd0bdd0164713a88c3e87b4514637e848b831a8b`; deployed artifact `b923e7b2b4e034c4f890e89b33992d469c84b779` |
-| Code change | PR #254 legacy isolation; PR #255 Telegram `/start` URL flow; beta.86 release-record gate in progress |
+| Code change | PR #254 legacy isolation; PR #255 Telegram `/start` URL flow; PR #256 release-record visibility and gate |
 | Release | Production `0.10.0-beta.85`; next candidate `0.10.0-beta.86` |
 | Build | live `sf-0.10.0-beta.85-b923e7b2b4e0-20260831T173711Z`; beta.86 not built |
 | Archive / runtime hashes | beta.85 in canonical release evidence; beta.86 pending |

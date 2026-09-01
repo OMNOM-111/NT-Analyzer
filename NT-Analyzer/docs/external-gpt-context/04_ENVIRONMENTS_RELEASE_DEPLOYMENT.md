@@ -60,8 +60,8 @@ rebuild. live_trading_allowed stays false. Earlier cycles are in their
 changelog entries.
 
 The beta.86 candidate is named `Legacy Isolation + Telegram Bot Cleanup` and
-contains merged PR #254 and PR #255 plus the mandatory release/change-record
-contract. Its final candidate/build/artifact identity is not recorded as live
+contains merged PR #254 and PR #255 plus release-record PR #256. Its final
+candidate/build/artifact identity is not recorded as live
 until final-main CI, immutable build and Canary acceptance complete.
 
 ### Three gates stand between a candidate and Production
