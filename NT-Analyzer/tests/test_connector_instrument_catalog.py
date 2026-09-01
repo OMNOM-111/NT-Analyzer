@@ -365,3 +365,28 @@ def test_the_device_pages_by_measured_bytes_and_count() -> None:
     # discarding the rest of the eligible set.
     assert "ordered.Add(ProjectConnectorInstrument(group[depth].Value));" in source
     assert 12 * 1024 < connector_protocol.MAX_COMMAND_RESULT_BYTES
+
+
+# --------------------------------------------------------------------------- #
+# The version gate must not withhold the catalog from a newer Connector.
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(("version", "supported"), [
+    ("0.4.1-dev.20", False),   # older base, high dev counter
+    ("0.4.2-dev.16", False),   # the build before the feature landed
+    ("0.4.2-dev.17", True),    # where it landed
+    ("0.4.2", True),           # the final release contains it
+    ("0.4.3-dev.1", True),     # newer base, low dev counter
+    ("0.4.3", True),
+    ("0.5.0-dev.1", True),
+    ("", False),
+    ("garbage", False),
+])
+def test_runtime_catalog_support_is_decided_by_the_base_version(
+    version: str, supported: bool,
+) -> None:
+    """Reading only ``-dev.N`` ranked 0.4.3-dev.1 below 0.4.2-dev.17.
+
+    That silently withheld the snapshot command from a strictly newer
+    Connector, leaving the server on bare roots with no way to recover.
+    """
+    assert connector_protocol._connector_supports_runtime_catalog(version) is supported
