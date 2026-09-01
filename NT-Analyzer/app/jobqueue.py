@@ -3686,82 +3686,6 @@ def resolve_front_month(
     return dict(ordered[0]) if ordered else None
 
 
-def resolve_root_instrument(
-    instrument: Any, rows: Any, now: Optional[datetime] = None,
-) -> Optional[str]:
-    """Resolve a bare root to the concrete contract name, or None.
-
-    Returns None when the name is already concrete, when nothing in the catalog
-    shares that root, or when the root has no runnable contract -- the caller
-    then reports the catalog error it would have reported anyway.
-    """
-    name = str(instrument or "").strip()
-    if not name or " " in name:
-        return None
-    runnable = _concrete_contracts(rows)
-    if name in runnable:
-        # A spot pair like "BTCUSD" is already a contract; never add a month.
-        return None
-    root = name.upper()
-    candidates = [
-        row for row in (rows or [])
-        if isinstance(row, Mapping)
-        and str(row.get("instrument") or "").strip() in runnable
-        and (str(row.get("root") or "").strip().upper()
-             or _instrument_root(row.get("instrument")).upper()) == root
-    ]
-    front = resolve_front_month(candidates, now=now)
-    if not front:
-        return None
-    resolved = str(front.get("instrument") or "").strip()
-    return resolved or None
-
-
-def _validate_instrument_contract(
-    req: "CreateJobRequest", runtime_catalog: Any = None,
-) -> None:
-    """A backtest may only name a contract the real catalog actually lists.
-
-    Without this a server with no NinjaTrader offers bare roots, the job is
-    accepted, and NinjaTrader fails to resolve a contract -- which reached the
-    owner as a silent failed run rather than a fixable message.
-    """
-    instrument = str(req.instrument or "").strip()
-    known = set()
-    source = "local"
-    if isinstance(runtime_catalog, Mapping):
-        known = _concrete_contracts(runtime_catalog.get("instruments"))
-        source = "connector"
-    if not known:
-        # An older Connector sends a catalog with no instruments at all. That
-        # is not a reason to refuse a machine whose own scan is real; it only
-        # means the device could not be the source.
-        doc = read_instruments_catalog() or {}
-        known = _concrete_contracts(doc.get("instruments"))
-        source = "local"
-    if not known:
-        raise JobValidationError(
-            "Каталог контрактов NinjaTrader недоступен: бэктест не может быть "
-            "запущен без конкретного контракта. Подключите Connector и "
-            "обновите каталог."
-        )
-    if instrument not in known:
-        if " " not in instrument:
-            # A root reaches this point only when resolve_root_instrument found
-            # no runnable contract for it, so say that rather than ask the user
-            # for a month the catalog does not have.
-            raise JobValidationError(
-                f"instrument '{instrument}': в каталоге NinjaTrader "
-                f"({source}) нет ни одного контракта по этому корню с "
-                f"историей данных. Загрузите историю в NinjaTrader или "
-                f"выберите другой инструмент."
-            )
-        raise JobValidationError(
-            f"instrument '{instrument}' отсутствует в каталоге NinjaTrader "
-            f"({source}); выберите контракт из каталога."
-        )
-
-
 def _validate(req: CreateJobRequest) -> None:
     runtime_catalog = getattr(req, "runtime_catalog", None)
     if isinstance(runtime_catalog, Mapping):
@@ -3779,7 +3703,6 @@ def _validate(req: CreateJobRequest) -> None:
         )
     if not req.instrument or len(req.instrument) > 64:
         raise JobValidationError("instrument: required, max 64 chars")
-    _validate_instrument_contract(req, runtime_catalog)
     if req.bars_period_type not in ("Minute", "Day", "Tick", "Second", "Volume"):
         raise JobValidationError(f"bars_period_type unsupported: {req.bars_period_type}")
     if not (1 <= int(req.bars_period_value) <= 1440):
@@ -3990,34 +3913,8 @@ def stage2_backtest_requirements(req: "CreateJobRequest") -> Dict[str, Any]:
     }
 
 
-def _resolve_instrument_root_in_place(req: "CreateJobRequest") -> None:
-    """Let a user name a root and run the contract the selector would show.
-
-    The Trading Online selector has always turned "MNQ" into the current
-    contract for the user. A backtest refused it instead, so the same choice
-    worked in one place and failed in the other. This closes that gap using
-    resolve_front_month -- the selector's own rule -- and runs before the
-    parameter alignment so ContractName carries the resolved contract too.
-    """
-    instrument = str(req.instrument or "").strip()
-    if not instrument or " " in instrument:
-        return
-    catalog = getattr(req, "runtime_catalog", None)
-    rows = None
-    if isinstance(catalog, Mapping):
-        rows = catalog.get("instruments") or []
-        if not _concrete_contracts(rows):
-            rows = None
-    if rows is None:
-        rows = (read_instruments_catalog() or {}).get("instruments") or []
-    resolved = resolve_root_instrument(instrument, rows)
-    if resolved and resolved != instrument:
-        req.instrument = resolved
-
-
 def create_job(req: CreateJobRequest) -> Tuple[str, Path]:
     """Create a job in pending/. Returns (job_id, pending_job_dir)."""
-    _resolve_instrument_root_in_place(req)
     _apply_locked_strategy_parameters(req)
     _inject_research_accounting_parameters(req)
     _align_instrument_strategy_parameters(req)
