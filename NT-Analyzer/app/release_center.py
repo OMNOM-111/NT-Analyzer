@@ -40,7 +40,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from . import account_auth, blue_green, observability, release_executor, runtime_env, secure_store
+from . import (
+    account_auth, blue_green, observability, release_executor, release_summary,
+    runtime_env, secure_store,
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -356,6 +359,103 @@ def _fingerprint(source: Dict[str, Any]) -> Dict[str, str]:
     }
 
 
+def _new_release_record(app_version: str, source_sha: str) -> Dict[str, Any]:
+    summary = release_summary.summary_for(app_version)
+    return {
+        "title": str(summary.get("title") or ""),
+        "change_summary": str(summary.get("description") or ""),
+        "changes": list(summary.get("points") or []),
+        "prs": list(summary.get("prs") or []),
+        "subsystems": str(summary.get("subsystems") or ""),
+        "release_impact": str(summary.get("release_impact") or ""),
+        "source_sha": str(source_sha or ""),
+        "verification_result": "PENDING",
+        "verification_completed_at_utc": "",
+        "source": str(summary.get("source") or ""),
+    }
+
+
+def _release_record_requirements(candidate: Dict[str, Any]) -> Dict[str, Any]:
+    record = candidate.get("release_record")
+    record = record if isinstance(record, dict) else {}
+    source_sha = str(record.get("source_sha") or "").strip()
+    candidate_sha = str(candidate.get("git_commit_sha") or "").strip()
+    required = {
+        "release_title": bool(str(record.get("title") or "").strip()),
+        "change_summary": bool(str(record.get("change_summary") or "").strip()),
+        "source_sha": bool(_COMMIT_RE.fullmatch(source_sha)) and source_sha == candidate_sha,
+        "verification_result": str(record.get("verification_result") or "").upper() == "PASS",
+    }
+    missing = [name for name, present in required.items() if not present]
+    return {"ok": not missing, "required": required, "missing": missing}
+
+
+def _require_release_record(candidate: Dict[str, Any]) -> None:
+    requirements = _release_record_requirements(candidate)
+    if requirements["ok"]:
+        return
+    raise ReleaseCenterError(
+        "Release/change record неполон: " + ", ".join(requirements["missing"]),
+        409, code="release_record_incomplete",
+    )
+
+
+def _release_stage(state: str) -> str:
+    if state in {STATE_DRAFT, STATE_BUILDING, STATE_BUILD_FAILED}:
+        return "BUILD"
+    if state in {STATE_BUILT, STATE_SIGNED, STATE_CANARY_DEPLOYING}:
+        return "CANARY DEPLOY"
+    if state in {STATE_CANARY_CHECKING, STATE_CANARY_FAILED}:
+        return "CANARY CHECK"
+    if state in {
+        STATE_CANARY_PASSED, STATE_APPROVED, STATE_PRODUCTION_SCHEDULED,
+        STATE_PRODUCTION_DEPLOYING, STATE_PRODUCTION_FAILED,
+    }:
+        return "PRODUCTION PROMOTION"
+    if state == STATE_PRODUCTION_LIVE:
+        return "DONE"
+    return "CI"
+
+
+def _release_status(state: str) -> str:
+    if state in FAILURE_STATES:
+        return "FAIL"
+    if state == STATE_PRODUCTION_LIVE:
+        return "PASS"
+    if state in {STATE_ROLLED_BACK, STATE_SUPERSEDED, STATE_CANCELLED}:
+        return "BLOCKED"
+    return "RUNNING"
+
+
+def _public_release_record(doc: Dict[str, Any], candidate: Dict[str, Any]) -> Dict[str, Any]:
+    record = candidate.get("release_record")
+    out = dict(record) if isinstance(record, dict) else {}
+    requirements = _release_record_requirements(candidate)
+    checks = [
+        {
+            "name": str(row.get("name") or ""),
+            "result": str(row.get("result") or "").upper(),
+            "created_at_utc": str(row.get("created_at_utc") or ""),
+        }
+        for row in doc.get("checks") or []
+        if str(row.get("candidate_id") or "") == str(candidate.get("candidate_id") or "")
+    ]
+    created = _iso_to_epoch(candidate.get("created_at_utc"))
+    state = str(candidate.get("state") or "")
+    finished = state in TERMINAL_STATES or state in FAILURE_STATES
+    ended = _iso_to_epoch(candidate.get("updated_at_utc")) if finished else _now()
+    out.update({
+        "verification_checks": checks,
+        "requirements": requirements["required"],
+        "missing_fields": requirements["missing"],
+        "ready_for_production": requirements["ok"],
+        "current_stage": _release_stage(state),
+        "status": _release_status(state),
+        "duration_seconds": max(0, int(ended - created)) if created else 0,
+    })
+    return out
+
+
 def _validate_idempotency_key(value: Any) -> str:
     key = str(value or "").strip()
     if not (8 <= len(key) <= 160):
@@ -548,6 +648,7 @@ def _candidate_summary(doc: Dict[str, Any], candidate: Dict[str, Any]) -> Dict[s
         "failure_reason": candidate.get("failure_reason") or "",
         "created_at_utc": candidate.get("created_at_utc"),
         "updated_at_utc": candidate.get("updated_at_utc"),
+        "release_record": _public_release_record(doc, candidate),
     }
 
 
@@ -843,6 +944,7 @@ def create_candidate(
             "created_by_legacy_id": _actor_id(actor),
             "failure_reason": "",
             "signed_fingerprint": {},
+            "release_record": _new_release_record(version, commit),
             "created_at_utc": _now_iso(),
             "updated_at_utc": _now_iso(),
         }
@@ -1158,6 +1260,10 @@ def record_canary_check(
         doc["checks"].append(row)
         transitioned = candidate.get("state")
         if result_id == CHECK_FAIL:
+            record = candidate.get("release_record")
+            if isinstance(record, dict):
+                record["verification_result"] = "FAIL"
+                record["verification_completed_at_utc"] = _now_iso()
             deployment["state"] = "failed"
             deployment["failure_reason"] = check_name[:200]
             _record_notification(doc, candidate["candidate_id"], "deploy_failed", environment=ENVIRONMENT_CANARY)
@@ -1167,6 +1273,10 @@ def record_canary_check(
                         evidence={"check": check_name})
             transitioned = STATE_CANARY_FAILED
         elif final and result_id == CHECK_PASS:
+            record = candidate.get("release_record")
+            if isinstance(record, dict):
+                record["verification_result"] = "PASS"
+                record["verification_completed_at_utc"] = _now_iso()
             deployment["state"] = "live"
             _record_notification(doc, candidate["candidate_id"], "deploy_successful", environment=ENVIRONMENT_CANARY)
             _transition(doc, candidate, STATE_CANARY_PASSED, actor=actor,
@@ -1207,6 +1317,7 @@ def approve_production(
             return cached
         if candidate.get("state") != STATE_CANARY_PASSED:
             raise ReleaseCenterError("Approval доступен только после canary_passed.", 409, code="invalid_transition")
+        _require_release_record(candidate)
         # Where the code came from is a separate question from whether Canary is
         # healthy. An artifact built from an unmerged branch passed acceptance
         # and was one button away from Production; canary_passed cannot answer
@@ -1334,6 +1445,7 @@ def promote_production(
             retryable.add(STATE_PRODUCTION_DEPLOYING)
         if candidate.get("state") not in retryable:
             raise ReleaseCenterError("Promotion доступен только после approval/scheduling.", 409, code="invalid_transition")
+        _require_release_record(candidate)
         artifact = _find(doc["artifacts"], "artifact_id", str(candidate.get("artifact_id") or ""))
         if not artifact:
             raise ReleaseCenterError("Artifact отсутствует.", 409, code="artifact_missing")

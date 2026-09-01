@@ -145,6 +145,17 @@ def promotion_gates(candidate: Dict[str, Any],
 
     gates = [
         {
+            "id": "release_record",
+            "label": "Release/change record заполнен и verification = PASS",
+            "ok": bool((candidate.get("release_record") or {}).get("ready_for_production")),
+            "detail": (
+                "Отсутствует: " + ", ".join(
+                    (candidate.get("release_record") or {}).get("missing_fields") or []
+                )
+                if (candidate.get("release_record") or {}).get("missing_fields") else ""
+            ),
+        },
+        {
             "id": "approved_main",
             "label": "Сборка сделана из утверждённого main",
             "ok": bool(provenance.get("eligible")),

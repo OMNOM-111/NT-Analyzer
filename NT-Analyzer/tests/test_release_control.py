@@ -369,7 +369,8 @@ def test_local_does_not_answer_the_canary_gates_from_its_own_snapshot():
     """LOCAL's snapshot has no Canary row at all. Deciding from it would mean
     deciding from ignorance."""
     out = pipeline_view.promotion_gates(
-        {"state": "canary_passed", "artifact_sha256": ARTIFACT},
+        {"state": "canary_passed", "artifact_sha256": ARTIFACT,
+         "release_record": {"ready_for_production": True, "missing_fields": []}},
         {"environments": []},
         control={"allowed": True, "available": True, "decided_by": "production"},
         registry_is_authoritative=False)
@@ -383,7 +384,8 @@ def test_local_does_not_answer_the_canary_gates_from_its_own_snapshot():
 
 def test_local_without_a_decision_refuses():
     out = pipeline_view.promotion_gates(
-        {"state": "canary_passed", "artifact_sha256": ARTIFACT},
+        {"state": "canary_passed", "artifact_sha256": ARTIFACT,
+         "release_record": {"ready_for_production": True, "missing_fields": []}},
         {"environments": []},
         control=None, registry_is_authoritative=False)
     assert out["allowed"] is False
@@ -405,7 +407,8 @@ def test_local_still_checks_everything_the_ledger_knows():
 def test_a_server_keeps_deciding_locally():
     """Where the registry is real, nothing is delegated."""
     out = pipeline_view.promotion_gates(
-        {"state": "canary_passed", "artifact_sha256": ARTIFACT},
+        {"state": "canary_passed", "artifact_sha256": ARTIFACT,
+         "release_record": {"ready_for_production": True, "missing_fields": []}},
         _registry(), registry_is_authoritative=True)
     ids = {g["id"] for g in out["gates"]}
     assert "artifact_unchanged" in ids

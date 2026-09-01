@@ -67,6 +67,12 @@ def rc_store(tmp_path, monkeypatch):
     monkeypatch.setattr(release_center, "_store_path", lambda: tmp_path / "releases.dpapi")
     monkeypatch.setattr(release_center, "_audit_path", lambda: tmp_path / "release-audit.jsonl")
     monkeypatch.setattr(release_center, "_git_state", lambda: ("a" * 40, False))
+    monkeypatch.setattr(release_center.release_summary, "summary_for", lambda version: {
+        "title": "Test release", "description": "Test change summary",
+        "points": ["Test user change"], "prs": ["#1"],
+        "subsystems": "release", "release_impact": "test only",
+        "source": "test.md",
+    })
     owner_uuid = auth_identity.new_user_uuid()
     account_auth._write_doc({
         "version": 1,
@@ -146,6 +152,45 @@ def test_full_happy_path(rc_store):
     detail = release_center.get_release(cid)
     assert detail["summary"]["state"] == "production_deploying"
     assert detail["summary"]["production_state"] == "deploying"
+
+
+def test_candidate_snapshots_the_release_change_record(rc_store):
+    cid = _mk()
+    record = release_center.get_release(cid)["summary"]["release_record"]
+    assert record["title"] == "Test release"
+    assert record["change_summary"] == "Test change summary"
+    assert record["source_sha"] == "a" * 40
+    assert record["verification_result"] == "PENDING"
+    assert record["ready_for_production"] is False
+
+
+def test_missing_release_record_blocks_production_approval(rc_store):
+    cid = _mk()
+    _to_canary_passed(cid)
+    doc = release_center._read_doc()
+    candidate = next(row for row in doc["candidates"] if row["candidate_id"] == cid)
+    candidate["release_record"]["change_summary"] = ""
+    release_center._write_doc(doc)
+    with pytest.raises(release_center.ReleaseCenterError) as exc:
+        release_center.approve_production(
+            actor=OWNER, candidate_id=cid, idempotency_key="missing-record-approval")
+    assert exc.value.code == "release_record_incomplete"
+    assert "change_summary" in str(exc.value)
+
+
+def test_release_record_is_rechecked_at_promotion(rc_store):
+    cid = _mk()
+    _to_canary_passed(cid)
+    release_center.approve_production(
+        actor=OWNER, candidate_id=cid, idempotency_key="record-approval-ok")
+    doc = release_center._read_doc()
+    candidate = next(row for row in doc["candidates"] if row["candidate_id"] == cid)
+    candidate["release_record"]["source_sha"] = ""
+    release_center._write_doc(doc)
+    with pytest.raises(release_center.ReleaseCenterError) as exc:
+        release_center.promote_production(
+            actor=OWNER, candidate_id=cid, idempotency_key="missing-record-promote")
+    assert exc.value.code == "release_record_incomplete"
 
 
 def test_invalid_transition_denied(rc_store):

@@ -2,7 +2,7 @@
 
 - Context Pack document: 01_PRODUCT_VISION_AND_SCOPE.md
 - Last verified UTC: 2026-08-13T09:49:37Z
-- Verified against Git SHA: 1279645e48e32000978364b38fb20d3dcd303843
+- Verified against Git SHA: dd0bdd0164713a88c3e87b4514637e848b831a8b
 - Scope: Product purpose, users, boundaries and principles
 - Status: DONE
 

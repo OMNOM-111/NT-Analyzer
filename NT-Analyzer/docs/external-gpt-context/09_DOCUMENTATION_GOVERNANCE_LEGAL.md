@@ -2,7 +2,7 @@
 
 - Context Pack document: 09_DOCUMENTATION_GOVERNANCE_LEGAL.md
 - Last verified UTC: 2026-08-30T20:59:15Z
-- Verified against Git SHA: 1279645e48e32000978364b38fb20d3dcd303843
+- Verified against Git SHA: dd0bdd0164713a88c3e87b4514637e848b831a8b
 - Scope: Docs source-of-truth model, revision rules, localization policy and legal status
 - Status: DONE
 
