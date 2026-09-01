@@ -52,6 +52,7 @@ MAX_COMMAND_TTL_SEC = 5 * 60
 RUNTIME_CATALOG_FRESH_SEC = 24 * 60 * 60
 MAX_RUNTIME_CATALOG_STRATEGIES = 160
 MAX_RUNTIME_CATALOG_TEMPLATES = 160
+MAX_RUNTIME_CATALOG_INSTRUMENTS = 400
 MAX_ACTIVE_INSTALLATIONS_PER_WORKSPACE = 10
 MAX_ACTIVE_ENROLLMENTS_PER_USER = 5
 MAX_MARKET_DATA_BARS = 64
@@ -1609,6 +1610,10 @@ _RUNTIME_CATALOG_ROOT_FIELDS = frozenset({
     "schema_version", "generated_at_utc", "strategies", "commission_templates",
     "strategy_count", "commission_template_count", "parameter_schemas_included",
     "truncated",
+    # Instruments arrived after the first bounded catalog. An older Connector
+    # simply omits them, which stays valid.
+    "instruments", "instrument_count", "instruments_scanned",
+    "instruments_truncated",
 })
 _RUNTIME_CATALOG_STRATEGY_FIELDS = frozenset({
     "class_name", "display_name", "stable_id",
@@ -1616,6 +1621,12 @@ _RUNTIME_CATALOG_STRATEGY_FIELDS = frozenset({
 _RUNTIME_CATALOG_TEMPLATE_FIELDS = frozenset({
     "name", "display", "supported",
 })
+_RUNTIME_CATALOG_INSTRUMENT_FIELDS = frozenset({
+    "instrument", "root", "expiry", "data_first", "data_last",
+    "asset_class", "exchange", "tick_size", "point_value", "tick_value",
+})
+# "MNQ 09-26" / "6A 12-26": a concrete contract, never a bare root.
+_CONTRACT_INSTRUMENT_RE = re.compile(r"^[A-Z0-9]{1,10} [A-Z0-9]{2,5}-?[0-9]{0,2}$")
 
 
 def _catalog_text(value: Any, *, maximum: int, field: str,
@@ -1648,6 +1659,17 @@ def _normalise_runtime_catalog(value: Any, now: float) -> Dict[str, Any]:
     if not isinstance(templates_raw, list) or len(templates_raw) > MAX_RUNTIME_CATALOG_TEMPLATES:
         raise ConnectorProtocolError(
             "Runtime catalog содержит недопустимый список комиссий.",
+            400, "invalid_runtime_catalog",
+        )
+    instruments_raw = value.get("instruments")
+    if instruments_raw is None:
+        # Older Connector: no instruments in the bounded catalog. The server
+        # keeps working and simply has no device-backed contracts.
+        instruments_raw = []
+    if (not isinstance(instruments_raw, list)
+            or len(instruments_raw) > MAX_RUNTIME_CATALOG_INSTRUMENTS):
+        raise ConnectorProtocolError(
+            "Runtime catalog содержит недопустимый список инструментов.",
             400, "invalid_runtime_catalog",
         )
     if bool(value.get("parameter_schemas_included")):
@@ -1709,6 +1731,64 @@ def _normalise_runtime_catalog(value: Any, now: float) -> Dict[str, Any]:
             "supported": bool(raw.get("supported")),
         })
 
+    instruments = []
+    seen_instruments = set()
+    for raw in instruments_raw:
+        if not isinstance(raw, Mapping) or set(raw) - _RUNTIME_CATALOG_INSTRUMENT_FIELDS:
+            raise ConnectorProtocolError(
+                "Runtime catalog содержит некорректный инструмент.",
+                400, "invalid_runtime_catalog",
+            )
+        name = _catalog_text(
+            raw.get("instrument"), maximum=40, field="instrument", required=True,
+        )
+        # A bare root is exactly what this channel exists to replace, so it is
+        # rejected here rather than surfacing as an unrunnable backtest.
+        if not _CONTRACT_INSTRUMENT_RE.match(name):
+            raise ConnectorProtocolError(
+                "Runtime catalog: instrument должен быть конкретным контрактом.",
+                400, "invalid_runtime_catalog",
+            )
+        if name in seen_instruments:
+            continue
+        seen_instruments.add(name)
+
+        def number(field: str) -> Optional[float]:
+            item = raw.get(field)
+            if item is None or isinstance(item, bool):
+                return None
+            try:
+                parsed = float(item)
+            except (TypeError, ValueError):
+                raise ConnectorProtocolError(
+                    f"Runtime catalog: {field} некорректен.",
+                    400, "invalid_runtime_catalog",
+                ) from None
+            if parsed != parsed or parsed in (float("inf"), float("-inf")):
+                raise ConnectorProtocolError(
+                    f"Runtime catalog: {field} некорректен.",
+                    400, "invalid_runtime_catalog",
+                )
+            return parsed
+
+        instruments.append({
+            "instrument": name,
+            "root": _catalog_text(raw.get("root"), maximum=20, field="root"),
+            "expiry": _catalog_text(raw.get("expiry"), maximum=10, field="expiry"),
+            "data_first": _catalog_text(
+                raw.get("data_first"), maximum=10, field="data_first"),
+            "data_last": _catalog_text(
+                raw.get("data_last"), maximum=10, field="data_last"),
+            "asset_class": _catalog_text(
+                raw.get("asset_class"), maximum=40, field="asset_class"),
+            "exchange": _catalog_text(raw.get("exchange"), maximum=40, field="exchange"),
+            "tick_size": number("tick_size"),
+            "point_value": number("point_value"),
+            "tick_value": number("tick_value"),
+            "has_minute_data": True,
+            "source": "connector_runtime_catalog",
+        })
+
     generated = _catalog_text(
         value.get("generated_at_utc"), maximum=40, field="generated_at_utc",
     )
@@ -1735,9 +1815,14 @@ def _normalise_runtime_catalog(value: Any, now: float) -> Dict[str, Any]:
         "received_at": now,
         "strategies": strategies,
         "commission_templates": templates,
+        "instruments": instruments,
         "strategy_count": declared_count("strategy_count", len(strategies)),
         "commission_template_count": declared_count(
             "commission_template_count", len(templates)),
+        "instrument_count": declared_count("instrument_count", len(instruments)),
+        "instruments_scanned": declared_count(
+            "instruments_scanned", len(instruments)),
+        "instruments_truncated": bool(value.get("instruments_truncated")),
         "parameter_schemas_included": False,
         "truncated": bool(value.get("truncated")),
     }

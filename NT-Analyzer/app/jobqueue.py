@@ -2775,6 +2775,21 @@ def whitelisted_strategies() -> List[str]:
     return names
 
 
+def _instruments_are_bare_roots(rows: Any) -> bool:
+    """True when nothing in the list names a concrete contract month.
+
+    A server that only knows "MNQ" cannot run a backtest: NinjaTrader needs
+    "MNQ 09-26". Treating that state as an empty catalog is what turns a silent
+    failed run into an explicit, fixable message.
+    """
+    items = [row for row in (rows or []) if isinstance(row, Mapping)]
+    if not items:
+        return True
+    return not any(
+        " " in str(row.get("instrument") or "").strip() for row in items
+    )
+
+
 def build_catalog_response(
     device_catalog: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
@@ -2886,10 +2901,34 @@ def build_catalog_response(
             for raw in (device_doc.get("commission_templates") or [])
             if isinstance(raw, Mapping) and str(raw.get("name") or "").strip()
         ]
+        # Concrete contracts from the device replace whatever the server has
+        # locally. A server cannot scan NinjaTrader, so its own instruments file
+        # is at best a stale seed and at worst bare roots no backtest can run.
+        remote_instruments = [
+            dict(raw) for raw in (device_doc.get("instruments") or [])
+            if isinstance(raw, Mapping) and str(raw.get("instrument") or "").strip()
+        ]
         strategies = remote_strategies
         commission_templates = remote_templates
         strategies_generated_at = str(device_doc.get("generated_at_utc") or "") or None
         templates_generated_at = strategies_generated_at
+        if remote_instruments:
+            instruments = remote_instruments
+            instruments_generated_at = strategies_generated_at
+            if device_doc.get("instruments_truncated"):
+                warnings.append(
+                    "Список контрактов усечён устройством; показаны самые свежие "
+                    f"{len(remote_instruments)}."
+                )
+        elif _instruments_are_bare_roots(instruments):
+            # An older Connector sends no instruments. Say so plainly instead of
+            # letting bare roots look like a usable contract list.
+            instruments = []
+            instruments_generated_at = None
+            warnings.append(
+                "Connector не передал контракты NinjaTrader — обновите Connector; "
+                "бэктест недоступен без конкретного контракта."
+            )
         if not device_status.get("fresh"):
             warnings.append(
                 "Каталог NinjaTrader показан из последнего device snapshot; "
@@ -3549,6 +3588,60 @@ def _risk_profile_param_is_placeholder(key: str, value: Any) -> bool:
     return False
 
 
+def _concrete_contracts(rows: Any) -> set:
+    """Instrument names that name an actual contract month."""
+    out = set()
+    for row in (rows or []):
+        if not isinstance(row, Mapping):
+            continue
+        name = str(row.get("instrument") or "").strip()
+        # "MNQ 09-26" is runnable; "MNQ" is a root NinjaTrader cannot resolve.
+        if name and " " in name:
+            out.add(name)
+    return out
+
+
+def _validate_instrument_contract(
+    req: "CreateJobRequest", runtime_catalog: Any = None,
+) -> None:
+    """A backtest may only name a contract the real catalog actually lists.
+
+    Without this a server with no NinjaTrader offers bare roots, the job is
+    accepted, and NinjaTrader fails to resolve a contract -- which reached the
+    owner as a silent failed run rather than a fixable message.
+    """
+    instrument = str(req.instrument or "").strip()
+    known = set()
+    source = "local"
+    if isinstance(runtime_catalog, Mapping):
+        known = _concrete_contracts(runtime_catalog.get("instruments"))
+        source = "connector"
+    if not known:
+        # An older Connector sends a catalog with no instruments at all. That
+        # is not a reason to refuse a machine whose own scan is real; it only
+        # means the device could not be the source.
+        doc = read_instruments_catalog() or {}
+        known = _concrete_contracts(doc.get("instruments"))
+        source = "local"
+    if not known:
+        raise JobValidationError(
+            "Каталог контрактов NinjaTrader недоступен: бэктест не может быть "
+            "запущен без конкретного контракта. Подключите Connector и "
+            "обновите каталог."
+        )
+    if instrument not in known:
+        if " " not in instrument:
+            raise JobValidationError(
+                f"instrument '{instrument}' — это корень без контрактного "
+                f"месяца. Укажите конкретный контракт, например "
+                f"'{instrument} 09-26'."
+            )
+        raise JobValidationError(
+            f"instrument '{instrument}' отсутствует в каталоге NinjaTrader "
+            f"({source}); выберите контракт из каталога."
+        )
+
+
 def _validate(req: CreateJobRequest) -> None:
     runtime_catalog = getattr(req, "runtime_catalog", None)
     if isinstance(runtime_catalog, Mapping):
@@ -3566,6 +3659,7 @@ def _validate(req: CreateJobRequest) -> None:
         )
     if not req.instrument or len(req.instrument) > 64:
         raise JobValidationError("instrument: required, max 64 chars")
+    _validate_instrument_contract(req, runtime_catalog)
     if req.bars_period_type not in ("Minute", "Day", "Tick", "Second", "Volume"):
         raise JobValidationError(f"bars_period_type unsupported: {req.bars_period_type}")
     if not (1 <= int(req.bars_period_value) <= 1440):

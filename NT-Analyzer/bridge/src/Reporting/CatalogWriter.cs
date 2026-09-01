@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -76,6 +76,15 @@ namespace NTAnalyzerBridge.Reporting
             List<string> notes = new List<string>();
             JArray commission = JArray.FromObject(
                 ScanCommissionTemplates(ntUserDir, notes, false));
+
+            // Concrete contracts, not bare roots. A server has no NinjaTrader
+            // database, so without these it can only offer "MNQ" and every
+            // backtest fails on an unresolvable contract month.
+            int scannedTotal;
+            bool instrumentsTruncated;
+            JArray instruments = BuildConnectorInstruments(
+                ntUserDir, out scannedTotal, out instrumentsTruncated);
+
             int strategyCount = strategies.Count;
             int templateCount = commission.Count;
             JObject doc = new JObject
@@ -84,8 +93,12 @@ namespace NTAnalyzerBridge.Reporting
                 ["generated_at_utc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
                 ["strategies"] = strategies,
                 ["commission_templates"] = commission,
+                ["instruments"] = instruments,
                 ["strategy_count"] = strategyCount,
                 ["commission_template_count"] = templateCount,
+                ["instrument_count"] = instruments.Count,
+                ["instruments_scanned"] = scannedTotal,
+                ["instruments_truncated"] = instrumentsTruncated,
                 ["parameter_schemas_included"] = false,
                 ["truncated"] = false,
             };
@@ -341,6 +354,67 @@ namespace NTAnalyzerBridge.Reporting
             return null;
         }
 
+        // Contracts the server may legitimately offer for a backtest: real
+        // minute data, and recent enough that NinjaTrader still has bars. The
+        // window keeps the payload bounded without dropping a whole root --
+        // every root contributes its newest contracts first.
+        internal const int ConnectorInstrumentLimit = 400;
+        internal const int ConnectorInstrumentMaxAgeDays = 400;
+
+        private static JArray BuildConnectorInstruments(
+            string ntUserDir, out int scannedTotal, out bool truncated)
+        {
+            int ok, fail;
+            List<Dictionary<string, object>> rows = ScanInstruments(ntUserDir, out ok, out fail);
+            scannedTotal = rows.Count;
+            truncated = false;
+
+            DateTime cutoff = DateTime.UtcNow.Date.AddDays(-ConnectorInstrumentMaxAgeDays);
+            var eligible = new List<KeyValuePair<DateTime, Dictionary<string, object>>>();
+            foreach (Dictionary<string, object> row in rows)
+            {
+                if (!(row["has_minute_data"] is bool) || !(bool)row["has_minute_data"]) continue;
+                DateTime last;
+                string lastText = Convert.ToString(row["data_last"]);
+                if (string.IsNullOrWhiteSpace(lastText)) continue;
+                if (!DateTime.TryParse(lastText, System.Globalization.CultureInfo.InvariantCulture,
+                                       System.Globalization.DateTimeStyles.None, out last)) continue;
+                if (last < cutoff) continue;
+                eligible.Add(new KeyValuePair<DateTime, Dictionary<string, object>>(last, row));
+            }
+
+            // Newest data first so a cap never silently drops the live month.
+            eligible.Sort((a, b) => b.Key.CompareTo(a.Key));
+            if (eligible.Count > ConnectorInstrumentLimit)
+            {
+                truncated = true;
+                eligible = eligible.GetRange(0, ConnectorInstrumentLimit);
+            }
+
+            var projected = new List<Dictionary<string, object>>();
+            foreach (var pair in eligible) projected.Add(pair.Value);
+            projected = projected.OrderBy(r => Convert.ToString(r["instrument"])).ToList();
+
+            JArray outRows = new JArray();
+            foreach (Dictionary<string, object> row in projected)
+            {
+                outRows.Add(new JObject
+                {
+                    ["instrument"] = Convert.ToString(row["instrument"]),
+                    ["root"] = Convert.ToString(row["root"]),
+                    ["expiry"] = Convert.ToString(row["expiry"]),
+                    ["data_first"] = Convert.ToString(row["data_first"]),
+                    ["data_last"] = Convert.ToString(row["data_last"]),
+                    ["asset_class"] = Convert.ToString(row["asset_class"]),
+                    ["exchange"] = Convert.ToString(row["exchange"]),
+                    ["tick_size"] = row["tick_size"] == null ? null : new JValue(row["tick_size"]),
+                    ["point_value"] = row["point_value"] == null ? null : new JValue(row["point_value"]),
+                    ["tick_value"] = row["tick_value"] == null ? null : new JValue(row["tick_value"]),
+                });
+            }
+            return outRows;
+        }
+
         // ----- instruments.json -------------------------------------------
 
         // Cached lookup methods from NinjaTrader.Cbi.Instrument.GetInstrument(string).
@@ -352,9 +426,38 @@ namespace NTAnalyzerBridge.Reporting
 
         private static void WriteInstruments(string path, string ntUserDir)
         {
+            int enrichedOk, enrichedFail;
+            List<Dictionary<string, object>> rows =
+                ScanInstruments(ntUserDir, out enrichedOk, out enrichedFail);
+
+            BridgeLog.Info("CatalogWriter: instrument metadata enrichment ok=" +
+                           enrichedOk + " fail=" + enrichedFail);
+
+            var doc = new Dictionary<string, object>
+            {
+                ["generated_at_utc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                ["count"]            = rows.Count,
+                ["source"]           = @"scan: db\minute\* + Cbi.Instrument.GetInstrument",
+                ["enrichment"]       = new Dictionary<string, object>
+                {
+                    ["ok"]   = enrichedOk,
+                    ["fail"] = enrichedFail,
+                },
+                ["instruments"]      = rows,
+            };
+            AtomicFile.WriteAllText(path, JsonConvert.SerializeObject(doc, Formatting.Indented));
+        }
+
+        /// <summary>
+        /// One scan of db\minute\*, shared by instruments.json and the bounded
+        /// Connector snapshot so a server never has to guess a contract month.
+        /// </summary>
+        private static List<Dictionary<string, object>> ScanInstruments(
+            string ntUserDir, out int enrichedOk, out int enrichedFail)
+        {
             var rows = new List<Dictionary<string, object>>();
-            int enrichedOk   = 0;
-            int enrichedFail = 0;
+            enrichedOk   = 0;
+            enrichedFail = 0;
             try
             {
                 string minuteDir = Path.Combine(ntUserDir, "db", "minute");
@@ -417,24 +520,7 @@ namespace NTAnalyzerBridge.Reporting
                 BridgeLog.Warn("CatalogWriter.WriteInstruments scan failed: " + ex.Message);
             }
 
-            rows = rows.OrderBy(r => (string)r["instrument"]).ToList();
-
-            BridgeLog.Info("CatalogWriter: instrument metadata enrichment ok=" +
-                           enrichedOk + " fail=" + enrichedFail);
-
-            var doc = new Dictionary<string, object>
-            {
-                ["generated_at_utc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                ["count"]            = rows.Count,
-                ["source"]           = @"scan: db\minute\* + Cbi.Instrument.GetInstrument",
-                ["enrichment"]       = new Dictionary<string, object>
-                {
-                    ["ok"]   = enrichedOk,
-                    ["fail"] = enrichedFail,
-                },
-                ["instruments"]      = rows,
-            };
-            AtomicFile.WriteAllText(path, JsonConvert.SerializeObject(doc, Formatting.Indented));
+            return rows.OrderBy(r => (string)r["instrument"]).ToList();
         }
 
         // Try to resolve the instrument via NinjaTrader.Cbi.Instrument.GetInstrument

@@ -664,6 +664,21 @@ def _device_catalog_status(*, fresh=True, state="fresh"):
                 "stable_id": "strategy-device-only",
                 "parameters": [],
             }],
+            # The device is the only place that knows real contract months.
+            "instruments": [{
+                "instrument": "MNQ SEP26",
+                "root": "MNQ",
+                "expiry": "09-26",
+                "data_first": "2026-05-01",
+                "data_last": "2026-08-28",
+                "asset_class": "futures",
+                "exchange": "Globex",
+                "tick_size": 0.25,
+                "point_value": 2.0,
+                "tick_value": 0.5,
+                "has_minute_data": True,
+                "source": "connector_runtime_catalog",
+            }],
             "commission_templates": [{
                 "name": "NinjaTrader Custom",
                 "display": "NinjaTrader Custom",
