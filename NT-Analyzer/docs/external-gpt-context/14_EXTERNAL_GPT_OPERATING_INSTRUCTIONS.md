@@ -2,7 +2,7 @@
 
 - Context Pack document: 14_EXTERNAL_GPT_OPERATING_INSTRUCTIONS.md
 - Last verified UTC: 2026-08-13T09:49:37Z
-- Verified against Git SHA: 22ed7097b4ac9e863304197e118b1d3ce5109e8a
+- Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Scope: How an external GPT should reason and ask for extra files when using this pack
 - Status: DONE
 

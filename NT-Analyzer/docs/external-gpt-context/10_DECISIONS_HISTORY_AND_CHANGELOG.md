@@ -2,7 +2,7 @@
 
 - Context Pack document: 10_DECISIONS_HISTORY_AND_CHANGELOG.md
 - Last verified UTC: 2026-08-23T02:27:02Z
-- Verified against Git SHA: 22ed7097b4ac9e863304197e118b1d3ce5109e8a
+- Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Scope: High-value milestones and architectural decisions only
 - Status: DONE
 

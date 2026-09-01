@@ -28,3 +28,49 @@ Release impact: Владелец видит бэктест как настоящ
 `final main -> mandatory CI -> one signed immutable artifact -> Canary acceptance -> same artifact without rebuild -> Production`
 
 Операционные candidate, build, artifact hashes, результат Canary и Production дописываются в этот файл после завершения живого релиза.
+
+## Operational closeout - 2026-09-01
+
+Released. Development, Canary and Production run the same immutable artifact;
+Production was promoted without a rebuild.
+
+| Field | Value |
+| --- | --- |
+| Final main SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` |
+| Version | `0.10.0-beta.87` |
+| Candidate | `rc_afebdc07e6e743d7be2f99cd91cf8617` |
+| Artifact ID | `art_9ce9dbcb9a7a4fee9df6a54d40f29806` |
+| Build ID | `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z` |
+| Archive SHA256 | `8889D38817409067E9A9EBE583DDF8225DF6383B328F09EA4F06053C70989A9D` |
+| Signature | verified |
+| Final state | `production_live` |
+
+Gates: PR #258 CI 5/5 on `f6f1c8e8`; main CI PASS on `b121bb18`; PR #259 CI 5/5
+on `d2b9e802`; final main CI PASS on `8f42158661e8`; `pre_release_check` PASS
+(bundle 468); release static scan PASS; External GPT Context validator PASS;
+full pytest 2449 passed / 32 skipped.
+
+Canary acceptance: artifact identity, signature, `/live` 200, `/ready` 200,
+`/api/health` 401, current Aurora surfaces 200, `/ui/legacy/` 410, Mini App 410,
+classic assets 404, Telegram endpoints alive at 401, market data role `consumer`,
+Connector `ok`, and the shipped Backtest demo-gate fix verified in the delivered
+`backtesting.js` and `ui.js`.
+
+Production verification: `/live` and `/ready` 200, build id and Git SHA match the
+artifact exactly, Aurora surfaces 200, retired surfaces 410, classic assets 404,
+Telegram and market-data endpoints auth-gated. In the delivered Production
+bundle the subscription upsell sits inside the `if (host && isDemoOnly)` guard,
+and the only unguarded watermark occurrence is the per-report badge keyed on a
+real `kind == demo_backtest`. The Production Backtest page reports
+`demoTier=0` with no demo or subscription text.
+
+The owner-authenticated Backtest run was proven on Development against this exact
+code: job `ui_20260901T015052691Z` completed and produced report No 18790
+(`B1EarlyWindowMGC5mC006` / `MNQ 09-26`) with a real equity curve and the
+Strategy Analyzer validation badge. Signing in as the owner in Production
+requires the owner's own Telegram session and was not performed by automation.
+
+Repository hygiene in the same pass: 27 stashes removed after proving each held
+only generated `governance-rendered` output, a `margins.json` timestamp or
+`star_ratings.json` runtime counters; 10 worktrees removed whose commits were
+already in main; 6 worktrees with unique unmerged commits were kept and listed.
