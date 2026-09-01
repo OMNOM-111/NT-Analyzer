@@ -2,7 +2,7 @@
 
 - Context Pack document: 08_UI_UX_AND_PRODUCT_CONTRACTS.md
 - Last verified UTC: 2026-08-31T00:00:00Z
-- Verified against Git SHA: dd0bdd0164713a88c3e87b4514637e848b831a8b
+- Verified against Git SHA: 22ed7097b4ac9e863304197e118b1d3ce5109e8a
 - Scope: Major UI areas, visibility rules and important UX contracts
 - Status: DONE
 
