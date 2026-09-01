@@ -2,7 +2,7 @@
 
 - Context Pack document: 13_TEST_AND_ACCEPTANCE_MATRIX.md
 - Last verified UTC: 2026-08-23T02:27:02Z
-- Verified against Git SHA: dd0bdd0164713a88c3e87b4514637e848b831a8b
+- Verified against Git SHA: 22ed7097b4ac9e863304197e118b1d3ce5109e8a
 - Scope: Canonical test layers, release gates, acceptance and rollback expectations
 - Status: DONE
 

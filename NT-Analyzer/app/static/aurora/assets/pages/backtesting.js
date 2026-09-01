@@ -495,7 +495,13 @@ UI.ready(async function () {
       const doc = await API.http.demoBacktestScenarios();
       const scenarios = doc.scenarios || [];
       selectedDemoScenario = (scenarios[0] && scenarios[0].id) || '';
-      if (host) {
+      // The scenario picker carries the demo watermark and the subscription
+      // upsell, so it belongs to the demo tier alone. Rendering it for an
+      // account that already has full backtesting told the owner their real
+      // backtests were "Демоверсия. Данные нереальные." -- a false claim about
+      // authoritative data, not just cosmetic noise. The demo button itself
+      // stays available; only this tier-specific panel is scoped.
+      if (host && isDemoOnly) {
         host.hidden = false;
         host.innerHTML = `<div class="cab-sub">${UI.esc(doc.watermark || 'Демоверсия. Данные нереальные.')}</div>
           <div class="seg demo-scenario-seg">${scenarios.map((s, i) =>
@@ -507,6 +513,9 @@ UI.ready(async function () {
           b.classList.add('active');
           selectedDemoScenario = b.dataset.demoSc;
         });
+      } else if (host) {
+        host.hidden = true;
+        host.innerHTML = '';
       }
     } catch (e) { /* scenarios optional for paid users */ }
     demoBtn.onclick = () => runDemoBacktest(selectedDemoScenario);

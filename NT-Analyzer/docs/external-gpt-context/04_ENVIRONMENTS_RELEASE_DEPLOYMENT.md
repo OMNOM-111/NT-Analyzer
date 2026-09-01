@@ -2,7 +2,7 @@
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
 - Last verified UTC: 2026-08-30T02:05:00Z
-- Verified against Git SHA: dd0bdd0164713a88c3e87b4514637e848b831a8b
+- Verified against Git SHA: 22ed7097b4ac9e863304197e118b1d3ce5109e8a
 - Verified deployed artifact Git SHA: `b923e7b2b4e034c4f890e89b33992d469c84b779`
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: DONE
@@ -44,25 +44,26 @@ summary, source SHA and final verification PASS are present.
 The Environment Switcher opens the selected origin and never carries session
 or browser storage between origins.
 
-## Current Production: beta.85; next candidate: beta.86
+## Current Production: beta.86
 
 | Field | Value |
 | --- | --- |
-| Candidate | rc_f71db0e286b6447bb13dc6b265c06682 |
-| Artifact | art_7df5c53560f746c688262d86e46d0694 |
-| Version / Git SHA | 0.10.0-beta.85 / b923e7b2b4e034c4f890e89b33992d469c84b779 |
-| Build ID | sf-0.10.0-beta.85-b923e7b2b4e0-20260831T173711Z |
-| Archive SHA256 | F488506AFD7DBEBC2ECF6EA3C34C27E1AD09E1F5CBE88B52C2FC5DF2933DF572 |
+| Candidate | rc_049d14ab6af640758a69b00432bb6e3d |
+| Artifact | art_e627d14a2dbb49fdaf98a0cc9847e8c2 |
+| Version / Git SHA | 0.10.0-beta.86 / 22ed7097b4ac9e863304197e118b1d3ce5109e8a |
+| Build ID | sf-0.10.0-beta.86-22ed7097b4ac-20260901T005018Z |
+| Archive SHA256 | 8052B7A5FC36E1519A7AFCD3B60E5A221F744DE768585D765145245911BABE7D |
+| Manifest SHA256 | 0E95CF8B879AE6D66D11F70BAD566E2658180AE432CD8EAEEE12CC50B4CFBCA4 |
 | Signature / worktree | verified / clean |
 
-Canary accepted beta.85 and Production received the exact same artifact without
+Canary accepted beta.86 and Production received the exact same artifact without
 rebuild. live_trading_allowed stays false. Earlier cycles are in their
 changelog entries.
 
-The beta.86 candidate is named `Legacy Isolation + Telegram Bot Cleanup` and
-contains merged PR #254 and PR #255 plus release-record PR #256. Its final
-candidate/build/artifact identity is not recorded as live
-until final-main CI, immutable build and Canary acceptance complete.
+The beta.86 release is named `Legacy Isolation + Telegram Bot Cleanup` and
+contains merged PR #254 and PR #255 plus release-record PR #256. Its terminal
+state is `production_live`; `/live` and `/ready` returned 404 before this
+release and 200 after, which is what proves the new artifact is serving.
 
 ### Three gates stand between a candidate and Production
 
