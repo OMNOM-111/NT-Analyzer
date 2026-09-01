@@ -1,7 +1,7 @@
 # beta.90 - Root Instrument Resolution
 
 Release summary: Бэктест принимает корень инструмента (`6M`, `MNQ`, `MES`) и сам разворачивает его в текущий конкретный контракт по тому же правилу, которое всегда использовал селектор Trading Online; спотовые инструменты не трогаются, а понятная ошибка остаётся только для корня, по которому у устройства действительно нет истории.
-Release PRs: TBD
+Release PRs: #265
 Affected subsystems: server backtest instrument resolution, Trading Online instrument selector
 Release impact: Пользователю больше не нужно знать контрактный месяц. Connector transport, signing/trust, auth, Release Center и market-data не затронуты.
 
