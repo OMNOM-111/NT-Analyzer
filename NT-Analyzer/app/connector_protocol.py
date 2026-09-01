@@ -1234,17 +1234,34 @@ def _queue_runtime_catalog_snapshot(
     return command
 
 
+# The bounded runtime catalog landed in 0.4.2-dev.17.
+_RUNTIME_CATALOG_BASE = (0, 4, 2)
+_RUNTIME_CATALOG_DEV = 17
+
+
 def _connector_supports_runtime_catalog(version: Any) -> bool:
+    """True when this Connector can answer a runtime catalog snapshot.
+
+    The base version decides first. Reading only the ``-dev.N`` counter treated
+    0.4.3-dev.1 as older than 0.4.2-dev.17 and silently withheld the catalog
+    command from a strictly newer Connector, which left the server on bare
+    roots with no way to recover.
+    """
     text = str(version or "").strip().lower()
     dev = re.search(r"-dev\.(\d+)$", text)
-    if dev:
-        return int(dev.group(1)) >= 17
+    dev_number = int(dev.group(1)) if dev else None
     base = text.split("-", 1)[0]
     try:
         parts = tuple(int(item) for item in base.split("."))
     except (TypeError, ValueError):
         return False
-    return parts >= (0, 4, 3)
+    if parts > _RUNTIME_CATALOG_BASE:
+        return True
+    if parts < _RUNTIME_CATALOG_BASE:
+        return False
+    # Exactly the base version: a prerelease must be at or past the dev build
+    # that introduced it; the final release always has it.
+    return dev_number is None or dev_number >= _RUNTIME_CATALOG_DEV
 
 
 def signed_hello(payload: Mapping[str, Any]) -> Dict[str, Any]:
