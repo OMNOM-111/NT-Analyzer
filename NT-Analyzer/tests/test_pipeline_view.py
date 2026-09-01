@@ -32,7 +32,10 @@ def approved_provenance(monkeypatch):
 
 
 def _candidate(state, artifact=ARTIFACT):
-    return {"state": state, "artifact_sha256": artifact}
+    return {
+        "state": state, "artifact_sha256": artifact,
+        "release_record": {"ready_for_production": True, "missing_fields": []},
+    }
 
 
 def _registry(canary_artifact=ARTIFACT, **extra):
@@ -112,6 +115,19 @@ def test_acceptance_is_required():
     out = pipeline_view.promotion_gates(_candidate("canary_checking"), _registry())
     assert out["allowed"] is False
     assert "acceptance" in out["blocking"]
+
+
+def test_release_record_is_a_production_gate():
+    candidate = _candidate("canary_passed")
+    candidate["release_record"] = {
+        "ready_for_production": False,
+        "missing_fields": ["change_summary", "verification_result"],
+    }
+    out = pipeline_view.promotion_gates(candidate, _registry())
+    assert out["allowed"] is False
+    assert "release_record" in out["blocking"]
+    gate = next(row for row in out["gates"] if row["id"] == "release_record")
+    assert "change_summary" in gate["detail"]
 
 
 def test_a_rebuilt_artifact_blocks_promotion():
@@ -305,10 +321,11 @@ def test_an_empty_release_centre_yields_a_view_that_still_renders():
 
 
 def test_assemble_carries_the_promotion_gates_of_the_active_candidate():
+    candidate = _candidate("canary_passed")
+    candidate["candidate_id"] = "rc_1"
     out = pipeline_view.assemble(
         registry=_registry(canary_artifact=ARTIFACT),
-        releases={"releases": [{"candidate_id": "rc_1", "state": "canary_passed",
-                                "artifact_sha256": ARTIFACT}]},
+        releases={"releases": [candidate]},
         sync={"state": "current"},
     )
     assert out["promotion"]["allowed"] is True

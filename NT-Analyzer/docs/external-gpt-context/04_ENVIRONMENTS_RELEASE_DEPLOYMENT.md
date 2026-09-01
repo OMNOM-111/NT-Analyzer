@@ -2,8 +2,8 @@
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
 - Last verified UTC: 2026-08-30T02:05:00Z
-- Verified against Git SHA: 1279645e48e32000978364b38fb20d3dcd303843
-- Verified deployed artifact Git SHA: `1a1d54aa728d487203bb8342ecf142752610f4cd`
+- Verified against Git SHA: dd0bdd0164713a88c3e87b4514637e848b831a8b
+- Verified deployed artifact Git SHA: `b923e7b2b4e034c4f890e89b33992d469c84b779`
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: DONE
 
@@ -27,6 +27,12 @@ flowchart LR
 - Production promotion is a switch to the accepted artifact, never a rebuild,
   manual copy or server hotfix.
 
+Every candidate snapshots one canonical `docs/changelog/` release/change
+record. The owner sees its title, summary, PRs, source SHA, version/build,
+artifact, current stage/status, checks, duration and the identity reported by
+DEV/Canary/Production. Approval and promotion fail closed unless title, change
+summary, source SHA and final verification PASS are present.
+
 ## Environment isolation
 
 | Environment | Origin | Isolation |
@@ -38,7 +44,7 @@ flowchart LR
 The Environment Switcher opens the selected origin and never carries session
 or browser storage between origins.
 
-## Current beta.85 release
+## Current Production: beta.85; next candidate: beta.86
 
 | Field | Value |
 | --- | --- |
@@ -52,6 +58,11 @@ or browser storage between origins.
 Canary accepted beta.85 and Production received the exact same artifact without
 rebuild. live_trading_allowed stays false. Earlier cycles are in their
 changelog entries.
+
+The beta.86 candidate is named `Legacy Isolation + Telegram Bot Cleanup` and
+contains merged PR #254 and PR #255 plus the mandatory release/change-record
+contract. Its final candidate/build/artifact identity is not recorded as live
+until final-main CI, immutable build and Canary acceptance complete.
 
 ### Three gates stand between a candidate and Production
 

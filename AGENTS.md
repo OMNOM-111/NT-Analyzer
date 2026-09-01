@@ -29,6 +29,13 @@
 - Любое новое изменение после Canary acceptance начинает цикл заново: новый commit, новый immutable artifact, новый CANARY, затем PRODUCTION. Запрещены отдельная Production-версия, частичный deploy и «быстрый» hotfix поверх уже проверенного artifact.
 - Перед любым release/deploy closeout обязательно фиксировать exact identity: Git SHA, build id, archive SHA256, manifest/runtime artifact SHA256, release dir, Canary/Production symlink targets, readiness/live status и результаты проверок.
 
+### Обязательный release/change record для всех исполнителей
+
+- Любой AI-агент или иной исполнитель, независимо от модели и инструмента, обязан оставить понятный version-controlled release/change record в существующем `NT-Analyzer/docs/changelog/`. Нельзя создавать конкурирующий source of truth.
+- До merge/release/promotion запись обязана объяснять: что изменено и зачем, основные пользовательские изменения, затронутые подсистемы, PR/commit, проверки, release impact и что именно публикуется. После Canary/Production closeout в неё добавляются фактические результаты сред и exact release identity.
+- Нельзя выпускать изменение, для которого владелец не может сразу определить название релиза, change summary, source SHA и verification result. Release Center обязан показывать эти поля вместе с version/build/artifact, этапом, статусом, длительностью и identity DEV/Canary/Production.
+- Production approval и promotion должны fail closed, если отсутствуют `release title`, `change summary`, валидный `source SHA` или итоговый `verification result = PASS`.
+
 ## AI Provenance Policy
 
 - AI никогда не указывает и не угадывает собственное название, версию модели или среду выполнения.

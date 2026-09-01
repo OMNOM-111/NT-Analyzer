@@ -57,6 +57,12 @@ def rc_store(tmp_path, monkeypatch):
     monkeypatch.setattr(release_center, "_store_path", lambda: tmp_path / "releases.dpapi")
     monkeypatch.setattr(release_center, "_audit_path", lambda: tmp_path / "release-audit.jsonl")
     monkeypatch.setattr(release_center, "_git_state", lambda: ("a" * 40, False))
+    monkeypatch.setattr(release_center.release_summary, "summary_for", lambda version: {
+        "title": "Test release", "description": "Test change summary",
+        "points": ["Test user change"], "prs": ["#1"],
+        "subsystems": "release", "release_impact": "test only",
+        "source": "test.md",
+    })
     owner_uuid = auth_identity.new_user_uuid()
     account_auth._write_doc({
         "version": 1,

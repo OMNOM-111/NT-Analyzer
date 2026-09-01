@@ -92,6 +92,20 @@ def test_each_card_explains_its_own_version() -> None:
     assert "stage-shared" not in UI, "a single block above the flow is not enough"
 
 
+def test_candidate_visibly_identifies_what_is_being_released() -> None:
+    record = _slice("function pipeReleaseRecordHtml(", "function pipeCandidateHtml(")
+    for field in (
+        "release_record", "change_summary", "prs", "source_sha", "current_stage",
+        "status", "build_id", "artifact_id", "duration_seconds",
+        "verification_checks", "Development → Canary", "Canary → Production",
+        "тот же artifact без rebuild",
+    ):
+        assert field in record
+    assert "Production BLOCKED" in record
+    assert "pipeReleaseRecordHtml(doc)" in _slice(
+        "function pipeCandidateHtml(", "function pipeNotificationsHtml(")
+
+
 def test_delivery_and_publication_are_each_one_action() -> None:
     actions = _slice("function actionsHtml(", "function checksHtml(")
     assert "data-stage-deliver" in actions

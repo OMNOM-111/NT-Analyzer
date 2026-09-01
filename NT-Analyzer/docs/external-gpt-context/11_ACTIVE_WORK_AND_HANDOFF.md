@@ -2,13 +2,13 @@
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-08-31T00:00:00Z
-- Verified against Git SHA: 1279645e48e32000978364b38fb20d3dcd303843
-- Verified deployed artifact Git SHA: `1a1d54aa728d487203bb8342ecf142752610f4cd`
-- Current Production version/build/artifact when known: `0.10.0-beta.79`; `sf-0.10.0-beta.79-1a1d54aa728d-20260829T234541Z`; live release dir `0.10.0-beta.79-1a1d54aa728d`
-- Scope: Final legacy isolation and repository housekeeping after beta.79 closeout
+- Verified against Git SHA: dd0bdd0164713a88c3e87b4514637e848b831a8b
+- Verified deployed artifact Git SHA: `b923e7b2b4e034c4f890e89b33992d469c84b779`
+- Current Production version/build/artifact when known: `0.10.0-beta.85`; `sf-0.10.0-beta.85-b923e7b2b4e0-20260831T173711Z`
+- Scope: beta.86 Legacy Isolation + Telegram Bot Cleanup release
 - Status: IN DEVELOPMENT
 
-## Development checkpoint - legacy isolation
+## Development checkpoint - beta.86 release candidate
 
 - Current Aurora has no classic UI or Telegram Mini App navigation/transport.
 - Retired legacy, Mini App, remote-access and tunnel routes return HTTP 410.
@@ -18,23 +18,26 @@
 - No historical report, audit record or user identity was deleted. Canary and
   Production were not changed; their release identity below remains historical
   operational truth until a separately approved promotion.
+- Release Center now requires and displays the canonical release/change record;
+  Production is fail closed without title, summary, source SHA and verification
+  PASS.
 
 ## Current checkpoint
 
 | Field | Value |
 | --- | --- |
-| Current Git SHA | `1279645e48e32000978364b38fb20d3dcd303843`; deployed artifact `1a1d54aa728d487203bb8342ecf142752610f4cd` |
-| Code change | beta.70-beta.79 closeout through PR #230 |
-| Release | `0.10.0-beta.79` |
-| Build | `sf-0.10.0-beta.79-1a1d54aa728d-20260829T234541Z` |
-| Archive / runtime hashes | recorded in release evidence |
-| Canary | accepted, ready, same release dir as Production |
-| Production | same immutable artifact, live/ready |
-| Release parity | same release directory suffix `0.10.0-beta.79-1a1d54aa728d`; previous/rollback beta.78 for Production |
+| Current Git SHA | `dd0bdd0164713a88c3e87b4514637e848b831a8b`; deployed artifact `b923e7b2b4e034c4f890e89b33992d469c84b779` |
+| Code change | PR #254 legacy isolation; PR #255 Telegram `/start` URL flow; beta.86 release-record gate in progress |
+| Release | Production `0.10.0-beta.85`; next candidate `0.10.0-beta.86` |
+| Build | live `sf-0.10.0-beta.85-b923e7b2b4e0-20260831T173711Z`; beta.86 not built |
+| Archive / runtime hashes | beta.85 in canonical release evidence; beta.86 pending |
+| Canary | beta.85 accepted/ready; beta.86 not deployed |
+| Production | beta.85 same immutable artifact, live/ready |
+| Release parity | beta.85 Canary/Production same artifact; beta.86 cycle pending |
 | Worker concurrency | `interactive_ai=4`, `chart=4`, `telemetry=2`, `maintenance=1` |
 | Canary idle result | CPU `83.711% → 4.839%`; total DB TX/s `155.378 → 28.700`; pickup p50/max `1.372/1.455 s` |
 | Production idle result | worker CPU `83.778% → 5.522%`; worker-attributable TX/s about `69.002 → 5.822`; pickup p50/max `1.392/1.468 s` |
-| Tests | full beta.79 closeout `2327 passed, 32 skipped, 0 failed`; current housekeeping local audit `2326 passed, 34 skipped, 0 failed`; CI GREEN |
+| Tests | legacy-isolation full regression `2430 passed, 34 skipped`; PR #255 focused `94 passed`; both merged PRs mandatory CI GREEN; beta.86 checks pending |
 | Market-data and Connector baseline | preserved; accepted TopstepX and Connector functional paths remain current |
 | Secret rotation | completed for the two Google Client Secrets and two Resend keys; three older platform secrets remain in env until their separate migration |
 
@@ -65,11 +68,10 @@
 
 ## Next development boundary
 
-The beta.79 release is closed. The next development stage should start from a
-clean `main` after this housekeeping pass resolves local WIP, obsolete PRs,
-old worktrees and stale stashes. Future performance work must begin with a
-measured hotspot and preserve the accepted beta.79 Connector and market-data
-baselines.
+The active task is the beta.86 release. Complete its release-record PR and
+final-main CI, build one signed immutable artifact, accept it on Canary and
+promote that exact artifact to Production. Preserve the accepted Connector and
+market-data baselines.
 
 ## Canonical evidence
 

@@ -24,6 +24,11 @@ _BULLET = re.compile(r"^\s*[-*•]\s+(.*\S)\s*$")
 _HEADING = re.compile(r"^\s*#{1,6}\s+(.*\S)\s*$")
 # "# beta.80 — юридический пакет" -> "юридический пакет"
 _TITLE_PREFIX = re.compile(r"^beta\.?\d+\s*(?:→\s*beta\.?\d+\s*)?[—:-]\s*", re.IGNORECASE)
+_METADATA = re.compile(
+    r"^\s*(Release summary|Release PRs|Affected subsystems|Release impact):\s*(.*\S)\s*$",
+    re.IGNORECASE,
+)
+_PR = re.compile(r"#\d+")
 
 
 def _changelog_dir() -> Path:
@@ -59,11 +64,30 @@ def _strip_markdown(text: str) -> str:
 
 
 def parse(markdown: str) -> Dict[str, Any]:
-    """Title plus the first bullet list, capped at MAX_POINTS."""
+    """Owner-facing release record plus the first short change list."""
     title = ""
     points: List[str] = []
+    metadata = {
+        "description": "",
+        "prs": [],
+        "subsystems": "",
+        "release_impact": "",
+    }
     in_list = False
     for raw in str(markdown or "").splitlines():
+        field = _METADATA.match(raw)
+        if field:
+            label = field.group(1).lower()
+            value = _strip_markdown(field.group(2))
+            if label == "release summary":
+                metadata["description"] = value
+            elif label == "release prs":
+                metadata["prs"] = _PR.findall(value)
+            elif label == "affected subsystems":
+                metadata["subsystems"] = value
+            elif label == "release impact":
+                metadata["release_impact"] = value
+            continue
         heading = _HEADING.match(raw)
         if heading:
             if not title:
@@ -81,18 +105,24 @@ def parse(markdown: str) -> Dict[str, Any]:
         if in_list and raw.strip():
             # A non-bullet, non-blank line ends the list.
             break
-    return {"title": title, "points": points}
+    return {"title": title, "points": points, **metadata}
 
 
 def summary_for(version: str, *, directory: Optional[Path] = None) -> Dict[str, Any]:
     """Release summary for a version, or empty when nothing is recorded."""
     entry = _entry_for(version, directory)
     if entry is None:
-        return {"title": "", "points": [], "source": ""}
+        return {
+            "title": "", "description": "", "points": [], "prs": [],
+            "subsystems": "", "release_impact": "", "source": "",
+        }
     try:
         markdown = entry.read_text(encoding="utf-8-sig")
     except OSError:
-        return {"title": "", "points": [], "source": ""}
+        return {
+            "title": "", "description": "", "points": [], "prs": [],
+            "subsystems": "", "release_impact": "", "source": "",
+        }
     parsed = parse(markdown)
     parsed["source"] = entry.name
     return parsed

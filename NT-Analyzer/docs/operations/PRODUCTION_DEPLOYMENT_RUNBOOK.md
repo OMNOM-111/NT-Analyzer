@@ -50,6 +50,15 @@ Production deployment всегда подчиняется схеме `DEV → CA
 Ручные SSH/Git-команды для обычного релиза не нужны. Owner открывает Release
 Center на LOCAL DEV и проходит последовательность:
 
+До создания кандидата для version в `docs/changelog/` должен существовать
+канонический release/change record с названием, кратким описанием, PR,
+пользовательскими изменениями, затронутыми подсистемами и release impact.
+Release Center сохраняет снимок этой записи вместе с точным source SHA и
+показывает владельцу текущий этап, статус, длительность, checks, build/artifact
+и identity DEV/Canary/Production. Canary acceptance выставляет verification
+result. Без title, summary, source SHA или `verification result = PASS`
+Production approval и promotion запрещены сервером.
+
 | Кнопка | Состояние после | Что происходит |
 | --- | --- | --- |
 | Новый релиз-кандидат | `draft` | проверяется чистый worktree и текущий commit |

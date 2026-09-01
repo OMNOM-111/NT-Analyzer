@@ -10,6 +10,11 @@ from app import release_center, release_publish, release_summary
 
 CHANGELOG = """# beta.80 — юридический пакет и pre-auth документы
 
+Release summary: Публичные юридические документы доступны до регистрации.
+Release PRs: #201, #202
+Affected subsystems: legal, documents, onboarding
+Release impact: пользовательский интерфейс и публичный API документов
+
 Период: 2026-08-30 → 2026-08-31.
 
 ## Что вошло
@@ -34,6 +39,10 @@ def test_summary_takes_title_and_at_most_three_points() -> None:
         "AI Provenance Policy.",
     ]
     assert len(parsed["points"]) <= release_summary.MAX_POINTS
+    assert parsed["description"].startswith("Публичные юридические")
+    assert parsed["prs"] == ["#201", "#202"]
+    assert parsed["subsystems"] == "legal, documents, onboarding"
+    assert parsed["release_impact"].startswith("пользовательский интерфейс")
 
 
 def test_summary_reads_the_shipped_changelog(tmp_path) -> None:
@@ -46,7 +55,10 @@ def test_summary_reads_the_shipped_changelog(tmp_path) -> None:
 def test_summary_is_empty_rather_than_invented(tmp_path) -> None:
     """No changelog entry must produce no summary, never a guess."""
     out = release_summary.summary_for("0.10.0-beta.99", directory=tmp_path)
-    assert out == {"title": "", "points": [], "source": ""}
+    assert out == {
+        "title": "", "description": "", "points": [], "prs": [],
+        "subsystems": "", "release_impact": "", "source": "",
+    }
     assert release_summary.summary_for("", directory=tmp_path)["points"] == []
 
 

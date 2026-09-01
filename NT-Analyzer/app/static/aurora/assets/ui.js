@@ -5310,6 +5310,78 @@
       <p class="cab-sub">«Не сообщено» — отсутствие данных, а не расхождение.</p></section>`;
   }
 
+  function releaseDuration(seconds) {
+    const total = Math.max(0, Number(seconds) || 0);
+    if (total < 60) return Math.round(total) + ' сек';
+    if (total < 3600) return Math.round(total / 60) + ' мин';
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.round((total % 3600) / 60);
+    return hours + ' ч' + (minutes ? ' ' + minutes + ' мин' : '');
+  }
+
+  function pipeReleaseRecordHtml(doc) {
+    const candidate = doc.candidate || {};
+    const record = candidate.release_record || {};
+    if (!candidate.candidate_id) return '';
+    const envs = doc.environments || {};
+    const stage = String(record.current_stage || 'CI');
+    const status = String(record.status || 'BLOCKED');
+    const route = stage === 'DONE' ? 'Canary → Production'
+      : (stage === 'PRODUCTION PROMOTION' ? 'Canary → Production' : 'Development → Canary');
+    const changes = Array.isArray(record.changes) ? record.changes.slice(0, 4) : [];
+    const prs = Array.isArray(record.prs) ? record.prs : [];
+    const checks = Array.isArray(record.verification_checks) ? record.verification_checks : [];
+    const missing = Array.isArray(record.missing_fields) ? record.missing_fields : [];
+    const runtimeArtifact = String(candidate.manifest_sha256 || candidate.artifact_sha256 || '');
+    const canaryArtifact = String((envs.canary || {}).artifact_sha256 || '');
+    const productionArtifact = String((envs.production || {}).artifact_sha256 || '');
+    const sameOnServers = !!runtimeArtifact
+      && canaryArtifact.toLowerCase() === runtimeArtifact.toLowerCase()
+      && productionArtifact.toLowerCase() === runtimeArtifact.toLowerCase();
+    const identityRows = [
+      ['DEV / candidate', candidate.artifact_id || (envs.development || {}).build_id ||
+        (envs.development || {}).commit || 'ещё не собран'],
+      ['Canary', canaryArtifact ? canaryArtifact.slice(0, 16) : 'не сообщено'],
+      ['Production', productionArtifact ? productionArtifact.slice(0, 16) : 'не сообщено'],
+    ];
+    return `<div class="release-record ${missing.length ? 'is-incomplete' : ''}">
+      <div class="release-record-head">
+        <div><div class="cab-sub">Сейчас выпускается</div>
+          <h3>${esc(record.title || 'Release/change record не заполнен')}</h3></div>
+        <span class="badge ${status === 'PASS' ? 'live' : (status === 'FAIL' ? 'failed' :
+          (status === 'BLOCKED' ? 'pending' : 'running'))}">${esc(status)}</span>
+      </div>
+      <div class="release-record-summary">${esc(record.change_summary ||
+        'Краткое описание выпуска отсутствует.')}</div>
+      ${prs.length ? `<div class="release-record-prs"><strong>Вошли:</strong> ${prs.map(esc).join(' · ')}</div>` : ''}
+      ${changes.length ? `<ul class="release-record-changes">${changes.map(item =>
+        `<li>${esc(item)}</li>`).join('')}</ul>` : ''}
+      <div class="release-record-grid">
+        <div><span>Этап</span><strong>${esc(stage)} · ${esc(status)}</strong></div>
+        <div><span>Направление</span><strong>${esc(route)}</strong></div>
+        <div><span>Source SHA</span><strong class="mono">${esc(record.source_sha || '—')}</strong></div>
+        <div><span>Version / Build</span><strong class="mono">${esc(candidate.app_version || '—')} · ${esc(candidate.build_id || 'ещё не собран')}</strong></div>
+        <div><span>Artifact ID</span><strong class="mono">${esc(candidate.artifact_id || 'ещё не собран')}</strong></div>
+        <div><span>Выполняется</span><strong>${esc(releaseDuration(record.duration_seconds))}</strong></div>
+      </div>
+      <div class="release-record-envs">${identityRows.map(row =>
+        `<div><span>${esc(row[0])}</span><strong class="mono">${esc(row[1])}</strong></div>`).join('')}</div>
+      <div class="release-record-proof ${sameOnServers ? 'is-pass' : ''}">
+        ${sameOnServers
+          ? 'PASS: Canary и Production выполняют тот же immutable artifact.'
+          : 'Контракт: Canary → Production продвигает тот же artifact без rebuild.'}
+      </div>
+      ${checks.length ? `<div class="stage-checks">${checks.map(row =>
+        `<span class="stage-check ${row.result === 'PASS' ? 'ok' : 'fail'}">${row.result === 'PASS' ? '✓' : '✕'} ${esc(row.name)}</span>`).join('')}</div>` : ''}
+      ${missing.length ? `<div class="stage-blocked">Production BLOCKED: отсутствует ${esc(missing.join(', '))}</div>` : ''}
+      ${(record.subsystems || record.release_impact) ? `<details class="env-tech"><summary>Release impact</summary>
+        <div class="admin-env-meta">
+          <div><span>Подсистемы</span><strong>${esc(record.subsystems || '—')}</strong></div>
+          <div><span>Влияние</span><strong>${esc(record.release_impact || '—')}</strong></div>
+        </div></details>` : ''}
+    </div>`;
+  }
+
   function pipeCandidateHtml(doc) {
     const candidate = doc.candidate || {};
     const promotion = doc.promotion || {};
@@ -5339,6 +5411,7 @@
         <div id="pipe-create-form" hidden></div></section>`;
     }
     return `<section class="cab-card"><h4>Релиз-кандидат</h4>
+      ${pipeReleaseRecordHtml(doc)}
       <div class="cab-sub mono">${esc(id)} · v${esc(candidate.app_version || '')} ·
         ${esc(candidate.release_channel || '')} · ${esc(candidate.state || '')}</div>
       ${pipeStagesHtml(doc.stages)}
