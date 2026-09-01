@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -543,8 +543,15 @@ namespace NTAnalyzerBridge.Connector
             }
             if (capability == "telemetry" && commandName == "snapshot_runtime")
             {
+                // Absent page_index means page 0, which is what every server
+                // that predates paging asks for.
+                int catalogPage = 0;
+                JToken pageToken = payload["page_index"];
+                if (pageToken != null && pageToken.Type == JTokenType.Integer)
+                    catalogPage = Math.Max(0, (int)pageToken);
                 ReportResult(commandId, idempotencyKey, "completed",
-                    "runtime snapshot available", "", BuildRuntimeCatalogResult());
+                    "runtime snapshot available", "",
+                    BuildRuntimeCatalogResult(catalogPage));
                 return;
             }
             if (capability == "accounts_read" && commandName == "snapshot_accounts")
@@ -680,12 +687,12 @@ namespace NTAnalyzerBridge.Connector
             return normalized;
         }
 
-        private JObject BuildRuntimeCatalogResult()
+        private JObject BuildRuntimeCatalogResult(int pageIndex)
         {
             StrategyLoader loader = new StrategyLoader(_cfg.NinjaTraderUserDir);
             loader.Refresh();
-            JObject catalog = CatalogWriter.BuildConnectorCatalog(
-                _cfg.NinjaTraderUserDir, loader.WhitelistedTypes());
+            JObject catalog = CatalogWriter.BuildConnectorCatalogPage(
+                _cfg.NinjaTraderUserDir, loader.WhitelistedTypes(), pageIndex);
             return new JObject { ["catalog"] = catalog };
         }
 

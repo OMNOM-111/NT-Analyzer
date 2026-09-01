@@ -54,6 +54,17 @@ namespace NTAnalyzerBridge.Reporting
         public static JObject BuildConnectorCatalog(
             string ntUserDir, IReadOnlyList<Type> strategyTypes)
         {
+            return BuildConnectorCatalogPage(ntUserDir, strategyTypes, 0);
+        }
+
+        /// <summary>
+        /// One signed page of the runtime catalog. The server assembles the
+        /// pages of a single catalog_id and activates them atomically, so a
+        /// half-delivered snapshot never replaces a working catalog.
+        /// </summary>
+        public static JObject BuildConnectorCatalogPage(
+            string ntUserDir, IReadOnlyList<Type> strategyTypes, int pageIndex)
+        {
             JArray strategies = new JArray();
             foreach (Type type in (strategyTypes ?? new List<Type>()).OrderBy(t => t.Name))
             {
@@ -83,28 +94,41 @@ namespace NTAnalyzerBridge.Reporting
             // Instruments get whatever the 16 KiB command result has left after
             // the strategies and templates, so a large Strategies folder can
             // never push the whole snapshot over the transport cap.
-            int headroom = strategies.ToString(Formatting.None).Length
-                           + commission.ToString(Formatting.None).Length
-                           + 512; // envelope keys, counts, flags
             int scannedTotal;
-            bool instrumentsTruncated;
-            JArray instruments = BuildConnectorInstruments(
-                ntUserDir, headroom, out scannedTotal, out instrumentsTruncated);
+            List<JObject> ordered = BuildConnectorInstruments(ntUserDir, out scannedTotal);
+            string generatedAt = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
+            string catalogId = ComputeCatalogId(ordered, generatedAt);
+
+            // Page 0 carries strategies and templates so later pages stay small.
+            List<List<JObject>> pages = PaginateInstruments(
+                ordered,
+                strategies.ToString(Formatting.None).Length
+                + commission.ToString(Formatting.None).Length);
+            if (pages.Count == 0) pages.Add(new List<JObject>());
+            if (pageIndex < 0 || pageIndex >= pages.Count) pageIndex = 0;
+            bool first = pageIndex == 0;
+
+            JArray instruments = new JArray();
+            foreach (JObject row in pages[pageIndex]) instruments.Add(row);
 
             int strategyCount = strategies.Count;
             int templateCount = commission.Count;
             JObject doc = new JObject
             {
                 ["schema_version"] = 1,
-                ["generated_at_utc"] = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                ["strategies"] = strategies,
-                ["commission_templates"] = commission,
+                ["generated_at_utc"] = generatedAt,
+                ["catalog_id"] = catalogId,
+                ["page_index"] = pageIndex,
+                ["page_count"] = pages.Count,
+                ["total_count"] = ordered.Count,
+                ["strategies"] = first ? strategies : new JArray(),
+                ["commission_templates"] = first ? commission : new JArray(),
                 ["instruments"] = instruments,
-                ["strategy_count"] = strategyCount,
-                ["commission_template_count"] = templateCount,
+                ["strategy_count"] = first ? strategyCount : 0,
+                ["commission_template_count"] = first ? templateCount : 0,
                 ["instrument_count"] = instruments.Count,
                 ["instruments_scanned"] = scannedTotal,
-                ["instruments_truncated"] = instrumentsTruncated,
+                ["instruments_truncated"] = false,
                 ["parameter_schemas_included"] = false,
                 ["truncated"] = false,
             };
@@ -369,20 +393,21 @@ namespace NTAnalyzerBridge.Reporting
         // Roots are filled round-robin newest-first, so the budget can never
         // evict an entire root -- every root gets its live month before any
         // root gets a second contract.
-        internal const int ConnectorSnapshotByteBudget = 15 * 1024;
-        // The server's _safe_payload refuses any list over 100 items, so the
-        // count binds before the bytes do. Both are enforced here.
-        internal const int ConnectorInstrumentCountLimit = 100;
+        // A page, not the catalog. The server refuses a result over 16 KiB and
+        // any list over 100 items, so the full 400-day set is delivered as
+        // several bounded pages rather than truncated: dropping valid contracts
+        // is what left the server offering bare roots.
+        internal const int ConnectorPageTargetBytes = 12 * 1024;
+        internal const int ConnectorInstrumentsPerPage = 80;
+        internal const int EnvelopeReserveBytes = 512;
         internal const int ConnectorInstrumentMaxAgeDays = 400;
 
-        private static JArray BuildConnectorInstruments(
-            string ntUserDir, int bytesAlreadyUsed,
-            out int scannedTotal, out bool truncated)
+        private static List<JObject> BuildConnectorInstruments(
+            string ntUserDir, out int scannedTotal)
         {
             int ok, fail;
             List<Dictionary<string, object>> rows = ScanInstruments(ntUserDir, out ok, out fail);
             scannedTotal = rows.Count;
-            truncated = false;
 
             DateTime cutoff = DateTime.UtcNow.Date.AddDays(-ConnectorInstrumentMaxAgeDays);
             var byRoot = new Dictionary<string, List<KeyValuePair<DateTime, Dictionary<string, object>>>>();
@@ -407,9 +432,10 @@ namespace NTAnalyzerBridge.Reporting
             foreach (string root in roots)
                 byRoot[root].Sort((a, b) => b.Key.CompareTo(a.Key));
 
-            int budget = ConnectorSnapshotByteBudget - bytesAlreadyUsed;
-            var selected = new List<Dictionary<string, object>>();
-            int used = 0;
+            // Round-robin: every root's live month lands on the earliest page,
+            // and the rest of the eligible set follows on later pages. Nothing
+            // eligible is discarded.
+            var ordered = new List<JObject>();
             int depth = 0;
             bool addedThisPass = true;
             while (addedThisPass)
@@ -419,28 +445,59 @@ namespace NTAnalyzerBridge.Reporting
                 {
                     List<KeyValuePair<DateTime, Dictionary<string, object>>> group = byRoot[root];
                     if (depth >= group.Count) continue;
-                    Dictionary<string, object> row = group[depth].Value;
-                    JObject projected = ProjectConnectorInstrument(row);
-                    int cost = projected.ToString(Formatting.None).Length + 1;
-                    if (used + cost > budget
-                        || selected.Count >= ConnectorInstrumentCountLimit)
-                    { truncated = true; return Finish(selected); }
-                    selected.Add(row);
-                    used += cost;
+                    ordered.Add(ProjectConnectorInstrument(group[depth].Value));
                     addedThisPass = true;
                 }
                 depth++;
             }
-            return Finish(selected);
+            return ordered;
         }
 
-        private static JArray Finish(List<Dictionary<string, object>> selected)
+        // Stable identity for one snapshot, so the server can tell pages of the
+        // same catalog from a newer scan that started mid-delivery.
+        private static string ComputeCatalogId(List<JObject> ordered, string generatedAt)
         {
-            JArray outRows = new JArray();
-            foreach (Dictionary<string, object> row in
-                     selected.OrderBy(r => Convert.ToString(r["instrument"]), StringComparer.Ordinal))
-                outRows.Add(ProjectConnectorInstrument(row));
-            return outRows;
+            var builder = new System.Text.StringBuilder(generatedAt);
+            foreach (JObject row in ordered)
+            {
+                builder.Append('|').Append(Convert.ToString(row["instrument"]));
+                builder.Append('@').Append(Convert.ToString(row["data_last"]));
+            }
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(
+                    System.Text.Encoding.UTF8.GetBytes(builder.ToString()));
+                return BitConverter.ToString(hash, 0, 16)
+                    .Replace("-", string.Empty).ToLowerInvariant();
+            }
+        }
+
+        // Split by measured serialized bytes and item count, never an estimate.
+        private static List<List<JObject>> PaginateInstruments(
+            List<JObject> ordered, int firstPageExtraBytes)
+        {
+            var pages = new List<List<JObject>>();
+            var current = new List<JObject>();
+            int used = 0;
+            int extra = firstPageExtraBytes;
+            foreach (JObject row in ordered)
+            {
+                int cost = row.ToString(Formatting.None).Length + 1;
+                bool full = current.Count >= ConnectorInstrumentsPerPage
+                            || used + cost + extra + EnvelopeReserveBytes
+                               > ConnectorPageTargetBytes;
+                if (full && current.Count > 0)
+                {
+                    pages.Add(current);
+                    current = new List<JObject>();
+                    used = 0;
+                    extra = 0;
+                }
+                current.Add(row);
+                used += cost;
+            }
+            if (current.Count > 0) pages.Add(current);
+            return pages;
         }
 
         // Only what a server cannot derive itself. root/expiry come from the

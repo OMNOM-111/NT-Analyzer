@@ -96,7 +96,7 @@ def test_connector_catalog_without_instruments_stays_valid() -> None:
 
 def test_connector_catalog_bounds_the_instrument_list() -> None:
     too_many = [_contract(f"MNQ {index:02d}-26")
-                for index in range(connector_protocol.MAX_RUNTIME_CATALOG_INSTRUMENTS + 1)]
+                for index in range(connector_protocol.MAX_RUNTIME_CATALOG_INSTRUMENTS_PER_PAGE + 1)]
     with pytest.raises(connector_protocol.ConnectorProtocolError):
         connector_protocol._normalise_runtime_catalog(
             _catalog(instruments=too_many), 1_800_000_000.0)
@@ -108,17 +108,17 @@ def test_connector_catalog_bounds_the_instrument_list() -> None:
 def test_a_realistic_full_snapshot_fits_the_command_result_cap() -> None:
     """What the device actually produces must survive `_safe_result` intact.
 
-    Measured against the real 1547-contract scan: filling the device budget
-    round-robin yields 100 contracts across all 52 roots. An oversized
+    One page, not the whole catalog: the full set is delivered as several
+    signed pages so no valid contract is dropped. An oversized
     result is not truncated -- it is refused, and the server silently keeps its
     stale roots, which is the failure this whole channel exists to remove.
     """
     instruments = [
         _contract(f"{root}{index:02d} 09-26")
         for root in ("MNQQ", "MESS", "MGCC", "M2KK")
-        for index in range(25)
+        for index in range(20)
     ]
-    assert len(instruments) == connector_protocol.MAX_RUNTIME_CATALOG_INSTRUMENTS
+    assert len(instruments) == connector_protocol.MAX_RUNTIME_CATALOG_INSTRUMENTS_PER_PAGE
     payload = _catalog(
         instruments=instruments,
         strategies=[{"class_name": f"Strategy{i:03d}",
@@ -144,11 +144,11 @@ def test_an_oversized_snapshot_is_refused_not_silently_truncated() -> None:
     assert rejected.value.code in {"result_too_large", "invalid_command_payload"}
 
 
-def test_the_device_budget_stays_under_the_server_cap() -> None:
-    """The device budget must leave room for the envelope, not equal the cap."""
+def test_the_device_page_target_leaves_headroom_under_the_cap() -> None:
+    """12 KiB per page, not 15 KiB hugging a 16 KiB hard refusal."""
     source = BRIDGE.read_text(encoding="utf-8-sig")
-    assert "ConnectorSnapshotByteBudget = 15 * 1024" in source
-    assert 15 * 1024 < connector_protocol.MAX_COMMAND_RESULT_BYTES
+    assert "ConnectorPageTargetBytes = 12 * 1024" in source
+    assert 12 * 1024 < connector_protocol.MAX_COMMAND_RESULT_BYTES
 
 
 def test_no_root_can_be_evicted_by_the_budget() -> None:
@@ -241,8 +241,127 @@ def test_connector_snapshot_source_sends_bounded_instruments() -> None:
     source = BRIDGE.read_text(encoding="utf-8-sig")
     assert '["instruments"] = instruments' in source
     assert "BuildConnectorInstruments" in source
-    assert "ConnectorSnapshotByteBudget" in source
-    assert "ConnectorInstrumentCountLimit = 100" in source
-    # Per-root newest-first, so the budget never drops a live month.
+    # Per-root newest-first, so active months lead the pages.
     assert "byRoot[root].Sort((a, b) => b.Key.CompareTo(a.Key));" in source
     assert "ConnectorInstrumentMaxAgeDays = 400" in source
+    assert "BuildConnectorCatalogPage" in source
+
+
+# --------------------------------------------------------------------------- #
+# Paging: the full catalog is delivered, never truncated.
+# --------------------------------------------------------------------------- #
+def _page(index: int, count: int, rows, *, catalog_id="cat0123456789abcdef",
+          total=None, generated="2026-09-01T05:00:00Z") -> dict:
+    return {
+        "schema_version": 1,
+        "generated_at_utc": generated,
+        "catalog_id": catalog_id,
+        "page_index": index,
+        "page_count": count,
+        "total_count": total if total is not None else len(rows),
+        "strategies": [], "commission_templates": [],
+        "instruments": rows,
+    }
+
+
+def test_a_partial_snapshot_never_replaces_the_live_catalog() -> None:
+    """The failure that matters: half a delivery must not blank the catalog."""
+    live = {"instruments": [_contract("PREV 01-26")]}
+    install = {"runtime_catalog": live}
+    first = connector_protocol._normalise_runtime_catalog(
+        _page(0, 2, [_contract("MNQ 09-26")], total=2), 1_800_000_000.0)
+    activated, _ = connector_protocol._accept_runtime_catalog_page(
+        install, first, 1_800_000_000.0)
+    assert activated is False
+    assert install["runtime_catalog"] is live
+
+
+def test_the_last_page_activates_the_whole_catalog_atomically() -> None:
+    install: dict = {}
+    rows = [[_contract("MNQ 09-26")], [_contract("MES 09-26")]]
+    for index, page_rows in enumerate(rows):
+        page = connector_protocol._normalise_runtime_catalog(
+            _page(index, 2, page_rows, total=2), 1_800_000_000.0)
+        activated, assembled = connector_protocol._accept_runtime_catalog_page(
+            install, page, 1_800_000_000.0)
+    assert activated is True
+    assert [row["instrument"] for row in assembled["instruments"]] == [
+        "MNQ 09-26", "MES 09-26"]
+    assert assembled["total_count"] == 2
+    assert "runtime_catalog_staging" not in install
+
+
+def test_a_newer_snapshot_discards_the_partial_one_not_the_live_one() -> None:
+    live = {"instruments": [_contract("PREV 01-26")]}
+    install = {"runtime_catalog": live}
+    stale = connector_protocol._normalise_runtime_catalog(
+        _page(0, 3, [_contract("MNQ 09-26")], catalog_id="old0000000000000", total=3),
+        1_800_000_000.0)
+    connector_protocol._accept_runtime_catalog_page(install, stale, 1_800_000_000.0)
+    fresh = connector_protocol._normalise_runtime_catalog(
+        _page(0, 1, [_contract("MES 09-26")], catalog_id="new0000000000000"),
+        1_800_000_000.0)
+    activated, assembled = connector_protocol._accept_runtime_catalog_page(
+        install, fresh, 1_800_000_000.0)
+    assert activated is True
+    assert [r["instrument"] for r in assembled["instruments"]] == ["MES 09-26"]
+
+
+def test_pages_of_different_snapshots_are_refused() -> None:
+    install: dict = {}
+    first = connector_protocol._normalise_runtime_catalog(
+        _page(0, 2, [_contract("MNQ 09-26")], total=2), 1_800_000_000.0)
+    connector_protocol._accept_runtime_catalog_page(install, first, 1_800_000_000.0)
+    mismatched = connector_protocol._normalise_runtime_catalog(
+        _page(1, 2, [_contract("MES 09-26")], total=2,
+              generated="2026-09-01T06:00:00Z"), 1_800_000_000.0)
+    with pytest.raises(connector_protocol.ConnectorProtocolError) as rejected:
+        connector_protocol._accept_runtime_catalog_page(
+            install, mismatched, 1_800_000_000.0)
+    assert rejected.value.code == "runtime_catalog_page_mismatch"
+
+
+def test_an_assembled_catalog_short_of_total_count_is_refused() -> None:
+    install: dict = {}
+    for index in range(2):
+        page = connector_protocol._normalise_runtime_catalog(
+            _page(index, 2, [_contract(f"MNQ 0{index}-26")], total=9), 1_800_000_000.0)
+        if index == 0:
+            connector_protocol._accept_runtime_catalog_page(
+                install, page, 1_800_000_000.0)
+            continue
+        with pytest.raises(connector_protocol.ConnectorProtocolError) as rejected:
+            connector_protocol._accept_runtime_catalog_page(
+                install, page, 1_800_000_000.0)
+        assert rejected.value.code == "runtime_catalog_incomplete"
+
+
+def test_a_multi_page_snapshot_requires_a_catalog_id() -> None:
+    payload = _page(0, 2, [_contract()], total=2)
+    payload.pop("catalog_id")
+    with pytest.raises(connector_protocol.ConnectorProtocolError):
+        connector_protocol._normalise_runtime_catalog(payload, 1_800_000_000.0)
+
+
+def test_an_old_connector_result_is_one_complete_page() -> None:
+    """No paging fields at all still activates, exactly as before."""
+    legacy = {"schema_version": 1, "generated_at_utc": "2026-09-01T05:00:00Z",
+              "strategies": [], "commission_templates": []}
+    page = connector_protocol._normalise_runtime_catalog(legacy, 1_800_000_000.0)
+    assert page["page_count"] == 1 and page["page_index"] == 0
+    activated, _ = connector_protocol._accept_runtime_catalog_page(
+        {}, page, 1_800_000_000.0)
+    assert activated is True
+
+
+def test_the_device_pages_by_measured_bytes_and_count() -> None:
+    source = BRIDGE.read_text(encoding="utf-8-sig")
+    assert "ConnectorPageTargetBytes = 12 * 1024" in source
+    assert "ConnectorInstrumentsPerPage = 80" in source
+    # Measured, not estimated.
+    assert "row.ToString(Formatting.None).Length + 1" in source
+    assert "ComputeCatalogId" in source
+    # Round-robin ordering keeps active roots on the first pages without
+    # discarding the rest of the eligible set.
+    assert "ordered.Add(ProjectConnectorInstrument(group[depth].Value));" in source
+    assert 12 * 1024 < connector_protocol.MAX_COMMAND_RESULT_BYTES
