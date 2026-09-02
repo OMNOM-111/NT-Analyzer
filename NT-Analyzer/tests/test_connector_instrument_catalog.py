@@ -335,3 +335,116 @@ def test_spot_pair_still_needs_its_data_range() -> None:
         time.time(),
     )
     assert [r["instrument"] for r in catalog["instruments"]] == ["BTCUSD"]
+
+
+# --------------------------------------------------------------------------- #
+# The live loop: one command carries one page, and the server asks for the next
+# page only after the previous result lands. A harness that builds the whole
+# snapshot up front cannot see a device whose snapshot identity drifts between
+# requests -- which is exactly how multi-page delivery stayed broken.
+# --------------------------------------------------------------------------- #
+class _Device:
+    """A device answering one page request at a time, like the real Connector."""
+
+    def __init__(self, contracts, per_page=2, stable_id=True):
+        self.contracts = contracts
+        self.per_page = per_page
+        self.stable_id = stable_id
+        self.calls = 0
+
+    def _pages(self):
+        return [self.contracts[i:i + self.per_page]
+                for i in range(0, len(self.contracts), self.per_page)] or [[]]
+
+    def page(self, index: int) -> dict:
+        self.calls += 1
+        pages = self._pages()
+        index = index if 0 <= index < len(pages) else 0
+        # A device that mixes a per-call timestamp into its identity hands every
+        # page a different catalog_id; a correct one derives it from content.
+        catalog_id = ("cat" + "0" * 17 if self.stable_id
+                      else "cat" + str(self.calls).rjust(17, "0"))
+        return _page(index, len(pages), pages[index],
+                     catalog_id=catalog_id, total=len(self.contracts))
+
+
+def _deliver(device, install, *, max_rounds=40):
+    """Drive the real request/result loop the server runs."""
+    rounds = 0
+    while rounds < max_rounds:
+        rounds += 1
+        wanted = connector_protocol._next_missing_catalog_page(install)
+        page = connector_protocol._normalise_runtime_catalog(
+            device.page(wanted), 1_800_000_000.0)
+        activated, assembled = connector_protocol._accept_runtime_catalog_page(
+            install, page, 1_800_000_000.0)
+        if activated:
+            return assembled, rounds
+    return None, rounds
+
+
+def test_live_paging_delivers_every_page_of_one_snapshot() -> None:
+    contracts = [_contract(f"R{i:02d} 09-26") for i in range(8)]  # 4 pages of 2
+    device = _Device(contracts, per_page=2, stable_id=True)
+    install = {"runtime_catalog": {"instruments": [_contract("PREV 01-26")]}}
+
+    assembled, rounds = _deliver(device, install)
+    assert assembled is not None, "delivery never completed"
+    assert len(assembled["instruments"]) == 8
+    assert rounds == 4, f"expected one round per page, took {rounds}"
+
+
+def test_a_snapshot_id_that_drifts_per_request_never_completes() -> None:
+    """The defect this test exists for.
+
+    With a per-request identity the server restages on every page, keeps asking
+    for page 0, and the delivery cannot converge -- in production that repeat
+    also collided with the unique idempotency key of the command already queued.
+    """
+    contracts = [_contract(f"R{i:02d} 09-26") for i in range(8)]
+    device = _Device(contracts, per_page=2, stable_id=False)
+    install = {"runtime_catalog": {"instruments": [_contract("PREV 01-26")]}}
+
+    assembled, rounds = _deliver(device, install, max_rounds=12)
+    assert assembled is None
+    assert rounds == 12
+    # And the working catalog survived the whole failed delivery.
+    assert [row["instrument"] for row in install["runtime_catalog"]["instruments"]] \
+        == ["PREV 01-26"]
+
+
+def test_repeating_one_page_keeps_the_same_snapshot() -> None:
+    contracts = [_contract(f"R{i:02d} 09-26") for i in range(6)]  # 3 pages of 2
+    device = _Device(contracts, per_page=2, stable_id=True)
+    install = {}
+
+    for index in (0, 1, 1, 1):
+        page = connector_protocol._normalise_runtime_catalog(
+            device.page(index), 1_800_000_000.0)
+        activated, _ = connector_protocol._accept_runtime_catalog_page(
+            install, page, 1_800_000_000.0)
+        assert activated is False
+
+    staging = install["runtime_catalog_staging"]
+    assert sorted(staging["pages"]) == ["0", "1"]
+    assert connector_protocol._next_missing_catalog_page(install) == 2
+
+    final = connector_protocol._normalise_runtime_catalog(
+        device.page(2), 1_800_000_000.0)
+    activated, assembled = connector_protocol._accept_runtime_catalog_page(
+        install, final, 1_800_000_000.0)
+    assert activated is True
+    assert len(assembled["instruments"]) == 6
+
+
+def test_the_bridge_identity_does_not_depend_on_a_per_call_timestamp() -> None:
+    """The device half of the same contract, guarded at the source.
+
+    ComputeCatalogId must read the content and nothing else, and one delivery
+    must serve its pages from a single cached snapshot.
+    """
+    source = BRIDGE.read_text(encoding="utf-8-sig")
+    assert "ComputeCatalogId(List<JObject> ordered)" in source
+    assert "ComputeCatalogId(ordered, generatedAt)" not in source
+    assert "class CatalogSnapshot" in source
+    assert "GetOrBuildSnapshot(" in source
