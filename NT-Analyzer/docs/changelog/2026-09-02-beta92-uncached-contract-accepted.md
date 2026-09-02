@@ -1,7 +1,7 @@
 # beta.92 - Каталог принимает контракт без локального кэша
 
 Release summary: Серверная проверка runtime-каталога считала голым корнем любой инструмент без диапазона данных и отклоняла весь снимок. Контракт определяется наличием контрактного месяца, а отсутствие диапазона означает лишь, что бары ещё не скачаны.
-Release PRs: TBD
+Release PRs: #273
 Affected subsystems: connector protocol runtime catalog validation
 Release impact: Разблокирует каталог из вселенной инструментов NinjaTrader (Connector 0.4.4). Backtest, транспорт Connector, подпись и архитектура релиза не затронуты.
 
