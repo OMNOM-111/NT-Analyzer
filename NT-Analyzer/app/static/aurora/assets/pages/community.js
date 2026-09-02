@@ -655,7 +655,9 @@
   async function startMessage(profileId) {
     try {
       const out = await API.http.sfChatStartConversation(profileId);
-      closeProfile();
+      // The member's wall stays where it is. Dismissing it here was right while
+      // the profile was an overlay the chat would have opened behind; now it is
+      // the centre context, and closing SF Chat must return the reader to it.
       const conversationId = out && out.conversation && out.conversation.conversation_id;
       if (window.UI && typeof UI.openSFChat === 'function') await UI.openSFChat({ conversationId, conversationType: 'human' });
       else if (window.UI && typeof UI.openOrchestrator === 'function') await UI.openOrchestrator({ conversationId, conversationType: 'human' });

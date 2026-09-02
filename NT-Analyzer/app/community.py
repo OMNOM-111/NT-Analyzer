@@ -1164,17 +1164,27 @@ def _registration_milestone(
     nothing about the state of their account.
     """
     pid = str(row.get("profile_id") or "")
-    registered = str(row.get("joined_at_utc") or row.get("created_at_utc") or "")
-    created = str(row.get("created_at_utc") or "")
-    # Only a genuinely distinct activation moment is reported as one.
-    activated = created if (created and registered and created != registered) else ""
+    # `joined_at_utc` carries the account's registration moment; the profile
+    # row's own `created_at_utc` is bookkeeping — it moves whenever the row is
+    # rewritten — so it is never reported as a date the member would recognise.
+    registered = str(row.get("joined_at_utc") or "")
     is_self = bool(viewer_profile_id and pid == viewer_profile_id)
+    activated = ""
     status = ""
     if is_self:
         try:
             from . import account_auth
-            account = account_auth.find_active_user(_safe_int(row.get("user_id")))
-            status = str((account or {}).get("status") or "")
+            account = account_auth.find_active_user(_safe_int(row.get("user_id"))) or {}
+            status = str(account.get("status") or "")
+            if not registered:
+                registered = str(account.get("created_at_utc") or "")
+            # Activation is only a separate fact when the account was approved
+            # at a different moment than it was created. Where the two coincide
+            # there is nothing to report, and inventing a second date from
+            # unrelated bookkeeping would be worse than showing none.
+            approved = str(account.get("approved_at_utc") or "")
+            if approved and approved != str(account.get("created_at_utc") or ""):
+                activated = approved
         except Exception:
             status = ""
     return {

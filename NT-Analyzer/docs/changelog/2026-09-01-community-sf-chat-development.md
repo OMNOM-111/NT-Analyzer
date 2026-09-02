@@ -392,6 +392,71 @@ Orchestrator не переделывались.
 `Написать` на чужом профиле по-прежнему открывает единый SF Chat через
 `sfChatStartConversation` + `UI.openSFChat`; отдельного Community Messenger нет.
 
+## DEV contour recovery and Community browser QA (scenarios A-D)
+
+### Восстановленный DEV-контур `8875`
+
+Прежняя конфигурация восстановлена по свидетельствам самого runtime, без
+подбора. Сервер публикует активный data root в `.stratforge-active-root.json`
+(`app/data_root_guard.py`), и файл в контуре называл `pid 25392` — ровно тот
+процесс, который обслуживал `8875` до перезапуска:
+
+- `STRATFORGE_DEVELOPMENT_DATA_ROOT` = `C:\\Users\\dimon\\AppData\\Local\\StratForge\\dev-contours\\community-sf-chat-pr270-d3fa41bc`
+- `NTA_MARKET_DATA_IPC_PORT` = `18875` — из `runtime/market_data_ipc_token.json`
+  того же контура (`tcp_port: 18875`, `bind: 127.0.0.1`), при `DEFAULT_TCP_PORT`
+  равном `18765`
+- `DEPLOYMENT_ENV` / `STRATFORGE_ENV` = `development`
+- порт `8875`, origin `http://127.0.0.1:8875`
+- `STRATFORGE_DATA_ROOT` и `NTA_DATA_ROOT` **не заданы** — это production-root
+- `NTA_TELEGRAM_CHAT_ID` не задавался: контур уже содержит подтверждённого
+  владельца (`primary_owner_id() = 999`, `status active`), и localhost-байпас
+  штатно резолвит его через `primary_owner()`. `ensure_owner` и Telegram-
+  подтверждение не обходились, фиктивный владелец не создавался
+- instance/database/queue/object-storage IDs в Development не требуются и берутся
+  из безопасных значений по умолчанию (`development-sqlite`,
+  `development-local-worker`, `development-files`), Telegram bot —
+  `development-disabled`
+
+Побочно удалён ложный маркер `.stratforge-active-root.json`, который прошлые
+перезапуски оставили в `NT-Analyzer/data/development` — заброшенный root без
+`accounts.dpapi`, способный ввести обслуживающие инструменты в заблуждение.
+
+### Две ошибки, найденные именно прогоном по реальным данным
+
+- **Дата активации была выдумкой.** Milestone брал `created_at_utc` профиля как
+  «дату активации», если она отличалась от `joined_at_utc`. На реальном профиле
+  это дало `2 сент. 09:52` при регистрации `2 сент. 03:19`: `created_at_utc`
+  строки профиля — это бухгалтерия, он сдвигается при перезаписи строки, и
+  никакой активацией не является. Каноническая активация — `approved_at_utc`
+  аккаунта, и только когда она действительно отличается от `created_at_utc`
+  аккаунта. У владельца они совпадают, поэтому строка активации теперь
+  отсутствует — как и должно быть.
+- **`Написать` теряло контекст Community.** `startMessage` вызывал
+  `closeProfile()` — правильно, пока профиль был overlay, который иначе остался
+  бы за чатом. После переноса профиля в центр это выбрасывало читателя обратно
+  в ленту. Вызов удалён: стена остаётся на месте и во время чата, и после его
+  закрытия.
+
+### Результаты сценариев
+
+- **A** — Recommendation → Elena Vaskos: центр переключается на её стену,
+  `← Recommendation` присутствует, лента и composer скрыты, **правая колонка не
+  меняется**; возврат восстанавливает Recommendation.
+- **B** — собственный профиль: milestone присутствует, идёт **первым** на стене
+  (`H3 → community-milestone → …`), дата `1 сент., 20:19` соответствует
+  `created_at_utc` аккаунта `2026-09-02T03:19:21Z`, статус `active`.
+- **C** — чужой профиль: milestone Elena показывает её настоящую дату
+  `2026-09-02T03:20:30Z`, `account_status` пуст, `is_self: false`; правая
+  колонка остаётся текущим владельцем.
+- **D** — `Написать` → открывается существующий диалог SF Chat «Elena Vaskos» в
+  едином чате; после закрытия чата центр по-прежнему на стене Elena.
+
+Дополнительно: milestone ровно один на обеих стенах и после reload; три
+последовательных чтения дают идентичный объект; milestone не является постом
+(его нет в `posts`, у него нет Like/Share и id для удаления); чужой
+`account_status` не раскрывается; на чистой вкладке console errors и warnings
+равны нулю; horizontal overflow равен нулю (`1785 = 1785`, `1600 = 1600`).
+
 ## Storage, migration and security
 
 - Development использует атомарные local documents. Explicit Canary/Production
@@ -408,6 +473,14 @@ Orchestrator не переделывались.
   idempotency, pagination, privacy и non-enumerating ACL.
 
 ## Verification and honest remaining scope
+
+- Browser QA pass: полная регрессия `2525 passed, 42 skipped` за `391.87s`;
+  `node --check`, `py_compile`, `git diff --check`, External GPT Context
+  validator и `pre_release_check.py` (474 files): PASS.
+- Сценарии A-D выполнены на восстановленном контуре `8875` против реальных
+  данных владельца (Elena Vaskos, Marcus Thorne, реальные профили и
+  существующий диалог SF Chat). Console errors/warnings на чистой вкладке = 0,
+  horizontal overflow = 0.
 
 - Community IA pass: focused Community/UI contract suite и полная регрессия
   `2525 passed, 42 skipped` за `366.80s`. Новые тесты:
