@@ -57,6 +57,90 @@ namespace NTAnalyzerBridge.Reporting
             return BuildConnectorCatalogPage(ntUserDir, strategyTypes, 0);
         }
 
+        // One delivery must serve every page from one snapshot. Rebuilding per
+        // page would let a scan that happens mid-delivery change the content
+        // under the server, which is exactly what the catalog_id exists to
+        // detect -- and would restart the delivery each time.
+        private static CatalogSnapshot GetOrBuildSnapshot(
+            string ntUserDir, IReadOnlyList<Type> strategyTypes)
+        {
+            lock (_snapshotGate)
+            {
+                if (_snapshot != null
+                    && DateTime.UtcNow - _snapshot.BuiltAtUtc < SnapshotTtl)
+                {
+                    return _snapshot;
+                }
+
+                JArray strategies = new JArray();
+                foreach (Type type in (strategyTypes ?? new List<Type>()).OrderBy(t => t.Name))
+                {
+                    try
+                    {
+                        Dictionary<string, object> full = BuildStrategyEntry(type, ntUserDir);
+                        strategies.Add(new JObject
+                        {
+                            ["class_name"] = Convert.ToString(full["class_name"]),
+                            ["display_name"] = Convert.ToString(full["display_name"]),
+                            ["stable_id"] = Convert.ToString(full["stable_id"]),
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        BridgeLog.Warn("Connector catalog skipped " + type.FullName + ": " + ex.Message);
+                    }
+                }
+
+                List<string> notes = new List<string>();
+                JArray commission = JArray.FromObject(
+                    ScanCommissionTemplates(ntUserDir, notes, false));
+
+                // Concrete contracts, not bare roots. A server has no NinjaTrader
+                // database, so without these it can only offer "MNQ" and every
+                // backtest fails on an unresolvable contract month.
+                int scannedTotal;
+                List<JObject> ordered = BuildConnectorInstruments(ntUserDir, out scannedTotal);
+
+                // Page 0 carries strategies and templates so later pages stay small.
+                List<List<JObject>> pages = PaginateInstruments(
+                    ordered,
+                    strategies.ToString(Formatting.None).Length
+                    + commission.ToString(Formatting.None).Length);
+                if (pages.Count == 0) pages.Add(new List<JObject>());
+
+                _snapshot = new CatalogSnapshot
+                {
+                    Ordered = ordered,
+                    Pages = pages,
+                    Strategies = strategies,
+                    Commission = commission,
+                    GeneratedAt = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                    CatalogId = ComputeCatalogId(ordered),
+                    ScannedTotal = scannedTotal,
+                    BuiltAtUtc = DateTime.UtcNow,
+                };
+                return _snapshot;
+            }
+        }
+
+        private sealed class CatalogSnapshot
+        {
+            public List<JObject> Ordered;
+            public List<List<JObject>> Pages;
+            public JArray Strategies;
+            public JArray Commission;
+            public string GeneratedAt;
+            public string CatalogId;
+            public int ScannedTotal;
+            public DateTime BuiltAtUtc;
+        }
+
+        private static readonly object _snapshotGate = new object();
+        private static CatalogSnapshot _snapshot;
+        // Long enough for the server to walk every page of one delivery,
+        // short enough that a rescan is picked up promptly.
+        private static readonly TimeSpan SnapshotTtl = TimeSpan.FromMinutes(10);
+
         /// <summary>
         /// One signed page of the runtime catalog. The server assembles the
         /// pages of a single catalog_id and activates them atomically, so a
@@ -65,46 +149,14 @@ namespace NTAnalyzerBridge.Reporting
         public static JObject BuildConnectorCatalogPage(
             string ntUserDir, IReadOnlyList<Type> strategyTypes, int pageIndex)
         {
-            JArray strategies = new JArray();
-            foreach (Type type in (strategyTypes ?? new List<Type>()).OrderBy(t => t.Name))
-            {
-                try
-                {
-                    Dictionary<string, object> full = BuildStrategyEntry(type, ntUserDir);
-                    strategies.Add(new JObject
-                    {
-                        ["class_name"] = Convert.ToString(full["class_name"]),
-                        ["display_name"] = Convert.ToString(full["display_name"]),
-                        ["stable_id"] = Convert.ToString(full["stable_id"]),
-                    });
-                }
-                catch (Exception ex)
-                {
-                    BridgeLog.Warn("Connector catalog skipped " + type.FullName + ": " + ex.Message);
-                }
-            }
-
-            List<string> notes = new List<string>();
-            JArray commission = JArray.FromObject(
-                ScanCommissionTemplates(ntUserDir, notes, false));
-
-            // Concrete contracts, not bare roots. A server has no NinjaTrader
-            // database, so without these it can only offer "MNQ" and every
-            // backtest fails on an unresolvable contract month.
-            // Instruments get whatever the 16 KiB command result has left after
-            // the strategies and templates, so a large Strategies folder can
-            // never push the whole snapshot over the transport cap.
-            int scannedTotal;
-            List<JObject> ordered = BuildConnectorInstruments(ntUserDir, out scannedTotal);
-            string generatedAt = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ");
-            string catalogId = ComputeCatalogId(ordered, generatedAt);
-
-            // Page 0 carries strategies and templates so later pages stay small.
-            List<List<JObject>> pages = PaginateInstruments(
-                ordered,
-                strategies.ToString(Formatting.None).Length
-                + commission.ToString(Formatting.None).Length);
-            if (pages.Count == 0) pages.Add(new List<JObject>());
+            CatalogSnapshot snapshot = GetOrBuildSnapshot(ntUserDir, strategyTypes);
+            JArray strategies = snapshot.Strategies;
+            JArray commission = snapshot.Commission;
+            List<JObject> ordered = snapshot.Ordered;
+            List<List<JObject>> pages = snapshot.Pages;
+            string generatedAt = snapshot.GeneratedAt;
+            string catalogId = snapshot.CatalogId;
+            int scannedTotal = snapshot.ScannedTotal;
             if (pageIndex < 0 || pageIndex >= pages.Count) pageIndex = 0;
             bool first = pageIndex == 0;
 
@@ -546,9 +598,15 @@ namespace NTAnalyzerBridge.Reporting
 
         // Stable identity for one snapshot, so the server can tell pages of the
         // same catalog from a newer scan that started mid-delivery.
-        private static string ComputeCatalogId(List<JObject> ordered, string generatedAt)
+        //
+        // Derived from the content alone. Mixing in a per-call timestamp gave
+        // every page of one delivery a different id, so the server's staging
+        // reset on each page, it re-requested page 0 forever, and the repeat
+        // collided with the unique idempotency key of the command it had
+        // already queued. Multi-page delivery could never finish.
+        private static string ComputeCatalogId(List<JObject> ordered)
         {
-            var builder = new System.Text.StringBuilder(generatedAt);
+            var builder = new System.Text.StringBuilder();
             foreach (JObject row in ordered)
             {
                 builder.Append('|').Append(Convert.ToString(row["instrument"]));
