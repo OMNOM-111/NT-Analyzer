@@ -3,7 +3,7 @@
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
 - Last verified UTC: 2026-09-02T03:42:40Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Development branch implementation SHA: `f475568475290df2161da9b6fe5da3b73342939b` (PR #270; not deployed)
+- Development branch implementation SHA: `55523872f2860a3a21489debe01e160207b0b288` (PR #270; latest owner-review UI pass; not deployed)
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production
@@ -15,9 +15,10 @@
 - Repository evidence: legacy isolation PR #254 and Telegram URL-flow PR #255
   merged with mandatory CI GREEN on `main`.
 - Development evidence: isolated branch `codex/community-social-network`,
-  implementation `f475568475290df2161da9b6fe5da3b73342939b` in PR #270;
+  implementation `55523872f2860a3a21489debe01e160207b0b288` in PR #270;
   full regression is `2501 passed, 35 skipped`; isolated browser QA covers
-  desktop, tablet and mobile geometry without document-level overflow.
+  desktop, tablet and mobile geometry without document-level overflow, with
+  independent center/wall scrolling and no console warnings/errors.
 - Operational evidence: Release Center closeout, server symlinks and read-only
   Production audit/acceptance evidence in the current handoff.
 - Canonical live release snapshot:
@@ -36,7 +37,7 @@
 | Charts / fan-out | `BETA` | Browser clients consume same-origin StratForge market-data WebSockets; provider credentials are not delivered to browsers and consumers do not create their own TopstepX loginKey/SignalR sessions | broader design acceptance is separate from this Connector closeout |
 | NinjaTrader / Connector | `BETA` | Production Connector on VMNINJA is `0.4.2-dev.20`; SERVER BACKTEST, cancel state machine, device catalog, account snapshot and Connector LIVE/GRACE/OFFLINE presentation are accepted | public installer distribution remains `EXTERNAL BLOCKED` on authorized Authenticode material |
 | Production worker queue | `AVAILABLE` | Eleven worker slots remain 4/4/2/1; empty workers use adaptive jittered backoff and one 30-second stale sweeper. Later auth hot-spot work reduced `/api/auth/status` latency but did not claim CPU improvement outside noise | DB tx/s still lacks a safe first-class diagnostics path |
-| Community / SF Chat | `BETA` in Development | Isolated branch has real profiles/privacy/social feed/search/follows/interactions, Channels compatibility, moderation/soft delete, server-attested Demo/Backtest result posts and one human SF Chat store shared by Community profiles and the global launcher. The approved-reference UI uses a compact social dock, dominant rich-object feed and full profile/wall panel; local desktop/tablet/mobile browser QA is PASS. Existing AI Orchestrator storage remains authoritative behind the same SF Chat shell. PostgreSQL documents fail closed and migrations `0020`/`0021` add allowlist plus FK/index/FORCE-RLS mirrors | Not present in the deployed artifact. Strategy/Chart/Live object adapters, credentialed PostgreSQL acceptance, owner visual acceptance, owner-approved merge and Canary/Production remain separate gates |
+| Community / SF Chat | `BETA` in Development | Isolated branch has real profiles/privacy/social feed/search/follows/interactions, Channels compatibility, moderation/soft delete, server-attested Demo/Backtest result posts and one human SF Chat store shared by Community profiles and the global launcher. The latest owner-review UI pass (`55523872f2860a3a21489debe01e160207b0b288`) removes the unused social view dock, keeps a dominant rich-object feed plus full profile/wall panel, adds clear Like/Comments/Share/Bookmark actions, independent feed/wall scroll, compact visibility dialog and a restrained cosmic SF Chat launcher. Existing AI Orchestrator storage remains authoritative behind the same SF Chat shell. PostgreSQL documents fail closed and migrations `0020`/`0021` add allowlist plus FK/index/FORCE-RLS mirrors | Not present in the deployed artifact. Strategy/Chart/Live object adapters, credentialed PostgreSQL acceptance, owner visual acceptance, owner-approved merge and Canary/Production remain separate gates |
 | Documents | `BETA` | Current handoff and Context Pack identify beta.87 as live; hidden Markdown amendment blocks are removed and AI provenance is infrastructure-only or absent | beta.87 exact operational identity is recorded in its changelog closeout |
 | Legal | `AVAILABLE` | One official onboarding agreement `2026-08-30-v2` is the sole versioned clickwrap; related official policies are readable informational documents; owner configuration is absent from both document API namespaces | Live Trading remains unavailable pending separate release and legal requirements |
 

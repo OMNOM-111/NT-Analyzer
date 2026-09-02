@@ -3,7 +3,7 @@
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-02T03:42:40Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Development branch implementation SHA: `f475568475290df2161da9b6fe5da3b73342939b` (PR #270; not deployed)
+- Development branch implementation SHA: `55523872f2860a3a21489debe01e160207b0b288` (PR #270; latest owner-review UI pass; not deployed)
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`
 - Scope: beta.87 live baseline plus isolated Community/SF Chat Development branch
@@ -13,7 +13,7 @@
 
 - Worktree: isolated Community/SF Chat checkout; local absolute paths are intentionally omitted.
 - Branch: `codex/community-social-network`; implementation:
-  `f475568475290df2161da9b6fe5da3b73342939b`; PR #270.
+  `55523872f2860a3a21489debe01e160207b0b288`; PR #270.
 - Community owns profiles, privacy/social graph, feed/search/interactions,
   moderation and existing Channels. SF Chat owns the only new human conversation
   state. Community does not contain a second DM subsystem.
@@ -22,7 +22,10 @@
 - Server-attested publishing currently covers completed Demo/Backtest results.
   Strategy, Chart and Live result adapters remain visibly disabled.
 - The approved-reference presentation uses a compact social dock, dominant
-  rich-object feed, compact composer and full profile/wall panel. Isolated
+  rich-object feed, compact composer and full profile/wall panel. The latest
+  owner-review pass removes unused view icons, adds explicit Like/Comments/
+  Share/Bookmark actions, independent center/wall scrolling, a compact
+  profile-visibility dialog and a restrained cosmic SF Chat launcher. Isolated
   browser QA passed at desktop, tablet and mobile sizes without document-level
   horizontal overflow or new console warnings/errors.
 - Production path uses fail-closed PostgreSQL documents plus migrations

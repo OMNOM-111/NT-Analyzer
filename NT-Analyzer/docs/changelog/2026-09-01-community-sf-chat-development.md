@@ -6,8 +6,9 @@ Change summary: В изолированной Community-ветке создан�
 изменения существующего AI Orchestrator authority.
 Source branch: `codex/community-social-network`
 Checkpoint commit: `d5a77e9392e1`
-Final implementation commit: `a2cc5e72a610d22605a1af0aaacfcb03341456d5`
-Approved-reference UI commit: `f475568475290df2161da9b6fe5da3b73342939b`
+Core implementation commit: `a2cc5e72a610d22605a1af0aaacfcb03341456d5`
+Latest owner-review UI commit: `55523872f2860a3a21489debe01e160207b0b288`
+Approved-reference UI baseline commit: `f475568475290df2161da9b6fe5da3b73342939b`
 Pull request: [#270](https://github.com/OMNOM-111/NT-Analyzer/pull/270)
 Verification result: `PASS` for Development automated gates and isolated local
 browser QA; credentialed PostgreSQL, owner visual acceptance, PR/CI and release
@@ -34,15 +35,24 @@ Release impact: Development only; Canary/Production не изменялись.
 - Большой Community hero удалён. Рабочая область стала плотной трёхзонной
   композицией: компактный social dock, доминирующая центральная лента и
   полноценная profile/wall-панель с публикациями и закладками.
+- Левая social-навигация сокращена до поиска людей и компактного списка
+  участников; лишние view-иконки удалены из утверждённой композиции.
 - Composer сокращён до avatar/input и явных действий. Strategy, Backtest,
   Result и Chart отображаются как rich StratForge objects с типом, источником,
   метриками, семантикой P&L/drawdown и безопасным chart preview, когда серия
   действительно присутствует в публичном snapshot.
 - Поиск принимает имя, `@username` и `#hashtag`; сортировка по времени и
   релевантности, profile wall и bookmarks проверены через реальный UI/API.
+- Действия публикации получили явные Like/Comments/Share/Bookmark labels и
+  SVG-иконки с deep-link для share; центральная лента и wall прокручиваются
+  независимо. Gear открывает компактный visibility-dialog, а не общий drawer.
+- Глобальный SF Chat launcher получил минималистичный космический стиль:
+  компактная тёмная карточка, SF mark, тонкая cyan-граница и restrained orbit
+  accent без изменения human/AI chat backend.
 - Browser QA выполнена в изолированном Development runtime на порту `8875`:
-  desktop `1920x1080`/`1280x720`, tablet `1024x768` и mobile `390x844` без
-  document-level horizontal overflow и без новых console warnings/errors.
+  desktop `1569x912`/`1280x720`, tablet `1024x768` и mobile `390x844` без
+  document-level horizontal overflow; center/wall scroll independently and
+  console warnings/errors are absent.
   Синтетические LOCAL QA PREVIEW записи находятся только в изолированном
   runtime state, явно помечены и не являются торговыми результатами.
 
@@ -63,8 +73,8 @@ Release impact: Development only; Canary/Production не изменялись.
 
 ## Verification and honest remaining scope
 
-- Focused Community/SF Chat/storage/HTTP contract suite: `143 passed`.
-- Full repository regression: `2501 passed, 35 skipped` in `342.86s`.
+- Focused Community/SF Chat/storage/HTTP contract suite: `99 passed`.
+- Full repository regression: `2501 passed, 35 skipped` in `506.33s`.
 - Python/JavaScript syntax, `git diff --check`, repository-wide Markdown scan
   and External GPT Context Pack validator: PASS.
 - Git-indexed `pre_release_check.py`: PASS (`474` bundle files; in-bundle
