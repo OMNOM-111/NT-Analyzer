@@ -534,6 +534,47 @@ pooling — очевидный следующий шаг для production, но
 (auth identity transition, production workers); чинить их здесь значило бы
 расширить PR за его предмет. Зафиксировано как отдельная работа.
 
+## Community profile derives from the existing StratForge account
+
+Community не имеет собственной регистрации. Профиль создаётся при первом
+обращении уже существующего аккаунта и наследует его данные. Отдельный
+acceptance-пользователь не создавался; изолированный acceptance-контур приложения
+свёрнут, чтобы не плодить третью локальную версию.
+
+### Найденный дефект
+
+На основном локальном checkout владелец зарегистрирован `2026-08-03T21:20:32Z`,
+а Community-профилей там `0`. При первом заходе `_ensure_profile_in_doc`
+проставлял `joined_at_utc = now`, и milestone показал бы **сегодняшнюю** дату
+вместо августовской. Это ровно то, что ломает требование «registration milestone
+берётся из существующего account registration date».
+
+### Исправление
+
+- `_account_registered_at()` читает `created_at_utc` аккаунта, и профиль при
+  создании наследует именно её.
+- Строка, созданная до того, как аккаунт был опрошен, чинится при следующем
+  обращении — дата двигается только **назад**, к дате аккаунта, и только когда
+  сохранённое значение позже. Поле зеркалит данные аккаунта, поэтому это
+  починка, а не переписывание пользовательского содержимого.
+- Для собственного профиля milestone берёт дату аккаунта как источник истины.
+
+### Подтверждённые инварианты
+
+Проверено на сценарии интеграции (аккаунт от 3 августа, профилей нет):
+
+| Инвариант | Результат |
+| --- | --- |
+| существующий owner account автоматически получает Community profile | профиль создан при первом обращении |
+| никакого второго registration flow внутри Community | в `community.html`/`community.js` нет ни одного signup/register элемента; `community.py` только читает `account_auth` (`find_active_user`, `user_uuid_for_legacy_id`, `avatar_file`) и никогда не создаёт пользователя |
+| milestone берётся из account registration date | `2026-08-03T21:20:32Z`, а не дата первого захода |
+| SF Chat использует ту же identity | `chat_identity().profile_id == ensure_social_profile().profile_id` |
+| никаких duplicate users/profiles | после трёх циклов обращений с обеих поверхностей — `1` профиль на аккаунт |
+
+Закреплено тестами `test_profile_inherits_the_existing_account_registration_date`,
+`test_a_profile_stamped_before_the_account_was_consulted_is_repaired` и
+`test_community_and_sf_chat_share_one_profile_for_one_account`.
+
 ## Storage, migration and security
 
 - Development использует атомарные local documents. Explicit Canary/Production

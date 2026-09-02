@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from app import community
+from app import account_auth, community
 
 
 @pytest.fixture()
@@ -500,3 +500,74 @@ def test_registration_milestone_reports_absent_facts_as_absent():
     # joined_at_utc and created_at_utc coincide for a fresh profile, so there is
     # no separate activation moment to claim.
     assert milestone["activated_at_utc"] == ""
+
+
+def test_profile_inherits_the_existing_account_registration_date(monkeypatch):
+    """Community has no registration of its own.
+
+    A profile is created on first sight of an account that already exists, so
+    it must inherit that account's registration date. Stamping the current
+    time would tell a member who registered a month ago that they joined the
+    day they first opened Community — which is exactly what the milestone
+    would then display.
+    """
+    registered = "2026-08-03T21:20:32Z"
+    monkeypatch.setattr(
+        account_auth, "find_active_user",
+        lambda uid: {"user_id": int(uid), "status": "active",
+                     "created_at_utc": registered, "approved_at_utc": registered},
+    )
+
+    profile = community.ensure_social_profile(
+        5150, display_name="Existing Member", username="existing_member",
+    )["profile"]
+    assert profile["joined_at_utc"] == registered
+
+    milestone = community.social_profile(5150, profile["profile_id"])["registration"]
+    assert milestone["registered_at_utc"] == registered
+
+
+def test_a_profile_stamped_before_the_account_was_consulted_is_repaired(monkeypatch):
+    """An existing row keeps the account's date, never the first-sight date."""
+    registered = "2026-08-03T21:20:32Z"
+    monkeypatch.setattr(account_auth, "find_active_user", lambda uid: {})
+    profile = community.ensure_social_profile(
+        5151, display_name="Stamped Now", username="stamped_now",
+    )["profile"]
+    stamped = profile["joined_at_utc"]
+    assert stamped > registered  # created with "now" while the account was unknown
+
+    monkeypatch.setattr(
+        account_auth, "find_active_user",
+        lambda uid: {"user_id": int(uid), "status": "active",
+                     "created_at_utc": registered, "approved_at_utc": registered},
+    )
+    repaired = community.ensure_social_profile(
+        5151, display_name="Stamped Now", username="stamped_now",
+    )["profile"]
+    assert repaired["joined_at_utc"] == registered
+    assert repaired["profile_id"] == profile["profile_id"]  # repaired, not replaced
+
+
+def test_community_and_sf_chat_share_one_profile_for_one_account():
+    """Both surfaces resolve the same identity; neither mints a second one."""
+    from app import sf_chat
+
+    profile = community.ensure_social_profile(
+        5152, display_name="One Identity", username="one_identity",
+    )["profile"]
+    identity = community.chat_identity(
+        5152, display_name="One Identity", username="one_identity",
+    )
+    assert identity["profile_id"] == profile["profile_id"]
+
+    for _ in range(3):
+        community.ensure_social_profile(5152, display_name="One Identity",
+                                        username="one_identity")
+        community.chat_identity(5152, display_name="One Identity",
+                                username="one_identity")
+        sf_chat.list_conversations(5152)
+
+    rows = [row for row in community._load().get("profiles") or []
+            if community._safe_int(row.get("user_id")) == 5152]
+    assert len(rows) == 1

@@ -915,6 +915,25 @@ def _profile_by_identity(doc: Dict[str, Any], user_id: Any, user_uuid: Any = "")
     return None
 
 
+def _account_registered_at(user_id: Any) -> str:
+    """The StratForge account's own registration moment.
+
+    Community has no registration of its own: a profile is created on first
+    sight of an existing account and must inherit the date that account was
+    actually registered. Stamping the current time would tell a member who
+    registered in August that they joined the day they first opened Community.
+    """
+    uid = _safe_int(user_id)
+    if uid <= 0:
+        return ""
+    try:
+        from . import account_auth
+        account = account_auth.find_active_user(uid) or {}
+        return str(account.get("created_at_utc") or "")
+    except Exception:
+        return ""
+
+
 def _ensure_profile_in_doc(
     doc: Dict[str, Any], user_id: Any, *, user_uuid: Any = "",
     display_name: str = "", username: str = "", role_label: str = "Участник",
@@ -937,7 +956,7 @@ def _ensure_profile_in_doc(
             "bio": "",
             "profile_visibility": "network",
             "allow_messages": "everyone",
-            "joined_at_utc": str(joined_at_utc or now),
+            "joined_at_utc": str(joined_at_utc or _account_registered_at(uid) or now),
             "created_at_utc": now,
             "updated_at_utc": now,
             "has_avatar": bool(has_avatar),
@@ -948,6 +967,15 @@ def _ensure_profile_in_doc(
     else:
         if canonical and not str(row.get("user_uuid") or ""):
             row["user_uuid"] = canonical
+        # A profile created before the account date was consulted carries the
+        # moment Community first saw the member, not the moment they
+        # registered. The field mirrors account data, so correcting it towards
+        # the account is a repair, never a rewrite of anything user-authored —
+        # and it only ever moves the date earlier.
+        registered = _account_registered_at(uid)
+        stored_join = str(row.get("joined_at_utc") or "")
+        if registered and (not stored_join or stored_join > registered):
+            row["joined_at_utc"] = registered
         # Account-sourced fields refresh only while the member has not chosen a
         # custom value. User-edited bio/privacy are never overwritten here.
         if display_name and not str(row.get("display_name") or "").strip():
@@ -1176,8 +1204,8 @@ def _registration_milestone(
             from . import account_auth
             account = account_auth.find_active_user(_safe_int(row.get("user_id"))) or {}
             status = str(account.get("status") or "")
-            if not registered:
-                registered = str(account.get("created_at_utc") or "")
+            # The account is the source of truth for one's own registration.
+            registered = str(account.get("created_at_utc") or "") or registered
             # Activation is only a separate fact when the account was approved
             # at a different moment than it was created. Where the two coincide
             # there is nothing to report, and inventing a second date from
