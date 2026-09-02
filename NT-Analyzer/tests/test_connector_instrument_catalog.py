@@ -8,6 +8,7 @@ Connector now ships concrete contracts and the server refuses anything else.
 from __future__ import annotations
 
 from pathlib import Path
+import time
 
 import pytest
 
@@ -287,3 +288,50 @@ def test_runtime_catalog_support_is_decided_by_the_base_version(
     Connector, leaving the server on bare roots with no way to recover.
     """
     assert connector_protocol._connector_supports_runtime_catalog(version) is supported
+
+
+def test_uncached_contract_is_accepted() -> None:
+    """No cached bars is the normal state before an instrument's first backtest.
+
+    The catalog now carries every futures root NinjaTrader knows about, and a
+    root nobody has run yet has no scanned range. Refusing it would put the
+    selector back to showing only what had already been downloaded.
+    """
+    catalog = connector_protocol._normalise_runtime_catalog(
+        {
+            "strategies": [], "commission_templates": [],
+            "instruments": [{
+                "instrument": "6M 09-26", "data_first": "", "data_last": "",
+                "tick_size": 1e-05, "point_value": 500000.0, "tick_value": 5.0,
+            }],
+        },
+        time.time(),
+    )
+    names = [row["instrument"] for row in catalog["instruments"]]
+    assert names == ["6M 09-26"]
+    assert catalog["instruments"][0]["data_last"] == ""
+
+
+def test_bare_root_without_a_range_is_still_refused() -> None:
+    with pytest.raises(connector_protocol.ConnectorProtocolError):
+        connector_protocol._normalise_runtime_catalog(
+            {
+                "strategies": [], "commission_templates": [],
+                "instruments": [{"instrument": "MNQ", "data_first": "", "data_last": ""}],
+            },
+            time.time(),
+        )
+
+
+def test_spot_pair_still_needs_its_data_range() -> None:
+    catalog = connector_protocol._normalise_runtime_catalog(
+        {
+            "strategies": [], "commission_templates": [],
+            "instruments": [{
+                "instrument": "BTCUSD",
+                "data_first": "2024-01-01", "data_last": "2026-09-01",
+            }],
+        },
+        time.time(),
+    )
+    assert [r["instrument"] for r in catalog["instruments"]] == ["BTCUSD"]

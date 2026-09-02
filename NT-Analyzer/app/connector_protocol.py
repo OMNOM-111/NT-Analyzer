@@ -1803,13 +1803,16 @@ def _normalise_runtime_catalog(value: Any, now: float) -> Dict[str, Any]:
             raw.get("data_first"), maximum=10, field="data_first")
         data_last = _catalog_text(
             raw.get("data_last"), maximum=10, field="data_last")
-        # A bare root is exactly what this channel exists to replace. It is
-        # recognisable by having no scanned data range at all, which is true of
-        # "MNQ" and false of both "MNQ 09-26" and a spot pair like "BTCUSD".
-        if not data_first or not data_last:
+        # A bare root is exactly what this channel exists to replace. What makes
+        # a name a contract is a contract month -- "MNQ 09-26" -- or, for a spot
+        # pair like "BTCUSD" that never has one, a scanned data range. A missing
+        # range on its own means only that nothing is cached locally yet, which
+        # is the normal state for every instrument before its first backtest;
+        # NinjaTrader downloads the history when Strategy Analyzer asks for it.
+        if " " not in name and not (data_first and data_last):
             raise ConnectorProtocolError(
-                "Runtime catalog: instrument без диапазона данных не является "
-                "конкретным контрактом.",
+                "Runtime catalog: instrument без контрактного месяца и без "
+                "диапазона данных не является конкретным контрактом.",
                 400, "invalid_runtime_catalog",
             )
         if name in seen_instruments:
