@@ -7390,8 +7390,24 @@
         </div>
       </div>
     </section>`);
+    const orbitLink = el(`<span class="orch-orbit-link" aria-hidden="true">
+      <svg viewBox="0 0 132 72" focusable="false">
+        <defs>
+          <linearGradient id="sf-chat-orbit-gradient" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#dffaff" stop-opacity=".92"></stop>
+            <stop offset=".48" stop-color="#55d5ff" stop-opacity=".84"></stop>
+            <stop offset="1" stop-color="#6b76ff" stop-opacity=".68"></stop>
+          </linearGradient>
+        </defs>
+        <path class="orch-orbit-glow" d="M60 16 C58 32 54 50 80 50 C97 50 104 55 115 58"></path>
+        <path class="orch-orbit-path" d="M60 16 C58 32 54 50 80 50 C97 50 104 55 115 58"></path>
+        <path class="orch-orbit-spark" d="M60 16 C58 32 54 50 80 50 C97 50 104 55 115 58"></path>
+        <circle class="orch-orbit-node" cx="115" cy="58" r="3"></circle>
+      </svg>
+    </span>`);
     document.body.appendChild(fab);
     document.body.appendChild(panel);
+    document.body.appendChild(orbitLink);
 
     fab.addEventListener('click', () => { ORCH.open ? closeOrchestrator() : openOrchestrator(); });
     qs('#orch-close', panel).addEventListener('click', closeOrchestrator);
@@ -7605,7 +7621,7 @@
     const panel = qs('#orch-panel'); const fab = qs('#orch-fab');
     ORCH.open = false;
     orchCloseSkinMenu();
-    if (panel) { panel.classList.remove('open'); setTimeout(() => { if (!ORCH.open) panel.hidden = true; }, 220); }
+    if (panel) { panel.classList.remove('open'); setTimeout(() => { if (!ORCH.open) panel.hidden = true; }, 460); }
     if (fab) fab.classList.remove('active');
     if (ORCH.pollStop) { ORCH.pollStop(); ORCH.pollStop = null; }
     orchStopFeedbackVoice();

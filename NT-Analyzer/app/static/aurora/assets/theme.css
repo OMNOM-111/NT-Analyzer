@@ -3805,3 +3805,154 @@ body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
   .sf-chat-panel .orch-send,
   .sf-chat-panel .orch-mic { width: 48px; height: 48px; border-radius: 14px; }
 }
+
+/* =========================================================================
+   SF Chat orbital launch — spatially joins the real launcher, shell and the
+   single grouped notice.  No conversation or notification data is invented:
+   this is only the presentation path for the existing widget and inbox.
+   ========================================================================= */
+.orch-orbit-link { display: none; }
+
+/* Keep a single closed-chat notice useful without letting it cover the page. */
+.sf-notice-wrap {
+  width: min(300px, calc(100vw - 28px));
+  max-height: 220px;
+}
+.sf-notice {
+  gap: 5px;
+  padding: 12px;
+  border-radius: 14px;
+}
+.sf-notice-title { font-size: 13px; -webkit-line-clamp: 1; }
+.sf-notice-body { -webkit-line-clamp: 2; }
+.sf-notice-actions > span { padding: 6px 9px; }
+.sf-notice-actions > span.ghost { display: none; }
+.sf-notice-more { margin: 2px -12px -12px; padding: 7px 12px; }
+
+@media (min-width: 1024px) {
+  /* The lower orbital rail remains clear for the real launcher and one
+     grouped notice. The shell still scales down on shorter desktops. */
+  .sf-chat-panel {
+    right: 118px;
+    bottom: 112px;
+    width: min(1120px, calc(100vw - 150px));
+    height: min(820px, calc(100vh - 144px));
+    min-height: min(620px, calc(100vh - 144px));
+    opacity: 0;
+    filter: blur(4px);
+    transform: translate3d(76px, 58px, 0) scale(.935);
+    transform-origin: calc(100% - 34px) 100%;
+    transition:
+      opacity .28s cubic-bezier(.22, 1, .36, 1),
+      transform .42s cubic-bezier(.16, 1, .3, 1),
+      filter .32s ease,
+      background .2s ease,
+      border-color .2s ease,
+      box-shadow .2s ease,
+      border-radius .2s ease,
+      color .2s ease;
+    will-change: opacity, transform, filter;
+  }
+  .sf-chat-panel.open {
+    opacity: 1;
+    filter: blur(0);
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+
+  .orch-orbit-link {
+    position: fixed;
+    right: 46px;
+    bottom: 56px;
+    z-index: 69;
+    display: block;
+    width: 132px;
+    height: 72px;
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(10px) scale(.94);
+    transform-origin: 100% 100%;
+    transition: opacity .24s ease .05s, transform .38s cubic-bezier(.16, 1, .3, 1);
+  }
+  .sf-chat-panel.open ~ .orch-orbit-link {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  .orch-orbit-link svg { width: 100%; height: 100%; overflow: visible; }
+  .orch-orbit-glow,
+  .orch-orbit-path,
+  .orch-orbit-spark { fill: none; stroke-linecap: round; }
+  .orch-orbit-glow {
+    stroke: rgba(67, 201, 255, .32);
+    stroke-width: 7;
+    filter: blur(5px);
+  }
+  .orch-orbit-path {
+    stroke: url(#sf-chat-orbit-gradient);
+    stroke-width: 1.35;
+  }
+  .orch-orbit-spark {
+    stroke: rgba(219, 250, 255, .96);
+    stroke-width: 2.2;
+    stroke-dasharray: 1 19;
+    animation: sfOrbitFlow 3.2s linear infinite;
+  }
+  .orch-orbit-node {
+    fill: #52d8ff;
+    filter: drop-shadow(0 0 5px #38caff);
+    animation: sfOrbitNode 1.9s ease-in-out infinite;
+  }
+
+  /* Other-conversation notices remain visible while the shell is open, but
+     collapse into the lower rail instead of covering messages or controls. */
+  body:has(.sf-chat-panel.open) .sf-notice-wrap {
+    top: auto;
+    right: 112px;
+    bottom: 18px;
+    z-index: 92;
+    width: min(300px, calc(100vw - 222px));
+    max-height: 78px;
+    opacity: 1;
+    pointer-events: none;
+  }
+  body:has(.sf-chat-panel.open) .sf-notice {
+    min-height: 68px;
+    max-height: 78px;
+    padding: 9px 11px;
+    gap: 2px;
+    border-color: rgba(85, 204, 255, .52);
+    background: linear-gradient(145deg, rgba(10, 28, 46, .98), rgba(12, 18, 38, .98));
+    box-shadow: 0 0 24px rgba(48, 186, 255, .18), 0 12px 32px rgba(0, 0, 0, .52);
+    transform: translateY(14px) scale(.97);
+  }
+  body:has(.sf-chat-panel.open) .sf-notice.in { transform: translateY(0) scale(1); }
+  body:has(.sf-chat-panel.open) .sf-notice-title {
+    padding-right: 46px;
+    font-size: 12.5px;
+    -webkit-line-clamp: 1;
+  }
+  body:has(.sf-chat-panel.open) .sf-notice-body,
+  body:has(.sf-chat-panel.open) .sf-notice-actions { display: none; }
+  body:has(.sf-chat-panel.open) .sf-notice-more {
+    position: absolute;
+    right: 10px;
+    bottom: 8px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  body:has(.sf-chat-panel.open) .sf-notice-more > span { display: none; }
+}
+
+@keyframes sfOrbitFlow { to { stroke-dashoffset: -20; } }
+@keyframes sfOrbitNode {
+  0%, 100% { opacity: .55; transform: scale(.82); transform-origin: 115px 58px; }
+  50% { opacity: 1; transform: scale(1.18); transform-origin: 115px 58px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sf-chat-panel,
+  .orch-orbit-link { transition-duration: .01ms !important; }
+  .orch-orbit-path,
+  .orch-orbit-spark,
+  .orch-orbit-node { animation: none !important; }
+}

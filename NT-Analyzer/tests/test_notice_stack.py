@@ -154,6 +154,27 @@ def test_phone_and_desktop_cards_are_anchored_above_sf_chat_launcher():
     assert "top: auto" in final
 
 
+def test_open_desktop_chat_docks_one_grouped_notice_in_the_lower_rail():
+    final = CSS[CSS.rindex("SF Chat orbital launch"):]
+    selector = "body:has(.sf-chat-panel.open) .sf-notice-wrap"
+    assert selector in final
+    block = final[final.index(selector):]
+    block = block[:block.index("}")]
+    assert "right: 112px" in block
+    assert "bottom: 18px" in block
+    assert "max-height: 78px" in block
+    assert "opacity: 1" in block
+    assert "pointer-events: none" in block
+
+
+def test_chat_shell_has_a_presentation_only_orbital_link_to_the_launcher():
+    assert 'class="orch-orbit-link"' in UI
+    assert 'id="sf-chat-orbit-gradient"' in UI
+    final = CSS[CSS.rindex("SF Chat orbital launch"):]
+    assert ".sf-chat-panel.open ~ .orch-orbit-link" in final
+    assert "@keyframes sfOrbitFlow" in final
+
+
 def test_closing_a_human_notice_does_not_mark_the_conversation_read():
     body = _render_notice()
     close_branch = body[body.index("data-notice-close"):body.index("openNotice(item)")]
