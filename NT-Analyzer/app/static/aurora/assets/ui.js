@@ -7212,7 +7212,7 @@
     conversations: [], currentId: 'default', loadingList: false, pollStop: null,
     mode: 'auto', messagesSignature: '', feedbackVoice: null, loadError: null,
     retryAfter: 0, transientError: null, viewerProfileId: '', aiAvailable: null,
-    pendingAttachments: [],
+    pendingAttachments: [], listQuery: '', listFilter: 'all',
   };
   const ORCH_KEY = lsKey('orch.currentConversationId');
   const ORCH_SKIN_KEY = lsKey('orch.skin');
@@ -7361,7 +7361,19 @@
       </header>
       <div class="orch-body">
         <button type="button" class="orch-drawer-scrim" id="orch-drawer-scrim" aria-label="Закрыть список диалогов" tabindex="-1"></button>
-        <aside class="orch-convos" id="orch-convos" aria-label="Диалоги"></aside>
+        <aside class="orch-convos" id="orch-convos" aria-label="Диалоги">
+          <div class="orch-convo-tools">
+            <div class="orch-convo-tools-head"><span>Диалоги</span><span id="orch-convo-count">0</span></div>
+            <label class="orch-convo-search" for="orch-convo-search">${icon('search')}<input id="orch-convo-search" type="search" autocomplete="off" placeholder="Поиск диалогов" aria-label="Поиск диалогов"></label>
+            <button class="orch-convo-new" id="orch-new-side" type="button">${icon('plus')}<span>Новый диалог</span></button>
+            <div class="orch-convo-filters" role="tablist" aria-label="Фильтр диалогов">
+              <button type="button" class="active" data-orch-convo-filter="all" role="tab" aria-selected="true">Все</button>
+              <button type="button" data-orch-convo-filter="pinned" role="tab" aria-selected="false">Закреплённые</button>
+              <button type="button" data-orch-convo-filter="recent" role="tab" aria-selected="false">Недавние</button>
+            </div>
+          </div>
+          <div class="orch-convo-list" id="orch-convo-list"></div>
+        </aside>
         <div class="orch-main">
           <div class="orch-msgs" id="orch-msgs"><div class="empty-state">Загрузка…</div></div>
           <div class="orch-compose">
@@ -7386,6 +7398,15 @@
     qs('#orch-list-toggle', panel).addEventListener('click', () => { orchCloseSkinMenu(); panel.classList.toggle('show-convos'); });
     qs('#orch-drawer-scrim', panel).addEventListener('click', () => panel.classList.remove('show-convos'));
     qs('#orch-new', panel).addEventListener('click', () => { orchCloseSkinMenu(); orchNewConversation(); });
+    qs('#orch-new-side', panel).addEventListener('click', () => { orchCloseSkinMenu(); orchNewConversation(); });
+    qs('#orch-convo-search', panel).addEventListener('input', (e) => {
+      ORCH.listQuery = String(e.target.value || '').trim().toLocaleLowerCase('ru-RU');
+      orchRenderConversations();
+    });
+    qsa('[data-orch-convo-filter]', panel).forEach((button) => button.addEventListener('click', () => {
+      ORCH.listFilter = button.dataset.orchConvoFilter || 'all';
+      orchRenderConversations();
+    }));
     qs('#orch-thread-state', panel).addEventListener('click', () => { orchCloseSkinMenu(); orchToggleConversationState(); });
     qs('#orch-skin-btn', panel).addEventListener('click', (e) => { e.stopPropagation(); orchToggleSkinMenu(); });
     qs('#orch-skin-menu', panel).addEventListener('click', (e) => e.stopPropagation());
@@ -7532,6 +7553,11 @@
     // Restore the last opened conversation unless the caller requested an exact
     // human or AI dialogue (for example from Community or a notification).
     const requestedId = String((options && options.conversationId) || '').trim();
+    if (requestedId) {
+      ORCH.listQuery = '';
+      ORCH.listFilter = 'all';
+      const search = qs('#orch-convo-search', panel); if (search) search.value = '';
+    }
     ORCH.currentId = requestedId || orchLoadLastId();
     const loaded = await orchLoadConversations();
     if (!loaded) return;
@@ -7564,7 +7590,7 @@
     const root = panel || qs('#orch-panel');
     if (!root) return;
     ORCH.loadError = { status: 401, message: 'Требуется вход через Telegram.' };
-    const wrap = qs('#orch-convos', root);
+    const wrap = qs('#orch-convo-list', root) || qs('#orch-convos', root);
     const box = qs('#orch-msgs', root);
     if (wrap) wrap.innerHTML = '<div class="empty-state">История не удалена. Войдите, чтобы загрузить свои диалоги.</div>';
     if (box) box.innerHTML = '<div class="empty-state"><strong>Войдите через Telegram</strong><br>После входа вернутся прежние чаты и станут доступны поручения.<div style="margin-top:12px"><button class="btn primary" id="orch-auth-login" type="button">Войти через Telegram</button></div></div>';
@@ -7660,7 +7686,7 @@
       toggle.setAttribute('aria-label', toggle.title);
     }
     const ta = qs('#orch-text'); const send = qs('#orch-send'); const mic = qs('#orch-mic');
-    const attach = qs('#orch-attach'); const create = qs('#orch-new');
+    const attach = qs('#orch-attach'); const create = qs('#orch-new'); const sideCreate = qs('#orch-new-side');
     const closed = !!(c && c.closed);
     const disabled = !c || closed || (!window.API || API.config.offline);
     if (ta) {
@@ -7673,6 +7699,10 @@
     if (send) send.disabled = disabled;
     if (attach) attach.hidden = !human || disabled;
     if (create) create.hidden = human || ORCH.aiAvailable === false;
+    // The sidebar is global navigation across both human and AI threads. Keep
+    // the existing AI topic create-flow available even while a human chat is
+    // selected; the compact header action remains conversation-contextual.
+    if (sideCreate) sideCreate.hidden = ORCH.aiAvailable === false;
     if (mic) mic.hidden = human || closed || !(window.SpeechRecognition || window.webkitSpeechRecognition) || (!window.API || API.config.offline);
     if (!human && ORCH.pendingAttachments.length) {
       ORCH.pendingAttachments = [];
@@ -7680,9 +7710,27 @@
     }
   }
   function orchRenderConversations() {
-    const wrap = qs('#orch-convos'); if (!wrap) return;
+    const wrap = qs('#orch-convo-list') || qs('#orch-convos'); if (!wrap) return;
     const unreadMap = NOTICE.unreadByConversation || {};
-    const rows = ORCH.conversations.map(c => {
+    const query = String(ORCH.listQuery || '').trim().toLocaleLowerCase('ru-RU');
+    const filter = ['all', 'pinned', 'recent'].includes(ORCH.listFilter) ? ORCH.listFilter : 'all';
+    let visible = ORCH.conversations.slice();
+    if (filter === 'pinned') visible = visible.filter(c => !!(c.pinned || c.is_default));
+    if (filter === 'recent') visible.sort((a, b) => String(b.updated_at_utc || '').localeCompare(String(a.updated_at_utc || '')));
+    if (query) visible = visible.filter(c => {
+      const participant = c.participant || {};
+      return [c.title, c.subtitle, c.last_message_preview, participant.display_name, participant.username]
+        .some(value => String(value || '').toLocaleLowerCase('ru-RU').includes(query));
+    });
+    const count = qs('#orch-convo-count');
+    if (count) count.textContent = visible.length === ORCH.conversations.length
+      ? String(visible.length) : `${visible.length}/${ORCH.conversations.length}`;
+    qsa('[data-orch-convo-filter]').forEach(button => {
+      const active = button.dataset.orchConvoFilter === filter;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    const rows = visible.map(c => {
       const active = c.conversation_id === ORCH.currentId;
       const human = orchIsHumanConversation(c);
       const canEdit = !human && !c.is_default;
@@ -7718,7 +7766,10 @@
     const error = ORCH.loadError
       ? '<div class="empty-state">Не удалось обновить список. Показана сохранённая история; повторите после восстановления соединения.</div>'
       : '';
-    wrap.innerHTML = error + (rows || (ORCH.loadError ? '' : '<div class="empty-state">Создайте первый диалог.</div>'));
+    const empty = query ? 'Диалоги не найдены.'
+      : filter === 'pinned' ? 'Нет закреплённых диалогов.'
+        : filter === 'recent' ? 'Нет недавних диалогов.' : 'Создайте первый диалог.';
+    wrap.innerHTML = error + (rows || (ORCH.loadError ? '' : `<div class="empty-state orch-convo-empty">${empty}</div>`));
     qsa('.orch-convo', wrap).forEach(node => {
       node.addEventListener('click', (e) => {
         if (e.target.closest('[data-rename]') || e.target.closest('[data-del]') || e.target.closest('[data-pin]')) return;
@@ -7764,6 +7815,9 @@
     if (orchHasUnfinishedCurrent() && !confirm('Текущая тема ещё не завершена. Создать новую тему всё равно?')) return;
     try {
       const res = await API.http.aiOrchestratorCreateConversation('');
+      ORCH.listQuery = '';
+      ORCH.listFilter = 'all';
+      const search = qs('#orch-convo-search'); if (search) search.value = '';
       orchSaveCurrentId((res.conversation && res.conversation.conversation_id) || 'default');
       await orchLoadConversations();
       await orchLoadMessages(ORCH.currentId);

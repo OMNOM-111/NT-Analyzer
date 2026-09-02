@@ -1748,13 +1748,30 @@ body.notices-cramped .sf-notice-wrap { display: none; }
   color: var(--tx);
   border-right: 1px solid var(--line-2);
   box-shadow: 12px 0 32px rgba(0, 0, 0, 0.35);
-  overflow-x: hidden; overflow-y: auto;
+  overflow: hidden;
   display: flex; flex-direction: column; gap: 4px;
   transform: translateX(-105%);
   transition: transform .18s ease;
   visibility: hidden;
   pointer-events: none;
 }
+.orch-convo-tools { display: flex; flex-direction: column; gap: 8px; padding: 2px 2px 10px; flex: 0 0 auto; }
+.orch-convo-tools-head { display: flex; align-items: center; justify-content: space-between; padding: 0 4px; color: var(--tx-3); font-size: 9px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+.orch-convo-tools-head > :last-child { min-width: 22px; padding: 2px 6px; border: 1px solid var(--line-2); border-radius: 999px; color: var(--tx-2); font-size: 9px; letter-spacing: 0; text-align: center; }
+.orch-convo-search { min-height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 11px; background: var(--bg-1); color: var(--tx-3); }
+.orch-convo-search:focus-within { border-color: var(--brand-line); box-shadow: 0 0 0 2px color-mix(in srgb, var(--brand) 10%, transparent); }
+.orch-convo-search svg { width: 15px; height: 15px; flex: 0 0 auto; }
+.orch-convo-search input { width: 100%; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--tx); font: inherit; font-size: 11px; }
+.orch-convo-search input::placeholder { color: var(--tx-3); }
+.orch-convo-new { min-height: 38px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 1px solid var(--brand-line); border-radius: 11px; background: var(--brand-soft); color: var(--tx); font: inherit; font-size: 11px; font-weight: 750; cursor: pointer; }
+.orch-convo-new:hover { filter: brightness(1.12); }
+.orch-convo-new svg { width: 15px; height: 15px; color: var(--brand); }
+.orch-convo-filters { display: grid; grid-template-columns: .72fr 1.4fr 1fr; padding: 3px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--bg-1); }
+.orch-convo-filters button { min-width: 0; min-height: 28px; padding: 0 6px; overflow: hidden; border: 0; border-radius: 7px; background: transparent; color: var(--tx-3); font: inherit; font-size: 9px; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
+.orch-convo-filters button:hover { color: var(--tx); }
+.orch-convo-filters button.active { background: var(--brand-soft); color: var(--brand); box-shadow: inset 0 0 0 1px var(--brand-line); }
+.orch-convo-list { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 4px; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--brand) 25%, transparent) transparent; }
+.orch-convo-empty { margin: 6px 2px; padding: 16px 10px; }
 .orch-panel.show-convos .orch-convos {
   transform: translateX(0);
   visibility: visible;
@@ -3554,6 +3571,7 @@ body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
     white-space: nowrap;
   }
   .sf-chat-panel #orch-skin-btn svg { color: #8dcfff; }
+  .sf-chat-panel #orch-new { display: none; }
   .sf-chat-panel .orch-body {
     display: grid;
     grid-template-columns: 276px minmax(0, 1fr);
@@ -3572,22 +3590,31 @@ body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
     transform: none;
     visibility: visible;
     pointer-events: auto;
-    overflow-x: hidden;
-    overflow-y: auto;
+    overflow: hidden;
     background: linear-gradient(180deg, rgba(5, 18, 32, .96), rgba(3, 11, 21, .98));
     border-right-color: rgba(105, 193, 255, .16);
     box-shadow: inset -1px 0 0 rgba(173, 232, 255, .03);
   }
-  .sf-chat-panel .orch-convos::before {
-    content: 'ДИАЛОГИ';
-    display: block;
-    flex: 0 0 auto;
-    padding: 0 10px 12px;
-    color: #7492ae;
-    font-size: 9px;
-    font-weight: 800;
-    letter-spacing: .14em;
+  .sf-chat-panel .orch-convos::before { display: none; }
+  .sf-chat-panel .orch-convo-tools { gap: 9px; padding: 0 2px 13px; }
+  .sf-chat-panel .orch-convo-tools-head { color: #7492ae; }
+  .sf-chat-panel .orch-convo-tools-head > :last-child { border-color: rgba(105, 193, 255, .18); color: #9fb5c9; background: rgba(8, 24, 40, .74); }
+  .sf-chat-panel .orch-convo-search {
+    min-height: 39px;
+    border-color: rgba(105, 193, 255, .2);
+    background: rgba(6, 20, 34, .82);
+    color: #7fa2bf;
   }
+  .sf-chat-panel .orch-convo-search:focus-within { border-color: rgba(82, 199, 255, .55); box-shadow: 0 0 0 2px rgba(40, 168, 231, .09); }
+  .sf-chat-panel .orch-convo-new {
+    min-height: 40px;
+    border-color: rgba(91, 198, 255, .48);
+    background: linear-gradient(135deg, rgba(25, 111, 165, .34), rgba(35, 67, 120, .32));
+    color: #d7ecf8;
+  }
+  .sf-chat-panel .orch-convo-filters { border-color: rgba(105, 193, 255, .15); background: rgba(3, 14, 26, .72); }
+  .sf-chat-panel .orch-convo-filters button.active { background: rgba(38, 133, 190, .25); color: #78d7ff; box-shadow: inset 0 0 0 1px rgba(87, 197, 255, .25); }
+  .sf-chat-panel .orch-convo-list { gap: 5px; scrollbar-color: rgba(89, 188, 241, .3) transparent; }
   .sf-chat-panel .orch-convo {
     min-height: 66px;
     padding: 11px 10px;

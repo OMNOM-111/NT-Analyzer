@@ -156,10 +156,7 @@ def test_every_aurora_page_uses_current_theme_cache_version():
         marker = 'href="assets/theme.css?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert versions["community.html"] == "20260901-community-workspace3"
-    assert {value for name, value in versions.items() if name != "community.html"} == {
-        "20260901-community-chat1"
-    }, versions
+    assert set(versions.values()) == {"20260901-sfchat-sidebar1"}, versions
 
 
 def test_development_preview_is_rewired_after_async_build_identity():
@@ -275,7 +272,7 @@ def test_every_aurora_page_uses_current_ui_cache_version():
             continue
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
     assert versions
-    assert set(versions.values()) == {"20260901-community-chat1"}, versions
+    assert set(versions.values()) == {"20260901-sfchat-sidebar1"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():
@@ -706,6 +703,10 @@ def test_community_v2_and_unified_sf_chat_are_real_api_backed_surfaces():
     assert "sfChatStartConversation" in page and "UI.openSFChat" in page
     assert "mock" not in page.lower()
     assert "sfChatConversations" in ui and "sfChatConversation" in ui and "sfChatMessage" in ui
+    assert 'id="orch-convo-search"' in ui and 'id="orch-new-side"' in ui
+    assert 'data-orch-convo-filter="pinned"' in ui and 'data-orch-convo-filter="recent"' in ui
+    assert "ORCH.listQuery" in ui and "participant.username" in ui
+    assert "sideCreate.hidden = ORCH.aiAvailable === false" in ui
     assert "NOTICE_MAX_VISIBLE = 1" in ui and "Открыть в чате" in ui
     assert "/api/community/v2/feed" in api and "/api/sf-chat/conversations" in api
     assert "/api/community/v2/objects" in api
