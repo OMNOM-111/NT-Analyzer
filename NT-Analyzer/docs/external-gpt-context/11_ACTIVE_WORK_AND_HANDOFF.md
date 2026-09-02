@@ -3,7 +3,7 @@
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-02T03:42:40Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Development branch implementation SHA: `55523872f2860a3a21489debe01e160207b0b288` (PR #270; latest owner-review UI pass; not deployed)
+- Development branch implementation SHA: `5fcb019c0c70dce20bd7b95a19f978e0c632c67f` (PR #270; latest SF Chat Orbital Glass presentation pass; not deployed)
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`
 - Scope: beta.87 live baseline plus isolated Community/SF Chat Development branch
@@ -13,7 +13,7 @@
 
 - Worktree: isolated Community/SF Chat checkout; local absolute paths are intentionally omitted.
 - Branch: `codex/community-social-network`; implementation:
-  `55523872f2860a3a21489debe01e160207b0b288`; PR #270.
+  `5fcb019c0c70dce20bd7b95a19f978e0c632c67f`; PR #270.
 - Community owns profiles, privacy/social graph, feed/search/interactions,
   moderation and existing Channels. SF Chat owns the only new human conversation
   state. Community does not contain a second DM subsystem.
@@ -25,9 +25,13 @@
   rich-object feed, compact composer and full profile/wall panel. The latest
   owner-review pass removes unused view icons, adds explicit Like/Comments/
   Share/Bookmark actions, independent center/wall scrolling, a compact
-  profile-visibility dialog and a restrained cosmic SF Chat launcher. Isolated
-  browser QA passed at desktop, tablet and mobile sizes without document-level
-  horizontal overflow or new console warnings/errors.
+  profile-visibility dialog and a restrained cosmic SF Chat launcher. The latest
+  Orbital Glass pass turns the launcher into a full glass/cosmic shell with a
+  persistent desktop conversation rail, distinct human/AI bubbles, compact
+  header/composer and a mobile drawer while preserving the existing Orchestrator
+  history, unread/read, attachments and routing contracts. Isolated browser QA
+  passed at desktop, tablet and mobile sizes without document-level horizontal
+  overflow or new console warnings/errors.
 - Production path uses fail-closed PostgreSQL documents plus migrations
   `0020`/`0021` (allowlist, FK/index/FORCE-RLS mirrors). A checksum-confirmed,
   backup-first idempotent legacy importer exists but was not run against any
@@ -57,7 +61,7 @@
 | Field | Value |
 | --- | --- |
 | Current Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (deployed beta.87 baseline) |
-| Development Git implementation | `f475568475290df2161da9b6fe5da3b73342939b` on `codex/community-social-network`; PR #270; not deployed |
+| Development Git implementation | `5fcb019c0c70dce20bd7b95a19f978e0c632c67f` on `codex/community-social-network`; PR #270; not deployed |
 | Deployed Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (beta.87) |
 | Code change | PR #254 legacy isolation; PR #255 Telegram `/start` URL flow; PR #256 release-record visibility and gate |
 | Release | Production `0.10.0-beta.87`, state `production_live` |
