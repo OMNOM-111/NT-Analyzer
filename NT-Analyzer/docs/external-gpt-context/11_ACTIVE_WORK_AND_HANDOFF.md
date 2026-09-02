@@ -1,9 +1,9 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-02T03:42:40Z
+- Last verified UTC: 2026-09-02T14:36:24Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Development branch implementation SHA: `e02ba97a2d03fb52b5418b5d6127060b64db2261` (PR #270; final SF Chat Orbital Glass sidebar pass; not deployed)
+- Development branch implementation SHA: `8844421cbaefa9abc1888d36c5d4274aa41bd53c` (PR #270; final SF Chat orbital-launch presentation pass; not deployed)
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`
 - Scope: beta.87 live baseline plus isolated Community/SF Chat Development branch
@@ -13,7 +13,7 @@
 
 - Worktree: isolated Community/SF Chat checkout; local absolute paths are intentionally omitted.
 - Branch: `codex/community-social-network`; implementation:
-  `e02ba97a2d03fb52b5418b5d6127060b64db2261`; PR #270.
+  `8844421cbaefa9abc1888d36c5d4274aa41bd53c`; PR #270.
 - Community owns profiles, privacy/social graph, feed/search/interactions,
   moderation and existing Channels. SF Chat owns the only new human conversation
   state. Community does not contain a second DM subsystem.
@@ -32,7 +32,10 @@
   conversation search/count, All/Pinned/Recent views and the existing AI topic
   create-flow without a parallel store or mock rows, while preserving the
   existing Orchestrator history, unread/read, attachments and routing contracts.
-  Isolated browser QA
+  The final orbital-launch pass connects the real desktop shell to its launcher
+  with a restrained light trajectory, keeps the launcher outside the panel and
+  docks one grouped real notice in the free lower rail. Mobile remains a
+  full-screen shell without the desktop decoration. Isolated browser QA
   passed at desktop, tablet and mobile sizes without document-level horizontal
   overflow or new console warnings/errors.
 - Production path uses fail-closed PostgreSQL documents plus migrations
@@ -64,7 +67,7 @@
 | Field | Value |
 | --- | --- |
 | Current Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (deployed beta.87 baseline) |
-| Development Git implementation | `e02ba97a2d03fb52b5418b5d6127060b64db2261` on `codex/community-social-network`; PR #270; not deployed |
+| Development Git implementation | `8844421cbaefa9abc1888d36c5d4274aa41bd53c` on `codex/community-social-network`; PR #270; not deployed |
 | Deployed Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (beta.87) |
 | Code change | PR #254 legacy isolation; PR #255 Telegram `/start` URL flow; PR #256 release-record visibility and gate |
 | Release | Production `0.10.0-beta.87`, state `production_live` |
