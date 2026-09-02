@@ -3,7 +3,7 @@
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-02T16:16:41Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Development branch implementation SHA: `27b4de3d65eb4e1d753302b90fec45c90a51765a` (PR #270; final SF Chat messenger presentation pass; not deployed)
+- Development branch implementation SHA: `0bb63236df3fc197a0119984c8587401290a4d3f` (PR #270; final Community/SF Chat design-audit pass; not deployed)
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`
 - Scope: beta.87 live baseline plus isolated Community/SF Chat Development branch
@@ -71,7 +71,7 @@
 | Field | Value |
 | --- | --- |
 | Current Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (deployed beta.87 baseline) |
-| Development Git implementation | `27b4de3d65eb4e1d753302b90fec45c90a51765a` on `codex/community-social-network`; PR #270; not deployed |
+| Development Git implementation | `0bb63236df3fc197a0119984c8587401290a4d3f` on `codex/community-social-network`; PR #270; not deployed |
 | Deployed Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (beta.87) |
 | Code change | PR #254 legacy isolation; PR #255 Telegram `/start` URL flow; PR #256 release-record visibility and gate |
 | Release | Production `0.10.0-beta.87`, state `production_live` |
