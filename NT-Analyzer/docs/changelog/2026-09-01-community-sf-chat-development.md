@@ -8,7 +8,7 @@ Source branch: `codex/community-social-network`
 Checkpoint commit: `d5a77e9392e1`
 Core implementation commit: `a2cc5e72a610d22605a1af0aaacfcb03341456d5`
 Latest owner-review UI commit: `55523872f2860a3a21489debe01e160207b0b288`
-Latest SF Chat presentation commit: `5fcb019c0c70dce20bd7b95a19f978e0c632c67f`
+Latest SF Chat presentation commit: `e02ba97a2d03fb52b5418b5d6127060b64db2261`
 Approved-reference UI baseline commit: `f475568475290df2161da9b6fe5da3b73342939b`
 Pull request: [#270](https://github.com/OMNOM-111/NT-Analyzer/pull/270)
 Verification result: `PASS` for Development automated gates and isolated local
@@ -56,6 +56,10 @@ Release impact: Development only; Canary/Production не изменялись.
   composer; на mobile rail остаётся безопасным выдвижным drawer. Existing
   history, unread/read, attachments, Human/AI routing and Orchestrator API
   остаются прежними.
+- Финальный sidebar pass добавляет поиск по реальным conversation metadata,
+  счётчик, действующий existing AI create-flow и фильтры `Все` /
+  `Закреплённые` / `Недавние`. Никаких mock-диалогов, нового chat storage или
+  изменения human/AI routing не добавлено.
 - Browser QA выполнена в изолированном Development runtime на порту `8875`:
   desktop `1569x912`/`1280x720`, tablet `1024x768` и mobile `390x844` без
   document-level horizontal overflow; center/wall scroll independently and
@@ -81,7 +85,7 @@ Release impact: Development only; Canary/Production не изменялись.
 ## Verification and honest remaining scope
 
 - Focused Community/SF Chat/storage/HTTP contract suite: `99 passed`.
-- Full repository regression: `2501 passed, 35 skipped` in `424.56s`.
+- Full repository regression: `2501 passed, 35 skipped` in `325.18s`.
 - Python/JavaScript syntax, `git diff --check`, repository-wide Markdown scan
   and External GPT Context Pack validator: PASS.
 - Git-indexed `pre_release_check.py`: PASS (`474` bundle files; in-bundle
