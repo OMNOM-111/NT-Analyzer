@@ -156,7 +156,7 @@ def test_every_aurora_page_uses_current_theme_cache_version():
         marker = 'href="assets/theme.css?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert versions["community.html"] == "20260901-community-workspace2"
+    assert versions["community.html"] == "20260901-community-workspace3"
     assert {value for name, value in versions.items() if name != "community.html"} == {
         "20260901-community-chat1"
     }, versions

@@ -3479,3 +3479,302 @@ body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
   .orch-fab::after { display: none; }
   .orch-fab .sf-chat-mark { transform: scale(.92); transform-origin: center; }
 }
+
+/* =========================================================================
+   SF Chat Orbital Glass — owner-review presentation pass
+   The widget keeps the existing human/AI Orchestrator DOM and API. These
+   rules only turn the floating shell into a spacious cosmic conversation
+   surface with a persistent desktop conversation rail.
+   ========================================================================= */
+@media (min-width: 761px) {
+  .sf-chat-panel {
+    right: clamp(16px, 3vw, 48px);
+    bottom: clamp(16px, 3vh, 32px);
+    width: min(1120px, calc(100vw - 32px));
+    height: min(820px, calc(100vh - 32px));
+    min-height: 620px;
+    border-radius: 24px;
+    border-color: rgba(111, 207, 255, .34);
+    background: #030a14;
+    box-shadow: 0 0 0 1px rgba(121, 224, 255, .07),
+      0 0 72px rgba(14, 143, 230, .16), 0 34px 110px rgba(0, 0, 0, .78);
+  }
+  .sf-chat-panel .orch-head {
+    min-height: 78px;
+    padding: 14px 22px;
+    gap: 12px;
+    background: linear-gradient(110deg, rgba(5, 16, 29, .98), rgba(3, 10, 20, .92));
+    border-bottom-color: rgba(106, 203, 255, .16);
+  }
+  .sf-chat-panel .orch-head-brand { padding-inline: 5px 8px; }
+  .sf-chat-panel .orch-head-brand .sf-chat-mark {
+    min-width: 58px;
+    height: 42px;
+    transform: scale(1.28);
+    transform-origin: center;
+  }
+  .sf-chat-panel .orch-head-name {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 20px;
+    letter-spacing: -.02em;
+    text-transform: none;
+  }
+  .sf-chat-panel .orch-head-name::after {
+    content: 'Orbital Glass';
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 0 9px;
+    border: 1px solid rgba(93, 183, 255, .28);
+    border-radius: 8px;
+    background: linear-gradient(135deg, rgba(34, 116, 191, .28), rgba(25, 43, 77, .38));
+    color: #83c7ff;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: .01em;
+    white-space: nowrap;
+  }
+  .sf-chat-panel .orch-head-sub { font-size: 12px; color: #91a9c1; }
+  .sf-chat-panel .orch-task-state { font-size: 9px; }
+  .sf-chat-panel #orch-skin-btn {
+    width: auto;
+    min-width: 142px;
+    padding-inline: 11px;
+    gap: 7px;
+    border-color: rgba(105, 194, 255, .2);
+    border-radius: 11px;
+    background: rgba(11, 28, 47, .8);
+  }
+  .sf-chat-panel #orch-skin-btn::after {
+    content: 'Orbital Glass';
+    color: #c6d8e9;
+    font: 650 11px/1 Inter, "Segoe UI", sans-serif;
+    white-space: nowrap;
+  }
+  .sf-chat-panel #orch-skin-btn svg { color: #8dcfff; }
+  .sf-chat-panel .orch-body {
+    display: grid;
+    grid-template-columns: 276px minmax(0, 1fr);
+    min-height: 0;
+    background: #030a14;
+  }
+  .sf-chat-panel .orch-drawer-scrim { display: none; }
+  .sf-chat-panel .orch-convos {
+    position: relative;
+    inset: auto;
+    z-index: 1;
+    width: auto;
+    min-width: 0;
+    padding: 20px 14px 18px;
+    gap: 5px;
+    transform: none;
+    visibility: visible;
+    pointer-events: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    background: linear-gradient(180deg, rgba(5, 18, 32, .96), rgba(3, 11, 21, .98));
+    border-right-color: rgba(105, 193, 255, .16);
+    box-shadow: inset -1px 0 0 rgba(173, 232, 255, .03);
+  }
+  .sf-chat-panel .orch-convos::before {
+    content: 'ДИАЛОГИ';
+    display: block;
+    flex: 0 0 auto;
+    padding: 0 10px 12px;
+    color: #7492ae;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: .14em;
+  }
+  .sf-chat-panel .orch-convo {
+    min-height: 66px;
+    padding: 11px 10px;
+    gap: 10px;
+    border-radius: 12px;
+    border-color: transparent;
+  }
+  .sf-chat-panel .orch-convo:hover { background: rgba(30, 77, 112, .28); }
+  .sf-chat-panel .orch-convo.active {
+    background: linear-gradient(135deg, rgba(33, 109, 164, .3), rgba(35, 63, 115, .28));
+    border-color: rgba(92, 196, 255, .4);
+    box-shadow: inset 3px 0 0 #4acbff, 0 8px 24px rgba(4, 54, 92, .18);
+  }
+  .sf-chat-panel .orch-convo.unread {
+    border-color: rgba(92, 196, 255, .32);
+    background: rgba(26, 96, 143, .17);
+  }
+  .sf-chat-panel .orch-convo-face,
+  .sf-chat-panel .orch-human-face {
+    width: 36px;
+    height: 36px;
+    border-color: rgba(112, 212, 255, .4);
+    background: linear-gradient(145deg, #173c5a, #071523);
+  }
+  .sf-chat-panel .orch-convo-title { font-size: 12.5px; }
+  .sf-chat-panel .orch-convo-sub { color: #809bb4; }
+  .sf-chat-panel .orch-convo-state { font-size: 9.5px; }
+  .sf-chat-panel .orch-main {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at 88% 12%, rgba(39, 178, 255, .13), transparent 30%),
+      radial-gradient(circle at 74% 92%, rgba(50, 130, 217, .12), transparent 34%),
+      linear-gradient(145deg, #030b16 0%, #04101e 48%, #020812 100%);
+  }
+  .sf-chat-panel .orch-main::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: .68;
+    background-image:
+      radial-gradient(circle at 18% 23%, rgba(151, 225, 255, .75) 0 1px, transparent 1.8px),
+      radial-gradient(circle at 52% 12%, rgba(98, 205, 255, .55) 0 1px, transparent 1.8px),
+      radial-gradient(circle at 78% 39%, rgba(129, 184, 255, .62) 0 1px, transparent 1.9px),
+      radial-gradient(circle at 92% 76%, rgba(95, 181, 255, .58) 0 1px, transparent 1.8px),
+      radial-gradient(circle at 37% 84%, rgba(104, 193, 255, .38) 0 1px, transparent 1.7px);
+    background-size: 233px 197px, 311px 271px, 419px 383px, 257px 337px, 503px 449px;
+    mix-blend-mode: screen;
+  }
+  .sf-chat-panel .orch-main::after {
+    content: '';
+    position: absolute;
+    right: -14%;
+    bottom: -22%;
+    width: 72%;
+    height: 42%;
+    pointer-events: none;
+    opacity: .42;
+    border-top: 1px solid rgba(145, 221, 255, .6);
+    border-radius: 50%;
+    transform: rotate(-17deg);
+    box-shadow: 0 -8px 24px rgba(67, 185, 255, .12), 0 -18px 58px rgba(48, 125, 221, .11);
+  }
+  .sf-chat-panel .orch-msgs {
+    position: relative;
+    z-index: 1;
+    padding: 26px 32px 24px;
+    gap: 18px;
+    background: transparent;
+    scrollbar-color: rgba(89, 188, 241, .34) transparent;
+    scrollbar-width: thin;
+  }
+  .sf-chat-panel .orch-msgs::before {
+    content: 'Сегодня';
+    align-self: center;
+    flex: 0 0 auto;
+    padding: 0 12px;
+    color: #7894ad;
+    font-size: 10px;
+    letter-spacing: .04em;
+  }
+  .sf-chat-panel .orch-msg {
+    max-width: 78%;
+    padding: 15px 19px;
+    border-radius: 20px;
+    font-size: 14px;
+    line-height: 1.55;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  .sf-chat-panel .orch-msg.assistant {
+    background: linear-gradient(145deg, rgba(25, 47, 70, .72), rgba(8, 23, 39, .84));
+    border-color: rgba(120, 201, 255, .35);
+    border-bottom-left-radius: 9px;
+    color: #d6e5f3;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, .2), inset 0 1px 0 rgba(210, 245, 255, .08);
+  }
+  .sf-chat-panel .orch-msg.user {
+    max-width: 70%;
+    background: linear-gradient(145deg, rgba(39, 87, 130, .58), rgba(41, 50, 111, .54));
+    border-color: rgba(110, 200, 255, .38);
+    border-bottom-right-radius: 9px;
+    color: #e3f4ff;
+    box-shadow: 0 10px 28px rgba(10, 65, 111, .16), inset 0 1px 0 rgba(210, 245, 255, .07);
+  }
+  /* Human conversations retain their own teal/blue signature while using
+     the same bubble geometry as AI conversations. */
+  .sf-chat-panel .orch-msg.human.assistant {
+    background: linear-gradient(145deg, rgba(25, 74, 80, .72), rgba(8, 34, 41, .86));
+    border-color: rgba(88, 224, 206, .34);
+  }
+  .sf-chat-panel .orch-msg.human.user {
+    background: linear-gradient(145deg, rgba(35, 125, 177, .64), rgba(65, 74, 154, .62));
+    border-color: rgba(104, 211, 255, .52);
+  }
+  .sf-chat-panel .orch-msg.human .orch-msg-meta { color: #9bd1de; }
+  .sf-chat-panel .orch-msg-face.agent-face {
+    width: 44px;
+    height: 44px;
+    margin: -1px 0 0 -2px;
+    border: 1px solid rgba(106, 201, 255, .45);
+    border-radius: 12px;
+    background: linear-gradient(145deg, #112f4b, #061421);
+    box-shadow: 0 5px 18px rgba(0, 0, 0, .24);
+  }
+  .sf-chat-panel .orch-compose {
+    position: relative;
+    z-index: 2;
+    background: linear-gradient(180deg, rgba(3, 11, 21, .72), rgba(3, 9, 17, .98));
+    border-top-color: rgba(105, 193, 255, .18);
+  }
+  .sf-chat-panel .orch-input { padding: 15px 24px 20px; gap: 10px; }
+  .sf-chat-panel .orch-input textarea {
+    min-height: 62px;
+    padding: 15px 17px;
+    border-radius: 17px;
+    background: linear-gradient(145deg, rgba(16, 32, 51, .88), rgba(7, 18, 31, .9));
+    border-color: rgba(126, 199, 242, .28);
+    font-size: 14px;
+  }
+  .sf-chat-panel .orch-send,
+  .sf-chat-panel .orch-mic {
+    width: 54px;
+    height: 54px;
+    border-radius: 16px;
+  }
+  .sf-chat-panel .orch-send { box-shadow: 0 8px 24px rgba(33, 155, 235, .25); }
+}
+
+@media (max-width: 760px) {
+  .sf-chat-panel .orch-head-brand { display: inline-flex; }
+  .sf-chat-panel .orch-head-brand .sf-chat-mark { min-width: 44px; transform: scale(1.04); }
+  .sf-chat-panel .orch-head-name { font-size: 17px; }
+  .sf-chat-panel .orch-head-name::after { min-height: 20px; padding-inline: 7px; font-size: 9px; }
+  .sf-chat-panel #orch-skin-btn { min-width: 34px; width: 34px; padding: 0; }
+  .sf-chat-panel #orch-skin-btn::after { display: none; }
+  .sf-chat-panel .orch-body { display: flex; }
+  .sf-chat-panel .orch-drawer-scrim { display: block; }
+  .sf-chat-panel .orch-convos {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 3;
+    width: min(320px, 86%);
+    padding: 16px 12px;
+    transform: translateX(-105%);
+    visibility: hidden;
+    pointer-events: none;
+  }
+  .sf-chat-panel.show-convos .orch-convos { transform: translateX(0); visibility: visible; pointer-events: auto; }
+  .sf-chat-panel .orch-main::after { opacity: .28; }
+  .sf-chat-panel .orch-msgs { padding: 22px 14px 18px; gap: 14px; }
+  .sf-chat-panel .orch-msg { max-width: 92%; padding: 13px 15px; font-size: 14px; border-radius: 17px; }
+  .sf-chat-panel .orch-msg.user { max-width: 84%; }
+  .sf-chat-panel .orch-msg.human.assistant {
+    background: linear-gradient(145deg, rgba(25, 74, 80, .72), rgba(8, 34, 41, .86));
+    border-color: rgba(88, 224, 206, .34);
+  }
+  .sf-chat-panel .orch-msg.human.user {
+    background: linear-gradient(145deg, rgba(35, 125, 177, .64), rgba(65, 74, 154, .62));
+    border-color: rgba(104, 211, 255, .52);
+  }
+  .sf-chat-panel .orch-msg.human .orch-msg-meta { color: #9bd1de; }
+  .sf-chat-panel .orch-input { padding: 11px 12px 14px; }
+  .sf-chat-panel .orch-input textarea { min-height: 52px; font-size: 13px; }
+  .sf-chat-panel .orch-send,
+  .sf-chat-panel .orch-mic { width: 48px; height: 48px; border-radius: 14px; }
+}
