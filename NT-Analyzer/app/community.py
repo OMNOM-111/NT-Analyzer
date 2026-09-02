@@ -1147,6 +1147,46 @@ def list_social_profiles(
         return {"ok": True, "profiles": rows[:lim], "viewer": _public_profile(doc, viewer, viewer_id)}
 
 
+def _registration_milestone(
+    row: Dict[str, Any], viewer_profile_id: str = "",
+) -> Dict[str, Any]:
+    """The permanent first entry on a profile wall.
+
+    Derived from the profile's own registration fields rather than stored as a
+    post, which makes every property the product asks for true by construction:
+    it exists exactly once, cannot be deleted or edited, carries a date nobody
+    can change, and neither a restart, a re-login, an import nor a migration can
+    produce a second copy. Nothing here is invented — an absent field is
+    reported as absent.
+
+    Account status is only ever reported for the member's own profile. Another
+    member's wall shows the registration date, which is already public, and
+    nothing about the state of their account.
+    """
+    pid = str(row.get("profile_id") or "")
+    registered = str(row.get("joined_at_utc") or row.get("created_at_utc") or "")
+    created = str(row.get("created_at_utc") or "")
+    # Only a genuinely distinct activation moment is reported as one.
+    activated = created if (created and registered and created != registered) else ""
+    is_self = bool(viewer_profile_id and pid == viewer_profile_id)
+    status = ""
+    if is_self:
+        try:
+            from . import account_auth
+            account = account_auth.find_active_user(_safe_int(row.get("user_id")))
+            status = str((account or {}).get("status") or "")
+        except Exception:
+            status = ""
+    return {
+        "kind": "registration",
+        "profile_id": pid,
+        "registered_at_utc": registered,
+        "activated_at_utc": activated,
+        "account_status": status,
+        "is_self": is_self,
+    }
+
+
 def social_profile(
     user_id: Any, profile_id: str, *, user_uuid: Any = "", posts_limit: int = 20,
 ) -> Dict[str, Any]:
@@ -1167,6 +1207,7 @@ def social_profile(
         return {
             "ok": True,
             "profile": _public_profile(doc, target, viewer_id),
+            "registration": _registration_milestone(target, viewer_id),
             "posts": posts,
         }
 

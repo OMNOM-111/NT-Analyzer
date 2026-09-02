@@ -331,6 +331,67 @@ DSN; пока он не выполнялся ни разу.
 `test_repository_failure_fails_closed_instead_of_falling_back`. Не-участник и
 несуществующий диалог дают один и тот же `404`, без оракула существования.
 
+## Community information architecture and the registration milestone
+
+Закреплена модель навигации `LEFT = discovery / CENTER = current context /
+RIGHT = me` и добавлена системная запись о регистрации. Rich post cards, social
+dock, структура Recommendation, SF Chat, PostgreSQL/RLS, Backtest, Connector и
+Orchestrator не переделывались.
+
+### Профиль участника открывается в центре, а не поверх Community
+
+- Раньше `openProfile` рисовал профиль в `#community-profile-modal` —
+  полноэкранный overlay `position: fixed; inset: 0; z-index: 110` с backdrop и
+  `body.community-modal-open { overflow: hidden }`. Он перекрывал всё
+  приложение, включая правую колонку.
+- Теперь центральная область переключается на стену участника
+  (`#community-profile-view`) с явным возвратом `← Recommendation`, который
+  называет ту ленту, из которой пришёл читатель. Overlay и его разметка
+  удалены; Escape и кнопка возврата ведут в поток.
+- Aurora route не менялся: это навигация внутри Community, как уже было
+  сделано для `community-channels-view`.
+
+### Правая колонка всегда принадлежит текущему пользователю
+
+Аудит подтвердил, что `loadWall()` читает `STATE.viewer` и запрашивает
+`communityV2Profile(viewer.profile_id)`; она никогда не переключалась на чужой
+профиль. Раньше это работало потому, что чужой профиль открывался поверх всего;
+теперь, когда центр меняет контекст, инвариант зафиксирован контрактным тестом.
+
+### Системная запись о регистрации
+
+Аудит показал, что такого объекта в backend **не существовало** — ни поля, ни
+поста, ни миграции. Реализовано канонично на сервере: `_registration_milestone`
+выводит запись из собственных полей профиля и отдаётся в `social_profile` как
+`registration`.
+
+Запись **выводится**, а не хранится отдельным постом. Это делает все требования
+истинными по построению: она существует ровно один раз, её нельзя удалить или
+изменить, дату невозможно переписать, а повторный login, перезапуск, импорт или
+миграция не могут создать второй экземпляр — дублировать просто нечего.
+Никакой JavaScript её не выдумывает: страница рисует только то, что вернул
+сервер.
+
+Содержимое строго фактическое:
+
+- `registered_at_utc` — `joined_at_utc` профиля (иначе `created_at_utc`);
+- `activated_at_utc` — только если момент активации действительно отличается от
+  регистрации, иначе поле пустое и в интерфейсе не рисуется;
+- `account_status` — **только на собственном профиле**. Чужая стена показывает
+  дату регистрации, которая и так публична, и ничего о состоянии чужого
+  аккаунта.
+
+Карточка стоит первой на стене — и на своей (правая колонка), и на чужой
+(центр), — перед обычными публикациями. Она компактная, в общей Orbital Glass
+эстетике, с системным знаком и статус-строкой, без Like/Share: это часть
+истории продукта, а не социальный пост. В `Закладках` она не показывается —
+там чужие публикации, а не история этого профиля.
+
+### Messaging
+
+`Написать` на чужом профиле по-прежнему открывает единый SF Chat через
+`sfChatStartConversation` + `UI.openSFChat`; отдельного Community Messenger нет.
+
 ## Storage, migration and security
 
 - Development использует атомарные local documents. Explicit Canary/Production
@@ -347,6 +408,29 @@ DSN; пока он не выполнялся ни разу.
   idempotency, pagination, privacy и non-enumerating ACL.
 
 ## Verification and honest remaining scope
+
+- Community IA pass: focused Community/UI contract suite и полная регрессия
+  `2525 passed, 42 skipped` за `366.80s`. Новые тесты:
+  `test_registration_milestone_is_derived_single_and_immutable`,
+  `test_registration_milestone_reports_absent_facts_as_absent`, плюс
+  расширенный `test_community_v2_and_unified_sf_chat_are_real_api_backed_surfaces`,
+  который теперь запрещает возврат overlay и требует, чтобы правая колонка
+  читала `viewer.profile_id`, а карточка регистрации приходила с сервера.
+- `node --check`, `py_compile`, `git diff --check`, External GPT Context
+  validator, `pre_release_check.py` (474 files): PASS.
+- **Browser QA сценариев A–D не выполнена.** Перезапуск DEV-сервера в
+  предыдущем проходе потерял окружение владельца: `NTA_TELEGRAM_CHAT_ID` и
+  data-root не заданы ни в user, ни в machine environment, а единственный
+  `accounts.dpapi` лежит в основном репозитории, а не в этом worktree. Поэтому
+  `primary_owner_id()` равен 0 и Community/SF Chat отвечают `401`. Создать
+  владельца в одноразовом data-root нельзя: `ensure_owner` намеренно требует
+  подтверждение через Telegram, и этот контроль не обходился.
+- Что проверено в браузере без сессии: структура (профильная секция и кнопка
+  возврата присутствуют, overlay удалён, правая стена на месте), отсутствие
+  horizontal overflow (`1110 < 1120`, `1600 = 1600`) и внешний вид
+  `← Recommendation` и milestone-карточки в центре и в правой колонке на
+  реальной разметке и реальном CSS. Console errors в этом состоянии —
+  исключительно `401`/`connection refused` из-за отсутствующей сессии.
 
 - Relational read-path pass: focused Community/SF Chat/storage/UI contract suite
   `106 passed, 21 skipped` (пропуски — acceptance-тесты PostgreSQL без DSN);

@@ -446,3 +446,57 @@ def test_social_soft_delete_and_owner_moderation_queue(community_store):
     deleted = community.delete_social_post(42, own["post_id"])
     assert deleted == {"ok": True, "post_id": own["post_id"], "deleted": True, "soft_delete": True}
     assert alice["profile_id"]
+
+
+def test_registration_milestone_is_derived_single_and_immutable():
+    """The registration entry is a property of the profile, not a stored post.
+
+    Deriving it from the profile's own registration fields makes every rule the
+    product asks for true by construction: exactly one exists, nobody can delete
+    or back-date it, and a re-login, restart, import or migration cannot produce
+    a second copy — there is no row to duplicate.
+    """
+    owner = community.ensure_social_profile(
+        4242, display_name="Milestone Owner", username="milestone_owner",
+    )["profile"]
+    other = community.ensure_social_profile(
+        4343, display_name="Milestone Other", username="milestone_other",
+    )["profile"]
+
+    own = community.social_profile(4242, owner["profile_id"])
+    milestone = own["registration"]
+    assert milestone["kind"] == "registration"
+    assert milestone["profile_id"] == owner["profile_id"]
+    assert milestone["registered_at_utc"] == owner["joined_at_utc"]
+    assert milestone["is_self"] is True
+
+    # Repeated reads and a re-ensured profile never create or move a second one.
+    community.ensure_social_profile(
+        4242, display_name="Milestone Owner", username="milestone_owner",
+    )
+    again = community.social_profile(4242, owner["profile_id"])["registration"]
+    assert again == milestone
+
+    # It is not a post: publishing does not add it and deleting cannot remove it.
+    assert all(str(post.get("kind") or "") != "registration"
+               for post in own["posts"])
+
+    # Another member sees the real registration date and nothing about the
+    # state of that account.
+    seen = community.social_profile(4242, other["profile_id"])["registration"]
+    assert seen["profile_id"] == other["profile_id"]
+    assert seen["registered_at_utc"] == other["joined_at_utc"]
+    assert seen["is_self"] is False
+    assert seen["account_status"] == ""
+
+
+def test_registration_milestone_reports_absent_facts_as_absent():
+    """No invented dates: an activation that never happened is not rendered."""
+    profile = community.ensure_social_profile(
+        4444, display_name="No Activation", username="no_activation",
+    )["profile"]
+    milestone = community.social_profile(4444, profile["profile_id"])["registration"]
+    assert milestone["registered_at_utc"]
+    # joined_at_utc and created_at_utc coincide for a fresh profile, so there is
+    # no separate activation moment to claim.
+    assert milestone["activated_at_utc"] == ""

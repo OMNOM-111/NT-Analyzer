@@ -697,10 +697,16 @@ def test_community_v2_and_unified_sf_chat_are_real_api_backed_surfaces():
         "community-feed",
         "community-composer-v2",
         "community-profile-wall-feed",
-        "community-profile-modal",
+        "community-profile-view",
         "community-channels-view",
     ):
         assert contract in html
+    # A member's wall is a place inside Community, not an overlay over it: the
+    # centre column swaps context and offers the way back.
+    assert "community-profile-modal" not in html
+    assert 'id="community-profile-back"' in html
+    assert 'id="community-profile-detail-center"' in html
+    assert "setCenterMode('profile')" in page and "setCenterMode(STATE.view === 'channels'" in page
     assert "community-hero" not in html
     assert "Торговое сообщество внутри StratForge" not in html
     assert 'id="community-nav"' not in html
@@ -718,6 +724,17 @@ def test_community_v2_and_unified_sf_chat_are_real_api_backed_surfaces():
     assert "openProfileVisibility" in page and "communityV2UpdateProfile" in page
     assert "community-post-action" in page and "actionIcon" in page
     assert "server-attested" in page
+
+    # The right column belongs to the signed-in member and never follows the
+    # profile opened in the centre.
+    assert "communityV2Profile(viewer.profile_id" in page
+    assert "communityV2Profile(profileId" in page
+    # The registration entry is rendered from the server's derived object; the
+    # page must not mint a date or a status of its own.
+    assert "registrationCardHtml(doc.registration" in page
+    assert "registration.registered_at_utc" in page
+    assert "Поздравляем с регистрацией в StratForge!" in page
+    assert "_registration_milestone" in (ROOT / "app" / "community.py").read_text(encoding="utf-8")
     assert "sfChatStartConversation" in page and "UI.openSFChat" in page
     assert "mock" not in page.lower()
     assert "sfChatConversations" in ui and "sfChatConversation" in ui and "sfChatMessage" in ui

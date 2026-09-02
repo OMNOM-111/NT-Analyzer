@@ -60,6 +60,14 @@
         <section class="community-feed" id="community-feed" aria-live="polite"><div class="community-feed-loading"><div class="community-skeleton post"></div><div class="community-skeleton post"></div></div></section>
         <button type="button" class="btn ghost community-load-more" id="community-load-more" hidden>Показать ещё</button>
 
+        <section class="community-profile-view" id="community-profile-view" hidden aria-label="Профиль участника">
+          <div class="community-profile-view-bar">
+            <button type="button" class="community-profile-back" id="community-profile-back"><span aria-hidden="true">←</span><span id="community-profile-back-label">Recommendation</span></button>
+            <span class="community-profile-view-kind">Профиль трейдера</span>
+          </div>
+          <div id="community-profile-detail-center"><div class="community-skeleton profile"></div></div>
+        </section>
+
         <section class="community-channels-view" id="community-channels-view" hidden>
           <div class="community-channel-head">
             <div><span class="community-eyebrow">РАБОЧИЕ КАНАЛЫ</span><h2 id="c-channel-title">Общий чат</h2><p id="c-channel-hint">Обсуждение внутри текущего workspace</p></div>
@@ -91,13 +99,6 @@
     </div>
   </div>
 
-  <div class="community-profile-modal" id="community-profile-modal" hidden>
-    <button type="button" class="community-modal-backdrop" data-community-profile-close aria-label="Закрыть профиль"></button>
-    <section class="community-profile-dialog" role="dialog" aria-modal="true" aria-labelledby="community-profile-name">
-      <button type="button" class="community-profile-close" data-community-profile-close aria-label="Закрыть">×</button>
-      <div id="community-profile-detail"><div class="community-skeleton profile"></div></div>
-    </section>
-  </div>
 
   <div class="community-visibility-modal" id="community-visibility-modal" hidden>
     <button type="button" class="community-modal-backdrop" data-community-visibility-close aria-label="Закрыть настройки видимости"></button>

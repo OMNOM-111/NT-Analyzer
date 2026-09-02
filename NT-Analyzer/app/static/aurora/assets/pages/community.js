@@ -8,6 +8,13 @@
     feed: null, profiles: [], viewer: null, pendingPostFiles: [],
     wallTab: 'posts', wallRequest: 0, wallSavedCount: 0,
     channel: 'general', channelFeed: null, threadRootId: '', pendingChannelFiles: [],
+    centerMode: 'stream', openProfileId: '', loadMoreVisible: false,
+  };
+  // The centre column's heading, reused by the back control so it names the
+  // stream the reader actually came from.
+  const STREAM_TITLES = {
+    'for-you': 'Recommendation', following: 'Подписки',
+    saved: 'Сохранённое', channels: 'Каналы',
   };
 
   function q(value, root) { return UI.qs(value, root); }
@@ -389,10 +396,14 @@
       if (doc.profile) renderViewer(profile);
       updateWallCounts(profile, savedCount);
       const posts = sortPosts(doc.posts || []);
-      host.innerHTML = posts.map(post => postHtml(post, 'wall')).join('') || renderEmpty(
+      // The registration entry heads the member's own wall too, and only the
+      // wall — bookmarks are someone else's posts, not this profile's history.
+      const milestone = STATE.wallTab === 'saved' ? '' : registrationCardHtml(doc.registration, profile);
+      const body = posts.map(post => postHtml(post, 'wall')).join('') || renderEmpty(
         STATE.wallTab === 'saved' ? 'Закладок пока нет' : 'На стене пока тихо',
         STATE.wallTab === 'saved' ? 'Сохранённые rich-публикации появятся здесь.' : 'Опубликуйте идею или подтверждённый результат.',
       );
+      host.innerHTML = milestone + body;
       wirePostActions(host);
     } catch (error) {
       if (requestId === STATE.wallRequest) UI.renderError(host, error, loadWall);
@@ -430,7 +441,8 @@
         wirePostActions(host);
         scrollToSharedPost();
       }
-      const more = q('#community-load-more'); if (more) more.hidden = !STATE.cursor;
+      STATE.loadMoreVisible = !!STATE.cursor;
+      const more = q('#community-load-more'); if (more) more.hidden = !STATE.cursor || STATE.centerMode === 'profile';
       setStatus(`${Number(doc.total_visible || posts.length)} публикаций`, 'ready');
       await loadWall();
     } catch (error) {
@@ -517,13 +529,12 @@
     const channelsView = q('#community-channels-view'); const feed = q('#community-feed');
     const composer = q('#community-composer-card'); const more = q('#community-load-more');
     const sort = q('.community-sort'); const title = q('#community-stream-title');
-    const titles = { 'for-you': 'Recommendation', following: 'Подписки', saved: 'Сохранённое', channels: 'Каналы' };
-    if (title) title.textContent = titles[STATE.view] || titles['for-you'];
+    if (title) title.textContent = STREAM_TITLES[STATE.view] || STREAM_TITLES['for-you'];
     if (sort) sort.hidden = channels;
     if (channelsView) channelsView.hidden = !channels;
     if (feed) feed.hidden = channels;
     if (composer) composer.hidden = channels || STATE.view === 'saved';
-    if (more && channels) more.hidden = true;
+    if (more && channels) { more.hidden = true; STATE.loadMoreVisible = false; }
   }
   async function setView(view) {
     if (view === 'profile') {
@@ -532,7 +543,9 @@
       return;
     }
     STATE.view = ['for-you', 'following', 'saved', 'channels'].includes(view) ? view : 'for-you';
-    STATE.cursor = ''; syncViewButtons();
+    STATE.cursor = ''; STATE.openProfileId = '';
+    setCenterMode(STATE.view === 'channels' ? 'channels' : 'stream');
+    syncViewButtons();
     if (STATE.view === 'channels') await loadChannels(); else await loadFeed(true);
   }
   function syncSortButtons() {
@@ -548,18 +561,81 @@
     });
   }
 
+  // A member's wall is a place inside Community, not an overlay on top of it.
+  // The centre column carries the current context and offers the way back; the
+  // right column stays the signed-in member throughout.
+  function setCenterMode(mode) {
+    STATE.centerMode = mode;
+    const showingProfile = mode === 'profile';
+    const profileView = q('#community-profile-view');
+    if (profileView) profileView.hidden = !showingProfile;
+    const toolbar = document.querySelector('.community-stream-toolbar');
+    if (toolbar) toolbar.hidden = showingProfile;
+    ['#community-composer-card', '#community-feed'].forEach(selector => {
+      const node = q(selector);
+      if (node) node.hidden = showingProfile;
+    });
+    const more = q('#community-load-more');
+    if (more) more.hidden = showingProfile ? true : !STATE.loadMoreVisible;
+    if (showingProfile) {
+      const channels = q('#community-channels-view');
+      if (channels) channels.hidden = true;
+    }
+  }
+  // The registration entry is server-derived from the profile's own fields, so
+  // it cannot be duplicated, deleted or back-dated here. Absent facts are left
+  // out rather than filled in.
+  function registrationCardHtml(registration, profile) {
+    if (!registration || !registration.registered_at_utc) return '';
+    const name = String((profile && profile.display_name) || 'Участник');
+    const facts = [
+      '<span><small>Дата регистрации</small><strong>' + esc(fmtDate(registration.registered_at_utc)) + '</strong></span>',
+    ];
+    if (registration.activated_at_utc) {
+      facts.push('<span><small>Дата активации</small><strong>' + esc(fmtDate(registration.activated_at_utc)) + '</strong></span>');
+    }
+    if (registration.account_status) {
+      facts.push('<span><small>Статус аккаунта</small><strong>' + esc(registration.account_status) + '</strong></span>');
+    }
+    return '<article class="community-milestone" aria-label="Системная запись">'
+      + '<header><span class="community-milestone-mark" aria-hidden="true">◈</span>'
+      + '<div><strong>Поздравляем с регистрацией в StratForge!</strong>'
+      + '<small>Системная запись · ' + esc(name) + '</small></div>'
+      + '<span class="community-milestone-tag">Защищённая запись</span></header>'
+      + '<p>Профиль создан в StratForge. Доступны модули стратегий, графиков и отчётов.</p>'
+      + '<div class="community-milestone-facts">' + facts.join('') + '</div>'
+      + '</article>';
+  }
   async function openProfile(profileId) {
     if (!profileId) return;
-    const modal = q('#community-profile-modal'); const host = q('#community-profile-detail');
-    if (!modal || !host) return;
-    modal.hidden = false; syncModalLock();
+    const host = q('#community-profile-detail-center');
+    if (!host) return;
+    STATE.openProfileId = profileId;
+    setCenterMode('profile');
+    const backLabel = q('#community-profile-back-label');
+    if (backLabel) backLabel.textContent = STREAM_TITLES[STATE.view] || 'Recommendation';
     host.innerHTML = '<div class="community-skeleton profile"></div>';
     try {
       const doc = await API.http.communityV2Profile(profileId, { posts_limit: 30 });
+      if (STATE.openProfileId !== profileId) return;
       const profile = doc.profile || {};
-      host.innerHTML = `<div class="community-profile-hero"><div class="community-profile-cover"><span>SF</span></div>${avatar(profile, 'xxl')}<div class="community-profile-identity"><span class="community-role">${esc(profile.role_label)}</span><h2 id="community-profile-name">${esc(profile.display_name)}</h2><span>@${esc(profile.username)}</span><p>${esc(profile.bio || 'Описание пока не заполнено.')}</p>${profileStats(profile)}<div class="community-profile-actions">${profile.is_self
+      const actions = profile.is_self
         ? '<button type="button" class="btn primary" data-modal-edit>Редактировать профиль</button>'
-        : `<button type="button" class="btn ${profile.is_following ? 'ghost' : 'primary'}" data-follow="${esc(profile.profile_id)}" data-following="${profile.is_following ? '1' : '0'}">${profile.is_following ? 'Вы читаете' : 'Подписаться'}</button>${profile.can_message ? `<button type="button" class="btn ghost" data-message-profile="${esc(profile.profile_id)}">Сообщение</button>` : ''}<button type="button" class="btn ghost" data-block-profile="${esc(profile.profile_id)}">Заблокировать</button>`}</div></div></div><div class="community-profile-wall"><h3>Публикации</h3>${(doc.posts || []).map(postHtml).join('') || renderEmpty('На стене пока тихо', 'Публикации появятся здесь.')}</div>`;
+        : '<button type="button" class="btn ' + (profile.is_following ? 'ghost' : 'primary') + '" data-follow="' + esc(profile.profile_id) + '" data-following="' + (profile.is_following ? '1' : '0') + '">' + (profile.is_following ? 'Вы читаете' : 'Подписаться') + '</button>'
+          + (profile.can_message ? '<button type="button" class="btn ghost" data-message-profile="' + esc(profile.profile_id) + '">Написать</button>' : '')
+          + '<button type="button" class="btn ghost" data-block-profile="' + esc(profile.profile_id) + '">Заблокировать</button>';
+      const wall = (doc.posts || []).map(postHtml).join('')
+        || renderEmpty('На стене пока тихо', 'Публикации появятся здесь.');
+      host.innerHTML = '<div class="community-profile-hero"><div class="community-profile-cover"><span>SF</span></div>'
+        + avatar(profile, 'xxl')
+        + '<div class="community-profile-identity"><span class="community-role">' + esc(profile.role_label) + '</span>'
+        + '<h2 id="community-profile-name">' + esc(profile.display_name) + '</h2>'
+        + '<span>@' + esc(profile.username) + '</span>'
+        + '<p>' + esc(profile.bio || 'Описание пока не заполнено.') + '</p>'
+        + profileStats(profile)
+        + '<div class="community-profile-actions">' + actions + '</div></div></div>'
+        + '<div class="community-profile-wall"><h3>Стена ' + esc(profile.display_name || 'участника') + '</h3>'
+        + registrationCardHtml(doc.registration, profile) + wall + '</div>';
       wirePeopleActions(host); wirePostActions(host);
       const edit = q('[data-modal-edit]', host); if (edit) edit.onclick = () => editProfile(profile);
       const message = q('[data-message-profile]', host); if (message) message.onclick = () => startMessage(message.dataset.messageProfile);
@@ -571,9 +647,11 @@
     } catch (error) { UI.renderError(host, error, () => openProfile(profileId)); }
   }
   function closeProfile() {
-    const modal = q('#community-profile-modal'); if (modal) modal.hidden = true;
+    STATE.openProfileId = '';
+    setCenterMode(STATE.view === 'channels' ? 'channels' : 'stream');
     syncModalLock();
   }
+
   async function startMessage(profileId) {
     try {
       const out = await API.http.sfChatStartConversation(profileId);
@@ -584,11 +662,9 @@
     } catch (error) { UI.reportError(error); }
   }
   function syncModalLock() {
-    const profileModal = q('#community-profile-modal');
     const visibilityModal = q('#community-visibility-modal');
-    const profileOpen = profileModal && !profileModal.hidden;
     const visibilityOpen = visibilityModal && !visibilityModal.hidden;
-    document.body.classList.toggle('community-modal-open', Boolean(profileOpen || visibilityOpen));
+    document.body.classList.toggle('community-modal-open', Boolean(visibilityOpen));
   }
   function openProfileVisibility(profile) {
     const modal = q('#community-visibility-modal');
@@ -695,14 +771,14 @@
       syncWallTabs(); loadWall();
     });
     qa('[data-community-profile-close]').forEach(button => button.onclick = closeProfile);
+    const backButton = q('#community-profile-back'); if (backButton) backButton.onclick = closeProfile;
     qa('[data-community-visibility-close]').forEach(button => button.onclick = closeProfileVisibility);
     const visibilityForm = q('#community-visibility-form'); if (visibilityForm) visibilityForm.onsubmit = saveProfileVisibility;
     document.addEventListener('keydown', event => {
       if (event.key !== 'Escape') return;
       const visibilityModal = q('#community-visibility-modal');
-      const profileModal = q('#community-profile-modal');
       if (visibilityModal && !visibilityModal.hidden) closeProfileVisibility();
-      else if (profileModal && !profileModal.hidden) closeProfile();
+      else if (STATE.centerMode === 'profile') closeProfile();
     });
     q('#community-post-submit').onclick = submitPost;
     const resultButton = q('[data-community-object="result"]'); if (resultButton) resultButton.onclick = openResultPublisher;
