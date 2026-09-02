@@ -7,9 +7,11 @@ Change summary: В изолированной Community-ветке создан�
 Source branch: `codex/community-social-network`
 Checkpoint commit: `d5a77e9392e1`
 Final implementation commit: `a2cc5e72a610d22605a1af0aaacfcb03341456d5`
+Approved-reference UI commit: `f475568475290df2161da9b6fe5da3b73342939b`
 Pull request: [#270](https://github.com/OMNOM-111/NT-Analyzer/pull/270)
-Verification result: `PASS` for Development automated gates; credentialed
-PostgreSQL, manual visual, PR/CI and release gates remain explicitly separate.
+Verification result: `PASS` for Development automated gates and isolated local
+browser QA; credentialed PostgreSQL, owner visual acceptance, PR/CI and release
+gates remain explicitly separate.
 Release impact: Development only; Canary/Production не изменялись.
 
 ## Пользовательский результат
@@ -26,6 +28,23 @@ Release impact: Development only; Canary/Production не изменялись.
 - Завершённый Demo/Backtest job можно опубликовать только через повторную
   server-side ownership проверку и immutable allowlisted SHA-256 snapshot.
   Клиент не может подменить P&L; raw trades/bars/source/path не публикуются.
+
+## Owner-reference visual refinement
+
+- Большой Community hero удалён. Рабочая область стала плотной трёхзонной
+  композицией: компактный social dock, доминирующая центральная лента и
+  полноценная profile/wall-панель с публикациями и закладками.
+- Composer сокращён до avatar/input и явных действий. Strategy, Backtest,
+  Result и Chart отображаются как rich StratForge objects с типом, источником,
+  метриками, семантикой P&L/drawdown и безопасным chart preview, когда серия
+  действительно присутствует в публичном snapshot.
+- Поиск принимает имя, `@username` и `#hashtag`; сортировка по времени и
+  релевантности, profile wall и bookmarks проверены через реальный UI/API.
+- Browser QA выполнена в изолированном Development runtime на порту `8875`:
+  desktop `1920x1080`/`1280x720`, tablet `1024x768` и mobile `390x844` без
+  document-level horizontal overflow и без новых console warnings/errors.
+  Синтетические LOCAL QA PREVIEW записи находятся только в изолированном
+  runtime state, явно помечены и не являются торговыми результатами.
 
 ## Storage, migration and security
 
@@ -50,12 +69,13 @@ Release impact: Development only; Canary/Production не изменялись.
   and External GPT Context Pack validator: PASS.
 - Git-indexed `pre_release_check.py`: PASS (`474` bundle files; in-bundle
   static scan, runtime reads, Python compile and shipped JavaScript syntax).
-- Pull request #270 required CI: `5/5 PASS` (Static gates, Ubuntu, Windows
-  self-hosted, bridge gate and python-tests) before this closeout-only update.
+- Pull request #270 required CI was `5/5 PASS` at the pre-refinement
+  `d3fa41bcd0493d11ab9d85fbb6a33e4a94f29aef` checkpoint. The UI refinement
+  requires its own fresh PR checks after push before any merge decision.
 - Real PostgreSQL tests require explicit acceptance DSNs and remain separately
   reported when unavailable; no database or server was mutated by this task.
 - Strategy metadata, Chart snapshot and Live result adapters remain disabled,
-  not simulated. Manual browser visual acceptance and Canary/Production are
-  separate gates.
+  not simulated. Owner visual acceptance and Canary/Production are separate
+  gates.
 - Backtest/Connector, market data, trading and future `МИР АГЕНТОВ` were not
   changed. Any integration change starts a new immutable artifact cycle.
