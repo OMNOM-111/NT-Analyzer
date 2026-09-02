@@ -41,10 +41,24 @@ VIEWER_USER = 9101
 PARTNER_BASE = 9200
 
 
+def _service_scope(conn) -> None:
+    """Give a raw fixture connection the scope the service always sets.
+
+    Every table carries FORCE ROW LEVEL SECURITY and a policy of
+    `sf_scope_global() OR user_id = sf_scope_user()`. `PostgresClient`
+    establishes that scope per transaction; a bare psycopg connection does not,
+    so seeding would be refused by the very policy the suite exists to prove.
+    Setting it here keeps RLS enforced rather than granting the fixture
+    BYPASSRLS, which would switch the protection off instead of satisfying it.
+    """
+    conn.execute("SELECT set_config('stratforge.service_scope', 'global', false)")
+
+
 def _truncate(admin_url: str) -> None:
     import psycopg
 
     with psycopg.connect(admin_url, autocommit=True) as conn:
+        _service_scope(conn)
         conn.execute(
             """
             TRUNCATE sf_chat_reads, sf_chat_messages, sf_chat_participants,
@@ -124,6 +138,7 @@ def seeded():
     viewer, community_doc, chat_doc = _build_document(conversations, messages_each)
 
     with psycopg.connect(ADMIN_URL, autocommit=True) as conn:
+        _service_scope(conn)
         conn.execute(
             "INSERT INTO sf_users(user_id,status,is_owner,document) VALUES(%s,'active',TRUE,'{}'::jsonb)",
             (VIEWER_USER,),
@@ -134,11 +149,19 @@ def seeded():
                 (PARTNER_BASE + index,),
             )
 
-    client = PostgresClient(APP_URL, production=True)
+    # Loopback acceptance instance, not a Production endpoint: the production
+    # client would (correctly) demand TLS that a throwaway local server has no
+    # certificate for.
+    client = PostgresClient(APP_URL, production=False)
     documents = DocumentRepository(client)
+    # The repository refuses a blind write: a document must be read first so a
+    # concurrent update cannot be clobbered. Seeding follows the same rule.
+    documents.read("community", {})
     documents.write("community", community_doc)
+    documents.read("sf_chat", {})
     documents.write("sf_chat", chat_doc)
     with psycopg.connect(ADMIN_URL, autocommit=True) as conn:
+        _service_scope(conn)
         conn.execute("ANALYZE sf_chat_messages")
         conn.execute("ANALYZE sf_chat_conversations")
         conn.execute("ANALYZE sf_chat_participants")

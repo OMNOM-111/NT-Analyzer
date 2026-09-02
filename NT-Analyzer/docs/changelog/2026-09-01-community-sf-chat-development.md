@@ -457,6 +457,83 @@ Orchestrator не переделывались.
 `account_status` не раскрывается; на чистой вкладке console errors и warnings
 равны нулю; horizontal overflow равен нулю (`1785 = 1785`, `1600 = 1600`).
 
+## PostgreSQL acceptance executed for the first time
+
+Ранее пропускавшийся PostgreSQL-набор впервые выполнен против настоящей базы.
+
+### Контур
+
+Portable PostgreSQL **17.6** (binaries-only ZIP, `329 891 687` B, официальная
+дистрибуция EnterpriseDB), распакован в изолированную папку acceptance-контура
+вне репозитория, поднят в user space через `initdb`/`pg_ctl` на
+`127.0.0.1:55432`, `listen_addresses = '127.0.0.1'`. Без Windows service, без
+admin/UAC, полностью удаляемо. Роли и база созданы существующим
+`deploy/testing/provision-test-postgres.sql`; заданы только
+`STRATFORGE_TEST_POSTGRES_ADMIN_URL` и `STRATFORGE_TEST_POSTGRES_URL`.
+Production DB/data root не использовались.
+
+### Результат: 9/9 PASS
+
+`tests/test_sf_chat_relational_postgres.py` — `9 passed`. Проверено на живой
+базе: keyset-обход без повторов, unread и последнее сообщение одним statement,
+обратная пагинация истории без пересечений, `EXPLAIN` без
+`Seq Scan on sf_chat_messages`, индексный резолв identity, отказ не-участнику,
+markers-only опрос, профили страницы одним statement, восемь одновременных
+читателей.
+
+Три дефекта были в самой фикстуре, не в продукте, и исправлены: сырые
+соединения не выставляли `stratforge.service_scope`, из-за чего FORCE RLS
+справедливо отклонял seed (исправлено установкой scope, а не выдачей
+`BYPASSRLS` — защита осталась включённой); клиент создавался с
+`production=True` и требовал TLS, которого у локального сервера нет; seed писал
+документ без предварительного чтения, что запрещено оптимистической блокировкой.
+
+### Реальные измерения latency (PostgreSQL 17.6, медиана из 7)
+
+| Объём | conversation list | first history page | idle poll | unread | switch | 8 сессий |
+| --- | --- | --- | --- | --- | --- | --- |
+| 5 диалогов / 200 сообщений | `67.8` мс | `66.1` мс | `66.8` мс | `54.5` мс | `57.2` мс | `193.5` мс |
+| 50 / 5 000 | `66.2` | `51.7` | `87.3` | `64.5` | `163.7` | `310.9` |
+| 500 / 25 000 | `66.2` | `53.2` | `73.7` | `73.4` | `74.9` | `236.5` |
+| 2 000 / 50 000 | `69.8` | `61.9` | `94.1` | `104.6` | `63.7` | `384.3` |
+
+Вторая страница списка (`68.6` мс при 2 000) и вторая страница истории (`51.3`
+мс) стоят столько же, сколько первые. `Seq Scan` по `sf_chat_messages`
+отсутствует везде, кроме 200 сообщений, где планировщик закономерно
+предпочитает его индексу на такой таблице.
+
+### Главное наблюдение: latency упирается не в запросы
+
+| Операция | медиана |
+| --- | --- |
+| `client.transaction()` + `SELECT 1` | `51.2` мс |
+| голое `psycopg.connect` + `SELECT 1` | `44.6` мс |
+| постоянное соединение, `SELECT 1` | `0.1` мс |
+
+То есть ~`45` мс каждого замера — установка TCP-соединения и аутентификация:
+`PostgresClient` открывает новое соединение на каждый вызов. Собственная работа
+запросов — единицы миллисекунд и **не растёт** с объёмом: список диалогов при
+2 000 диалогов стоит примерно `69.8 - 51.2 ≈ 19` мс сверх соединения. Connection
+pooling — очевидный следующий шаг для production, но вслепую он здесь не
+внедрялся.
+
+### Два других PostgreSQL-набора: предсуществующий bit-rot
+
+`tests/test_production_storage.py` (`10 failed, 2 passed`) и
+`tests/test_production_workers.py` (`12 errors`) впервые выполнились и показали
+собственную устаревшесть, не связанную с Community/SF Chat:
+
+- workers: те же сырые соединения без `stratforge.service_scope` (12 ошибок);
+- storage: `Auth user UUID is required during the identity transition` (8 раз) —
+  фикстуры сеют пользователей без `user_uuid`; один тест требует TLS от
+  локального DSN; `test_workspace_membership_upsert_defect` падает с
+  `NameError: name 'core' is not defined` и вызывает `core.init_pool()` /
+  `core._pool`, которых в текущем `production_storage/core.py` нет вовсе.
+
+Ни один из этих файлов не менялся в этой задаче. Это отдельные подсистемы
+(auth identity transition, production workers); чинить их здесь значило бы
+расширить PR за его предмет. Зафиксировано как отдельная работа.
+
 ## Storage, migration and security
 
 - Development использует атомарные local documents. Explicit Canary/Production
