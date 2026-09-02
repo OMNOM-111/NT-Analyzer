@@ -7472,8 +7472,16 @@
     qs('#orch-new', panel).addEventListener('click', () => { orchCloseSkinMenu(); orchNewConversation(); });
     qs('#orch-new-side', panel).addEventListener('click', () => { orchCloseSkinMenu(); orchNewConversation(); });
     qs('#orch-convo-search', panel).addEventListener('input', (e) => {
-      ORCH.listQuery = String(e.target.value || '').trim().toLocaleLowerCase('ru-RU');
-      orchRenderConversations();
+      // Filtering rebuilt the whole rail on every character. One render per
+      // typing pause keeps the field responsive on a large list.
+      const value = String(e.target.value || '').trim().toLocaleLowerCase('ru-RU');
+      if (ORCH.searchTimer) clearTimeout(ORCH.searchTimer);
+      ORCH.searchTimer = setTimeout(() => {
+        ORCH.searchTimer = null;
+        if (ORCH.listQuery === value) return;
+        ORCH.listQuery = value;
+        orchRenderConversations();
+      }, 120);
     });
     qsa('[data-orch-convo-filter]', panel).forEach((button) => button.addEventListener('click', () => {
       ORCH.listFilter = button.dataset.orchConvoFilter || 'all';
@@ -7611,6 +7619,7 @@
     const panel = qs('#orch-panel'); const fab = qs('#orch-fab');
     if (!panel) return;
     ORCH.open = true;
+    if (ORCH.hideTimer) { clearTimeout(ORCH.hideTimer); ORCH.hideTimer = null; }
     panel.hidden = false;
     requestAnimationFrame(() => panel.classList.add('open'));
     if (fab) fab.classList.add('active');
@@ -7626,15 +7635,25 @@
     // human or AI dialogue (for example from Community or a notification).
     const requestedId = String((options && options.conversationId) || '').trim();
     if (requestedId) {
+      if (ORCH.searchTimer) { clearTimeout(ORCH.searchTimer); ORCH.searchTimer = null; }
       ORCH.listQuery = '';
       ORCH.listFilter = 'all';
       const search = qs('#orch-convo-search', panel); if (search) search.value = '';
     }
     ORCH.currentId = requestedId || orchLoadLastId();
+    // The list and the opened dialogue are independent reads. They used to run
+    // one after the other, so the shell waited for two round trips before it
+    // was usable; they now overlap.
+    const wanted = ORCH.currentId;
+    const messagesFirst = wanted ? orchLoadMessages(wanted).catch(() => false) : null;
     const loaded = await orchLoadConversations();
+    if (messagesFirst) await messagesFirst;
     if (!loaded) return;
-    if (ORCH.currentId) await orchLoadMessages(ORCH.currentId);
-    else qs('#orch-msgs', panel).innerHTML = '<div class="empty-state">Начните переписку из профиля участника в Сообществе.</div>';
+    // orchLoadConversations may retarget currentId when the stored dialogue is
+    // gone; in that case the prefetch above rendered nothing and the corrected
+    // conversation still has to be read.
+    if (ORCH.currentId && ORCH.currentId !== wanted) await orchLoadMessages(ORCH.currentId);
+    else if (!ORCH.currentId) qs('#orch-msgs', panel).innerHTML = '<div class="empty-state">Начните переписку из профиля участника в Сообществе.</div>';
     const ta = qs('#orch-text', panel); if (ta && !ta.disabled) ta.focus();
     if (ORCH.currentId) dismissNoticesForConversation(ORCH.currentId);
     // Fast local refresh while open: Telegram uses a separate long-poll receiver,
@@ -7664,7 +7683,13 @@
     ORCH.loadError = { status: 401, message: 'Требуется вход через Telegram.' };
     const wrap = qs('#orch-convo-list', root) || qs('#orch-convos', root);
     const box = qs('#orch-msgs', root);
-    if (wrap) wrap.innerHTML = '<div class="empty-state">История не удалена. Войдите, чтобы загрузить свои диалоги.</div>';
+    if (wrap) {
+      // Writing the rail directly bypasses the render cache below; clearing it
+      // keeps a later identical conversation render from being skipped and
+      // leaving this sign-in notice in place after the session is restored.
+      wrap._orchRows = '';
+      wrap.innerHTML = '<div class="empty-state">История не удалена. Войдите, чтобы загрузить свои диалоги.</div>';
+    }
     if (box) box.innerHTML = '<div class="empty-state"><strong>Войдите через Telegram</strong><br>После входа вернутся прежние чаты и станут доступны поручения.<div style="margin-top:12px"><button class="btn primary" id="orch-auth-login" type="button">Войти через Telegram</button></div></div>';
     const login = qs('#orch-auth-login', root);
     if (login) login.onclick = () => { closeOrchestrator(); renderTelegramLogin(''); };
@@ -7677,7 +7702,18 @@
     const panel = qs('#orch-panel'); const fab = qs('#orch-fab');
     ORCH.open = false;
     orchCloseSkinMenu();
-    if (panel) { panel.classList.remove('open'); setTimeout(() => { if (!ORCH.open) panel.hidden = true; }, 460); }
+    // The shell was held in the DOM for 460ms after the class came off while
+    // the longest transition ran 220ms, so close felt roughly twice as long as
+    // it looked. The timer is now matched to the transition and cleared on
+    // re-open, so a fast open/close/open cannot hide a panel that is opening.
+    if (panel) {
+      panel.classList.remove('open');
+      if (ORCH.hideTimer) clearTimeout(ORCH.hideTimer);
+      ORCH.hideTimer = setTimeout(() => {
+        ORCH.hideTimer = null;
+        if (!ORCH.open) panel.hidden = true;
+      }, 240);
+    }
     if (fab) fab.classList.remove('active');
     if (ORCH.pollStop) { ORCH.pollStop(); ORCH.pollStop = null; }
     orchStopFeedbackVoice();
@@ -7785,6 +7821,10 @@
       orchRenderPendingAttachments();
     }
   }
+  // Upper bound on rows put in the DOM at once. Far above any realistic rail,
+  // so it never fires in ordinary use; it only stops a pathological list from
+  // freezing the click that produced it.
+  const ORCH_LIST_RENDER_CAP = 300;
   function orchRenderConversations() {
     const wrap = qs('#orch-convo-list') || qs('#orch-convos'); if (!wrap) return;
     const unreadMap = NOTICE.unreadByConversation || {};
@@ -7806,6 +7846,13 @@
       button.classList.toggle('active', active);
       button.setAttribute('aria-selected', active ? 'true' : 'false');
     });
+    // A filter or a cleared search re-renders every matching row. At 2000
+    // conversations that is ~30k nodes and ~1.2s of blocked main thread for one
+    // click. The rail renders a bounded window and says so; the counter above it
+    // keeps showing the true visible/total figures.
+    const total = visible.length;
+    const truncated = Math.max(0, total - ORCH_LIST_RENDER_CAP);
+    if (truncated) visible = visible.slice(0, ORCH_LIST_RENDER_CAP);
     const rows = visible.map(c => {
       const active = c.conversation_id === ORCH.currentId;
       const human = orchIsHumanConversation(c);
@@ -7845,16 +7892,33 @@
     const empty = query ? 'Диалоги не найдены.'
       : filter === 'pinned' ? 'Нет закреплённых диалогов.'
         : filter === 'recent' ? 'Нет недавних диалогов.' : 'Создайте первый диалог.';
-    wrap.innerHTML = error + (rows || (ORCH.loadError ? '' : `<div class="empty-state orch-convo-empty">${empty}</div>`));
-    qsa('.orch-convo', wrap).forEach(node => {
-      node.addEventListener('click', (e) => {
-        if (e.target.closest('[data-rename]') || e.target.closest('[data-del]') || e.target.closest('[data-pin]')) return;
-        orchSelectConversation(node.dataset.cid);
+    const more = truncated
+      ? `<div class="empty-state orch-convo-empty">Показаны первые ${ORCH_LIST_RENDER_CAP} из ${total}. Уточните поиск, чтобы увидеть остальные.</div>`
+      : '';
+    const html = error + (rows || (ORCH.loadError ? '' : `<div class="empty-state orch-convo-empty">${empty}</div>`)) + more;
+    // The list is re-rendered by the 3s refresh whether or not anything moved.
+    // Writing identical markup back tore down and rebuilt every row, losing the
+    // rail's scroll position and, with a large list, blocking the main thread
+    // on each tick. Skipping an unchanged write costs one string compare.
+    if (wrap._orchRows !== html) {
+      wrap._orchRows = html;
+      wrap.innerHTML = html;
+    }
+    // One delegated listener for the whole rail. Binding four handlers per row
+    // meant a list of N conversations attached 4N listeners on every render.
+    if (!wrap._orchWired) {
+      wrap._orchWired = true;
+      wrap.addEventListener('click', (e) => {
+        const pin = e.target.closest('[data-pin]');
+        if (pin) { e.stopPropagation(); orchPin(pin.dataset.pin, pin.dataset.pinned !== '1'); return; }
+        const rename = e.target.closest('[data-rename]');
+        if (rename) { e.stopPropagation(); orchRename(rename.dataset.rename); return; }
+        const remove = e.target.closest('[data-del]');
+        if (remove) { e.stopPropagation(); orchDelete(remove.dataset.del); return; }
+        const row = e.target.closest('.orch-convo');
+        if (row) orchSelectConversation(row.dataset.cid);
       });
-    });
-    qsa('[data-pin]', wrap).forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); orchPin(b.dataset.pin, b.dataset.pinned !== '1'); }));
-    qsa('[data-rename]', wrap).forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); orchRename(b.dataset.rename); }));
-    qsa('[data-del]', wrap).forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); orchDelete(b.dataset.del); }));
+    }
   }
   async function orchPin(cid, pinned) {
     if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }

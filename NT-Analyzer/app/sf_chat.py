@@ -17,7 +17,7 @@ import secrets
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from . import community, runtime_env
 
@@ -177,6 +177,31 @@ def _conversation_messages(doc: Dict[str, Any], conversation_id: str) -> List[Di
             and not row.get("deleted_at_utc")]
 
 
+def _messages_by_conversation(doc: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """Group live messages by conversation in one pass.
+
+    Listing conversations used to call `_conversation_messages` per row, so a
+    viewer with C conversations rescanned all M messages C times. At the
+    document cap (2000 conversations / 50000 messages) that is 100M row tests
+    and one listing measured ~44s. Grouping once makes the same listing linear.
+    """
+    index: Dict[str, List[Dict[str, Any]]] = {}
+    for row in doc.get("messages") or []:
+        if row.get("deleted_at_utc"):
+            continue
+        index.setdefault(str(row.get("conversation_id") or ""), []).append(row)
+    return index
+
+
+def _reads_by_conversation(doc: Dict[str, Any]) -> Dict[Tuple[str, str], Dict[str, Any]]:
+    """Index read rows by (conversation, profile) so lookups are not scans."""
+    index: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for row in doc.get("reads") or []:
+        index[(str(row.get("conversation_id") or ""),
+               str(row.get("profile_id") or ""))] = row
+    return index
+
+
 def _other_profile_id(conversation: Dict[str, Any], viewer_profile_id: str) -> str:
     return next((str(value) for value in conversation.get("participant_profile_ids") or []
                  if str(value) != viewer_profile_id), "")
@@ -214,11 +239,15 @@ def _public_message(row: Dict[str, Any], profiles: Dict[str, Dict[str, Any]]) ->
 def _public_conversation(
     doc: Dict[str, Any], row: Dict[str, Any], viewer_profile_id: str,
     profiles: Dict[str, Dict[str, Any]],
+    *,
+    messages_index: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    reads_index: Optional[Dict[Tuple[str, str], Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     cid = str(row.get("conversation_id") or "")
-    messages = _conversation_messages(doc, cid)
+    messages = (messages_index.get(cid) or []) if messages_index is not None         else _conversation_messages(doc, cid)
     last = messages[-1] if messages else None
-    read = _read_row(doc, cid, viewer_profile_id) or {}
+    read = (reads_index.get((cid, viewer_profile_id)) if reads_index is not None
+            else _read_row(doc, cid, viewer_profile_id)) or {}
     last_read_seq = int(read.get("last_read_seq") or 0)
     unread = sum(1 for message in messages
                  if int(message.get("seq") or 0) > last_read_seq
@@ -300,7 +329,12 @@ def list_conversations(
                 if viewer_id in list(row.get("participant_profile_ids") or [])]
         profile_ids = [str(pid) for row in rows for pid in row.get("participant_profile_ids") or []]
         profiles = community.chat_public_profiles(viewer_id, profile_ids)
-        public = [_public_conversation(doc, row, viewer_id, profiles) for row in rows]
+        messages_index = _messages_by_conversation(doc)
+        reads_index = _reads_by_conversation(doc)
+        public = [_public_conversation(doc, row, viewer_id, profiles,
+                                       messages_index=messages_index,
+                                       reads_index=reads_index)
+                  for row in rows]
         public.sort(key=lambda item: str(item.get("updated_at_utc") or ""), reverse=True)
         return {
             "ok": True,

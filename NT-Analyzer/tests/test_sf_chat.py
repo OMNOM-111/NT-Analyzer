@@ -142,3 +142,40 @@ def test_authoritative_repository_outage_never_falls_back_to_local_json(monkeypa
         sf_chat._load()
     assert chat_exc.value.status == 503
     assert "storage_unavailable" in str(chat_exc.value)
+
+
+def test_listing_conversations_does_not_rescan_messages_per_conversation(
+    profiles, monkeypatch,
+):
+    """Listing must stay linear in the size of the store.
+
+    `_public_conversation` used to call `_conversation_messages` for every row,
+    so a viewer with C conversations rescanned all M messages C times. At the
+    document cap that is 100M row tests, and one listing measured ~44s against
+    ~0.66s once the grouping is done a single time. Counting the per-row scans
+    keeps the guarantee deterministic instead of timing-dependent.
+    """
+    alice, bob, eve = profiles
+    for partner_user_id, partner in ((99, bob), (77, eve)):
+        conversation_id = sf_chat.start_conversation(
+            42, partner["profile_id"],
+        )["conversation"]["conversation_id"]
+        for index in range(3):
+            sf_chat.send_message(42, conversation_id, text=f"Сообщение {index}")
+            sf_chat.send_message(partner_user_id, conversation_id, text=f"Ответ {index}")
+
+    scans = []
+    original = sf_chat._conversation_messages
+    monkeypatch.setattr(
+        sf_chat, "_conversation_messages",
+        lambda doc, cid: (scans.append(cid), original(doc, cid))[1],
+    )
+
+    listed = sf_chat.list_conversations(42)
+
+    assert len(listed["conversations"]) == 2
+    assert scans == [], "listing rescanned the message list per conversation"
+    # The grouped index must still produce the same public payload.
+    previews = {row["last_message_preview"] for row in listed["conversations"]}
+    assert previews == {"Ответ 2"}
+    assert all(row["message_count"] == 6 for row in listed["conversations"])
