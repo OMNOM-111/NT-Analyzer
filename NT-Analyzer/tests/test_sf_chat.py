@@ -6,6 +6,8 @@ import copy
 import pytest
 
 from app import community, sf_chat, storage_router
+
+from . import _relational_fake
 from app.production_storage import StorageUnavailableError
 
 
@@ -110,6 +112,9 @@ def test_explicit_server_environment_uses_authoritative_documents(monkeypatch):
 
     monkeypatch.setattr(storage_router, "read_document", read_document)
     monkeypatch.setattr(storage_router, "write_document", write_document)
+    # Writes stay document-authoritative; reads are relational in this mode, so
+    # the read side is served from the same documents through the mirror API.
+    _relational_fake.install(monkeypatch, documents)
 
     alice = community.ensure_social_profile(
         42, display_name="Alice", username="alice_42",

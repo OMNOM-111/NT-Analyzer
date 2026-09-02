@@ -1,6 +1,7 @@
 """PostgreSQL repositories with explicit user/workspace scope and no fallback."""
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import json
@@ -1513,6 +1514,396 @@ class DocumentRepository:
                 "DELETE FROM sf_connector_installations WHERE installation_id = ANY(%s)",
                 (missing_installations,),
             )
+
+
+
+
+
+def _encode_conversation_cursor(updated_at: Any, conversation_id: str) -> str:
+    """Keyset cursor over (updated_at, conversation_id).
+
+    Offsets were rejected: a conversation moving to the top between two pages
+    shifts every later row, so an offset silently skips or repeats rows.
+    """
+    if updated_at is None or not conversation_id:
+        return ""
+    stamp = updated_at.isoformat() if isinstance(updated_at, datetime) else str(updated_at)
+    raw = f"{stamp}|{conversation_id}".encode("utf-8")
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _decode_conversation_cursor(cursor: Optional[str]) -> tuple:
+    """Return (updated_at, conversation_id); an unreadable cursor starts over."""
+    text = str(cursor or "").strip()
+    if not text:
+        return None, ""
+    try:
+        padded = text + "=" * (-len(text) % 4)
+        raw = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        stamp, _, conversation_id = raw.partition("|")
+        if not stamp or not conversation_id:
+            return None, ""
+        return datetime.fromisoformat(stamp), conversation_id
+    except (ValueError, TypeError, UnicodeDecodeError):
+        return None, ""
+
+
+
+class SFChatRepository:
+    """Relational reads for the SF Chat hot path.
+
+    The document repository stays the authoritative writer and keeps these
+    mirrors in step inside the same transaction, so every row here carries the
+    exact document the JSON store held. Reads never touch the global document:
+    opening the panel, polling it and switching conversation each run bounded,
+    index-driven queries against `sf_chat_*` under the same FORCE RLS policies.
+    """
+
+    def __init__(self, client: "PostgresClient") -> None:
+        self._client = client
+
+    # -- conversation list ---------------------------------------------------
+    def conversation_page(
+        self, viewer_profile_id: str, *, scope: Scope,
+        limit: int = 30, cursor: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """One keyset page of a viewer's conversations.
+
+        A single statement carries the row, its read pointer, its newest
+        message and its unread count, so a page costs one round trip rather
+        than one per conversation.
+        """
+        lim = max(1, min(200, int(limit or 30)))
+        after_updated, after_id = _decode_conversation_cursor(cursor)
+        with self._client.transaction(scope, read_only=True) as conn:
+            rows = conn.execute(
+                """
+                SELECT c.conversation_id,
+                       c.updated_at,
+                       c.document AS conversation,
+                       COALESCE(r.last_read_seq, 0) AS last_read_seq,
+                       last_message.document AS last_message,
+                       COALESCE(counts.total, 0) AS message_count,
+                       COALESCE(counts.unread, 0) AS unread_count
+                  FROM sf_chat_participants p
+                  JOIN sf_chat_conversations c
+                    ON c.conversation_id = p.conversation_id
+                  LEFT JOIN sf_chat_reads r
+                    ON r.conversation_id = p.conversation_id
+                   AND r.profile_id = p.profile_id
+                  LEFT JOIN LATERAL (
+                        SELECT m.document
+                          FROM sf_chat_messages m
+                         WHERE m.conversation_id = c.conversation_id
+                           AND m.deleted_at IS NULL
+                         ORDER BY m.seq DESC
+                         LIMIT 1
+                  ) AS last_message ON TRUE
+                  LEFT JOIN LATERAL (
+                        SELECT count(*) AS total,
+                               count(*) FILTER (
+                                 WHERE m.seq > COALESCE(r.last_read_seq, 0)
+                                   AND m.sender_profile_id <> p.profile_id
+                               ) AS unread
+                          FROM sf_chat_messages m
+                         WHERE m.conversation_id = c.conversation_id
+                           AND m.deleted_at IS NULL
+                  ) AS counts ON TRUE
+                 WHERE p.profile_id = %(viewer)s
+                   AND (
+                        %(after_updated)s::timestamptz IS NULL
+                     OR (c.updated_at, c.conversation_id)
+                        < (%(after_updated)s::timestamptz, %(after_id)s)
+                   )
+                 ORDER BY c.updated_at DESC, c.conversation_id DESC
+                 LIMIT %(limit)s
+                """,
+                {
+                    "viewer": str(viewer_profile_id), "limit": lim + 1,
+                    "after_updated": after_updated, "after_id": after_id or "",
+                },
+            ).fetchall()
+        has_more = len(rows) > lim
+        rows = rows[:lim]
+        next_cursor = ""
+        if has_more and rows:
+            next_cursor = _encode_conversation_cursor(
+                rows[-1].get("updated_at"), str(rows[-1].get("conversation_id") or ""),
+            )
+        return {"rows": [dict(row) for row in rows], "next_cursor": next_cursor,
+                "has_more": has_more}
+
+    def unread_total(self, viewer_profile_id: str, *, scope: Scope) -> int:
+        """Unread across every conversation, straight off the message index."""
+        with self._client.transaction(scope, read_only=True) as conn:
+            row = conn.execute(
+                """
+                SELECT COALESCE(sum(counts.unread), 0) AS unread
+                  FROM sf_chat_participants p
+                  LEFT JOIN sf_chat_reads r
+                    ON r.conversation_id = p.conversation_id
+                   AND r.profile_id = p.profile_id
+                  JOIN LATERAL (
+                        SELECT count(*) AS unread
+                          FROM sf_chat_messages m
+                         WHERE m.conversation_id = p.conversation_id
+                           AND m.deleted_at IS NULL
+                           AND m.seq > COALESCE(r.last_read_seq, 0)
+                           AND m.sender_profile_id <> p.profile_id
+                  ) AS counts ON TRUE
+                 WHERE p.profile_id = %(viewer)s
+                """,
+                {"viewer": str(viewer_profile_id)},
+            ).fetchone()
+        return int((row or {}).get("unread") or 0)
+
+    # -- incremental polling -------------------------------------------------
+    def poll_state(self, viewer_profile_id: str, *, scope: Scope,
+                   limit: int = 50) -> Dict[str, Any]:
+        """Change markers only: no documents, no message bodies, bounded size.
+
+        This is what an open panel asks for on its refresh tick, so its payload
+        must not grow with the rail. It carries a fixed-size change signature
+        plus a capped list of the conversations that actually have unread
+        messages; a thread with nothing new needs no row at all.
+        """
+        lim = max(1, min(200, int(limit or 50)))
+        with self._client.transaction(scope, read_only=True) as conn:
+            signature = conn.execute(
+                """
+                SELECT count(*) AS conversations,
+                       COALESCE(max(c.updated_at), to_timestamp(0)) AS newest,
+                       COALESCE(sum(c.last_seq), 0) AS seq_total
+                  FROM sf_chat_participants p
+                  JOIN sf_chat_conversations c
+                    ON c.conversation_id = p.conversation_id
+                 WHERE p.profile_id = %(viewer)s
+                """,
+                {"viewer": str(viewer_profile_id)},
+            ).fetchone() or {}
+            rows = conn.execute(
+                """
+                SELECT p.conversation_id,
+                       c.last_seq,
+                       c.updated_at,
+                       COALESCE(r.last_read_seq, 0) AS last_read_seq,
+                       COALESCE(counts.unread, 0) AS unread_count
+                  FROM sf_chat_participants p
+                  JOIN sf_chat_conversations c
+                    ON c.conversation_id = p.conversation_id
+                  LEFT JOIN sf_chat_reads r
+                    ON r.conversation_id = p.conversation_id
+                   AND r.profile_id = p.profile_id
+                  LEFT JOIN LATERAL (
+                        SELECT count(*) AS unread
+                          FROM sf_chat_messages m
+                         WHERE m.conversation_id = c.conversation_id
+                           AND m.deleted_at IS NULL
+                           AND m.seq > COALESCE(r.last_read_seq, 0)
+                           AND m.sender_profile_id <> p.profile_id
+                  ) AS counts ON TRUE
+                 WHERE p.profile_id = %(viewer)s
+                   AND COALESCE(counts.unread, 0) > 0
+                 ORDER BY c.updated_at DESC
+                 LIMIT %(limit)s
+                """,
+                {"viewer": str(viewer_profile_id), "limit": lim},
+            ).fetchall()
+        return {
+            "rows": [dict(row) for row in rows],
+            "conversation_count": int(signature.get("conversations") or 0),
+            "newest_updated_at": signature.get("newest"),
+            "seq_total": int(signature.get("seq_total") or 0),
+        }
+
+    # -- one conversation ----------------------------------------------------
+    def conversation(
+        self, conversation_id: str, viewer_profile_id: str, *, scope: Scope,
+    ) -> Optional[Dict[str, Any]]:
+        """The conversation a viewer participates in, or None.
+
+        Membership is part of the WHERE clause, so a non-participant gets no
+        row at all rather than a row the caller has to remember to filter.
+        """
+        with self._client.transaction(scope, read_only=True) as conn:
+            row = conn.execute(
+                """
+                SELECT c.conversation_id,
+                       c.updated_at,
+                       c.document AS conversation,
+                       COALESCE(r.last_read_seq, 0) AS last_read_seq,
+                       last_message.document AS last_message,
+                       COALESCE(counts.total, 0) AS message_count,
+                       COALESCE(counts.unread, 0) AS unread_count
+                  FROM sf_chat_participants p
+                  JOIN sf_chat_conversations c
+                    ON c.conversation_id = p.conversation_id
+                  LEFT JOIN sf_chat_reads r
+                    ON r.conversation_id = p.conversation_id
+                   AND r.profile_id = p.profile_id
+                  LEFT JOIN LATERAL (
+                        SELECT m.document
+                          FROM sf_chat_messages m
+                         WHERE m.conversation_id = c.conversation_id
+                           AND m.deleted_at IS NULL
+                         ORDER BY m.seq DESC
+                         LIMIT 1
+                  ) AS last_message ON TRUE
+                  LEFT JOIN LATERAL (
+                        SELECT count(*) AS total,
+                               count(*) FILTER (
+                                 WHERE m.seq > COALESCE(r.last_read_seq, 0)
+                                   AND m.sender_profile_id <> p.profile_id
+                               ) AS unread
+                          FROM sf_chat_messages m
+                         WHERE m.conversation_id = c.conversation_id
+                           AND m.deleted_at IS NULL
+                  ) AS counts ON TRUE
+                 WHERE p.profile_id = %(viewer)s
+                   AND p.conversation_id = %(conversation)s
+                """,
+                {"viewer": str(viewer_profile_id),
+                 "conversation": str(conversation_id)},
+            ).fetchone()
+        return dict(row) if row else None
+
+    def participant_profile_ids(
+        self, conversation_id: str, *, scope: Scope,
+    ) -> list:
+        with self._client.transaction(scope, read_only=True) as conn:
+            rows = conn.execute(
+                """
+                SELECT profile_id
+                  FROM sf_chat_participants
+                 WHERE conversation_id = %s
+                 ORDER BY profile_id
+                """,
+                (str(conversation_id),),
+            ).fetchall()
+        return [str(row.get("profile_id") or "") for row in rows]
+
+    # -- history -------------------------------------------------------------
+    def message_page(
+        self, conversation_id: str, *, scope: Scope,
+        limit: int = 50, before_seq: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """One page of history, walked backwards by `seq`.
+
+        Ordering and the cursor both ride
+        `sf_chat_messages(conversation_id, seq DESC) WHERE deleted_at IS NULL`,
+        so an old page costs the same as a recent one and no page reads the
+        whole conversation.
+        """
+        lim = max(1, min(200, int(limit or 50)))
+        with self._client.transaction(scope, read_only=True) as conn:
+            rows = conn.execute(
+                """
+                SELECT seq, document
+                  FROM sf_chat_messages
+                 WHERE conversation_id = %(conversation)s
+                   AND deleted_at IS NULL
+                   AND (%(before)s::bigint IS NULL OR seq < %(before)s::bigint)
+                 ORDER BY seq DESC
+                 LIMIT %(limit)s
+                """,
+                {"conversation": str(conversation_id), "limit": lim + 1,
+                 "before": None if before_seq is None else int(before_seq)},
+            ).fetchall()
+        has_more = len(rows) > lim
+        rows = rows[:lim]
+        oldest_seq = int(rows[-1].get("seq") or 0) if rows else 0
+        # Returned oldest-first: the panel prepends a page above what it shows.
+        messages = [dict(row.get("document") or {}) for row in reversed(rows)]
+        return {"messages": messages, "has_more": has_more,
+                "next_before_seq": oldest_seq if has_more else 0}
+
+    def read_seq(
+        self, conversation_id: str, profile_id: str, *, scope: Scope,
+    ) -> int:
+        with self._client.transaction(scope, read_only=True) as conn:
+            row = conn.execute(
+                """
+                SELECT last_read_seq
+                  FROM sf_chat_reads
+                 WHERE conversation_id = %s AND profile_id = %s
+                """,
+                (str(conversation_id), str(profile_id)),
+            ).fetchone()
+        return int((row or {}).get("last_read_seq") or 0)
+
+
+class CommunityRepository:
+    """Relational reads for the Community rows SF Chat needs.
+
+    Only the profile projection is served here: the chat header and the
+    conversation rail need the other participant, and resolving it used to load
+    the entire Community document -- every profile, post, comment, reaction and
+    follow of every user -- on each chat request.
+    """
+
+    def __init__(self, client: "PostgresClient") -> None:
+        self._client = client
+
+    def profile_by_identity(
+        self, user_id: int, user_uuid: str, *, scope: Scope,
+    ) -> Optional[Dict[str, Any]]:
+        """Resolve the caller's own profile without loading the document.
+
+        SF Chat asks who the caller is on every request, including every poll
+        tick. Both branches ride a unique index: `sf_community_profiles_uuid_idx`
+        when the account carries a UUID, `sf_community_profiles_user_idx`
+        otherwise, matching the document lookup's precedence exactly.
+        """
+        with self._client.transaction(scope, read_only=True) as conn:
+            row = conn.execute(
+                """
+                SELECT profile_id, user_id, user_uuid, document
+                  FROM sf_community_profiles
+                 WHERE (%(uuid)s <> '' AND user_uuid::text = %(uuid)s)
+                    OR (%(uuid)s = '' AND user_id = %(uid)s)
+                 ORDER BY (user_uuid::text = %(uuid)s) DESC
+                 LIMIT 1
+                """,
+                {"uuid": str(user_uuid or ""), "uid": int(user_id or 0)},
+            ).fetchone()
+        return dict(row) if row else None
+
+    def public_profiles(
+        self, viewer_profile_id: str, profile_ids: Sequence[str], *, scope: Scope,
+    ) -> list:
+        """Every counter and predicate `_public_profile` needs, in one statement."""
+        wanted = sorted({str(value) for value in profile_ids if str(value or "")})
+        if not wanted:
+            return []
+        with self._client.transaction(scope, read_only=True) as conn:
+            rows = conn.execute(
+                """
+                SELECT p.profile_id,
+                       p.document,
+                       (SELECT count(*) FROM sf_community_follows f
+                         WHERE f.target_profile_id = p.profile_id) AS followers,
+                       (SELECT count(*) FROM sf_community_follows f
+                         WHERE f.follower_profile_id = p.profile_id) AS following,
+                       (SELECT count(*) FROM sf_community_posts po
+                         WHERE po.author_profile_id = p.profile_id
+                           AND po.deleted_at IS NULL) AS posts,
+                       EXISTS(SELECT 1 FROM sf_community_follows f
+                               WHERE f.follower_profile_id = %(viewer)s
+                                 AND f.target_profile_id = p.profile_id) AS viewer_follows,
+                       EXISTS(SELECT 1 FROM sf_community_follows f
+                               WHERE f.follower_profile_id = p.profile_id
+                                 AND f.target_profile_id = %(viewer)s) AS follows_viewer,
+                       EXISTS(SELECT 1 FROM sf_community_blocks b
+                               WHERE (b.blocker_profile_id = %(viewer)s
+                                      AND b.target_profile_id = p.profile_id)
+                                  OR (b.blocker_profile_id = p.profile_id
+                                      AND b.target_profile_id = %(viewer)s)) AS blocked
+                  FROM sf_community_profiles p
+                 WHERE p.profile_id = ANY(%(ids)s)
+                """,
+                {"viewer": str(viewer_profile_id or ""), "ids": wanted},
+            ).fetchall()
+        return [dict(row) for row in rows]
 
 
 class AuthRepository:

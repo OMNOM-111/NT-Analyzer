@@ -6904,7 +6904,18 @@
     let systemData = { items: [], unread_count: 0, unread_by_conversation: {} };
     if (canUseSFChatNotices()) {
       try {
-        const data = await API.http.sfChatConversations();
+        // Ask for change markers first. This poller runs even with the chat
+        // closed, and in the common case — nothing unread — it can stop here
+        // instead of pulling titles, previews and participant profiles.
+        let unreadAhead = 1;
+        if (typeof API.http.sfChatState === 'function') {
+          const state = await API.http.sfChatState();
+          unreadAhead = Math.max(0, Number(state.unread_count || 0));
+          // The signature is a fixed handful of fields covering every thread,
+          // including the quiet ones that send no row of their own.
+          NOTICE.stateSignature = JSON.stringify(state.signature || {});
+        }
+        const data = unreadAhead > 0 ? await API.http.sfChatConversations() : { conversations: [] };
         for (const conversation of data.conversations || []) {
           const unread = Math.max(0, Number(conversation.unread_count || 0));
           if (conversation.conversation_type !== 'human' || !unread) continue;
@@ -7493,6 +7504,10 @@
     qs('#orch-form', panel).addEventListener('submit', (e) => { e.preventDefault(); orchSend(); });
     qs('#orch-attach', panel).addEventListener('click', () => qs('#orch-files', panel).click());
     qs('#orch-files', panel).addEventListener('change', (e) => orchAddAttachments(e.target.files));
+    qs('#orch-msgs', panel).addEventListener('scroll', (e) => {
+      // Reaching the top of a human thread asks for the page before it.
+      if (e.target.scrollTop <= 48) orchLoadOlderMessages();
+    }, { passive: true });
     const ta = qs('#orch-text', panel);
     ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(120, ta.scrollHeight) + 'px'; });
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); orchSend(); } });
@@ -7645,6 +7660,7 @@
     // one after the other, so the shell waited for two round trips before it
     // was usable; they now overlap.
     const wanted = ORCH.currentId;
+    ORCH.historyRows = null; ORCH.historyMore = false; ORCH.historyBefore = undefined;
     const messagesFirst = wanted ? orchLoadMessages(wanted).catch(() => false) : null;
     const loaded = await orchLoadConversations();
     if (messagesFirst) await messagesFirst;
@@ -7928,6 +7944,9 @@
   }
   async function orchSelectConversation(cid) {
     if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
+    if (cid && cid !== ORCH.currentId) {
+      ORCH.historyRows = null; ORCH.historyMore = false; ORCH.historyBefore = undefined;
+    }
     if (!cid || cid === ORCH.currentId) {
       qs('#orch-panel').classList.remove('show-convos');
       if (cid) dismissNoticesForConversation(cid);
@@ -8367,6 +8386,38 @@
       }
     });
   }
+  // Matches the server's default history page. History is walked backwards by
+  // `seq` on an index, so an old page costs the same as a recent one.
+  const ORCH_HISTORY_PAGE = 50;
+  // Pulls the page before what is on screen and keeps the reader's position:
+  // the rail grows upwards instead of jumping to a new scroll offset.
+  async function orchLoadOlderMessages() {
+    const box = qs('#orch-msgs');
+    const cid = ORCH.currentId;
+    if (!box || !cid || ORCH.loadingOlder || !ORCH.historyMore) return;
+    if (!orchIsHumanConversation(cid) || !ORCH.historyBefore) return;
+    ORCH.loadingOlder = true;
+    const anchorHeight = box.scrollHeight;
+    const anchorTop = box.scrollTop;
+    try {
+      const data = await API.http.sfChatConversation(cid, {
+        limit: ORCH_HISTORY_PAGE, before_seq: ORCH.historyBefore,
+      });
+      if (ORCH.currentId !== cid) return;
+      const older = data.messages || [];
+      if (!older.length) { ORCH.historyMore = false; return; }
+      ORCH.historyRows = older.concat(ORCH.historyRows || []);
+      ORCH.historyMore = !!data.has_more;
+      ORCH.historyBefore = Number(data.next_before_seq || 0);
+      ORCH.messagesSignature = '';
+      box.innerHTML = orchMessagesHtml(ORCH.historyRows);
+      box.scrollTop = anchorTop + (box.scrollHeight - anchorHeight);
+    } catch (e) {
+      reportError(e);
+    } finally {
+      ORCH.loadingOlder = false;
+    }
+  }
   async function orchLoadMessages(cid, silent) {
     const box = qs('#orch-msgs'); if (!box) return;
     if (!cid) return false;
@@ -8375,9 +8426,28 @@
     const human = orchIsHumanConversation(cid);
     try {
       const data = human
-        ? await API.http.sfChatConversation(cid, { limit: 200 })
+        ? await API.http.sfChatConversation(cid, { limit: ORCH_HISTORY_PAGE })
         : await API.http.aiOrchestratorConversation(cid, { limit: 200 });
       messages = data.messages || [];
+      if (human) {
+        // A human thread is read one page at a time from the newest end. Pages
+        // already scrolled into view are kept: the poll only replaces the range
+        // it just re-read, so loading older history is not undone every 3s.
+        const lowest = messages.length ? Number(messages[0].seq || 0) : 0;
+        const kept = (ORCH.currentId === cid ? ORCH.historyRows || [] : [])
+          .filter(row => !lowest || Number(row.seq || 0) < lowest);
+        ORCH.historyRows = kept.concat(messages);
+        if (!silent || ORCH.historyBefore === undefined) {
+          ORCH.historyMore = !!data.has_more;
+          ORCH.historyBefore = Number(data.next_before_seq || 0);
+        }
+        if (kept.length) {
+          ORCH.historyMore = ORCH.historyMore || !!data.has_more;
+        }
+        messages = ORCH.historyRows;
+      } else {
+        ORCH.historyRows = null; ORCH.historyMore = false; ORCH.historyBefore = 0;
+      }
       if (data.viewer_profile_id) ORCH.viewerProfileId = String(data.viewer_profile_id);
       if (data.conversation) {
         const index = ORCH.conversations.findIndex(row => row.conversation_id === cid);

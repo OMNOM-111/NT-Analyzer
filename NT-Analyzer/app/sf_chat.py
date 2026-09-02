@@ -236,22 +236,19 @@ def _public_message(row: Dict[str, Any], profiles: Dict[str, Dict[str, Any]]) ->
     }
 
 
-def _public_conversation(
-    doc: Dict[str, Any], row: Dict[str, Any], viewer_profile_id: str,
-    profiles: Dict[str, Dict[str, Any]],
-    *,
-    messages_index: Optional[Dict[str, List[Dict[str, Any]]]] = None,
-    reads_index: Optional[Dict[Tuple[str, str], Dict[str, Any]]] = None,
+def _conversation_payload(
+    row: Dict[str, Any], viewer_profile_id: str,
+    profiles: Dict[str, Dict[str, Any]], *,
+    last: Optional[Dict[str, Any]], message_count: int, unread: int,
 ) -> Dict[str, Any]:
+    """The single public shape of a conversation.
+
+    Both read paths land here — the Development document store and the
+    Production relational mirrors — so the payload cannot drift between them.
+    Only the three message-derived facts are supplied by the caller, because
+    only their *source* differs.
+    """
     cid = str(row.get("conversation_id") or "")
-    messages = (messages_index.get(cid) or []) if messages_index is not None         else _conversation_messages(doc, cid)
-    last = messages[-1] if messages else None
-    read = (reads_index.get((cid, viewer_profile_id)) if reads_index is not None
-            else _read_row(doc, cid, viewer_profile_id)) or {}
-    last_read_seq = int(read.get("last_read_seq") or 0)
-    unread = sum(1 for message in messages
-                 if int(message.get("seq") or 0) > last_read_seq
-                 and str(message.get("sender_profile_id") or "") != viewer_profile_id)
     other_id = _other_profile_id(row, viewer_profile_id)
     other = profiles.get(other_id) or {
         "profile_id": other_id, "display_name": "Участник", "username": "",
@@ -266,8 +263,8 @@ def _public_conversation(
         "subtitle": "Человек · @" + str(other.get("username") or "участник"),
         "participant": other,
         "participant_profile_ids": [str(value) for value in row.get("participant_profile_ids") or []],
-        "message_count": len(messages),
-        "unread_count": unread,
+        "message_count": int(message_count),
+        "unread_count": int(unread),
         "last_message_id": str((last or {}).get("message_id") or ""),
         "last_message_preview": preview[:240],
         "updated_at_utc": str(row.get("updated_at_utc") or row.get("created_at_utc") or ""),
@@ -277,6 +274,46 @@ def _public_conversation(
         "is_default": False,
         "work_state": "open",
     }
+
+
+def _public_conversation(
+    doc: Dict[str, Any], row: Dict[str, Any], viewer_profile_id: str,
+    profiles: Dict[str, Dict[str, Any]],
+    *,
+    messages_index: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    reads_index: Optional[Dict[Tuple[str, str], Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Document-store projection: message facts come from the loaded document."""
+    cid = str(row.get("conversation_id") or "")
+    messages = (messages_index.get(cid) or []) if messages_index is not None         else _conversation_messages(doc, cid)
+    read = (reads_index.get((cid, viewer_profile_id)) if reads_index is not None
+            else _read_row(doc, cid, viewer_profile_id)) or {}
+    last_read_seq = int(read.get("last_read_seq") or 0)
+    unread = sum(1 for message in messages
+                 if int(message.get("seq") or 0) > last_read_seq
+                 and str(message.get("sender_profile_id") or "") != viewer_profile_id)
+    return _conversation_payload(
+        row, viewer_profile_id, profiles,
+        last=messages[-1] if messages else None,
+        message_count=len(messages), unread=unread,
+    )
+
+
+def _relational_conversation(
+    relational_row: Dict[str, Any], viewer_profile_id: str,
+    profiles: Dict[str, Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Relational projection: message facts come from the indexed mirrors."""
+    conversation = dict(relational_row.get("conversation") or {})
+    if not conversation.get("conversation_id"):
+        conversation["conversation_id"] = str(relational_row.get("conversation_id") or "")
+    last = relational_row.get("last_message")
+    return _conversation_payload(
+        conversation, viewer_profile_id, profiles,
+        last=dict(last) if isinstance(last, dict) else None,
+        message_count=int(relational_row.get("message_count") or 0),
+        unread=int(relational_row.get("unread_count") or 0),
+    )
 
 
 def start_conversation(
@@ -314,15 +351,33 @@ def start_conversation(
         return {"ok": True, "conversation": _public_conversation(doc, row, actor["profile_id"], profiles)}
 
 
+def _relational_reads() -> bool:
+    """True when the authoritative read side is PostgreSQL.
+
+    Development keeps the document store: it is the import/fallback source and
+    is small by construction. Production and Canary read the mirrors, so no
+    ordinary chat action deserialises a document holding every user's history.
+    """
+    from . import storage_router
+    return bool(storage_router.production_enabled())
+
+
+DEFAULT_CONVERSATION_PAGE = 30
+DEFAULT_HISTORY_PAGE = 50
+
+
 def list_conversations(
     user_id: Any, *, user_uuid: Any = "", display_name: str = "",
     username: str = "", role_label: str = "Участник",
+    limit: int = DEFAULT_CONVERSATION_PAGE, cursor: str = "",
 ) -> Dict[str, Any]:
     actor = _identity(
         user_id, user_uuid=user_uuid, display_name=display_name,
         username=username, role_label=role_label,
     )
     viewer_id = str(actor["profile_id"])
+    if _relational_reads():
+        return _list_conversations_relational(viewer_id, limit=limit, cursor=cursor)
     with _LOCK:
         doc = _load()
         rows = [row for row in doc.get("conversations") or []
@@ -335,38 +390,213 @@ def list_conversations(
                                        messages_index=messages_index,
                                        reads_index=reads_index)
                   for row in rows]
-        public.sort(key=lambda item: str(item.get("updated_at_utc") or ""), reverse=True)
+        # Same ordering key as the relational keyset, tie-breaker included:
+        # conversations created in the same second would otherwise come back in
+        # insertion order here and in id order in Production.
+        public.sort(key=lambda item: (str(item.get("updated_at_utc") or ""),
+                                      str(item.get("conversation_id") or "")), reverse=True)
+        unread_total = sum(int(row.get("unread_count") or 0) for row in public)
+        page = max(1, min(200, int(limit or DEFAULT_CONVERSATION_PAGE)))
+        # Development pages the already-loaded list so the API contract — and
+        # therefore the client's paging code — is identical in both modes.
+        start = 0
+        if cursor:
+            ids = [row.get("conversation_id") for row in public]
+            if cursor in ids:
+                start = ids.index(cursor) + 1
+        window = public[start:start + page]
+        has_more = len(public) > start + page
         return {
             "ok": True,
-            "conversations": public,
-            "unread_count": sum(int(row.get("unread_count") or 0) for row in public),
+            "conversations": window,
+            "next_cursor": str(window[-1].get("conversation_id") or "") if (has_more and window) else "",
+            "has_more": has_more,
+            "unread_count": unread_total,
             "viewer_profile_id": viewer_id,
         }
+
+
+def _list_conversations_relational(
+    viewer_id: str, *, limit: int, cursor: str,
+) -> Dict[str, Any]:
+    from . import storage_router
+    from .production_storage import StorageError
+    try:
+        page = storage_router.sf_chat_conversation_page(
+            viewer_id, limit=limit or DEFAULT_CONVERSATION_PAGE, cursor=cursor,
+        )
+        rows = list(page.get("rows") or [])
+        profile_ids = [
+            str(pid)
+            for row in rows
+            for pid in (row.get("conversation") or {}).get("participant_profile_ids") or []
+        ]
+        profiles = community.chat_public_profiles(viewer_id, profile_ids)
+        unread_total = storage_router.sf_chat_unread_total(viewer_id)
+    except StorageError as exc:
+        raise SFChatError(
+            f"Production SF Chat repository unavailable ({exc.code}).", 503,
+        ) from None
+    return {
+        "ok": True,
+        "conversations": [_relational_conversation(row, viewer_id, profiles) for row in rows],
+        "next_cursor": str(page.get("next_cursor") or ""),
+        "has_more": bool(page.get("has_more")),
+        "unread_count": int(unread_total),
+        "viewer_profile_id": viewer_id,
+    }
+
+
+def poll_state(
+    user_id: Any, *, user_uuid: Any = "", display_name: str = "",
+    username: str = "", role_label: str = "Участник",
+) -> Dict[str, Any]:
+    """Change markers for an open panel: no message bodies, no documents.
+
+    A refresh tick asks this instead of re-reading the conversation list. In
+    Production it is one indexed statement returning a handful of integers per
+    conversation, so an idle panel transfers almost nothing.
+    """
+    actor = _identity(
+        user_id, user_uuid=user_uuid, display_name=display_name,
+        username=username, role_label=role_label,
+    )
+    viewer_id = str(actor["profile_id"])
+    if _relational_reads():
+        from . import storage_router
+        from .production_storage import StorageError
+        try:
+            state = storage_router.sf_chat_poll_state(viewer_id)
+        except StorageError as exc:
+            raise SFChatError(
+                f"Production SF Chat repository unavailable ({exc.code}).", 503,
+            ) from None
+        rows = [{
+            "conversation_id": str(row.get("conversation_id") or ""),
+            "last_seq": int(row.get("last_seq") or 0),
+            "updated_at_utc": _iso(row.get("updated_at")),
+            "last_read_seq": int(row.get("last_read_seq") or 0),
+            "unread_count": int(row.get("unread_count") or 0),
+        } for row in state.get("rows") or []]
+        signature = {
+            "conversation_count": int(state.get("conversation_count") or 0),
+            "newest_updated_at_utc": _iso(state.get("newest_updated_at")),
+            "seq_total": int(state.get("seq_total") or 0),
+        }
+    else:
+        with _LOCK:
+            doc = _load()
+            messages_index = _messages_by_conversation(doc)
+            reads_index = _reads_by_conversation(doc)
+            rows = []
+            for row in doc.get("conversations") or []:
+                cid = str(row.get("conversation_id") or "")
+                if viewer_id not in [str(v) for v in row.get("participant_profile_ids") or []]:
+                    continue
+                last_read = int((reads_index.get((cid, viewer_id)) or {}).get("last_read_seq") or 0)
+                unread = sum(1 for message in messages_index.get(cid) or []
+                             if int(message.get("seq") or 0) > last_read
+                             and str(message.get("sender_profile_id") or "") != viewer_id)
+                rows.append({
+                    "conversation_id": cid,
+                    "last_seq": int(row.get("last_seq") or 0),
+                    "updated_at_utc": str(row.get("updated_at_utc") or ""),
+                    "last_read_seq": last_read,
+                    "unread_count": unread,
+                })
+            rows.sort(key=lambda item: str(item["updated_at_utc"]), reverse=True)
+            signature = {
+                "conversation_count": len(rows),
+                "newest_updated_at_utc": rows[0]["updated_at_utc"] if rows else "",
+                "seq_total": sum(int(row["last_seq"]) for row in rows),
+            }
+            # Only threads with something new earn a row, matching Production.
+            rows = [row for row in rows if int(row["unread_count"]) > 0][:50]
+    return {
+        "ok": True,
+        "conversations": rows,
+        "unread_count": sum(int(row["unread_count"]) for row in rows),
+        "signature": signature,
+        "viewer_profile_id": viewer_id,
+    }
+
+
+def _iso(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return str(value)
 
 
 def conversation_messages(
     user_id: Any, conversation_id: str, *, user_uuid: Any = "",
     display_name: str = "", username: str = "", role_label: str = "Участник",
-    limit: int = 200,
+    limit: int = DEFAULT_HISTORY_PAGE, before_seq: int = 0,
 ) -> Dict[str, Any]:
     actor = _identity(
         user_id, user_uuid=user_uuid, display_name=display_name,
         username=username, role_label=role_label,
     )
     viewer_id = str(actor["profile_id"])
-    lim = max(1, min(500, int(limit or 200)))
+    lim = max(1, min(500, int(limit or DEFAULT_HISTORY_PAGE)))
+    before = max(0, int(before_seq or 0))
+    if _relational_reads():
+        return _conversation_messages_relational(
+            viewer_id, conversation_id, limit=lim, before_seq=before,
+        )
     with _LOCK:
         doc = _load()
         conv = _require_participant(doc, conversation_id, viewer_id)
-        messages = _conversation_messages(doc, str(conv["conversation_id"]))[-lim:]
+        history = _conversation_messages(doc, str(conv["conversation_id"]))
+        if before:
+            history = [row for row in history if int(row.get("seq") or 0) < before]
+        window = history[-lim:]
+        has_more = len(history) > len(window)
         profile_ids = [str(pid) for pid in conv.get("participant_profile_ids") or []]
         profiles = community.chat_public_profiles(viewer_id, profile_ids)
         return {
             "ok": True,
             "conversation": _public_conversation(doc, conv, viewer_id, profiles),
-            "messages": [_public_message(row, profiles) for row in messages],
+            "messages": [_public_message(row, profiles) for row in window],
+            "has_more": has_more,
+            "next_before_seq": int(window[0].get("seq") or 0) if (has_more and window) else 0,
             "viewer_profile_id": viewer_id,
         }
+
+
+def _conversation_messages_relational(
+    viewer_id: str, conversation_id: str, *, limit: int, before_seq: int,
+) -> Dict[str, Any]:
+    from . import storage_router
+    from .production_storage import StorageError
+    cid = _safe_id(conversation_id, "conversation_id")
+    try:
+        row = storage_router.sf_chat_conversation(cid, viewer_id)
+        if row is None:
+            # Membership is part of the query, so a non-participant and a
+            # missing conversation are indistinguishable here — the same single
+            # 404 the document path returns, for the same reason.
+            raise SFChatError("Диалог не найден.", 404)
+        page = storage_router.sf_chat_message_page(
+            cid, limit=limit, before_seq=before_seq,
+        )
+        conversation = dict(row.get("conversation") or {})
+        profile_ids = [str(pid) for pid in conversation.get("participant_profile_ids") or []]
+        profiles = community.chat_public_profiles(viewer_id, profile_ids)
+    except StorageError as exc:
+        raise SFChatError(
+            f"Production SF Chat repository unavailable ({exc.code}).", 503,
+        ) from None
+    messages = list(page.get("messages") or [])
+    return {
+        "ok": True,
+        "conversation": _relational_conversation(row, viewer_id, profiles),
+        "messages": [_public_message(message, profiles) for message in messages],
+        "has_more": bool(page.get("has_more")),
+        "next_before_seq": int(page.get("next_before_seq") or 0),
+        "viewer_profile_id": viewer_id,
+    }
 
 
 def _store_attachments(
@@ -499,6 +729,26 @@ def mark_read(
         username=username, role_label=role_label,
     )
     viewer_id = str(actor["profile_id"])
+    if _relational_reads():
+        # The open panel calls this on every refresh tick. Checking the read
+        # pointer against the conversation head first costs two indexed lookups
+        # and, in the steady state where nothing new arrived, avoids loading and
+        # rewriting the whole document for a no-op advance.
+        from . import storage_router
+        from .production_storage import StorageError
+        try:
+            row = storage_router.sf_chat_conversation(_safe_id(conversation_id, "conversation_id"), viewer_id)
+            if row is None:
+                raise SFChatError("Диалог не найден.", 404)
+            head = int((row.get("conversation") or {}).get("last_seq") or 0)
+            already = int(row.get("last_read_seq") or 0)
+        except StorageError as exc:
+            raise SFChatError(
+                f"Production SF Chat repository unavailable ({exc.code}).", 503,
+            ) from None
+        if already >= head:
+            return {"ok": True, "conversation_id": str(conversation_id),
+                    "read_through_seq": head, "advanced": 0}
     with _LOCK:
         doc = _load()
         conv = _require_participant(doc, conversation_id, viewer_id)

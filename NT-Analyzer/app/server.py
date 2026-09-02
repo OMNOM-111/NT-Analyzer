@@ -6801,14 +6801,35 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(exc.status, str(exc))
             return
 
+        if path == "/api/sf-chat/state":
+            # Change markers for an open panel. A refresh tick reads this
+            # instead of the conversation list, so an idle chat transfers a few
+            # integers per conversation rather than titles, previews and
+            # participant profiles.
+            try:
+                actor = self._community_actor()
+                self._json(HTTPStatus.OK, sf_chat.poll_state(
+                    actor["user_id"], user_uuid=actor["user_uuid"],
+                    display_name=actor["display_name"], username=actor["username"],
+                    role_label=actor["role_label"],
+                ))
+            except (community.CommunityError, sf_chat.SFChatError) as exc:
+                self._err(getattr(exc, "status", HTTPStatus.BAD_REQUEST), str(exc))
+            return
+
         if path == "/api/sf-chat/conversations":
             try:
                 actor = self._community_actor()
                 community.ensure_social_profile(**actor)
+                try:
+                    list_limit = int((qs.get("limit") or [str(sf_chat.DEFAULT_CONVERSATION_PAGE)])[0])
+                except (TypeError, ValueError):
+                    list_limit = sf_chat.DEFAULT_CONVERSATION_PAGE
                 human = sf_chat.list_conversations(
                     actor["user_id"], user_uuid=actor["user_uuid"],
                     display_name=actor["display_name"], username=actor["username"],
                     role_label=actor["role_label"],
+                    limit=list_limit, cursor=str((qs.get("cursor") or [""])[0]),
                 )
                 conversations = list(human.get("conversations") or [])
                 ai_available = self._sf_chat_ai_allowed()
@@ -6839,6 +6860,8 @@ class Handler(BaseHTTPRequestHandler):
                     "ok": True,
                     "conversations": conversations,
                     "human_unread_count": int(human.get("unread_count") or 0),
+                    "next_cursor": str(human.get("next_cursor") or ""),
+                    "has_more": bool(human.get("has_more")),
                     "unread_count": sum(int(item.get("unread_count") or 0) for item in conversations),
                     "viewer_profile_id": str(human.get("viewer_profile_id") or ""),
                     "ai_available": ai_available,
@@ -6850,9 +6873,13 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/sf-chat/conversations/"):
             conversation_id = path.rsplit("/", 1)[-1]
             try:
-                limit = int((qs.get("limit") or ["200"])[0])
+                limit = int((qs.get("limit") or [str(sf_chat.DEFAULT_HISTORY_PAGE)])[0])
             except (TypeError, ValueError):
-                limit = 200
+                limit = sf_chat.DEFAULT_HISTORY_PAGE
+            try:
+                before_seq = int((qs.get("before_seq") or ["0"])[0])
+            except (TypeError, ValueError):
+                before_seq = 0
             try:
                 actor = self._community_actor()
                 if conversation_id.startswith("sfh_"):
@@ -6860,7 +6887,7 @@ class Handler(BaseHTTPRequestHandler):
                         actor["user_id"], conversation_id,
                         user_uuid=actor["user_uuid"], display_name=actor["display_name"],
                         username=actor["username"], role_label=actor["role_label"],
-                        limit=limit,
+                        limit=limit, before_seq=before_seq,
                     )
                 else:
                     if not self._sf_chat_ai_allowed():

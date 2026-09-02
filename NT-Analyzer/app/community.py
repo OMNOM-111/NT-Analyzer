@@ -981,27 +981,32 @@ def _social_blocked(doc: Dict[str, Any], left: str, right: str) -> bool:
     )
 
 
-def _public_profile(doc: Dict[str, Any], row: Dict[str, Any], viewer_profile_id: str = "") -> Dict[str, Any]:
+def _profile_payload(
+    row: Dict[str, Any], viewer_profile_id: str, *,
+    followers: int, following: int, posts: int, blocked: bool,
+    viewer_follows: bool, follows_viewer: bool,
+) -> Dict[str, Any]:
+    """The single public shape of a profile.
+
+    Both read paths land here — the Development document store and the
+    Production relational mirrors — so visibility and messaging policy cannot
+    be evaluated differently between them. Only the counters and the two
+    follow predicates are supplied by the caller, because only their *source*
+    differs.
+    """
     pid = str(row.get("profile_id") or "")
-    followers = sum(1 for item in doc.get("follows") or []
-                    if str(item.get("target_profile_id") or "") == pid)
-    following = sum(1 for item in doc.get("follows") or []
-                    if str(item.get("follower_profile_id") or "") == pid)
-    posts = sum(1 for item in doc.get("posts") or []
-                if str(item.get("author_profile_id") or "") == pid and not item.get("deleted_at_utc"))
-    blocked = bool(viewer_profile_id and _social_blocked(doc, viewer_profile_id, pid))
     is_self = bool(viewer_profile_id and pid == viewer_profile_id)
     profile_visibility = str(row.get("profile_visibility") or "network")
     details_visible = bool(
         profile_visibility == "network" or is_self
-        or (viewer_profile_id and _follows(doc, viewer_profile_id, pid))
+        or (viewer_profile_id and viewer_follows)
     )
     policy = str(row.get("allow_messages") or "everyone")
     can_message = bool(viewer_profile_id and viewer_profile_id != pid and not blocked)
     if policy == "nobody":
         can_message = False
     elif policy == "following" and can_message:
-        can_message = _follows(doc, pid, viewer_profile_id)
+        can_message = follows_viewer
     return {
         "profile_id": pid,
         "display_name": str(row.get("display_name") or "Участник")[:80],
@@ -1013,14 +1018,48 @@ def _public_profile(doc: Dict[str, Any], row: Dict[str, Any], viewer_profile_id:
         "avatar_url": f"/api/community/v2/profiles/{pid}/avatar" if row.get("has_avatar") else "",
         "stats": {"posts": posts, "followers": followers, "following": following},
         "is_self": is_self,
-        "is_following": bool(viewer_profile_id and _follows(doc, viewer_profile_id, pid)),
-        "follows_you": bool(viewer_profile_id and _follows(doc, pid, viewer_profile_id)),
+        "is_following": bool(viewer_profile_id and viewer_follows),
+        "follows_you": bool(viewer_profile_id and follows_viewer),
         "can_message": can_message,
         "blocked": blocked,
         "profile_visibility": profile_visibility if is_self else "",
         "allow_messages": policy if is_self else "",
         "details_visible": details_visible,
     }
+
+
+def _public_profile(doc: Dict[str, Any], row: Dict[str, Any], viewer_profile_id: str = "") -> Dict[str, Any]:
+    """Document-store projection: counters come from the loaded document."""
+    pid = str(row.get("profile_id") or "")
+    return _profile_payload(
+        row, viewer_profile_id,
+        followers=sum(1 for item in doc.get("follows") or []
+                      if str(item.get("target_profile_id") or "") == pid),
+        following=sum(1 for item in doc.get("follows") or []
+                      if str(item.get("follower_profile_id") or "") == pid),
+        posts=sum(1 for item in doc.get("posts") or []
+                  if str(item.get("author_profile_id") or "") == pid
+                  and not item.get("deleted_at_utc")),
+        blocked=bool(viewer_profile_id and _social_blocked(doc, viewer_profile_id, pid)),
+        viewer_follows=bool(viewer_profile_id and _follows(doc, viewer_profile_id, pid)),
+        follows_viewer=bool(viewer_profile_id and _follows(doc, pid, viewer_profile_id)),
+    )
+
+
+def _relational_profile(relational_row: Dict[str, Any], viewer_profile_id: str) -> Dict[str, Any]:
+    """Relational projection: counters come from the indexed mirrors."""
+    row = dict(relational_row.get("document") or {})
+    if not row.get("profile_id"):
+        row["profile_id"] = str(relational_row.get("profile_id") or "")
+    return _profile_payload(
+        row, viewer_profile_id,
+        followers=int(relational_row.get("followers") or 0),
+        following=int(relational_row.get("following") or 0),
+        posts=int(relational_row.get("posts") or 0),
+        blocked=bool(relational_row.get("blocked")),
+        viewer_follows=bool(relational_row.get("viewer_follows")),
+        follows_viewer=bool(relational_row.get("follows_viewer")),
+    )
 
 
 def ensure_social_profile(
@@ -1696,11 +1735,64 @@ def moderate_social_report(
         }
 
 
+def _identity_refresh_needed(
+    row: Dict[str, Any], *, user_uuid: str, display_name: str,
+    username: str, role_label: str,
+) -> bool:
+    """Would `_ensure_profile_in_doc` change anything a reader can observe?
+
+    Mirrors that function's update rules one for one. `updated_at_utc` is
+    deliberately not counted: bumping it on every poll is write amplification
+    with nothing behind it.
+    """
+    if user_uuid and not str(row.get("user_uuid") or ""):
+        return True
+    if display_name and not str(row.get("display_name") or "").strip():
+        return True
+    if username and str(row.get("username") or "").startswith("sf_"):
+        return True
+    if role_label and str(role_label).strip()[:40] != str(row.get("role_label") or ""):
+        return True
+    return False
+
+
 def chat_identity(
     user_id: Any, *, user_uuid: Any = "", display_name: str = "",
     username: str = "", role_label: str = "Участник",
 ) -> Dict[str, Any]:
     """Private service-to-service identity for SF Chat; never serialize raw."""
+    from . import storage_router
+    if storage_router.production_enabled():
+        # SF Chat resolves the caller on every request, including every poll
+        # tick, and this used to load *and rewrite* the whole Community
+        # document each time. When the stored profile already matches what the
+        # account would write, one indexed lookup answers it and nothing is
+        # written; anything that would actually change still takes the
+        # document path below.
+        from .production_storage import StorageError
+        try:
+            found = storage_router.community_profile_by_identity(
+                _safe_int(user_id), _resolved_user_uuid(user_id, user_uuid),
+            )
+        except StorageError as exc:
+            raise CommunityError(
+                f"Production Community repository unavailable ({exc.code}).", 503,
+            ) from None
+        if found is not None:
+            row = dict(found.get("document") or {})
+            if not row.get("profile_id"):
+                row["profile_id"] = str(found.get("profile_id") or "")
+            if not _identity_refresh_needed(
+                row, user_uuid=_resolved_user_uuid(user_id, user_uuid),
+                display_name=display_name, username=username, role_label=role_label,
+            ):
+                return {
+                    "profile_id": str(row["profile_id"]),
+                    "user_id": _safe_int(row.get("user_id")),
+                    "user_uuid": str(row.get("user_uuid") or ""),
+                    "display_name": str(row.get("display_name") or "Участник"),
+                    "username": str(row.get("username") or ""),
+                }
     with _LOCK:
         doc = _load()
         row = _ensure_profile_in_doc(
@@ -1740,7 +1832,29 @@ def chat_target(sender_profile_id: str, target_profile_id: str) -> Dict[str, Any
 
 
 def chat_public_profiles(viewer_profile_id: str, profile_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Profiles for a chat page.
+
+    SF Chat asks for this on every conversation list and every history read.
+    In Production it is one indexed statement over the requested ids; it used
+    to load the whole Community document — every profile, post, comment,
+    reaction and follow of every user — to project a handful of participants.
+    """
     wanted = {str(value or "") for value in profile_ids if str(value or "")}
+    if not wanted:
+        return {}
+    from . import storage_router
+    if storage_router.production_enabled():
+        from .production_storage import StorageError
+        try:
+            rows = storage_router.community_public_profiles(viewer_profile_id, sorted(wanted))
+        except StorageError as exc:
+            raise CommunityError(
+                f"Production Community repository unavailable ({exc.code}).", 503,
+            ) from None
+        return {
+            str(row.get("profile_id") or ""): _relational_profile(row, viewer_profile_id)
+            for row in rows
+        }
     with _LOCK:
         doc = _load()
         return {

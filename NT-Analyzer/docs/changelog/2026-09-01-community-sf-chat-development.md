@@ -232,6 +232,105 @@ Production (`storage_router.read_document`). `_save()` ограничивает 
 модели хранения, а не минимальная правка, и она сознательно **не** выполнена в
 рамках pre-acceptance прохода.
 
+## Production read path moved onto the relational mirrors
+
+Единственный оставшийся scalability risk закрыт: production authoritative reads
+SF Chat больше не читают глобальный документ. Функциональность и дизайн
+Community/SF Chat не менялись; Backtest, Connector, trading, payments, AI
+Orchestrator logic, `МИР АГЕНТОВ` и Production не затронуты. Нового storage не
+создавалось, миграции не выполнялись — используются уже существующие таблицы,
+индексы и FORCE RLS из `0021`.
+
+### Что было
+
+Каждый запрос SF Chat читал **два** глобальных документа:
+
+- `sf_chat._load()` — все диалоги, сообщения и read-строки всех пользователей;
+- `community.chat_public_profiles` → `community._load()` — все профили, посты,
+  комментарии, реакции и подписки всех пользователей.
+
+Хуже того, `community.chat_identity` не только читал, но и **перезаписывал**
+документ Community на каждом запросе, включая каждый tick опроса.
+
+### Что стало
+
+- `SFChatRepository` и `CommunityRepository` (`production_storage/core.py`)
+  выполняют индексные чтения по `sf_chat_*` / `sf_community_*` под тем же
+  service scope и теми же RLS-политиками.
+- Список диалогов — один statement: строка, её read-указатель, последнее
+  сообщение и unread приходят вместе через `LATERAL`, без запроса на диалог.
+- Keyset-пагинация по `(updated_at, conversation_id)`. Offset отвергнут:
+  диалог, поднявшийся наверх между страницами, сдвигает все последующие строки.
+- История — обратный проход по `seq` на
+  `sf_chat_messages(conversation_id, seq DESC) WHERE deleted_at IS NULL`,
+  поэтому старая страница стоит столько же, сколько свежая.
+- Опрос — отдельный `/api/sf-chat/state`: фиксированная change-signature плюс
+  ограниченный список только тех диалогов, где действительно есть непрочитанное.
+- `mark_read` при уже прочитанном диалоге отвечает по двум индексным чтениям и
+  не трогает документ; запись через документ остаётся, когда есть что двигать.
+- `chat_identity` в Production резолвится одним индексным чтением и ничего не
+  пишет, пока учётная запись реально не изменила наблюдаемое поле.
+- Документное хранилище сохранено как DEV/fallback/import-совместимость и
+  остаётся авторитетным **писателем**: mirrors синхронизируются в той же
+  транзакции, поэтому реляционные строки несут ровно тот документ, что и JSON.
+
+### Единая проекция
+
+`_conversation_payload` и `_profile_payload` — единственные места, где строится
+публичная форма; оба пути (документ и mirrors) передают в них только те факты,
+источник которых различается. Тест
+`test_relational_and_document_projections_are_identical` сравнивает результаты
+двух путей на одних данных, поэтому расхождение падает в тестах, а не тихо
+уезжает в Production. Сортировка документного пути получила тот же tie-breaker
+по `conversation_id`, что и keyset.
+
+### Измерения
+
+Statements и payload измерены на реальном коде через
+`tests/_relational_fake`, который повторяет семантику SQL (порядок, keyset,
+предикат участия, правило unread). Latency принадлежит живому PostgreSQL и
+здесь **не измерялась** — см. раздел о непокрытом.
+
+| Объём | statements: открытие / опрос / стр. истории / переключение | payload открытия | payload опроса |
+| --- | --- | --- | --- |
+| 5 диалогов / 200 сообщений | 4 / 2 / 4 / 4 | 5.1 КБ | 0.9 КБ |
+| 50 / 5 000 | 4 / 2 / 4 / 4 | 29.9 КБ | 7.5 КБ |
+| 500 / 25 000 | 4 / 2 / 4 / 4 | 30.0 КБ | 7.5 КБ |
+| 2 000 / 50 000 | 4 / 2 / 4 / 4 | 30.1 КБ | 7.5 КБ |
+
+Число statements постоянно на всех объёмах — N+1 отсутствует. Payload открытия
+ограничен одной страницей, payload опроса — сигнатурой и лимитом в 50 строк
+непрочитанного. `mark_read` на прочитанном диалоге — 2 statements и `advanced=0`.
+
+Промежуточная итерация возвращала маркер на каждый диалог, и опрос при 2 000
+диалогов весил `290 КБ` — тяжелее страницы, которую он должен был заменить. Это
+исправлено до фиксированных `7.5 КБ`; свойство закреплено тестом
+`test_idle_polling_payload_stays_flat_as_the_rail_grows`.
+
+Для сравнения, документный путь (остаётся в DEV) на тех же объёмах:
+`2.3 / 93.6 / 386.4 / 963.3` мс на один `list_conversations`.
+
+### Чего эти измерения не покрывают
+
+На этой машине нет PostgreSQL: ни сервера, ни Docker/podman, ни acceptance DSN
+(`psycopg` установлен, слушателя на 5432 нет). Поэтому **latency conversation
+list, first/next history page и поведение нескольких одновременных сессий
+против реальной БД не измерены**. Написан отдельный acceptance-набор
+`tests/test_sf_chat_relational_postgres.py` (9 тестов) по существующей
+конвенции репозитория: он пропускается без
+`STRATFORGE_TEST_POSTGRES_ADMIN_URL` / `STRATFORGE_TEST_POSTGRES_URL` и
+проверяет keyset-обход без повторов, unread и последнее сообщение одним
+statement, обратную пагинацию истории без пересечений, `EXPLAIN` без
+`Seq Scan on sf_chat_messages`, индексный резолв identity, отказ
+не-участнику и восемь одновременных читателей. Запустить его можно, передав
+DSN; пока он не выполнялся ни разу.
+
+### Fail-closed
+
+Недоступность репозитория поднимает `503` и никогда не отвечает из документа —
+`test_repository_failure_fails_closed_instead_of_falling_back`. Не-участник и
+несуществующий диалог дают один и тот же `404`, без оракула существования.
+
 ## Storage, migration and security
 
 - Development использует атомарные local documents. Explicit Canary/Production
@@ -248,6 +347,23 @@ Production (`storage_router.read_document`). `_save()` ограничивает 
   idempotency, pagination, privacy и non-enumerating ACL.
 
 ## Verification and honest remaining scope
+
+- Relational read-path pass: focused Community/SF Chat/storage/UI contract suite
+  `106 passed, 21 skipped` (пропуски — acceptance-тесты PostgreSQL без DSN);
+  полная регрессия `2523 passed, 42 skipped` за `335.76s`.
+- Новые тесты: `tests/test_sf_chat_relational.py` (16) — эквивалентность двух
+  проекций, отсутствие глобального чтения документа в hot path, постоянное
+  число statements, keyset-обход без повторов и пропусков, ограниченный payload
+  опроса, изоляция одновременных читателей, fail-closed при отказе репозитория;
+  `tests/test_sf_chat_relational_postgres.py` (9) — acceptance против живой
+  PostgreSQL, пропускается без DSN.
+- `node --check`, `py_compile`, `git diff --check`, External GPT Context
+  validator и `pre_release_check.py` (474 bundle files): PASS.
+- Известное окружение: на этой рабочей станции полный прогон помечает
+  `development/durable/nt_analyzer.sqlite3` в live-data guard. Проверено на
+  чистом HEAD без изменений этой задачи — поведение идентичное (`2507 passed`,
+  тот же guard), то есть предшествующее и не связанное с этой работой; на CI
+  live-data root отсутствует и guard проходит.
 
 - Hardening pass: focused Community/SF Chat/storage/UI contract suite
   `90 passed`; полная регрессия `2507 passed, 33 skipped` за `437.20s`.
