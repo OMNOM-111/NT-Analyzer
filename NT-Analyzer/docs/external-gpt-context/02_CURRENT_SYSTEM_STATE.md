@@ -1,9 +1,9 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
-- Last verified UTC: 2026-09-02T14:36:24Z
+- Last verified UTC: 2026-09-02T16:16:41Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Development branch implementation SHA: `8844421cbaefa9abc1888d36c5d4274aa41bd53c` (PR #270; final SF Chat orbital-launch presentation pass; not deployed)
+- Development branch implementation SHA: `27b4de3d65eb4e1d753302b90fec45c90a51765a` (PR #270; final SF Chat messenger presentation pass; not deployed)
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production
@@ -15,7 +15,7 @@
 - Repository evidence: legacy isolation PR #254 and Telegram URL-flow PR #255
   merged with mandatory CI GREEN on `main`.
 - Development evidence: isolated branch `codex/community-social-network`,
-  implementation `8844421cbaefa9abc1888d36c5d4274aa41bd53c` in PR #270;
+  implementation `27b4de3d65eb4e1d753302b90fec45c90a51765a` in PR #270;
   full regression is `2503 passed, 35 skipped`; isolated browser QA covers
   desktop, tablet and mobile geometry without document-level overflow, with
   independent center/wall scrolling and no console warnings/errors.
@@ -37,7 +37,7 @@
 | Charts / fan-out | `BETA` | Browser clients consume same-origin StratForge market-data WebSockets; provider credentials are not delivered to browsers and consumers do not create their own TopstepX loginKey/SignalR sessions | broader design acceptance is separate from this Connector closeout |
 | NinjaTrader / Connector | `BETA` | Production Connector on VMNINJA is `0.4.2-dev.20`; SERVER BACKTEST, cancel state machine, device catalog, account snapshot and Connector LIVE/GRACE/OFFLINE presentation are accepted | public installer distribution remains `EXTERNAL BLOCKED` on authorized Authenticode material |
 | Production worker queue | `AVAILABLE` | Eleven worker slots remain 4/4/2/1; empty workers use adaptive jittered backoff and one 30-second stale sweeper. Later auth hot-spot work reduced `/api/auth/status` latency but did not claim CPU improvement outside noise | DB tx/s still lacks a safe first-class diagnostics path |
-| Community / SF Chat | `BETA` in Development | Isolated branch has real profiles/privacy/social feed/search/follows/interactions, Channels compatibility, moderation/soft delete, server-attested Demo/Backtest result posts and one human SF Chat store shared by Community profiles and the global launcher. The latest presentation pass (`8844421cbaefa9abc1888d36c5d4274aa41bd53c`) keeps the dominant rich-object feed plus full profile/wall panel and adds an Orbital Glass SF Chat shell with a persistent desktop conversation rail, real-data search/count/All-Pinned-Recent controls, existing AI create-flow and distinct human/AI bubbles. The desktop shell now opens spatially from the real launcher through a presentation-only light trajectory and leaves a lower rail for one grouped real notification; mobile remains full-screen without that decoration. Existing notification state, human routing and AI Orchestrator storage remain authoritative. PostgreSQL documents fail closed and migrations `0020`/`0021` add allowlist plus FK/index/FORCE-RLS mirrors | Not present in the deployed artifact. Strategy/Chart/Live object adapters, credentialed PostgreSQL acceptance, owner visual acceptance, owner-approved merge and Canary/Production remain separate gates |
+| Community / SF Chat | `BETA` in Development | Isolated branch has real profiles/privacy/social feed/search/follows/interactions, Channels compatibility, moderation/soft delete, server-attested Demo/Backtest result posts and one human SF Chat store shared by Community profiles and the global launcher. The latest presentation pass (`27b4de3d65eb4e1d753302b90fec45c90a51765a`) keeps the accepted Community composition and gives the Orbital Glass SF Chat shell a messenger-first presentation: compact right user bubbles, separate left AI/human avatars with glass bubbles, secondary disclosure-based response controls, denser real-data sidebar, clean composer and restrained vector SF branding. The desktop shell remains linked to the real launcher by a presentation-only light trajectory; mobile remains full-screen without that decoration. Existing notification state, human routing and AI Orchestrator storage remain authoritative. PostgreSQL documents fail closed and migrations `0020`/`0021` add allowlist plus FK/index/FORCE-RLS mirrors | Not present in the deployed artifact. Strategy/Chart/Live object adapters, credentialed PostgreSQL acceptance, owner visual acceptance, owner-approved merge and Canary/Production remain separate gates |
 | Documents | `BETA` | Current handoff and Context Pack identify beta.87 as live; hidden Markdown amendment blocks are removed and AI provenance is infrastructure-only or absent | beta.87 exact operational identity is recorded in its changelog closeout |
 | Legal | `AVAILABLE` | One official onboarding agreement `2026-08-30-v2` is the sole versioned clickwrap; related official policies are readable informational documents; owner configuration is absent from both document API namespaces | Live Trading remains unavailable pending separate release and legal requirements |
 
