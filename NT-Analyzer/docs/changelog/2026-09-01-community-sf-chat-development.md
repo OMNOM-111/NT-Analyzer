@@ -90,9 +90,9 @@ Release impact: Development only; Canary/Production не изменялись.
   and External GPT Context Pack validator: PASS.
 - Git-indexed `pre_release_check.py`: PASS (`474` bundle files; in-bundle
   static scan, runtime reads, Python compile and shipped JavaScript syntax).
-- Pull request #270 required CI was `5/5 PASS` at the pre-refinement
-  `d3fa41bcd0493d11ab9d85fbb6a33e4a94f29aef` checkpoint. The UI refinement
-  requires its own fresh PR checks after push before any merge decision.
+- Pull request #270 required CI reached `5/5 PASS` after the final sidebar pass
+  at the code-and-record head `f464d069502a93c3d44c7de35c0cba3a2ba492e4`.
+  Merge remains an explicit owner decision.
 - Real PostgreSQL tests require explicit acceptance DSNs and remain separately
   reported when unavailable; no database or server was mutated by this task.
 - Strategy metadata, Chart snapshot and Live result adapters remain disabled,

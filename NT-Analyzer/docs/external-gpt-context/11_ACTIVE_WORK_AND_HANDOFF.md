@@ -39,9 +39,9 @@
   `0020`/`0021` (allowlist, FK/index/FORCE-RLS mirrors). A checksum-confirmed,
   backup-first idempotent legacy importer exists but was not run against any
   environment.
-- PR #270 required CI reached `5/5 PASS` at the pre-refinement `d3fa41bc`
-  checkpoint. The UI refinement needs fresh PR checks after push, and merge
-  still requires owner approval.
+- PR #270 required CI reached `5/5 PASS` after the final sidebar pass at
+  `f464d069502a93c3d44c7de35c0cba3a2ba492e4`; merge still requires owner
+  approval.
 - No Backtest/Connector, market-data, trading, future `МИР АГЕНТОВ`, Canary or
   Production action belongs to this branch.
 
