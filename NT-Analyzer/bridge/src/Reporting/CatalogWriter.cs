@@ -402,6 +402,82 @@ namespace NTAnalyzerBridge.Reporting
         internal const int EnvelopeReserveBytes = 512;
         internal const int ConnectorInstrumentMaxAgeDays = 400;
 
+        // NinjaTrader's own instrument universe, which exists before any bars are
+        // cached. db\minute only records what has been downloaded, so deriving
+        // the catalog from it hides every instrument the user has not backtested
+        // yet. MasterInstrument/Instrument is where NinjaTrader itself knows a
+        // contract exists, and Strategy Analyzer downloads the history on demand.
+        //
+        // Returns the nearest unexpired contract per futures root, keyed by root.
+        private static Dictionary<string, Dictionary<string, object>> CanonicalFutureFrontMonths()
+        {
+            var byRoot = new Dictionary<string, Dictionary<string, object>>(
+                StringComparer.OrdinalIgnoreCase);
+            var expiryByRoot = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                Type instrType = Type.GetType("NinjaTrader.Cbi.Instrument, NinjaTrader.Core",
+                                              throwOnError: false)
+                    ?? AppDomain.CurrentDomain.GetAssemblies()
+                        .Select(a => SafeGetType(a, "NinjaTrader.Cbi.Instrument"))
+                        .FirstOrDefault(t => t != null);
+                if (instrType == null) return byRoot;
+
+                var allProp = instrType.GetProperty("All",
+                    System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+                var all = allProp?.GetValue(null, null) as System.Collections.IEnumerable;
+                if (all == null) return byRoot;
+
+                DateTime today = DateTime.UtcNow.Date;
+                foreach (object instrument in all)
+                {
+                    if (instrument == null) continue;
+                    object master = ReadProp(instrument, "MasterInstrument");
+                    if (master == null) continue;
+                    string kind = ReadProp(master, "InstrumentType")?.ToString();
+                    if (!string.Equals(kind, "Future", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    string full = ReadProp(instrument, "FullName")?.ToString();
+                    if (string.IsNullOrWhiteSpace(full) || full.IndexOf(' ') < 0) continue;
+
+                    object expiryRaw = ReadProp(instrument, "Expiry");
+                    if (!(expiryRaw is DateTime)) continue;
+                    DateTime expiry = ((DateTime)expiryRaw).Date;
+                    if (expiry < today) continue;
+
+                    string root = ReadProp(master, "Name")?.ToString();
+                    if (string.IsNullOrWhiteSpace(root)) root = ParseRoot(full);
+                    if (string.IsNullOrWhiteSpace(root)) continue;
+
+                    DateTime held;
+                    if (expiryByRoot.TryGetValue(root, out held) && held <= expiry) continue;
+
+                    double? tickSize = TryReadDouble(master, "TickSize");
+                    double? pointValue = TryReadDouble(master, "PointValue");
+                    var row = new Dictionary<string, object>
+                    {
+                        ["instrument"] = full,
+                        ["root"] = root,
+                        ["expiry"] = ParseExpiry(full),
+                        ["data_first"] = null,
+                        ["data_last"] = null,
+                        ["has_minute_data"] = false,
+                        ["tick_size"] = tickSize.HasValue ? (object)tickSize.Value : null,
+                        ["point_value"] = pointValue.HasValue ? (object)pointValue.Value : null,
+                        ["tick_value"] = (tickSize.HasValue && pointValue.HasValue)
+                            ? (object)Math.Round(tickSize.Value * pointValue.Value, 8) : null,
+                    };
+                    byRoot[root] = row;
+                    expiryByRoot[root] = expiry;
+                }
+            }
+            catch (Exception ex)
+            {
+                BridgeLog.Warn("CatalogWriter: canonical instrument enumeration failed: " + ex.Message);
+            }
+            return byRoot;
+        }
+
         private static List<JObject> BuildConnectorInstruments(
             string ntUserDir, out int scannedTotal)
         {
@@ -425,6 +501,21 @@ namespace NTAnalyzerBridge.Reporting
                 if (!byRoot.ContainsKey(root))
                     byRoot[root] = new List<KeyValuePair<DateTime, Dictionary<string, object>>>();
                 byRoot[root].Add(new KeyValuePair<DateTime, Dictionary<string, object>>(last, row));
+            }
+
+            // Every futures root NinjaTrader knows about gets its current contract,
+            // even with nothing cached yet, so the selector offers the instrument
+            // before its first backtest instead of after it. A root that already
+            // has cached bars keeps those rows and their real data ranges.
+            foreach (KeyValuePair<string, Dictionary<string, object>> entry in
+                     CanonicalFutureFrontMonths())
+            {
+                if (byRoot.ContainsKey(entry.Key)) continue;
+                byRoot[entry.Key] = new List<KeyValuePair<DateTime, Dictionary<string, object>>>
+                {
+                    new KeyValuePair<DateTime, Dictionary<string, object>>(
+                        DateTime.MinValue, entry.Value),
+                };
             }
 
             List<string> roots = byRoot.Keys.ToList();
