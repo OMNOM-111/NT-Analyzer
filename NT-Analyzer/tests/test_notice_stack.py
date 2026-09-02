@@ -98,6 +98,9 @@ def test_the_grouped_card_offers_chat_action_and_remaining_count():
     assert "Открыть в чате" in body
     assert "sf-notice-more" in body
     assert "_more" in body
+    assert "noticeTitle(item)" in body
+    assert "noticeTimeLabel(item.created_at_utc)" in body
+    assert "unread_count: unread" in UI
 
 
 # --------------------------------------------------------------------------- #

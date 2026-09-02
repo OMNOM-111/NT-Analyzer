@@ -32,6 +32,7 @@ class CommunityError(RuntimeError):
 
 _LOCK = threading.RLock()
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_STORE_KEY = "community"
 _MAX_MSG = 4000
 _MAX_ATTACHMENTS = 3
 _MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024
@@ -86,7 +87,7 @@ def _load() -> Dict[str, Any]:
     if storage_router.production_enabled():
         from .production_storage import StorageError
         try:
-            doc = storage_router.read_document("community", _empty_doc())
+            doc = storage_router.read_document(_STORE_KEY, _empty_doc())
         except StorageError as exc:
             raise CommunityError(
                 f"Production Community repository unavailable ({exc.code}).", 503,
@@ -126,7 +127,7 @@ def _save(doc: Dict[str, Any]) -> None:
     if storage_router.production_enabled():
         from .production_storage import StorageError
         try:
-            storage_router.write_document("community", payload)
+            storage_router.write_document(_STORE_KEY, payload)
         except StorageError as exc:
             raise CommunityError(
                 f"Production Community repository unavailable ({exc.code}).", 503,
@@ -262,6 +263,17 @@ def _idempotency_hash(value: Any) -> str:
     return hashlib.sha256(clean.encode("utf-8")).hexdigest()
 
 
+def _image_payload_matches_mime(mime: str, payload: bytes) -> bool:
+    """Reject a data URL whose declared MIME does not match its file magic."""
+    if mime == "image/png":
+        return payload.startswith(b"\x89PNG\r\n\x1a\n")
+    if mime == "image/jpeg":
+        return payload.startswith(b"\xff\xd8\xff")
+    if mime == "image/webp":
+        return len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP"
+    return False
+
+
 def _validate_attachments(value: Any, *, workspace_id: str, owner_id: str) -> List[Dict[str, Any]]:
     """Persist only small image attachments supplied as data URLs.
 
@@ -290,6 +302,8 @@ def _validate_attachments(value: Any, *, workspace_id: str, owner_id: str) -> Li
             raise CommunityError("Повреждённые данные изображения.") from None
         if not payload or len(payload) > _MAX_ATTACHMENT_BYTES:
             raise CommunityError("Размер каждого изображения не должен превышать 2 МБ.")
+        if not _image_payload_matches_mime(mime, payload):
+            raise CommunityError("Содержимое изображения не соответствует MIME-типу.")
         attachment_id = "catt_" + secrets.token_hex(9)
         extension = _MIME_EXTENSION[mime]
         stored_name = f"{owner_id}_{index}{extension}"
@@ -1186,6 +1200,7 @@ def _public_comment(doc: Dict[str, Any], row: Dict[str, Any], viewer_profile_id:
         "text": str(row.get("text") or "")[:1200],
         "created_at_utc": str(row.get("created_at_utc") or ""),
         "author": _public_profile(doc, author, viewer_profile_id) if author else None,
+        "can_delete": str(row.get("author_profile_id") or "") == viewer_profile_id,
     }
 
 
@@ -1222,6 +1237,77 @@ def _public_social_post(doc: Dict[str, Any], row: Dict[str, Any], viewer_profile
         "bookmarked": bookmarked,
         "can_delete": str(row.get("author_profile_id") or "") == viewer_profile_id,
     }
+
+
+_RESULT_METRIC_FIELDS = (
+    ("net_profit_after_commission", "Net P&L"),
+    ("net_profit", "Net P&L"),
+    ("profit_factor", "Profit factor"),
+    ("max_drawdown", "Max drawdown"),
+    ("trade_count", "Trades"),
+    ("winning_pct", "Win rate"),
+)
+
+
+def attested_result_snapshot(
+    source_id: str, summary: Dict[str, Any], *, origin: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build a public result card exclusively from a scoped server job summary.
+
+    Scope/ownership is checked by the HTTP adapter before this sanitizer is
+    called. Only allowlisted summary fields cross into Community; raw trades,
+    bars, paths, strategy source and job parameters never do.
+    """
+    sid = str(source_id or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", sid):
+        raise CommunityError("Некорректный source ID.")
+    if not isinstance(summary, dict) or str(summary.get("status") or "") != "done":
+        raise CommunityError("Публиковать можно только завершённый результат.", 409)
+    source_origin = dict(origin or {})
+    result_type = "demo" if str(source_origin.get("type") or "").lower() == "demo" else "backtest"
+    raw_metrics = summary.get("metrics") if isinstance(summary.get("metrics"), dict) else {}
+    metrics: Dict[str, Any] = {}
+    seen_labels = set()
+    for key, label in _RESULT_METRIC_FIELDS:
+        value = summary.get(key)
+        if value is None:
+            value = raw_metrics.get(key)
+        if value is None or label in seen_labels or isinstance(value, bool):
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not math.isfinite(number):
+            continue
+        metrics[label] = int(number) if number.is_integer() else round(number, 4)
+        seen_labels.add(label)
+        if len(metrics) >= 5:
+            break
+    instrument = str(summary.get("instrument") or "").strip()[:40]
+    timeframe = str(summary.get("timeframe") or "").strip()[:40]
+    strategy = str(summary.get("strategy_name") or summary.get("class_name") or "Strategy").strip()[:120]
+    timestamp = str(summary.get("finished_at_utc") or summary.get("created_at_utc") or "")[:40]
+    public = {
+        "snapshot_version": 1,
+        "kind": "Demo Result" if result_type == "demo" else "Backtest Result",
+        "source_type": f"{result_type}_result",
+        "source_id": sid,
+        "result_type": result_type,
+        "timestamp_utc": timestamp,
+        "title": " · ".join(value for value in (instrument, strategy) if value)[:180],
+        "summary": " · ".join(value for value in (timeframe, "server-attested") if value),
+        "metrics": metrics,
+    }
+    canonical = json.dumps(
+        public, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    public["attestation"] = {
+        "algorithm": "sha256",
+        "digest": hashlib.sha256(canonical).hexdigest(),
+    }
+    return public
 
 
 def create_social_post(
@@ -1430,6 +1516,54 @@ def bookmark_post(
                 "post": _public_social_post(doc, post, viewer_id)}
 
 
+def delete_social_post(
+    user_id: Any, post_id: str, *, user_uuid: Any = "", moderator: bool = False,
+) -> Dict[str, Any]:
+    """Soft-delete a post owned by the actor or selected by an owner moderator."""
+    with _LOCK:
+        doc = _load()
+        viewer = _viewer_profile(doc, user_id, user_uuid)
+        viewer_id = str(viewer["profile_id"])
+        post = next((row for row in doc.get("posts") or []
+                     if str(row.get("post_id") or "") == str(post_id or "")), None)
+        if post is None or post.get("deleted_at_utc"):
+            raise CommunityError("Публикация не найдена.", 404)
+        if str(post.get("author_profile_id") or "") != viewer_id and not moderator:
+            raise CommunityError("Нельзя удалить чужую публикацию.", 403)
+        post["deleted_at_utc"] = _now_iso()
+        post["deleted_by_profile_id"] = viewer_id
+        post["moderated"] = bool(moderator)
+        _save(doc)
+        return {"ok": True, "post_id": str(post_id), "deleted": True, "soft_delete": True}
+
+
+def delete_social_comment(
+    user_id: Any, comment_id: str, *, user_uuid: Any = "", moderator: bool = False,
+) -> Dict[str, Any]:
+    """Soft-delete a comment without rewriting the parent publication."""
+    with _LOCK:
+        doc = _load()
+        viewer = _viewer_profile(doc, user_id, user_uuid)
+        viewer_id = str(viewer["profile_id"])
+        comment = next((row for row in doc.get("comments") or []
+                        if str(row.get("comment_id") or "") == str(comment_id or "")), None)
+        if comment is None or comment.get("deleted_at_utc"):
+            raise CommunityError("Комментарий не найден.", 404)
+        if str(comment.get("author_profile_id") or "") != viewer_id and not moderator:
+            raise CommunityError("Нельзя удалить чужой комментарий.", 403)
+        comment["deleted_at_utc"] = _now_iso()
+        comment["deleted_by_profile_id"] = viewer_id
+        comment["moderated"] = bool(moderator)
+        post = next((row for row in doc.get("posts") or []
+                     if str(row.get("post_id") or "") == str(comment.get("post_id") or "")), None)
+        _save(doc)
+        return {
+            "ok": True, "comment_id": str(comment_id), "deleted": True,
+            "soft_delete": True,
+            "post": _public_social_post(doc, post, viewer_id) if post else None,
+        }
+
+
 def block_social_profile(
     user_id: Any, target_profile_id: str, *, blocked: bool = True, user_uuid: Any = "",
 ) -> Dict[str, Any]:
@@ -1486,6 +1620,80 @@ def report_social_target(
         doc.setdefault("reports", []).append(row)
         _save(doc)
         return {"ok": True, "report_id": row["report_id"], "status": "open"}
+
+
+def social_moderation_queue(*, status: str = "open", limit: int = 100) -> Dict[str, Any]:
+    """Owner-facing safe moderation queue; reporter account identifiers stay private."""
+    wanted = str(status or "open").strip().lower()
+    if wanted not in {"open", "resolved", "dismissed", "all"}:
+        raise CommunityError("Неизвестный статус moderation queue.")
+    lim = max(1, min(500, _safe_int(limit, 100)))
+    with _LOCK:
+        doc = _load()
+        rows = []
+        for row in reversed(doc.get("reports") or []):
+            row_status = str(row.get("status") or "open")
+            if wanted != "all" and row_status != wanted:
+                continue
+            rows.append({
+                "report_id": str(row.get("report_id") or ""),
+                "target_id": str(row.get("target_id") or ""),
+                "target_type": str(row.get("target_type") or "unknown"),
+                "reason": str(row.get("reason") or "")[:500],
+                "status": row_status,
+                "resolution": str(row.get("resolution") or ""),
+                "created_at_utc": str(row.get("created_at_utc") or ""),
+                "resolved_at_utc": str(row.get("resolved_at_utc") or ""),
+            })
+            if len(rows) >= lim:
+                break
+        return {"ok": True, "reports": rows, "status": wanted}
+
+
+def moderate_social_report(
+    owner_id: Any, report_id: str, *, action: str = "resolve", note: str = "",
+    owner_user_uuid: str = "",
+) -> Dict[str, Any]:
+    """Resolve/dismiss a report and optionally soft-delete reported content."""
+    decision = str(action or "resolve").strip().lower()
+    if decision not in {"resolve", "dismiss", "remove"}:
+        raise CommunityError("Неизвестное действие модерации.")
+    with _LOCK:
+        doc = _load()
+        report = next((row for row in doc.get("reports") or []
+                       if str(row.get("report_id") or "") == str(report_id or "")), None)
+        if report is None:
+            raise CommunityError("Жалоба не найдена.", 404)
+        removed = False
+        if decision == "remove":
+            target_id = str(report.get("target_id") or "")
+            target_type = str(report.get("target_type") or "")
+            collection = "posts" if target_type == "post" else "comments" if target_type == "comment" else ""
+            if not collection:
+                raise CommunityError("Для профиля доступно только решение жалобы; блокировка аккаунта выполняется через управление пользователями.")
+            target_key = "post_id" if collection == "posts" else "comment_id"
+            target = next((row for row in doc.get(collection) or []
+                           if str(row.get(target_key) or "") == target_id), None)
+            if target is None:
+                raise CommunityError("Объект жалобы не найден.", 404)
+            if not target.get("deleted_at_utc"):
+                target["deleted_at_utc"] = _now_iso()
+                target["moderated"] = True
+                removed = True
+        now = _now_iso()
+        report["status"] = "dismissed" if decision == "dismiss" else "resolved"
+        report["resolution"] = decision
+        report["moderation_note"] = str(note or "").strip()[:500]
+        report["resolved_at_utc"] = now
+        report["moderated_by_user_id"] = _safe_int(owner_id)
+        canonical = _resolved_user_uuid(owner_id, owner_user_uuid)
+        if canonical:
+            report["moderated_by_user_uuid"] = canonical
+        _save(doc)
+        return {
+            "ok": True, "report_id": str(report_id), "status": report["status"],
+            "resolution": decision, "content_removed": removed,
+        }
 
 
 def chat_identity(

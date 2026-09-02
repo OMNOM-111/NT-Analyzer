@@ -426,6 +426,314 @@ class DocumentRepository:
             self._sync_entitlements(conn, doc)
         elif repository == "connectors":
             self._sync_connectors(conn, doc)
+        elif repository == "community":
+            self._sync_community(conn, doc)
+        elif repository == "sf_chat":
+            self._sync_sf_chat(conn, doc)
+
+    def _sync_community(self, conn: Any, doc: Dict[str, Any]) -> None:
+        """Maintain constrained social mirrors in the document transaction."""
+        profiles = [row for row in doc.get("profiles", []) if isinstance(row, dict)
+                    and str(row.get("profile_id") or "") and _int(row.get("user_id")) > 0]
+        profile_ids: list[str] = []
+        for row in profiles:
+            profile_id = str(row["profile_id"])
+            profile_ids.append(profile_id)
+            conn.execute(
+                """
+                INSERT INTO sf_community_profiles(
+                  profile_id,user_id,user_uuid,username,visibility,message_policy,
+                  created_at,updated_at,document
+                ) VALUES(%s,%s,%s,%s,%s,%s,COALESCE(%s,clock_timestamp()),
+                         COALESCE(%s,clock_timestamp()),%s)
+                ON CONFLICT(profile_id) DO UPDATE SET
+                  user_id=EXCLUDED.user_id,user_uuid=EXCLUDED.user_uuid,
+                  username=EXCLUDED.username,visibility=EXCLUDED.visibility,
+                  message_policy=EXCLUDED.message_policy,updated_at=EXCLUDED.updated_at,
+                  document=EXCLUDED.document
+                """,
+                (
+                    profile_id, _int(row.get("user_id")), _uuid(row.get("user_uuid")),
+                    str(row.get("username") or "")[:30],
+                    _status(row.get("profile_visibility"), {"network", "followers"}, "network"),
+                    _status(row.get("allow_messages"), {"everyone", "following", "nobody"}, "everyone"),
+                    _timestamp(row.get("created_at_utc") or row.get("joined_at_utc")),
+                    _timestamp(row.get("updated_at_utc")), _jsonb(row),
+                ),
+            )
+
+        posts = [row for row in doc.get("posts", []) if isinstance(row, dict)
+                 and str(row.get("post_id") or "") and str(row.get("author_profile_id") or "")]
+        post_ids: list[str] = []
+        for row in posts:
+            post_id = str(row["post_id"])
+            post_ids.append(post_id)
+            snapshot = row.get("object_snapshot") if isinstance(row.get("object_snapshot"), dict) else {}
+            attestation = snapshot.get("attestation") if isinstance(snapshot.get("attestation"), dict) else {}
+            conn.execute(
+                """
+                INSERT INTO sf_community_posts(
+                  post_id,author_profile_id,workspace_id,visibility,kind,
+                  object_source_type,object_source_id,attestation_sha256,
+                  created_at,updated_at,deleted_at,document
+                ) VALUES(%s,%s,NULLIF(%s,''),%s,%s,NULLIF(%s,''),NULLIF(%s,''),
+                         NULLIF(%s,''),COALESCE(%s,clock_timestamp()),
+                         COALESCE(%s,clock_timestamp()),%s,%s)
+                ON CONFLICT(post_id) DO UPDATE SET
+                  author_profile_id=EXCLUDED.author_profile_id,
+                  workspace_id=EXCLUDED.workspace_id,visibility=EXCLUDED.visibility,
+                  kind=EXCLUDED.kind,object_source_type=EXCLUDED.object_source_type,
+                  object_source_id=EXCLUDED.object_source_id,
+                  attestation_sha256=EXCLUDED.attestation_sha256,
+                  updated_at=EXCLUDED.updated_at,deleted_at=EXCLUDED.deleted_at,
+                  document=EXCLUDED.document
+                """,
+                (
+                    post_id, str(row.get("author_profile_id") or ""),
+                    str(row.get("workspace_id") or ""),
+                    _status(row.get("visibility"), {"network", "followers"}, "network"),
+                    _status(row.get("kind"), {"text", "image", "object"}, "text"),
+                    str(snapshot.get("source_type") or "")[:40],
+                    str(snapshot.get("source_id") or "")[:96],
+                    str(attestation.get("digest") or "")[:64],
+                    _timestamp(row.get("created_at_utc")), _timestamp(row.get("updated_at_utc")),
+                    _timestamp(row.get("deleted_at_utc")), _jsonb(row),
+                ),
+            )
+
+        comments = [row for row in doc.get("comments", []) if isinstance(row, dict)
+                    and str(row.get("comment_id") or "") and str(row.get("post_id") or "")
+                    and str(row.get("author_profile_id") or "")]
+        comment_ids: list[str] = []
+        for row in comments:
+            comment_id = str(row["comment_id"])
+            comment_ids.append(comment_id)
+            conn.execute(
+                """
+                INSERT INTO sf_community_comments(
+                  comment_id,post_id,author_profile_id,created_at,deleted_at,document
+                ) VALUES(%s,%s,%s,COALESCE(%s,clock_timestamp()),%s,%s)
+                ON CONFLICT(comment_id) DO UPDATE SET
+                  post_id=EXCLUDED.post_id,author_profile_id=EXCLUDED.author_profile_id,
+                  deleted_at=EXCLUDED.deleted_at,document=EXCLUDED.document
+                """,
+                (
+                    comment_id, str(row.get("post_id") or ""),
+                    str(row.get("author_profile_id") or ""),
+                    _timestamp(row.get("created_at_utc")), _timestamp(row.get("deleted_at_utc")),
+                    _jsonb(row),
+                ),
+            )
+
+        edge_specs = (
+            ("follows", "sf_community_follows", "follow_id", "follower_profile_id", "target_profile_id", "follow"),
+            ("social_blocks", "sf_community_blocks", "block_id", "blocker_profile_id", "target_profile_id", "block"),
+        )
+        edge_ids: Dict[str, list[str]] = {}
+        for collection, table, key_column, left_key, right_key, prefix in edge_specs:
+            ids: list[str] = []
+            for row in doc.get(collection, []):
+                if not isinstance(row, dict):
+                    continue
+                left, right = str(row.get(left_key) or ""), str(row.get(right_key) or "")
+                if not left or not right:
+                    continue
+                edge_id = _stable_key(prefix, {left_key: left, right_key: right})
+                ids.append(edge_id)
+                conn.execute(
+                    f"""
+                    INSERT INTO {table}({key_column},{left_key},{right_key},created_at,document)
+                    VALUES(%s,%s,%s,COALESCE(%s,clock_timestamp()),%s)
+                    ON CONFLICT({key_column}) DO UPDATE SET document=EXCLUDED.document
+                    """,
+                    (edge_id, left, right, _timestamp(row.get("created_at_utc")), _jsonb(row)),
+                )
+            edge_ids[table] = ids
+
+        reactions: list[str] = []
+        for row in doc.get("post_reactions", []):
+            if not isinstance(row, dict):
+                continue
+            post_id, profile_id = str(row.get("post_id") or ""), str(row.get("profile_id") or "")
+            if not post_id or not profile_id:
+                continue
+            reaction_id = _stable_key("reaction", {"post_id": post_id, "profile_id": profile_id})
+            reactions.append(reaction_id)
+            conn.execute(
+                """
+                INSERT INTO sf_community_reactions(
+                  reaction_id,post_id,profile_id,reaction,created_at,document
+                ) VALUES(%s,%s,%s,%s,COALESCE(%s,clock_timestamp()),%s)
+                ON CONFLICT(reaction_id) DO UPDATE SET
+                  reaction=EXCLUDED.reaction,document=EXCLUDED.document
+                """,
+                (
+                    reaction_id, post_id, profile_id,
+                    _status(row.get("reaction"), {"support", "insightful", "fire"}, "support"),
+                    _timestamp(row.get("created_at_utc")), _jsonb(row),
+                ),
+            )
+
+        bookmarks: list[str] = []
+        for row in doc.get("bookmarks", []):
+            if not isinstance(row, dict):
+                continue
+            post_id, profile_id = str(row.get("post_id") or ""), str(row.get("profile_id") or "")
+            if not post_id or not profile_id:
+                continue
+            bookmark_id = _stable_key("bookmark", {"post_id": post_id, "profile_id": profile_id})
+            bookmarks.append(bookmark_id)
+            conn.execute(
+                """
+                INSERT INTO sf_community_bookmarks(
+                  bookmark_id,post_id,profile_id,created_at,document
+                ) VALUES(%s,%s,%s,COALESCE(%s,clock_timestamp()),%s)
+                ON CONFLICT(bookmark_id) DO UPDATE SET document=EXCLUDED.document
+                """,
+                (bookmark_id, post_id, profile_id, _timestamp(row.get("created_at_utc")), _jsonb(row)),
+            )
+
+        reports = [row for row in doc.get("reports", []) if isinstance(row, dict)
+                   and str(row.get("report_id") or "") and str(row.get("from_profile_id") or "")]
+        report_ids: list[str] = []
+        for row in reports:
+            report_id = str(row["report_id"])
+            report_ids.append(report_id)
+            conn.execute(
+                """
+                INSERT INTO sf_community_moderation_reports(
+                  report_id,reporter_profile_id,target_type,target_id,status,
+                  created_at,resolved_at,document
+                ) VALUES(%s,%s,%s,%s,%s,COALESCE(%s,clock_timestamp()),%s,%s)
+                ON CONFLICT(report_id) DO UPDATE SET
+                  target_type=EXCLUDED.target_type,target_id=EXCLUDED.target_id,
+                  status=EXCLUDED.status,resolved_at=EXCLUDED.resolved_at,
+                  document=EXCLUDED.document
+                """,
+                (
+                    report_id, str(row.get("from_profile_id") or ""),
+                    _status(row.get("target_type"), {"post", "profile", "comment"}, "post"),
+                    str(row.get("target_id") or "")[:100],
+                    _status(row.get("status"), {"open", "resolved", "dismissed"}, "open"),
+                    _timestamp(row.get("created_at_utc")), _timestamp(row.get("resolved_at_utc")),
+                    _jsonb(row),
+                ),
+            )
+
+        self._delete_missing(conn, "sf_community_comments", "comment_id", comment_ids)
+        self._delete_missing(conn, "sf_community_reactions", "reaction_id", reactions)
+        self._delete_missing(conn, "sf_community_bookmarks", "bookmark_id", bookmarks)
+        self._delete_missing(conn, "sf_community_moderation_reports", "report_id", report_ids)
+        for table, ids in edge_ids.items():
+            key = "follow_id" if table.endswith("follows") else "block_id"
+            self._delete_missing(conn, table, key, ids)
+        self._delete_missing(conn, "sf_community_posts", "post_id", post_ids)
+        self._delete_missing(conn, "sf_community_profiles", "profile_id", profile_ids)
+
+    def _sync_sf_chat(self, conn: Any, doc: Dict[str, Any]) -> None:
+        """Maintain private-conversation mirrors; API ACL remains authoritative."""
+        conversations = [row for row in doc.get("conversations", []) if isinstance(row, dict)
+                         and str(row.get("conversation_id") or "")]
+        conversation_ids: list[str] = []
+        participant_ids: list[str] = []
+        for row in conversations:
+            conversation_id = str(row["conversation_id"])
+            conversation_ids.append(conversation_id)
+            conn.execute(
+                """
+                INSERT INTO sf_chat_conversations(
+                  conversation_id,conversation_type,last_seq,created_at,updated_at,document
+                ) VALUES(%s,'human',%s,COALESCE(%s,clock_timestamp()),
+                         COALESCE(%s,clock_timestamp()),%s)
+                ON CONFLICT(conversation_id) DO UPDATE SET
+                  last_seq=EXCLUDED.last_seq,updated_at=EXCLUDED.updated_at,
+                  document=EXCLUDED.document
+                """,
+                (
+                    conversation_id, max(0, _int(row.get("last_seq"))),
+                    _timestamp(row.get("created_at_utc")), _timestamp(row.get("updated_at_utc")),
+                    _jsonb(row),
+                ),
+            )
+            for profile_id in sorted({str(value) for value in row.get("participant_profile_ids", []) if value}):
+                participant_id = _stable_key(
+                    "participant", {"conversation_id": conversation_id, "profile_id": profile_id},
+                )
+                participant_ids.append(participant_id)
+                conn.execute(
+                    """
+                    INSERT INTO sf_chat_participants(
+                      participant_id,conversation_id,profile_id,joined_at,document
+                    ) VALUES(%s,%s,%s,COALESCE(%s,clock_timestamp()),%s)
+                    ON CONFLICT(participant_id) DO UPDATE SET document=EXCLUDED.document
+                    """,
+                    (
+                        participant_id, conversation_id, profile_id,
+                        _timestamp(row.get("created_at_utc")),
+                        _jsonb({"conversation_id": conversation_id, "profile_id": profile_id}),
+                    ),
+                )
+
+        messages = [row for row in doc.get("messages", []) if isinstance(row, dict)
+                    and str(row.get("message_id") or "") and str(row.get("conversation_id") or "")
+                    and str(row.get("sender_profile_id") or "")]
+        message_ids: list[str] = []
+        for row in messages:
+            message_id = str(row["message_id"])
+            message_ids.append(message_id)
+            conn.execute(
+                """
+                INSERT INTO sf_chat_messages(
+                  message_id,conversation_id,seq,sender_profile_id,idempotency_key_hash,
+                  created_at,deleted_at,document
+                ) VALUES(%s,%s,%s,%s,NULLIF(%s,''),COALESCE(%s,clock_timestamp()),%s,%s)
+                ON CONFLICT(message_id) DO UPDATE SET
+                  seq=EXCLUDED.seq,sender_profile_id=EXCLUDED.sender_profile_id,
+                  idempotency_key_hash=EXCLUDED.idempotency_key_hash,
+                  deleted_at=EXCLUDED.deleted_at,document=EXCLUDED.document
+                """,
+                (
+                    message_id, str(row.get("conversation_id") or ""),
+                    max(1, _int(row.get("seq"))), str(row.get("sender_profile_id") or ""),
+                    str(row.get("idempotency_key_hash") or "")[:64],
+                    _timestamp(row.get("created_at_utc")), _timestamp(row.get("deleted_at_utc")),
+                    _jsonb(row),
+                ),
+            )
+
+        read_ids: list[str] = []
+        for row in doc.get("reads", []):
+            if not isinstance(row, dict):
+                continue
+            conversation_id, profile_id = (
+                str(row.get("conversation_id") or ""), str(row.get("profile_id") or ""),
+            )
+            if not conversation_id or not profile_id:
+                continue
+            read_id = _stable_key(
+                "read", {"conversation_id": conversation_id, "profile_id": profile_id},
+            )
+            read_ids.append(read_id)
+            conn.execute(
+                """
+                INSERT INTO sf_chat_reads(
+                  read_id,conversation_id,profile_id,last_read_seq,read_at,document
+                ) VALUES(%s,%s,%s,%s,COALESCE(%s,clock_timestamp()),%s)
+                ON CONFLICT(read_id) DO UPDATE SET
+                  last_read_seq=EXCLUDED.last_read_seq,read_at=EXCLUDED.read_at,
+                  document=EXCLUDED.document
+                """,
+                (
+                    read_id, conversation_id, profile_id,
+                    max(0, _int(row.get("last_read_seq"))), _timestamp(row.get("read_at_utc")),
+                    _jsonb(row),
+                ),
+            )
+
+        self._delete_missing(conn, "sf_chat_messages", "message_id", message_ids)
+        self._delete_missing(conn, "sf_chat_reads", "read_id", read_ids)
+        self._delete_missing(conn, "sf_chat_participants", "participant_id", participant_ids)
+        self._delete_missing(conn, "sf_chat_conversations", "conversation_id", conversation_ids)
 
     @staticmethod
     def _delete_missing(conn: Any, table: str, key: str, values: Sequence[Any]) -> None:

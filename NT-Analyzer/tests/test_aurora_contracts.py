@@ -676,13 +676,18 @@ def test_community_v2_and_unified_sf_chat_are_real_api_backed_surfaces():
     for contract in ("community-feed", "community-composer-v2", "community-profile-modal", "community-channels-view"):
         assert contract in html
     assert "communityV2Feed" in page and "communityV2Post" in page
+    assert 'data-community-object="result"' in html and 'data-community-object="result" disabled' not in html
+    assert "communityV2Objects" in page and "communityV2PublishObject" in page
+    assert "server-attested" in page
     assert "sfChatStartConversation" in page and "UI.openSFChat" in page
     assert "mock" not in page.lower()
     assert "sfChatConversations" in ui and "sfChatConversation" in ui and "sfChatMessage" in ui
     assert "NOTICE_MAX_VISIBLE = 1" in ui and "Открыть в чате" in ui
     assert "/api/community/v2/feed" in api and "/api/sf-chat/conversations" in api
+    assert "/api/community/v2/objects" in api
     assert 'path == "/api/community/v2/feed"' in server
     assert 'path == "/api/sf-chat/conversations"' in server
+    assert 'path == "/api/community/v2/objects"' in server
 
 
 def test_named_domain_agents_and_unified_finance_page_contract():

@@ -6723,6 +6723,58 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(exc.status, str(exc))
             return
 
+        if path == "/api/community/v2/objects":
+            requested = str((qs.get("source_type") or qs.get("type") or ["result"])[0] or "result")
+            if requested not in {"result", "job_result"}:
+                self._err(HTTPStatus.BAD_REQUEST, "Неизвестный тип объекта Community.")
+                return
+            try:
+                limit = max(1, min(50, int((qs.get("limit") or ["20"])[0])))
+            except (TypeError, ValueError):
+                limit = 20
+            try:
+                actor = self._community_actor()
+                community.ensure_social_profile(**actor)
+                scope = self._data_scope()
+                caps = (getattr(self, "_remote_context", None) or {}).get("capabilities") or {}
+                objects = []
+                if not (caps.get("backtesting") or caps.get("demo_backtest")):
+                    self._json(HTTPStatus.OK, {
+                        "ok": True, "objects": [], "source_type": "job_result",
+                    })
+                    return
+                for row in jobqueue.list_jobs(limit=max(limit * 3, 20), **scope):
+                    if str(row.get("status") or "") != "done":
+                        continue
+                    source_id = str(row.get("job_id") or "")
+                    origin = jobqueue.job_origin(source_id)
+                    if not caps.get("backtesting") and caps.get("demo_backtest") \
+                            and str(origin.get("type") or "") != "demo":
+                        continue
+                    objects.append(community.attested_result_snapshot(
+                        source_id, row, origin=origin,
+                    ))
+                    if len(objects) >= limit:
+                        break
+                self._json(HTTPStatus.OK, {"ok": True, "objects": objects, "source_type": "job_result"})
+            except (community.CommunityError, jobqueue.JobValidationError) as exc:
+                self._err(getattr(exc, "status", HTTPStatus.BAD_REQUEST), str(exc))
+            return
+
+        if path == "/api/community/v2/moderation":
+            context = getattr(self, "_remote_context", None) or {}
+            if not context.get("is_owner"):
+                self._err(HTTPStatus.FORBIDDEN, "Модерация Community доступна только владельцу.")
+                return
+            try:
+                self._json(HTTPStatus.OK, community.social_moderation_queue(
+                    status=(qs.get("status") or ["open"])[0],
+                    limit=(qs.get("limit") or ["100"])[0],
+                ))
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
         if path == "/api/community/v2/profiles" or path == "/api/community/v2/search":
             try:
                 actor = self._community_actor()
@@ -10105,9 +10157,44 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(exc.status, str(exc))
             return
 
+        if path == "/api/community/v2/objects":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            context = getattr(self, "_remote_context", None) or {}
+            try:
+                source_type = str(body.get("source_type") or "job_result").strip().lower()
+                source_id = str(body.get("source_id") or "").strip()
+                if source_type not in {"result", "job_result"}:
+                    raise community.CommunityError("Неизвестный тип объекта Community.")
+                if not jobqueue.job_in_scope(source_id, **self._data_scope()):
+                    raise community.CommunityError("Результат не найден.", 404)
+                origin = jobqueue.job_origin(source_id)
+                caps = context.get("capabilities") or {}
+                if not (caps.get("backtesting") or caps.get("demo_backtest")):
+                    raise community.CommunityError("Публикация результатов недоступна.", 403)
+                if not caps.get("backtesting") and caps.get("demo_backtest") \
+                        and str(origin.get("type") or "") != "demo":
+                    raise community.CommunityError("Результат не найден.", 404)
+                summary = jobqueue.read_job_summary(source_id, include_adjusted=False)
+                snapshot = community.attested_result_snapshot(source_id, summary or {}, origin=origin)
+                actor = self._community_actor()
+                community.ensure_social_profile(**actor)
+                self._json(HTTPStatus.OK, community.create_social_post(
+                    actor["user_id"], text=str(body.get("text") or ""),
+                    visibility=str(body.get("visibility") or "network"),
+                    workspace_id=str(context.get("workspace_id") or ""),
+                    user_uuid=actor["user_uuid"],
+                    idempotency_key=str(self.headers.get("Idempotency-Key") or ""),
+                    object_snapshot=snapshot, trusted_snapshot=True,
+                ))
+            except (community.CommunityError, jobqueue.JobValidationError) as exc:
+                self._err(getattr(exc, "status", HTTPStatus.BAD_REQUEST), str(exc))
+            return
+
         social_post_parts = [part for part in path.split("/") if part]
         if (len(social_post_parts) == 6 and social_post_parts[:4] == ["api", "community", "v2", "posts"]
-                and social_post_parts[5] in {"reaction", "comments", "bookmark"}):
+                and social_post_parts[5] in {"reaction", "comments", "bookmark", "delete"}):
             if not self._check_local_post():
                 return
             body = self._read_body() or {}
@@ -10126,12 +10213,57 @@ class Handler(BaseHTTPRequestHandler):
                         actor["user_id"], post_id, text=str(body.get("text") or ""),
                         user_uuid=actor["user_uuid"],
                     )
+                elif action == "delete":
+                    context = getattr(self, "_remote_context", None) or {}
+                    out = community.delete_social_post(
+                        actor["user_id"], post_id, user_uuid=actor["user_uuid"],
+                        moderator=bool(context.get("is_owner")),
+                    )
                 else:
                     out = community.bookmark_post(
                         actor["user_id"], post_id,
                         bookmarked=bool(body.get("bookmarked", True)), user_uuid=actor["user_uuid"],
                     )
                 self._json(HTTPStatus.OK, out)
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path.startswith("/api/community/v2/comments/") and path.endswith("/delete"):
+            if not self._check_local_post():
+                return
+            parts = [part for part in path.split("/") if part]
+            if len(parts) != 6:
+                self._err(HTTPStatus.NOT_FOUND, f"no POST route: {path}")
+                return
+            try:
+                actor = self._community_actor()
+                context = getattr(self, "_remote_context", None) or {}
+                self._json(HTTPStatus.OK, community.delete_social_comment(
+                    actor["user_id"], parts[4], user_uuid=actor["user_uuid"],
+                    moderator=bool(context.get("is_owner")),
+                ))
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path.startswith("/api/community/v2/moderation/"):
+            if not self._check_local_post():
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            if not context.get("is_owner"):
+                self._err(HTTPStatus.FORBIDDEN, "Модерация Community доступна только владельцу.")
+                return
+            report_id = path.rsplit("/", 1)[-1]
+            body = self._read_body() or {}
+            user = context.get("user") if isinstance(context.get("user"), dict) else {}
+            try:
+                self._json(HTTPStatus.OK, community.moderate_social_report(
+                    context.get("user_id"), report_id,
+                    action=str(body.get("action") or "resolve"),
+                    note=str(body.get("note") or ""),
+                    owner_user_uuid=str(user.get("user_uuid") or context.get("user_uuid") or ""),
+                ))
             except community.CommunityError as exc:
                 self._err(exc.status, str(exc))
             return

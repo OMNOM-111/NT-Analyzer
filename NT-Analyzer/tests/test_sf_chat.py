@@ -6,6 +6,7 @@ import copy
 import pytest
 
 from app import community, sf_chat, storage_router
+from app.production_storage import StorageUnavailableError
 
 
 @pytest.fixture()
@@ -71,6 +72,12 @@ def test_non_participant_cannot_enumerate_messages_or_attachments(profiles):
     assert attachment_exc.value.status == 404
     assert sf_chat.attachment(99, attachment_id)["mime_type"] == "image/png"
 
+    with pytest.raises(sf_chat.SFChatError, match="MIME"):
+        sf_chat.send_message(
+            42, conversation_id,
+            attachments=[{"name": "fake.png", "data_url": "data:image/png;base64,Zm9v"}],
+        )
+
 
 def test_block_and_message_policy_are_enforced(profiles):
     alice, bob, _ = profiles
@@ -117,3 +124,21 @@ def test_explicit_server_environment_uses_authoritative_documents(monkeypatch):
     assert set(documents) == {"community", "sf_chat"}
     assert "community" in writes and "sf_chat" in writes
     assert documents["sf_chat"]["messages"][0]["text"] == "PostgreSQL document"
+
+
+def test_authoritative_repository_outage_never_falls_back_to_local_json(monkeypatch):
+    monkeypatch.setattr(storage_router, "production_enabled", lambda: True)
+
+    def unavailable(*_args, **_kwargs):
+        raise StorageUnavailableError("offline")
+
+    monkeypatch.setattr(storage_router, "read_document", unavailable)
+    with pytest.raises(community.CommunityError) as community_exc:
+        community._load()
+    assert community_exc.value.status == 503
+    assert "storage_unavailable" in str(community_exc.value)
+
+    with pytest.raises(sf_chat.SFChatError) as chat_exc:
+        sf_chat._load()
+    assert chat_exc.value.status == 503
+    assert "storage_unavailable" in str(chat_exc.value)

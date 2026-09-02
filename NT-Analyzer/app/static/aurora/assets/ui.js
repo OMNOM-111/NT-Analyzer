@@ -6822,6 +6822,16 @@
     }
   }
 
+  function noticeTitle(item) {
+    const title = String(item.title || 'Уведомление');
+    const count = Math.max(0, Number(item.unread_count || 0));
+    if (item.kind !== 'human_message' || count <= 1) return title;
+    const mod10 = count % 10; const mod100 = count % 100;
+    const noun = mod10 === 1 && mod100 !== 11 ? 'сообщение'
+      : (mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14) ? 'сообщения' : 'сообщений');
+    return `${count} новых ${noun} · ${title}`;
+  }
+
   function renderNotice(item) {
     const id = String(item.id || '');
     if (!id || NOTICE.shown.has(id) || qs(`.sf-notice[data-nid="${id}"]`)) return;
@@ -6833,9 +6843,11 @@
     wrap.classList.add('has-notices');
     const urgent = !!item.urgent;
     const cid = String(item.conversation_id || '');
-    const kicker = item.conversation_title
+    const timeLabel = noticeTimeLabel(item.created_at_utc);
+    const kickerBase = item.conversation_title
       ? String(item.conversation_title)
       : (urgent ? 'Срочно' : 'Уведомление');
+    const kicker = [kickerBase, timeLabel].filter(Boolean).join(' · ');
     const preview = String(item.body || '').trim();
     const avatar = item.avatar_url
       ? `<span class="sf-notice-avatar"><img src="${esc(item.avatar_url)}" alt=""></span>`
@@ -6848,7 +6860,7 @@
         <span class="sf-notice-source">${avatar}<span class="sf-notice-kicker">${esc(kicker)}</span></span>
         <span class="sf-notice-close" data-notice-close="${esc(id)}" title="Скрыть" aria-label="Скрыть">${icon('close')}</span>
       </span>
-      <span class="sf-notice-title">${esc(item.title || 'Уведомление')}</span>
+      <span class="sf-notice-title">${esc(noticeTitle(item))}</span>
       ${preview ? `<span class="sf-notice-body">${esc(preview)}</span>` : ''}
       <span class="sf-notice-actions"><span>Открыть в чате</span><span class="ghost">Подробнее</span></span>
       ${more ? `<span class="sf-notice-more"><span>ещё ${more} уведомлен.</span><strong>+${more}</strong></span>` : ''}
@@ -6908,7 +6920,7 @@
             title: String(conversation.title || participant.display_name || 'Новое сообщение'),
             body: String(conversation.last_message_preview || 'Новое сообщение'),
             created_at_utc: String(conversation.updated_at_utc || ''),
-            avatar_url: String(participant.avatar_url || ''), urgent: false,
+            avatar_url: String(participant.avatar_url || ''), unread_count: unread, urgent: false,
           });
         }
       } catch (e) { /* system notices may still remain available */ }

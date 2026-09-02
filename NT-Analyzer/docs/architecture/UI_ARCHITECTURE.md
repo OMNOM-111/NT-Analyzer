@@ -1,6 +1,6 @@
 # Aurora UI architecture
 
-Актуально на 2026-08-31.
+Актуально на 2026-09-01.
 
 ## Layout
 
@@ -37,6 +37,14 @@ legacy_viewer/static/            frozen classic UI, separate process only
   headers, portfolio and account history endpoints.
 - `legacy_viewer.py`: localhost-only read-only classic viewer without current
   workers, Telegram, trading or release automation.
+- `community.py`: Community social graph, profiles/privacy, cursor feed,
+  reactions/comments/bookmarks, server-attested posts, channels and moderation.
+- `sf_chat.py`: единый human-to-human conversation store для действий из
+  Community и глобального launcher. Существующий AI Orchestrator не перенесён и
+  не переписан: он подключён к тому же SF Chat shell через API facade.
+- `production_storage`: документы `community`/`sf_chat` остаются совместимым
+  авторитетным контрактом, а миграции `0020`/`0021` добавляют allowlist и
+  связанные FK/index/RLS mirrors. Canary/Production не падают обратно в JSON.
 
 ## Shared shell
 
@@ -56,10 +64,17 @@ legacy_viewer/static/            frozen classic UI, separate process only
 - `UI.ready`, abort signals and polling cleanup prevent work after page unload.
 - Async blocks have loading/empty/error states. Independent requests are loaded
   concurrently where one failure must not blank unrelated data.
-- Общий chat widget сохраняет прежнее имя `StratForge Orchestrator`, но
-  пользователь разговаривает с Витьком. Ошибка API или истёкшая сессия не
+- Общий пользовательский chat widget называется `SF Chat` и показывает в одной
+  оболочке личные human-диалоги и существующие AI-диалоги. Технический
+  `StratForge Orchestrator` остаётся внутренним AI gateway; его storage и
+  маршрутизация совместимы с прежним API. Ошибка API или истёкшая сессия не
   очищает список диалогов: UI показывает вход через Telegram и сохраняет
   последнюю успешно загруженную историю.
+- Community отвечает за discovery/social graph, а SF Chat — за communication.
+  Кнопка `Message` и глобальный launcher открывают один и тот же deterministic
+  human `conversation_id`, историю и unread/read state; второго Community DM
+  store нет. Компактные уведомления группируют непрочитанные сообщения одного
+  диалога и не помечают их прочитанными при простом закрытии карточки.
 - Все Aurora-страницы используют одинаковую cache-version для общего
   `api.js`, поэтому после обновления нельзя получить смесь старого адаптера и
   нового backend-контракта.

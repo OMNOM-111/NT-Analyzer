@@ -1,8 +1,9 @@
 # 12. API and Schema Reference
 
 - Context Pack document: 12_API_AND_SCHEMA_REFERENCE.md
-- Last verified UTC: 2026-08-31T00:00:00Z
+- Last verified UTC: 2026-09-01T00:00:00Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
+- Development branch checkpoint: `d5a77e9392e1` (not deployed)
 - Scope: Compact index of important endpoint families, entities and capability names
 - Status: DONE
 
@@ -17,6 +18,8 @@
 | Runtime ops | `/api/ops/runtime/*` | accounts, positions, orders, executions, bars, strategy runtime surfaces |
 | Market-data browser edge | `/api/ops/runtime/bars`, `/api/ops/runtime/bars/batch`, `/ws/market-data` | same-origin history/health and deduplicated browser realtime; no provider credentials |
 | AI Lab / Orchestrator | `/api/ai-lab/*`, `/api/vitek/*` | orchestration, domain agents, TTS, experiments, summaries |
+| Community v2 | `/api/community/v2/*` | profiles/privacy, feed/search, follows, interactions, blocks, moderation and server-attested result publications |
+| SF Chat | `/api/sf-chat/*` | one human conversation/message/attachment/unread/read contract; global UI also projects existing AI conversations |
 | Release / admin | `/api/admin/releases*`, `/api/admin/pipeline`, `/api/admin/environment-targets` | create/build/verify/deploy/accept/promote/rollback and separate-origin switching |
 | Release control | `/api/environments/release-control` | signed, replay-protected authoritative Canary/Production promotion decision |
 | Admin integrations | `/api/admin/connectors`, `/api/admin/operations` | bounded status cards for gateway/providers, Telegram, Worker and Connector |
@@ -36,6 +39,8 @@
 | Release Center | `sf_release_artifacts`, `sf_release_candidates`, `sf_release_deployments`, `sf_release_checks`, `sf_release_approvals`, `sf_release_rollbacks`, `sf_release_events` | `0009_release_center.sql` |
 | Blue-green detail | `sf_release_deploy_steps`, `sf_maintenance_windows` | `0010_blue_green_deploy_steps.sql` |
 | Documents | `sf_documents`, `sf_document_revisions` | `0011_document_specifications.sql` |
+| Community / SF Chat documents | repository allowlist entries `community`, `sf_chat` | `0020_community_sf_chat_repositories.sql` |
+| Community / SF Chat relational mirrors | `sf_community_*`, `sf_chat_*` with FK/index/FORCE RLS | `0021_community_sf_chat_relational_mirrors.sql` |
 
 ## Capability names worth recognizing
 
@@ -52,6 +57,7 @@
 | `releases.rollback_production` | rollback Production |
 | `environment.switch` | open another environment origin |
 | `docs.manage_global` / `docs.manage_workspace` | edit global or workspace-scoped docs |
+| `community` | access Community and unified human SF Chat; object publication also rechecks source job entitlement/ownership |
 
 ## Source files external GPT should request for code-level work
 
@@ -66,3 +72,6 @@
 - `app/release_center.py`
 - `app/blue_green.py`
 - `app/permissions.py`
+- `app/community.py`
+- `app/sf_chat.py`
+- `tools/community_storage_migration.py`

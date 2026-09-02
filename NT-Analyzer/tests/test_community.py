@@ -289,6 +289,14 @@ def test_reports_requests_and_image_attachment_are_private_to_workspace(communit
         )
     assert invalid.value.status == 400
 
+    with pytest.raises(community.CommunityError, match="MIME"):
+        community.post_message(
+            42,
+            text="spoofed image",
+            workspace_id=workspace,
+            attachments=[{"name": "fake.png", "data_url": "data:image/png;base64,Zm9v"}],
+        )
+
 
 def test_social_feed_profile_privacy_and_interactions(community_store):
     alice = community.ensure_social_profile(
@@ -364,3 +372,77 @@ def test_social_objects_must_be_server_attested(community_store):
             42, text="raw result", object_snapshot={"kind": "backtest", "pnl": 999999},
         )
     assert exc.value.status == 403
+
+
+def test_server_attested_result_snapshot_is_allowlisted_and_immutable(community_store):
+    summary = {
+        "status": "done",
+        "class_name": "MNQOpenDrive",
+        "instrument": "MNQ 09-26",
+        "timeframe": "1 Minute",
+        "finished_at_utc": "2026-09-01T12:00:00Z",
+        "metrics": {
+            "net_profit": 125.5,
+            "profit_factor": 1.42,
+            "max_drawdown": -40,
+            "trade_count": 12,
+            "raw_private_metric": 999,
+        },
+        "path": "C:/private/result",
+        "trades": [{"price": 1}],
+        "source_code": "secret",
+    }
+    snapshot = community.attested_result_snapshot(
+        "job_demo_001", summary, origin={"type": "demo", "user_id": "42"},
+    )
+    assert snapshot["source_type"] == "demo_result"
+    assert snapshot["source_id"] == "job_demo_001"
+    assert snapshot["metrics"] == {
+        "Net P&L": 125.5,
+        "Profit factor": 1.42,
+        "Max drawdown": -40,
+        "Trades": 12,
+    }
+    assert len(snapshot["attestation"]["digest"]) == 64
+    assert not ({"path", "trades", "source_code", "origin"} & snapshot.keys())
+    assert "raw_private_metric" not in snapshot["metrics"]
+
+    community.ensure_social_profile(42, display_name="Alice", username="alice_42")
+    post = community.create_social_post(
+        42, text="Verified demo", object_snapshot=snapshot, trusted_snapshot=True,
+    )["post"]
+    assert post["object"]["attestation"] == snapshot["attestation"]
+
+    with pytest.raises(community.CommunityError) as unfinished:
+        community.attested_result_snapshot("job_running_1", {"status": "running"})
+    assert unfinished.value.status == 409
+
+
+def test_social_soft_delete_and_owner_moderation_queue(community_store):
+    alice = community.ensure_social_profile(42, display_name="Alice", username="alice_42")["profile"]
+    community.ensure_social_profile(99, display_name="Bob", username="bob_99")
+    post = community.create_social_post(42, text="Reported post")["post"]
+
+    with pytest.raises(community.CommunityError) as foreign_delete:
+        community.delete_social_post(99, post["post_id"])
+    assert foreign_delete.value.status == 403
+
+    report = community.report_social_target(
+        99, post["post_id"], target_type="post", reason="policy review",
+    )
+    queue = community.social_moderation_queue()
+    assert queue["reports"][0]["report_id"] == report["report_id"]
+    assert not ({"from_profile_id", "user_id", "user_uuid"} & queue["reports"][0].keys())
+    resolved = community.moderate_social_report(
+        1, report["report_id"], action="remove", note="confirmed",
+    )
+    assert resolved["content_removed"] is True
+    assert community.social_feed(42)["posts"] == []
+    stored = next(row for row in community._load()["posts"] if row["post_id"] == post["post_id"])
+    assert stored["deleted_at_utc"] and stored["moderated"] is True
+    assert community.social_moderation_queue(status="resolved")["reports"][0]["resolution"] == "remove"
+
+    own = community.create_social_post(42, text="Own post")["post"]
+    deleted = community.delete_social_post(42, own["post_id"])
+    assert deleted == {"ok": True, "post_id": own["post_id"], "deleted": True, "soft_delete": True}
+    assert alice["profile_id"]

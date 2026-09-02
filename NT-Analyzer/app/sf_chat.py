@@ -29,6 +29,7 @@ class SFChatError(RuntimeError):
 
 
 _LOCK = threading.RLock()
+_STORE_KEY = "sf_chat"
 _MAX_MESSAGE = 4000
 _MAX_ATTACHMENTS = 3
 _MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024
@@ -64,7 +65,7 @@ def _load() -> Dict[str, Any]:
     if storage_router.production_enabled():
         from .production_storage import StorageError
         try:
-            parsed = storage_router.read_document("sf_chat", _empty_doc())
+            parsed = storage_router.read_document(_STORE_KEY, _empty_doc())
         except StorageError as exc:
             raise SFChatError(
                 f"Production SF Chat repository unavailable ({exc.code}).", 503,
@@ -96,7 +97,7 @@ def _save(doc: Dict[str, Any]) -> None:
     if storage_router.production_enabled():
         from .production_storage import StorageError
         try:
-            storage_router.write_document("sf_chat", payload)
+            storage_router.write_document(_STORE_KEY, payload)
         except StorageError as exc:
             raise SFChatError(
                 f"Production SF Chat repository unavailable ({exc.code}).", 503,
@@ -114,6 +115,16 @@ def _safe_id(value: Any, label: str) -> str:
     if not _SAFE_ID_RE.fullmatch(clean):
         raise SFChatError(f"Некорректный {label}.")
     return clean
+
+
+def _image_payload_matches_mime(mime: str, payload: bytes) -> bool:
+    if mime == "image/png":
+        return payload.startswith(b"\x89PNG\r\n\x1a\n")
+    if mime == "image/jpeg":
+        return payload.startswith(b"\xff\xd8\xff")
+    if mime == "image/webp":
+        return len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP"
+    return False
 
 
 def _identity(
@@ -352,6 +363,8 @@ def _store_attachments(
             raise SFChatError("Повреждённые данные изображения.") from None
         if not payload or len(payload) > _MAX_ATTACHMENT_BYTES:
             raise SFChatError("Размер каждого изображения не должен превышать 2 МБ.")
+        if not _image_payload_matches_mime(mime, payload):
+            raise SFChatError("Содержимое изображения не соответствует MIME-типу.")
         attachment_id = "sfa_" + secrets.token_hex(9)
         stored_name = f"{message_id}_{index}{_MIME_EXTENSION[mime]}"
         target = (target_dir / stored_name).resolve()

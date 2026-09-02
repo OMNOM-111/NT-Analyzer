@@ -118,7 +118,7 @@
   }
   function commentHtml(comment) {
     const author = comment.author || {};
-    return `<div class="community-comment">${avatar(author, 'xs')}<div><button type="button" data-profile="${esc(author.profile_id || '')}">${esc(author.display_name || 'Участник')}</button><p>${esc(comment.text || '')}</p><small>${esc(fmtDate(comment.created_at_utc))}</small></div></div>`;
+    return `<div class="community-comment" data-comment-id="${esc(comment.comment_id || '')}">${avatar(author, 'xs')}<div><button type="button" data-profile="${esc(author.profile_id || '')}">${esc(author.display_name || 'Участник')}</button><p>${esc(comment.text || '')}</p><small>${esc(fmtDate(comment.created_at_utc))}</small>${comment.can_delete ? `<button type="button" class="linklike" data-delete-comment="${esc(comment.comment_id || '')}">Удалить</button>` : ''}</div></div>`;
   }
   function postHtml(post) {
     const author = post.author || {};
@@ -128,7 +128,7 @@
     return `<article class="community-post-card" data-post-id="${esc(post.post_id)}" data-viewer-reaction="${esc(active)}">
       <header class="community-post-head">
         <button type="button" class="community-post-author" data-profile="${esc(author.profile_id || '')}">${avatar(author, '')}<span><strong>${esc(author.display_name || 'Участник')}</strong><small>@${esc(author.username || '')} · ${esc(author.role_label || '')}</small></span></button>
-        <div class="community-post-meta"><time>${esc(fmtDate(post.created_at_utc))}</time><span title="Видимость">${post.visibility === 'followers' ? '◎' : '◉'}</span><button type="button" data-report-post="${esc(post.post_id)}" title="Пожаловаться">•••</button></div>
+        <div class="community-post-meta"><time>${esc(fmtDate(post.created_at_utc))}</time><span title="Видимость">${post.visibility === 'followers' ? '◎' : '◉'}</span>${post.can_delete ? `<button type="button" data-delete-post="${esc(post.post_id)}" title="Удалить публикацию">×</button>` : `<button type="button" data-report-post="${esc(post.post_id)}" title="Пожаловаться">•••</button>`}</div>
       </header>
       ${post.text ? `<div class="community-post-text">${esc(post.text)}</div>` : ''}
       ${(post.hashtags || []).length ? `<div class="community-tags">${post.hashtags.map(tag => `<button type="button" data-hashtag="${esc(tag)}">#${esc(tag)}</button>`).join('')}</div>` : ''}
@@ -176,6 +176,15 @@
         try { const out = await API.http.communityV2Bookmark(postId, bookmark.dataset.bookmark !== '1'); replacePost(out.post); }
         catch (error) { UI.reportError(error); }
       };
+      const remove = q('[data-delete-post]', card);
+      if (remove) remove.onclick = async () => {
+        if (!confirm('Удалить публикацию? Она будет скрыта, а запись останется в журнале модерации.')) return;
+        try {
+          await API.http.communityV2DeletePost(postId);
+          card.remove();
+          UI.toast('Публикация удалена');
+        } catch (error) { UI.reportError(error); }
+      };
       const focus = q('[data-focus-comment]', card);
       if (focus) focus.onclick = () => { const input = q('.community-comment-form input', card); if (input) input.focus(); };
       const form = q('.community-comment-form', card);
@@ -193,6 +202,11 @@
         try { await API.http.communityV2Report({ target_id: postId, target_type: 'post', reason: reason.trim() }); UI.toast('Жалоба передана на проверку'); }
         catch (error) { UI.reportError(error); }
       };
+      qa('[data-delete-comment]', card).forEach(button => button.onclick = async () => {
+        if (!confirm('Удалить комментарий?')) return;
+        try { const out = await API.http.communityV2DeleteComment(button.dataset.deleteComment); replacePost(out.post); }
+        catch (error) { UI.reportError(error); }
+      });
       qa('[data-hashtag]', card).forEach(button => button.onclick = () => {
         const search = q('#community-search'); if (search) search.value = '#' + button.dataset.hashtag;
         STATE.query = ''; loadFeed(true, { hashtag: button.dataset.hashtag });
@@ -284,6 +298,34 @@
       STATE.view = 'for-you'; syncViewButtons(); await loadFeed(true); UI.toast('Публикация добавлена');
     } catch (error) { UI.reportError(error); }
     finally { if (submit) submit.disabled = false; }
+  }
+
+  async function openResultPublisher() {
+    const drawer = UI.drawer('Подтверждённый результат', '<div class="community-feed-loading"><div class="community-skeleton compact"></div><div class="community-skeleton compact"></div></div>');
+    const host = q('.drawer-b', drawer);
+    try {
+      const doc = await API.http.communityV2Objects({ source_type: 'result', limit: 20 });
+      const rows = (doc && doc.objects) || [];
+      if (!rows.length) {
+        host.innerHTML = renderEmpty('Нет завершённых результатов', 'Сначала завершите Demo или Backtest. Незавершённые и чужие job не публикуются.');
+        return;
+      }
+      host.innerHTML = `<div class="col gap-md"><p class="muted"><strong>server-attested snapshot:</strong> StratForge формирует карточку результата на сервере. Клиент не может изменить метрики или выдать произвольный P&amp;L за подтверждённый результат.</p>${rows.map(row => `<article class="community-object-picker">${objectCard(row)}<button type="button" class="btn primary sm" data-publish-result="${esc(row.source_id || '')}">Опубликовать</button></article>`).join('')}</div>`;
+      qa('[data-publish-result]', host).forEach(button => button.onclick = async () => {
+        button.disabled = true;
+        try {
+          const input = q('#community-post-text');
+          await API.http.communityV2PublishObject({
+            source_type: 'job_result', source_id: button.dataset.publishResult,
+            text: input ? input.value.trim() : '',
+            visibility: q('#community-post-visibility').value,
+          });
+          if (input) input.value = '';
+          UI.closeDrawer(); STATE.view = 'for-you'; syncViewButtons();
+          await loadFeed(true); UI.toast('Подтверждённый результат опубликован');
+        } catch (error) { UI.reportError(error); button.disabled = false; }
+      });
+    } catch (error) { UI.renderError(host, error, openResultPublisher); }
   }
 
   function syncViewButtons() {
@@ -407,6 +449,7 @@
     qa('[data-community-tab]').forEach(button => button.onclick = () => setView(button.dataset.communityTab));
     qa('[data-community-profile-close]').forEach(button => button.onclick = closeProfile);
     q('#community-post-submit').onclick = submitPost;
+    const resultButton = q('[data-community-object="result"]'); if (resultButton) resultButton.onclick = openResultPublisher;
     q('#community-load-more').onclick = () => loadFeed(false);
     q('#community-post-files').onchange = async event => { try { await readImages(event.target.files, 'post'); } catch (error) { UI.reportError(error); } finally { event.target.value = ''; } };
     q('#c-files').onchange = async event => { try { await readImages(event.target.files, 'channel'); } catch (error) { UI.reportError(error); } finally { event.target.value = ''; } };
