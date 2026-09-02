@@ -25,6 +25,7 @@
   `0020`/`0021` (allowlist, FK/index/FORCE-RLS mirrors). A checksum-confirmed,
   backup-first idempotent legacy importer exists but was not run against any
   environment.
+- PR #270 required CI reached `5/5 PASS`; merge still requires owner approval.
 - No Backtest/Connector, market-data, trading, future `МИР АГЕНТОВ`, Canary or
   Production action belongs to this branch.
 
@@ -88,15 +89,15 @@
 | Public Connector installer | `EXTERNAL BLOCKED` | authorized Authenticode signing tool/material |
 | Legal package deployment | `IN DEVELOPMENT` | Official agreement `2026-08-30-v2`, public endpoint isolation, AI provenance policy and release governance are implemented in Development; immutable Canary/Production promotion remains separate. Live Trading is unavailable |
 | Community trusted object adapters | `IN DEVELOPMENT` | Demo/Backtest result snapshot is implemented; Strategy, Chart and Live result require their own server-side ownership adapters |
-| Community acceptance | `IN DEVELOPMENT` | credentialed PostgreSQL tests, manual visual acceptance, PR #270 required CI/merge, clean-main integration and Canary/Production are not yet complete |
+| Community acceptance | `IN DEVELOPMENT` | PR #270 required CI is 5/5 PASS; credentialed PostgreSQL tests, manual visual acceptance, owner-approved merge, clean-main integration and Canary/Production are not yet complete |
 
 ## Next development boundary
 
-Wait for required PR #270 CI, run credentialed PostgreSQL and manual visual
-acceptance when those gates are available, then merge only after owner approval
-and clean-main integration. Any release must build one signed immutable artifact
-after merge, accept it on Canary and promote that exact artifact to Production.
-Preserve the accepted Connector, Backtest, market-data and AI Orchestrator baselines.
+Run credentialed PostgreSQL and manual visual acceptance when those gates are
+available, then merge PR #270 only after owner approval and clean-main
+integration. Any release must build one signed immutable artifact after merge,
+accept it on Canary and promote that exact artifact to Production. Preserve the
+accepted Connector, Backtest, market-data and AI Orchestrator baselines.
 
 ## Canonical evidence
 

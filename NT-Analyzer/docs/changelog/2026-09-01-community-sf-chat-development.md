@@ -50,6 +50,8 @@ Release impact: Development only; Canary/Production не изменялись.
   and External GPT Context Pack validator: PASS.
 - Git-indexed `pre_release_check.py`: PASS (`474` bundle files; in-bundle
   static scan, runtime reads, Python compile and shipped JavaScript syntax).
+- Pull request #270 required CI: `5/5 PASS` (Static gates, Ubuntu, Windows
+  self-hosted, bridge gate and python-tests) before this closeout-only update.
 - Real PostgreSQL tests require explicit acceptance DSNs and remain separately
   reported when unavailable; no database or server was mutated by this task.
 - Strategy metadata, Chart snapshot and Live result adapters remain disabled,
