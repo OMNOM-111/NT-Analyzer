@@ -3,7 +3,7 @@
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
 - Last verified UTC: 2026-09-01T00:00:00Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Development branch checkpoint: `d5a77e9392e1` (not deployed)
+- Development branch implementation SHA: `a2cc5e72a610d22605a1af0aaacfcb03341456d5` (PR #270; not deployed)
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production
@@ -15,7 +15,8 @@
 - Repository evidence: legacy isolation PR #254 and Telegram URL-flow PR #255
   merged with mandatory CI GREEN on `main`.
 - Development evidence: isolated branch `codex/community-social-network`,
-  checkpoint `d5a77e9392e1`; Community/SF Chat focused contracts are green.
+  implementation `a2cc5e72a610d22605a1af0aaacfcb03341456d5` in PR #270;
+  full regression is `2501 passed, 35 skipped`.
 - Operational evidence: Release Center closeout, server symlinks and read-only
   Production audit/acceptance evidence in the current handoff.
 - Canonical live release snapshot:
@@ -34,7 +35,7 @@
 | Charts / fan-out | `BETA` | Browser clients consume same-origin StratForge market-data WebSockets; provider credentials are not delivered to browsers and consumers do not create their own TopstepX loginKey/SignalR sessions | broader design acceptance is separate from this Connector closeout |
 | NinjaTrader / Connector | `BETA` | Production Connector on VMNINJA is `0.4.2-dev.20`; SERVER BACKTEST, cancel state machine, device catalog, account snapshot and Connector LIVE/GRACE/OFFLINE presentation are accepted | public installer distribution remains `EXTERNAL BLOCKED` on authorized Authenticode material |
 | Production worker queue | `AVAILABLE` | Eleven worker slots remain 4/4/2/1; empty workers use adaptive jittered backoff and one 30-second stale sweeper. Later auth hot-spot work reduced `/api/auth/status` latency but did not claim CPU improvement outside noise | DB tx/s still lacks a safe first-class diagnostics path |
-| Community / SF Chat | `BETA` in Development | Isolated branch has real profiles/privacy/social feed/search/follows/interactions, Channels compatibility, moderation/soft delete, server-attested Demo/Backtest result posts and one human SF Chat store shared by Community profiles and the global launcher. Existing AI Orchestrator storage remains authoritative behind the same SF Chat shell. PostgreSQL documents fail closed and migrations `0020`/`0021` add allowlist plus FK/index/FORCE-RLS mirrors | Not present in the deployed artifact. Strategy/Chart/Live object adapters, credentialed PostgreSQL acceptance, manual visual acceptance, PR/merge and Canary/Production remain separate gates |
+| Community / SF Chat | `BETA` in Development | Isolated branch has real profiles/privacy/social feed/search/follows/interactions, Channels compatibility, moderation/soft delete, server-attested Demo/Backtest result posts and one human SF Chat store shared by Community profiles and the global launcher. Existing AI Orchestrator storage remains authoritative behind the same SF Chat shell. PostgreSQL documents fail closed and migrations `0020`/`0021` add allowlist plus FK/index/FORCE-RLS mirrors | Not present in the deployed artifact. Strategy/Chart/Live object adapters, credentialed PostgreSQL acceptance, manual visual acceptance, PR #270 CI/merge and Canary/Production remain separate gates |
 | Documents | `BETA` | Current handoff and Context Pack identify beta.87 as live; hidden Markdown amendment blocks are removed and AI provenance is infrastructure-only or absent | beta.87 exact operational identity is recorded in its changelog closeout |
 | Legal | `AVAILABLE` | One official onboarding agreement `2026-08-30-v2` is the sole versioned clickwrap; related official policies are readable informational documents; owner configuration is absent from both document API namespaces | Live Trading remains unavailable pending separate release and legal requirements |
 

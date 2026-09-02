@@ -3,7 +3,7 @@
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-01T00:00:00Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Development branch checkpoint: `d5a77e9392e1` (not deployed)
+- Development branch implementation SHA: `a2cc5e72a610d22605a1af0aaacfcb03341456d5` (PR #270; not deployed)
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`
 - Scope: beta.87 live baseline plus isolated Community/SF Chat Development branch
@@ -12,7 +12,8 @@
 ## Active isolated development — Community / SF Chat
 
 - Worktree: isolated Community/SF Chat checkout; local absolute paths are intentionally omitted.
-- Branch: `codex/community-social-network`; checkpoint: `d5a77e9392e1`.
+- Branch: `codex/community-social-network`; implementation:
+  `a2cc5e72a610d22605a1af0aaacfcb03341456d5`; PR #270.
 - Community owns profiles, privacy/social graph, feed/search/interactions,
   moderation and existing Channels. SF Chat owns the only new human conversation
   state. Community does not contain a second DM subsystem.
@@ -46,7 +47,7 @@
 | Field | Value |
 | --- | --- |
 | Current Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (deployed beta.87 baseline) |
-| Development Git checkpoint | `d5a77e9392e1` on `codex/community-social-network`; not deployed |
+| Development Git implementation | `a2cc5e72a610d22605a1af0aaacfcb03341456d5` on `codex/community-social-network`; PR #270; not deployed |
 | Deployed Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (beta.87) |
 | Code change | PR #254 legacy isolation; PR #255 Telegram `/start` URL flow; PR #256 release-record visibility and gate |
 | Release | Production `0.10.0-beta.87`, state `production_live` |
@@ -87,15 +88,15 @@
 | Public Connector installer | `EXTERNAL BLOCKED` | authorized Authenticode signing tool/material |
 | Legal package deployment | `IN DEVELOPMENT` | Official agreement `2026-08-30-v2`, public endpoint isolation, AI provenance policy and release governance are implemented in Development; immutable Canary/Production promotion remains separate. Live Trading is unavailable |
 | Community trusted object adapters | `IN DEVELOPMENT` | Demo/Backtest result snapshot is implemented; Strategy, Chart and Live result require their own server-side ownership adapters |
-| Community acceptance | `IN DEVELOPMENT` | credentialed PostgreSQL tests, manual visual acceptance, PR/merge, clean-main integration and Canary/Production are not yet complete |
+| Community acceptance | `IN DEVELOPMENT` | credentialed PostgreSQL tests, manual visual acceptance, PR #270 required CI/merge, clean-main integration and Canary/Production are not yet complete |
 
 ## Next development boundary
 
-Complete Community/SF Chat regression and Git closeout in its isolated branch,
-open the PR, then merge only after owner approval and clean-main integration.
-Any release must build one signed immutable artifact after merge, accept it on
-Canary and promote that exact artifact to Production. Preserve the accepted
-Connector, Backtest, market-data and AI Orchestrator baselines.
+Wait for required PR #270 CI, run credentialed PostgreSQL and manual visual
+acceptance when those gates are available, then merge only after owner approval
+and clean-main integration. Any release must build one signed immutable artifact
+after merge, accept it on Canary and promote that exact artifact to Production.
+Preserve the accepted Connector, Backtest, market-data and AI Orchestrator baselines.
 
 ## Canonical evidence
 
