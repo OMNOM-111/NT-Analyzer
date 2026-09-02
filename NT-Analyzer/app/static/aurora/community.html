@@ -5,23 +5,16 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
 <title>Сообщество — StratForge AI</title>
-<link rel="stylesheet" href="assets/theme.css?v=20260901-community-workspace1">
+<link rel="stylesheet" href="assets/theme.css?v=20260901-community-workspace2">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 </head>
 <body data-page="community" data-title="Сообщество" data-kicker="Лента, профили и каналы StratForge">
   <div class="community-v2" id="community-v2">
     <div class="community-layout">
-      <aside class="community-social-dock community-left" aria-label="Навигация сообщества">
+      <aside class="community-social-dock community-left" aria-label="Люди сообщества">
         <button type="button" class="community-dock-button community-dock-primary" id="community-find-people" title="Найти людей" aria-label="Найти людей">
           <span aria-hidden="true">⌕</span>
         </button>
-        <nav class="community-dock-nav" id="community-nav">
-          <button type="button" class="active" data-community-view="for-you" title="Рекомендации" aria-label="Рекомендации"><span aria-hidden="true">⌂</span></button>
-          <button type="button" data-community-view="following" title="Подписки" aria-label="Подписки"><span aria-hidden="true">◎</span></button>
-          <button type="button" data-community-view="saved" title="Сохранённое" aria-label="Сохранённое"><span aria-hidden="true">◇</span></button>
-          <button type="button" data-community-view="channels" title="Каналы" aria-label="Каналы"><span aria-hidden="true">#</span></button>
-          <button type="button" data-community-view="profile" title="Моя стена" aria-label="Моя стена"><span aria-hidden="true">◉</span></button>
-        </nav>
         <div class="community-dock-people" id="community-following-list" aria-label="Люди, которых вы читаете">
           <div class="community-skeleton compact"></div>
         </div>
@@ -106,11 +99,43 @@
     </section>
   </div>
 
+  <div class="community-visibility-modal" id="community-visibility-modal" hidden>
+    <button type="button" class="community-modal-backdrop" data-community-visibility-close aria-label="Закрыть настройки видимости"></button>
+    <section class="community-visibility-dialog" role="dialog" aria-modal="true" aria-labelledby="community-visibility-title">
+      <header class="community-visibility-head">
+        <div><span class="community-visibility-icon" aria-hidden="true">⚙</span><h2 id="community-visibility-title">Видимость профиля StratForge</h2></div>
+        <button type="button" class="community-visibility-close" data-community-visibility-close aria-label="Закрыть">×</button>
+      </header>
+      <p class="community-visibility-intro">Настройте, какие сведения видят подписчики и остальные участники платформы.</p>
+      <form id="community-visibility-form">
+        <fieldset class="community-visibility-group community-visibility-followers">
+          <legend><span aria-hidden="true">◎</span> Для подписчиков (Followers)</legend>
+          <div class="community-visibility-grid">
+            <span class="community-visibility-status"><b aria-hidden="true">✓</b> Профиль и описание</span>
+            <span class="community-visibility-status"><b aria-hidden="true">✓</b> Публикации по подписке</span>
+          </div>
+          <small>Подписчики видят профиль и публикации, разрешённые настройками каждой записи.</small>
+        </fieldset>
+        <fieldset class="community-visibility-group community-visibility-network">
+          <legend><span aria-hidden="true">◉</span> Для всех остальных (Non-followers)</legend>
+          <label class="community-visibility-check"><input id="community-visibility-network" type="checkbox"><span>Показывать описание профиля всей сети</span></label>
+          <small>Публикации, закладки и вложения следуют отдельным правилам доступа.</small>
+        </fieldset>
+        <fieldset class="community-visibility-group community-visibility-messages">
+          <legend><span aria-hidden="true">✉</span> Личные сообщения</legend>
+          <label for="community-visibility-messages-select">Кто может писать</label>
+          <select id="community-visibility-messages-select"><option value="everyone">Все участники</option><option value="following">Только мои подписки</option><option value="nobody">Никто</option></select>
+        </fieldset>
+        <div class="community-visibility-foot"><span>Закладки всегда приватны.</span><button type="submit" class="btn primary"><span aria-hidden="true">✓</span>Сохранить настройки</button></div>
+      </form>
+    </section>
+  </div>
+
 <script src="assets/api.js?v=20260901-community-chat1"></script>
 <script src="assets/domain.js?v=20260629-final4"></script>
 <script src="assets/ambient.js?v=20260703-stratforge1"></script>
 <script src="assets/ui.js?v=20260901-community-chat1"></script>
 <script src="assets/victor.js?v=20260718-contours2"></script>
-<script src="assets/pages/community.js?v=20260901-community-workspace1"></script>
+<script src="assets/pages/community.js?v=20260901-community-workspace2"></script>
 </body>
 </html>

@@ -156,7 +156,7 @@ def test_every_aurora_page_uses_current_theme_cache_version():
         marker = 'href="assets/theme.css?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert versions["community.html"] == "20260901-community-workspace1"
+    assert versions["community.html"] == "20260901-community-workspace2"
     assert {value for name, value in versions.items() if name != "community.html"} == {
         "20260901-community-chat1"
     }, versions
@@ -688,6 +688,8 @@ def test_community_v2_and_unified_sf_chat_are_real_api_backed_surfaces():
         assert contract in html
     assert "community-hero" not in html
     assert "Торговое сообщество внутри StratForge" not in html
+    assert 'id="community-nav"' not in html
+    assert 'id="community-visibility-modal"' in html and 'id="community-visibility-form"' in html
     assert 'data-community-sort="recent"' in html and 'data-community-sort="relevant"' in html
     assert 'data-community-wall-tab="posts"' in html and 'data-community-wall-tab="saved"' in html
     for action in ("График", "Стратегия", "Файл", "Опубликовать"):
@@ -697,6 +699,9 @@ def test_community_v2_and_unified_sf_chat_are_real_api_backed_surfaces():
     assert "communityV2Objects" in page and "communityV2PublishObject" in page
     assert "data-community-rich-object" in page
     assert "raw.startsWith('@')" in page
+    assert "data-share-post" in page and "Поделиться публикацией" in page
+    assert "openProfileVisibility" in page and "communityV2UpdateProfile" in page
+    assert "community-post-action" in page and "actionIcon" in page
     assert "server-attested" in page
     assert "sfChatStartConversation" in page and "UI.openSFChat" in page
     assert "mock" not in page.lower()

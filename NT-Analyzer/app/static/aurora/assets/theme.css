@@ -3033,15 +3033,13 @@ body.community-modal-open { overflow: hidden; }
   background: linear-gradient(180deg, rgba(9,19,33,.96), rgba(5,13,24,.94));
   box-shadow: inset 0 1px 0 rgba(255,255,255,.035);
 }
-.community-dock-button, .community-dock-nav button {
+.community-dock-button {
   display: grid; width: 40px; height: 40px; flex: 0 0 auto; place-items: center;
   border: 1px solid transparent; border-radius: 11px; background: transparent;
   color: var(--tx-3); font: inherit; font-size: 16px; cursor: pointer;
 }
-.community-dock-button:hover, .community-dock-nav button:hover { border-color: var(--line-2); background: var(--bg-3); color: var(--tx); }
+.community-dock-button:hover { border-color: var(--line-2); background: var(--bg-3); color: var(--tx); }
 .community-dock-primary { border-color: rgba(33,200,255,.2); background: rgba(33,200,255,.08); color: var(--community-cyan); }
-.community-dock-nav { display: flex; flex-direction: column; gap: 5px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
-.community-dock-nav button.active { border-color: rgba(33,200,255,.28); background: linear-gradient(145deg, rgba(33,200,255,.16), rgba(73,91,255,.08)); color: var(--community-cyan); box-shadow: 0 0 20px rgba(33,200,255,.08); }
 .community-dock-people { display: flex; min-height: 0; flex: 1; flex-direction: column; align-items: center; gap: 9px; padding-top: 2px; overflow: hidden auto; scrollbar-width: none; }
 .community-dock-people::-webkit-scrollbar { display: none; }
 .community-followed-person { position: relative; display: block; width: 38px; height: 38px; flex: 0 0 auto; padding: 0; border: 0; border-radius: 12px; background: transparent; cursor: pointer; }
@@ -3156,7 +3154,6 @@ body.community-modal-open { overflow: hidden; }
 @media (max-width: 760px) {
   .community-layout { grid-template-columns: 1fr; }
   .community-social-dock { position: static; width: 100%; height: auto; min-height: 0; max-height: none; flex-direction: row; justify-content: flex-start; padding: 7px; overflow-x: auto; }
-  .community-dock-nav { flex-direction: row; padding: 0 8px 0 0; border-right: 1px solid var(--line); border-bottom: 0; }
   .community-dock-people { flex-direction: row; overflow: visible; }
   .community-dock-count { border-top: 0; }
   .community-wall { grid-column: 1; }
@@ -3269,4 +3266,216 @@ body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
   .sf-chat-panel { right: 0; bottom: 0; width: 100vw; height: 100dvh; border-radius: 0; }
   .orch-head-brand { display: none; }
   .sf-chat-panel .orch-head { min-height: 58px; }
+}
+
+/* =========================================================================
+   Community owner-review pass — independent columns, compact controls and
+   the restrained SF Chat mark from the Streamline SF visual direction.
+   ========================================================================= */
+@media (min-width: 1121px) {
+  body[data-page="community"] .main.has-global-news-strip .content {
+    padding-bottom: 38px;
+  }
+  body[data-page="community"] .community-layout {
+    height: calc(100vh - 166px);
+    min-height: 0;
+    align-items: stretch;
+    overflow: hidden;
+  }
+  body[data-page="community"] .community-social-dock {
+    height: 100%;
+    min-height: 0;
+    max-height: none;
+    position: relative;
+  }
+  body[data-page="community"] .community-center,
+  body[data-page="community"] .community-wall {
+    height: 100%;
+    min-height: 0;
+    max-height: none;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-color: rgba(77, 181, 231, .34) transparent;
+    scrollbar-width: thin;
+  }
+  body[data-page="community"] .community-center {
+    padding-right: 4px;
+  }
+  body[data-page="community"] .community-wall {
+    position: relative;
+  }
+}
+
+.community-post-actions {
+  min-height: 42px;
+  gap: 3px;
+  padding: 6px 0;
+}
+.community-post-action {
+  min-height: 30px;
+  gap: 6px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--tx-3);
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.community-post-action:hover {
+  border-color: rgba(82, 190, 235, .18);
+  background: rgba(32, 72, 103, .25);
+  color: var(--tx);
+}
+.community-post-action .community-action-icon {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+}
+.community-post-action .community-action-icon svg { width: 15px; height: 15px; }
+.community-post-action .community-action-count { color: var(--tx-2); font-variant-numeric: tabular-nums; }
+.community-post-action[data-reaction].active { color: #ff6489; background: rgba(255, 84, 126, .08); }
+.community-post-action[data-reaction].active .community-action-count { color: #ff9ab3; }
+.community-post-action.community-bookmark-action.active { color: #ffd05a; background: rgba(255, 190, 56, .08); }
+.community-bookmark-action .community-action-label { display: none; }
+.community-post-compact .community-action-label { display: none; }
+.community-post-compact .community-post-action { padding-inline: 6px; }
+
+@media (max-width: 900px) {
+  .community-post-action .community-action-label { display: none; }
+  .community-post-action { padding-inline: 7px; }
+}
+
+.community-visibility-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 130;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+}
+.community-visibility-modal[hidden] { display: none; }
+.community-visibility-dialog {
+  position: relative;
+  width: min(500px, calc(100vw - 24px));
+  max-height: min(680px, calc(100vh - 24px));
+  overflow: auto;
+  border: 1px solid rgba(97, 180, 235, .26);
+  border-radius: 16px;
+  background: linear-gradient(155deg, rgba(14, 26, 46, .99), rgba(7, 15, 28, .99));
+  box-shadow: 0 26px 78px rgba(0, 0, 0, .68), 0 0 0 1px rgba(45, 191, 255, .04);
+}
+.community-visibility-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 54px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+.community-visibility-head > div { display: flex; min-width: 0; align-items: center; gap: 9px; }
+.community-visibility-head h2 { margin: 0; font-size: 13px; letter-spacing: -.01em; }
+.community-visibility-icon { color: var(--community-cyan); font-size: 17px; }
+.community-visibility-close {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  background: rgba(5, 14, 25, .7);
+  color: var(--tx-3);
+  font-size: 18px;
+  cursor: pointer;
+}
+.community-visibility-close:hover { border-color: var(--brand-line); color: var(--tx); }
+.community-visibility-intro { margin: 15px 16px 12px; color: var(--tx-2); font-size: 10px; line-height: 1.5; }
+.community-visibility-dialog form { display: grid; gap: 10px; padding: 0 16px 16px; }
+.community-visibility-group {
+  min-width: 0;
+  margin: 0;
+  padding: 11px 12px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 10px;
+  background: rgba(6, 15, 29, .56);
+}
+.community-visibility-group legend { padding: 0 5px; color: var(--tx-2); font-size: 10px; font-weight: 800; }
+.community-visibility-group legend span { margin-right: 5px; color: var(--community-cyan); }
+.community-visibility-group small { display: block; margin-top: 9px; color: var(--tx-4); font-size: 8px; line-height: 1.45; }
+.community-visibility-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.community-visibility-status,
+.community-visibility-check { display: flex; min-width: 0; align-items: center; gap: 7px; color: var(--tx-2); font-size: 9.5px; }
+.community-visibility-status b { display: inline-grid; width: 15px; height: 15px; flex: 0 0 auto; place-items: center; border-radius: 4px; background: #168cf1; color: white; font-size: 10px; }
+.community-visibility-check input { width: 15px; height: 15px; margin: 0; accent-color: #168cf1; }
+.community-visibility-group label[for] { display: block; margin-bottom: 6px; color: var(--tx-3); font-size: 8.5px; }
+.community-visibility-group select { width: 100%; min-height: 34px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 8px; background: #0a1629; color: var(--tx); font: inherit; font-size: 9.5px; }
+.community-visibility-group select:focus { border-color: rgba(33, 200, 255, .5); outline: 0; box-shadow: 0 0 0 3px rgba(33, 200, 255, .08); }
+.community-visibility-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 2px; }
+.community-visibility-foot > span { color: var(--tx-4); font-size: 8px; }
+.community-visibility-foot .btn { min-height: 34px; font-size: 9.5px; }
+
+/* The launcher is a compact SF mark with an orbital trace, not a glowing orb. */
+.orch-fab {
+  right: 24px;
+  bottom: 34px;
+  width: 78px;
+  height: 54px;
+  overflow: hidden;
+  border-radius: 17px;
+  justify-content: flex-start;
+  padding: 0 9px;
+  background: linear-gradient(145deg, #0c1d2f 0%, #071321 56%, #030910 100%);
+  border: 1px solid rgba(99, 211, 255, .72);
+  box-shadow: 0 0 0 1px rgba(20, 91, 133, .22), 0 10px 26px rgba(0, 0, 0, .56), inset 0 1px 0 rgba(207, 247, 255, .08);
+}
+.orch-fab::before {
+  content: '';
+  position: absolute;
+  width: 112px;
+  height: 78px;
+  left: -35px;
+  top: -30px;
+  border: 1px solid rgba(71, 204, 255, .58);
+  border-left-color: transparent;
+  border-bottom-color: transparent;
+  border-radius: 50%;
+  transform: rotate(-24deg);
+  opacity: .8;
+  pointer-events: none;
+}
+.orch-fab::after {
+  content: 'CHAT';
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  color: #c3deeb;
+  font-family: Inter, "Segoe UI", sans-serif;
+  font-size: 7px;
+  font-weight: 700;
+  letter-spacing: .2em;
+  line-height: 1;
+  pointer-events: none;
+}
+.orch-fab:hover {
+  transform: translateY(-2px);
+  border-color: rgba(139, 229, 255, .95);
+  box-shadow: 0 0 0 3px rgba(37, 183, 242, .1), 0 12px 32px rgba(0, 0, 0, .62), inset 0 1px 0 rgba(207, 247, 255, .12);
+}
+.orch-fab.active { transform: scale(.96); }
+.orch-fab .sf-chat-mark { position: relative; z-index: 1; min-width: 35px; transform: scale(.88); transform-origin: left center; filter: drop-shadow(0 0 6px rgba(45, 205, 255, .32)); }
+.orch-fab-notice { top: -5px; right: -4px; border-color: #071321; }
+
+@media (max-width: 760px) {
+  .community-visibility-dialog { width: min(500px, calc(100vw - 16px)); max-height: calc(100vh - 16px); border-radius: 14px; }
+  .community-visibility-grid { grid-template-columns: 1fr; }
+  .community-visibility-foot { align-items: flex-end; flex-direction: column; }
+  .orch-fab { right: 14px; bottom: 70px; width: 54px; height: 54px; border-radius: 16px; padding: 0; justify-content: center; }
+  .orch-fab::after { display: none; }
+  .orch-fab .sf-chat-mark { transform: scale(.92); transform-origin: center; }
 }

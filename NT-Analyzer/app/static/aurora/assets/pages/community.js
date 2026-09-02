@@ -48,6 +48,23 @@
     if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'K';
     return String(n);
   }
+  function domId(value) {
+    const safe = String(value == null ? '' : value).replace(/[^a-zA-Z0-9_-]/g, '-');
+    return safe || 'post';
+  }
+  function actionIcon(name) {
+    const icons = {
+      heart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 8.7c0 5.3-8.8 10.2-8.8 10.2S3.2 14 3.2 8.7A4.4 4.4 0 0 1 11 5.8a4.4 4.4 0 0 1 9.8 2.9Z"/></svg>',
+      comment: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11.5a7.5 7.5 0 0 1-8 7.5 8.7 8.7 0 0 1-3.3-.6L4 20l1.5-3.8A7.2 7.2 0 0 1 4 11.5 7.5 7.5 0 0 1 12 4a7.5 7.5 0 0 1 8 7.5Z"/></svg>',
+      share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 16 4-4-4-4"/><path d="M4 19v-1.5A5.5 5.5 0 0 1 9.5 12H16"/></svg>',
+      bookmark: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 4.5A2.5 2.5 0 0 1 9 2h6a2.5 2.5 0 0 1 2.5 2.5V21L12 17.5 6.5 21V4.5Z"/></svg>',
+    };
+    return icons[name] || '';
+  }
+  function reactionTotal(reactions) {
+    return Object.values(reactions && typeof reactions === 'object' ? reactions : {})
+      .reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
+  }
   function setStatus(text, tone) {
     const node = q('#community-tab-status');
     if (!node) return;
@@ -93,7 +110,7 @@
       </div>
       <div class="community-wall-actions"><button type="button" class="btn ghost" data-focus-composer><span aria-hidden="true">＋</span>Создать пост</button></div>
       ${wallStats(profile)}`;
-    qa('[data-edit-profile]').forEach(button => { button.onclick = () => editProfile(profile); });
+    qa('[data-edit-profile]').forEach(button => { button.onclick = () => openProfileVisibility(profile); });
     qa('[data-focus-composer]').forEach(button => { button.onclick = () => { const input = q('#community-post-text'); if (input) { input.focus(); input.scrollIntoView({ behavior: 'smooth', block: 'center' }); } }; });
     qa(`[data-profile="${cssEscape(profile.profile_id || '')}"]`).forEach(button => { button.onclick = () => openProfile(profile.profile_id); });
   }
@@ -201,7 +218,7 @@
     const reactions = post.reactions || {};
     const active = String(post.viewer_reaction || '');
     const comments = (post.recent_comments || []).map(commentHtml).join('');
-    return `<article class="community-post-card ${surface === 'wall' ? 'community-post-compact' : ''}" data-post-id="${esc(post.post_id)}" data-viewer-reaction="${esc(active)}">
+    return `<article id="community-post-${esc(domId(post.post_id))}" class="community-post-card ${surface === 'wall' ? 'community-post-compact' : ''}" data-post-id="${esc(post.post_id)}" data-viewer-reaction="${esc(active)}">
       <header class="community-post-head">
         <button type="button" class="community-post-author" data-profile="${esc(author.profile_id || '')}">${avatar(author, '')}<span><strong>${esc(author.display_name || 'Участник')}</strong><small>@${esc(author.username || '')} · ${esc(author.role_label || '')}</small></span></button>
         <div class="community-post-meta"><time>${esc(fmtDate(post.created_at_utc))}</time><span title="Видимость">${post.visibility === 'followers' ? '◎' : '◉'}</span>${post.can_delete ? `<button type="button" data-delete-post="${esc(post.post_id)}" title="Удалить публикацию">×</button>` : `<button type="button" data-report-post="${esc(post.post_id)}" title="Пожаловаться">•••</button>`}</div>
@@ -210,12 +227,11 @@
       ${(post.hashtags || []).length ? `<div class="community-tags">${post.hashtags.map(tag => `<button type="button" data-hashtag="${esc(tag)}">#${esc(tag)}</button>`).join('')}</div>` : ''}
       ${postMedia(post.attachments)}${objectCard(post.object)}
       <div class="community-post-actions">
-        <button type="button" class="${active === 'support' ? 'active' : ''}" data-reaction="support"><span>♡</span>${shortNumber(reactions.support)}</button>
-        <button type="button" class="${active === 'insightful' ? 'active' : ''}" data-reaction="insightful"><span>◇</span>${shortNumber(reactions.insightful)}</button>
-        <button type="button" class="${active === 'fire' ? 'active' : ''}" data-reaction="fire"><span>↗</span>${shortNumber(reactions.fire)}</button>
-        <button type="button" data-focus-comment><span>◌</span>${shortNumber(post.comment_count)}</button>
+        <button type="button" class="community-post-action ${active === 'support' ? 'active' : ''}" data-reaction="support" aria-label="Нравится, ${shortNumber(reactionTotal(reactions))}" title="Нравится"><span class="community-action-icon" aria-hidden="true">${actionIcon('heart')}</span><span class="community-action-label">Нравится</span><span class="community-action-count">${shortNumber(reactionTotal(reactions))}</span></button>
+        <button type="button" class="community-post-action" data-focus-comment aria-label="Комментарии, ${shortNumber(post.comment_count)}" title="Комментарии"><span class="community-action-icon" aria-hidden="true">${actionIcon('comment')}</span><span class="community-action-label">Комментарии</span><span class="community-action-count">${shortNumber(post.comment_count)}</span></button>
+        <button type="button" class="community-post-action" data-share-post aria-label="Поделиться публикацией" title="Поделиться"><span class="community-action-icon" aria-hidden="true">${actionIcon('share')}</span><span class="community-action-label">Поделиться</span></button>
         <span class="community-action-spacer"></span>
-        <button type="button" class="${post.bookmarked ? 'active' : ''}" data-bookmark="${post.bookmarked ? '1' : '0'}" title="Сохранить"><span>◇</span></button>
+        <button type="button" class="community-post-action community-bookmark-action ${post.bookmarked ? 'active' : ''}" data-bookmark="${post.bookmarked ? '1' : '0'}" aria-label="${post.bookmarked ? 'Убрать из закладок' : 'Сохранить в закладки'}" title="${post.bookmarked ? 'Убрать из закладок' : 'Сохранить'}"><span class="community-action-icon" aria-hidden="true">${actionIcon('bookmark')}</span><span class="community-action-label">${post.bookmarked ? 'Сохранено' : 'Сохранить'}</span></button>
       </div>
       <div class="community-comments">${comments}<form class="community-comment-form"><input maxlength="1200" placeholder="Ответить по существу…"><button type="submit" aria-label="Отправить комментарий">↑</button></form></div>
     </article>`;
@@ -267,6 +283,18 @@
       };
       const focus = q('[data-focus-comment]', card);
       if (focus) focus.onclick = () => { const input = q('.community-comment-form input', card); if (input) input.focus(); };
+      const share = q('[data-share-post]', card);
+      if (share) share.onclick = async () => {
+        const url = `${window.location.href.split('#')[0]}#community-post-${encodeURIComponent(postId)}`;
+        const nav = window.navigator || {};
+        try {
+          if (typeof nav.share === 'function') await nav.share({ title: 'Публикация StratForge', url });
+          else if (nav.clipboard && typeof nav.clipboard.writeText === 'function') { await nav.clipboard.writeText(url); UI.toast('Ссылка на публикацию скопирована'); }
+          else UI.toast('Ссылка на публикацию готова');
+        } catch (error) {
+          if (!error || error.name !== 'AbortError') UI.reportError(error);
+        }
+      };
       const form = q('.community-comment-form', card);
       if (form) form.onsubmit = async event => {
         event.preventDefault();
@@ -302,6 +330,15 @@
       const shell = document.createElement('div'); shell.innerHTML = postHtml(post, card.classList.contains('community-post-compact') ? 'wall' : 'feed');
       const next = shell.firstElementChild; card.replaceWith(next); wirePostActions(next);
     });
+  }
+
+  function scrollToSharedPost() {
+    const hash = String(window.location.hash || '').replace(/^#/, '');
+    if (!hash.startsWith('community-post-')) return;
+    let target = hash;
+    try { target = decodeURIComponent(hash); } catch (error) { /* keep the safe hash */ }
+    const node = document.getElementById(target);
+    if (node) window.requestAnimationFrame(() => node.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   }
 
   function relevanceScore(post) {
@@ -391,6 +428,7 @@
         ));
         else host.insertAdjacentHTML('beforeend', content);
         wirePostActions(host);
+        scrollToSharedPost();
       }
       const more = q('#community-load-more'); if (more) more.hidden = !STATE.cursor;
       setStatus(`${Number(doc.total_visible || posts.length)} публикаций`, 'ready');
@@ -514,7 +552,7 @@
     if (!profileId) return;
     const modal = q('#community-profile-modal'); const host = q('#community-profile-detail');
     if (!modal || !host) return;
-    modal.hidden = false; document.body.classList.add('community-modal-open');
+    modal.hidden = false; syncModalLock();
     host.innerHTML = '<div class="community-skeleton profile"></div>';
     try {
       const doc = await API.http.communityV2Profile(profileId, { posts_limit: 30 });
@@ -534,7 +572,7 @@
   }
   function closeProfile() {
     const modal = q('#community-profile-modal'); if (modal) modal.hidden = true;
-    document.body.classList.remove('community-modal-open');
+    syncModalLock();
   }
   async function startMessage(profileId) {
     try {
@@ -544,6 +582,50 @@
       if (window.UI && typeof UI.openSFChat === 'function') await UI.openSFChat({ conversationId, conversationType: 'human' });
       else if (window.UI && typeof UI.openOrchestrator === 'function') await UI.openOrchestrator({ conversationId, conversationType: 'human' });
     } catch (error) { UI.reportError(error); }
+  }
+  function syncModalLock() {
+    const profileModal = q('#community-profile-modal');
+    const visibilityModal = q('#community-visibility-modal');
+    const profileOpen = profileModal && !profileModal.hidden;
+    const visibilityOpen = visibilityModal && !visibilityModal.hidden;
+    document.body.classList.toggle('community-modal-open', Boolean(profileOpen || visibilityOpen));
+  }
+  function openProfileVisibility(profile) {
+    const modal = q('#community-visibility-modal');
+    const network = q('#community-visibility-network');
+    const messages = q('#community-visibility-messages-select');
+    if (!modal || !network || !messages) return;
+    network.checked = profile && profile.profile_visibility !== 'followers';
+    messages.value = (profile && profile.allow_messages) || 'everyone';
+    modal.hidden = false;
+    syncModalLock();
+    network.focus();
+  }
+  function closeProfileVisibility() {
+    const modal = q('#community-visibility-modal');
+    if (modal) modal.hidden = true;
+    syncModalLock();
+  }
+  async function saveProfileVisibility(event) {
+    event.preventDefault();
+    const submit = q('#community-visibility-form button[type="submit"]');
+    const network = q('#community-visibility-network');
+    const messages = q('#community-visibility-messages-select');
+    if (!submit || !network || !messages) return;
+    submit.disabled = true;
+    try {
+      await API.http.communityV2UpdateProfile({
+        profile_visibility: network.checked ? 'network' : 'followers',
+        allow_messages: messages.value,
+      });
+      closeProfileVisibility();
+      await loadFeed(true);
+      UI.toast('Настройки видимости сохранены');
+    } catch (error) {
+      UI.reportError(error);
+    } finally {
+      submit.disabled = false;
+    }
   }
   function editProfile(profile) {
     const drawer = UI.drawer('Профиль Community', `<div class="col gap-lg"><div class="field"><label>Отображаемое имя</label><input id="community-edit-name" maxlength="80" value="${esc(profile.display_name || '')}"></div><div class="field"><label>Username</label><input id="community-edit-username" maxlength="30" value="${esc(profile.username || '')}"></div><div class="field"><label>О себе</label><textarea id="community-edit-bio" rows="5" maxlength="500">${esc(profile.bio || '')}</textarea></div><div class="form-row"><div class="field"><label>Профиль видят</label><select id="community-edit-visibility"><option value="network" ${profile.profile_visibility !== 'followers' ? 'selected' : ''}>Вся сеть</option><option value="followers" ${profile.profile_visibility === 'followers' ? 'selected' : ''}>Подписчики</option></select></div><div class="field"><label>Кто может писать</label><select id="community-edit-messages"><option value="everyone">Все участники</option><option value="following">Только мои подписки</option><option value="nobody">Никто</option></select></div></div><button type="button" class="btn primary" id="community-edit-save">Сохранить</button></div>`);
@@ -613,6 +695,15 @@
       syncWallTabs(); loadWall();
     });
     qa('[data-community-profile-close]').forEach(button => button.onclick = closeProfile);
+    qa('[data-community-visibility-close]').forEach(button => button.onclick = closeProfileVisibility);
+    const visibilityForm = q('#community-visibility-form'); if (visibilityForm) visibilityForm.onsubmit = saveProfileVisibility;
+    document.addEventListener('keydown', event => {
+      if (event.key !== 'Escape') return;
+      const visibilityModal = q('#community-visibility-modal');
+      const profileModal = q('#community-profile-modal');
+      if (visibilityModal && !visibilityModal.hidden) closeProfileVisibility();
+      else if (profileModal && !profileModal.hidden) closeProfile();
+    });
     q('#community-post-submit').onclick = submitPost;
     const resultButton = q('[data-community-object="result"]'); if (resultButton) resultButton.onclick = openResultPublisher;
     q('#community-load-more').onclick = () => loadFeed(false);
