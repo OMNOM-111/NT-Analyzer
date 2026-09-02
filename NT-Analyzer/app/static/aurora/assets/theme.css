@@ -3956,3 +3956,264 @@ body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
   .orch-orbit-spark,
   .orch-orbit-node { animation: none !important; }
 }
+
+/* =========================================================================
+   SF Chat final messenger presentation — role-aware bubbles, compact real
+   conversation controls and restrained Streamline SF branding. The existing
+   data sources, events and routing remain unchanged.
+   ========================================================================= */
+.sf-chat-mark {
+  min-width: 46px;
+  height: 30px;
+  line-height: 1;
+  letter-spacing: 0;
+  filter: drop-shadow(0 0 7px rgba(74, 207, 255, .3));
+}
+.sf-chat-mark svg { width: 100%; height: 100%; overflow: visible; }
+.sf-chat-mark path {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.sf-chat-mark-s { stroke: #dffaff; stroke-width: 1.4; }
+.sf-chat-mark-f { stroke: #42cfff; stroke-width: 1.55; }
+.sf-notice-avatar .sf-chat-mark { min-width: 24px; width: 24px; height: 18px; transform: none; }
+.sf-chat-panel .orch-head-brand .sf-chat-mark { width: 62px; min-width: 62px; height: 38px; transform: none; }
+.orch-fab .sf-chat-mark { width: 40px; min-width: 40px; height: 27px; transform: none; transform-origin: center; }
+
+.sf-chat-panel .orch-msg-body { color: #dce9f5; letter-spacing: -.006em; }
+.sf-chat-panel .orch-actions {
+  margin-top: 7px;
+  padding-top: 0;
+  border-top: 0;
+  gap: 3px;
+  opacity: .64;
+}
+.sf-chat-panel .orch-action {
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+  gap: 6px;
+  font-size: 9.5px;
+  line-height: 1.25;
+}
+.sf-chat-panel .orch-action-mark { width: 6px; height: 6px; box-shadow: 0 0 0 2px rgba(142, 211, 244, .06); }
+.sf-chat-panel .orch-action-state { font-weight: 650; text-transform: none; }
+.sf-chat-panel .orch-action.waiting { color: #70859a; }
+.sf-chat-panel .orch-action.waiting .orch-action-mark { background: #9a8350; box-shadow: 0 0 0 2px rgba(154, 131, 80, .06); }
+.sf-chat-panel .orch-action.waiting .orch-action-state { color: #8396a8; }
+.sf-chat-panel .orch-actions:hover,
+.sf-chat-panel .orch-actions:focus-within { opacity: .9; }
+
+.sf-chat-panel .orch-msg-footer {
+  display: block;
+  margin-top: 7px;
+  padding-top: 0;
+  border-top: 0;
+  white-space: normal;
+}
+.sf-chat-panel .orch-msg-tools-summary {
+  min-height: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+  color: #708ba4;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  cursor: pointer;
+  opacity: .74;
+  transition: color .16s ease, opacity .16s ease;
+}
+.sf-chat-panel .orch-msg-tools-summary::-webkit-details-marker { display: none; }
+.sf-chat-panel .orch-msg-tools-summary:hover,
+.sf-chat-panel .orch-msg-tools-summary:focus-visible,
+.sf-chat-panel .orch-msg-footer[open] > .orch-msg-tools-summary { color: #a8c8de; opacity: 1; }
+.sf-chat-panel .orch-msg-tools-label { display: inline-flex; align-items: center; gap: 5px; }
+.sf-chat-panel .orch-msg-tools-label > span { color: #69cfff; font-size: 13px; letter-spacing: .08em; line-height: 1; }
+.sf-chat-panel .orch-msg-tools-summary time { margin-left: auto; color: #668097; font: inherit; font-variant-numeric: tabular-nums; }
+.sf-chat-panel .orch-msg-footer-panel {
+  margin-top: 5px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(121, 202, 244, .12);
+}
+.sf-chat-panel .orch-msg-footer-row { gap: 6px; }
+.sf-chat-panel .orch-msg-footer-left { gap: 6px; }
+.sf-chat-panel .orch-msg-footer .orch-msg-meta { margin-top: 3px; color: #60788f; font-size: 8.5px; }
+.sf-chat-panel .orch-rating-label,
+.sf-chat-panel .orch-msg-kind { font-size: 8px; letter-spacing: .035em; }
+.sf-chat-panel .orch-fulfill-status { font-size: 9px; font-weight: 600; }
+.sf-chat-panel .orch-fulfill-btn { width: 20px; height: 20px; border-radius: 6px; }
+.sf-chat-panel .orch-rate-star { width: 18px; height: 18px; }
+
+@media (min-width: 761px) {
+  .sf-chat-panel .orch-msg.assistant {
+    max-width: 76%;
+    padding: 0;
+    gap: 10px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .sf-chat-panel .orch-msg.assistant > .orch-msg-stack {
+    min-width: 0;
+    padding: 12px 15px 10px;
+    border: 1px solid rgba(120, 201, 255, .3);
+    border-radius: 17px 17px 17px 7px;
+    background: linear-gradient(145deg, rgba(24, 46, 68, .76), rgba(7, 21, 36, .9));
+    box-shadow: 0 12px 30px rgba(0, 0, 0, .19), inset 0 1px 0 rgba(218, 247, 255, .065);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+  .sf-chat-panel .orch-msg.user {
+    max-width: 66%;
+    padding: 10px 14px 9px;
+    border-radius: 17px 17px 7px 17px;
+    font-size: 13.5px;
+    line-height: 1.45;
+    background: linear-gradient(145deg, rgba(40, 91, 135, .62), rgba(38, 48, 105, .6));
+    border-color: rgba(116, 207, 255, .42);
+    box-shadow: 0 9px 26px rgba(9, 60, 101, .16), inset 0 1px 0 rgba(220, 248, 255, .075);
+  }
+  .sf-chat-panel .orch-msg.human.assistant { background: transparent; border: 0; box-shadow: none; }
+  .sf-chat-panel .orch-msg.human.assistant > .orch-msg-stack {
+    background: linear-gradient(145deg, rgba(22, 66, 73, .78), rgba(6, 31, 38, .9));
+    border-color: rgba(92, 222, 207, .3);
+  }
+  .sf-chat-panel .orch-msg-face.agent-face,
+  .sf-chat-panel .orch-human-face {
+    width: 39px;
+    height: 39px;
+    margin: 2px 0 0;
+    border-radius: 11px;
+    border: 1px solid rgba(113, 211, 255, .46);
+    background: linear-gradient(145deg, #102e49, #06131f);
+    box-shadow: 0 5px 16px rgba(0, 0, 0, .24), 0 0 16px rgba(59, 190, 255, .08);
+  }
+  .sf-chat-panel .orch-msgs {
+    padding: 22px 28px 18px;
+    gap: 14px;
+  }
+  .sf-chat-panel .orch-msgs::before { margin-bottom: 1px; }
+  .sf-chat-panel .orch-msg { font-size: 13.5px; line-height: 1.48; }
+}
+
+@media (min-width: 1024px) {
+  .sf-chat-panel {
+    right: 118px;
+    bottom: 96px;
+    width: min(1040px, calc(100vw - 190px));
+    height: min(740px, calc(100vh - 128px));
+    min-height: min(560px, calc(100vh - 128px));
+    border-radius: 22px;
+    background: rgba(2, 9, 17, .985);
+    border-color: rgba(119, 214, 255, .38);
+    box-shadow: 0 0 0 1px rgba(177, 235, 255, .055), 0 0 58px rgba(23, 149, 226, .14), 0 30px 92px rgba(0, 0, 0, .75);
+  }
+  .sf-chat-panel .orch-head { min-height: 72px; padding: 11px 19px; }
+  .sf-chat-panel .orch-body { grid-template-columns: 248px minmax(0, 1fr); }
+  .sf-chat-panel .orch-convos { padding: 16px 12px 15px; }
+  .sf-chat-panel .orch-convo-tools { gap: 8px; padding-bottom: 11px; }
+  .sf-chat-panel .orch-convo-tools-head { padding-inline: 3px; font-size: 8.5px; }
+  .sf-chat-panel .orch-convo-search { min-height: 37px; border-radius: 10px; }
+  .sf-chat-panel .orch-convo-new { min-height: 38px; border-radius: 10px; }
+  .sf-chat-panel .orch-convo-filters button { min-height: 27px; font-size: 8.5px; }
+  .sf-chat-panel .orch-convo-list { gap: 4px; }
+  .sf-chat-panel .orch-convo {
+    min-height: 58px;
+    padding: 9px 9px;
+    gap: 8px;
+    border-radius: 11px;
+  }
+  .sf-chat-panel .orch-convo-title { font-size: 11.5px; letter-spacing: -.01em; }
+  .sf-chat-panel .orch-convo-sub { margin-top: 2px; font-size: 8.8px; }
+  .sf-chat-panel .orch-convo-state { margin-top: 3px; font-size: 8.5px; }
+  .sf-chat-panel .orch-convo-unread { min-width: 17px; height: 17px; padding: 0 4px; font-size: 8.5px; line-height: 17px; }
+  .sf-chat-panel .orch-main {
+    background:
+      radial-gradient(circle at 88% 10%, rgba(46, 187, 255, .16), transparent 31%),
+      radial-gradient(circle at 74% 90%, rgba(53, 126, 225, .15), transparent 37%),
+      radial-gradient(ellipse at 38% 56%, rgba(17, 73, 115, .09), transparent 46%),
+      linear-gradient(145deg, #030b16 0%, #04101e 48%, #020812 100%);
+  }
+  .sf-chat-panel .orch-main::before { opacity: .82; }
+  .sf-chat-panel .orch-main::after { opacity: .58; border-top-color: rgba(161, 229, 255, .7); }
+  .sf-chat-panel .orch-compose {
+    background: linear-gradient(180deg, rgba(3, 11, 21, .64), rgba(2, 8, 16, .98));
+    border-top-color: rgba(112, 202, 248, .16);
+  }
+  .sf-chat-panel .orch-input { padding: 11px 18px 15px; gap: 8px; }
+  .sf-chat-panel .orch-input textarea {
+    min-height: 52px;
+    padding: 13px 15px;
+    border-radius: 16px;
+    background: linear-gradient(145deg, rgba(15, 31, 50, .86), rgba(6, 17, 30, .92));
+    border-color: rgba(132, 207, 248, .3);
+    font-size: 13px;
+  }
+  .sf-chat-panel .orch-mic,
+  .sf-chat-panel .orch-attach { width: 44px; height: 44px; border-radius: 13px; }
+  .sf-chat-panel .orch-send {
+    width: 50px;
+    height: 50px;
+    border-radius: 15px;
+    background: linear-gradient(140deg, #55d8ff, #5a82f5);
+    box-shadow: 0 0 0 1px rgba(178, 238, 255, .2), 0 8px 22px rgba(32, 146, 225, .24);
+  }
+  .orch-orbit-link {
+    right: 38px;
+    bottom: 34px;
+    width: 146px;
+    height: 78px;
+  }
+  .sf-chat-panel.open ~ .orch-orbit-link { opacity: .92; }
+  .orch-orbit-glow { stroke: rgba(77, 211, 255, .42); stroke-width: 9; filter: blur(5.5px); }
+  .orch-orbit-path { stroke-width: 1.7; }
+  .orch-orbit-spark { stroke-width: 2.5; stroke-dasharray: 1 16; }
+  .orch-orbit-node { filter: drop-shadow(0 0 7px #38caff); }
+}
+
+@media (max-width: 760px) {
+  .sf-chat-panel .orch-head-brand .sf-chat-mark { width: 48px; min-width: 48px; height: 30px; transform: none; }
+  .sf-chat-panel .orch-head { padding-inline: 10px; }
+  .sf-chat-panel .orch-head-name { font-size: 16px; text-transform: none; letter-spacing: -.01em; }
+  .sf-chat-panel .orch-msgs { padding: 18px 12px 14px; gap: 12px; }
+  .sf-chat-panel .orch-msg.assistant {
+    max-width: 94%;
+    padding: 0;
+    gap: 8px;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+  }
+  .sf-chat-panel .orch-msg.assistant > .orch-msg-stack {
+    min-width: 0;
+    padding: 11px 13px 9px;
+    border: 1px solid rgba(120, 201, 255, .3);
+    border-radius: 16px 16px 16px 7px;
+    background: linear-gradient(145deg, rgba(24, 46, 68, .78), rgba(7, 21, 36, .91));
+    box-shadow: 0 9px 24px rgba(0, 0, 0, .18), inset 0 1px 0 rgba(218, 247, 255, .06);
+  }
+  .sf-chat-panel .orch-msg.user {
+    max-width: 82%;
+    padding: 10px 13px 9px;
+    border-radius: 16px 16px 7px 16px;
+    background: linear-gradient(145deg, rgba(40, 91, 135, .65), rgba(38, 48, 105, .62));
+  }
+  .sf-chat-panel .orch-msg.human.assistant { background: transparent; border: 0; box-shadow: none; }
+  .sf-chat-panel .orch-msg.human.assistant > .orch-msg-stack {
+    background: linear-gradient(145deg, rgba(22, 66, 73, .8), rgba(6, 31, 38, .92));
+    border-color: rgba(92, 222, 207, .3);
+  }
+  .sf-chat-panel .orch-msg-face.agent-face,
+  .sf-chat-panel .orch-human-face { width: 34px; height: 34px; margin: 2px 0 0; border-radius: 10px; }
+  .sf-chat-panel .orch-input { padding: 9px 10px 12px; gap: 7px; }
+  .sf-chat-panel .orch-input textarea { min-height: 46px; padding: 11px 12px; border-radius: 14px; }
+  .sf-chat-panel .orch-mic,
+  .sf-chat-panel .orch-attach { width: 40px; height: 40px; border-radius: 12px; }
+  .sf-chat-panel .orch-send { width: 46px; height: 46px; border-radius: 14px; }
+}

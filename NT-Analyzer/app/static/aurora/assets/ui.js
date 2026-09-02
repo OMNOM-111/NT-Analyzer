@@ -7228,7 +7228,10 @@
     { id: 'day',      title: 'Day',      sub: 'Светлый operations desk',         icon: 'chart',  fabTitle: 'SF Chat · Day' },
   ];
   function sfChatMark() {
-    return '<span class="sf-chat-mark" aria-hidden="true"><i>S</i><i>F</i></span>';
+    return `<span class="sf-chat-mark" aria-hidden="true"><svg viewBox="0 0 72 40" focusable="false">
+      <path class="sf-chat-mark-s" d="M66 5H22C13 5 7 9.5 7 15.5S14 26 23 26h24c8 0 12 2.5 12 5.5S55 36 47 36H5"></path>
+      <path class="sf-chat-mark-f" d="M43 36V19c0-6 3.5-9 10-9h13M43 23h16"></path>
+    </svg></span>`;
   }
   function orchIsHumanConversation(value) {
     const row = typeof value === 'object' && value
@@ -8003,23 +8006,24 @@
         <button type="button" class="orch-fulfill-btn ${fulfillment === 'done' ? 'active done' : ''}" data-orch-fulfill="done" title="Выполнено" aria-label="Выполнено">${icon('check')}</button>
         <button type="button" class="orch-fulfill-btn ${fulfillment === 'failed' ? 'active failed' : ''}" data-orch-fulfill="failed" title="Не выполнено" aria-label="Не выполнено">${icon('close')}</button>
       </div>` : `<span class="orch-msg-kind soft">${esc(kindLabel)}</span>`;
-    return `<div class="orch-msg-footer" data-orch-message-id="${esc(row.message_id)}">
-      <div class="orch-msg-footer-row">
-        <div class="orch-msg-footer-left">
-          ${isInformational ? '' : `<div class="orch-rating compact" data-orch-message-id="${esc(row.message_id)}" data-rating="${Number(row.rating || 0) || ''}">
-            <div class="orch-rating-row"><span class="orch-rating-label">Оценка</span><div class="orch-rating-stars">${[1, 2, 3].map(n => `<button type="button" class="orch-rate-star ${Number(row.rating || 0) >= n ? 'active' : ''}" data-orch-rate="${n}" title="${({ 1: 'Слабый ответ', 2: 'Нормально', 3: 'Хороший ответ' })[n]}" aria-label="${({ 1: 'Слабый ответ', 2: 'Нормально', 3: 'Хороший ответ' })[n]}">${icon('star')}</button>`).join('')}</div></div>
-          </div>`}
-          ${isInformational ? `<span class="orch-msg-kind soft">${esc(kindLabel)}</span>` : `<span class="orch-fulfill-status ${statusCls}" title="${esc(fulfillLabel)}">${fulfillment === 'done' ? icon('check') : fulfillment === 'failed' ? icon('close') : ''}<span>${esc(fulfillLabel)}</span></span>`}
+    const comment = String(row.feedback_comment || '');
+    const hasComment = !!comment.trim();
+    const rating = Number(row.rating || 0);
+    const feedbackOpen = rating === 1 && !hasComment;
+    return `<details class="orch-msg-footer" data-orch-message-id="${esc(row.message_id)}" ${feedbackOpen ? 'open' : ''}>
+      <summary class="orch-msg-tools-summary"><span class="orch-msg-tools-label"><span aria-hidden="true">···</span> Детали ответа</span><time>${esc(orchFmtTime(row.timestamp_utc))}</time></summary>
+      <div class="orch-msg-footer-panel">
+        <div class="orch-msg-footer-row">
+          <div class="orch-msg-footer-left">
+            ${isInformational ? '' : `<div class="orch-rating compact" data-orch-message-id="${esc(row.message_id)}" data-rating="${rating || ''}">
+              <div class="orch-rating-row"><span class="orch-rating-label">Оценка</span><div class="orch-rating-stars">${[1, 2, 3].map(n => `<button type="button" class="orch-rate-star ${rating >= n ? 'active' : ''}" data-orch-rate="${n}" title="${({ 1: 'Слабый ответ', 2: 'Нормально', 3: 'Хороший ответ' })[n]}" aria-label="${({ 1: 'Слабый ответ', 2: 'Нормально', 3: 'Хороший ответ' })[n]}">${icon('star')}</button>`).join('')}</div></div>
+            </div>`}
+            ${isInformational ? `<span class="orch-msg-kind soft">${esc(kindLabel)}</span>` : `<span class="orch-fulfill-status ${statusCls}" title="${esc(fulfillLabel)}">${fulfillment === 'done' ? icon('check') : fulfillment === 'failed' ? icon('close') : ''}<span>${esc(fulfillLabel)}</span></span>`}
+          </div>
+          <div class="orch-msg-footer-right">${marks}</div>
         </div>
-        <div class="orch-msg-footer-right">${marks}</div>
-      </div>
-      <div class="orch-msg-meta">${metaBits}${orchChainHtml(row)}</div>
-      ${(() => {
-        const comment = String(row.feedback_comment || '');
-        const hasComment = !!comment.trim();
-        const rating = Number(row.rating || 0);
-        const feedbackOpen = rating === 1 && !hasComment;
-        return `<div class="orch-feedback-archive" ${hasComment ? '' : 'hidden'}>
+        <div class="orch-msg-meta">${metaBits}${orchChainHtml(row)}</div>
+        <div class="orch-feedback-archive" ${hasComment ? '' : 'hidden'}>
           <div><span class="orch-feedback-archive-label">Сохранённый комментарий</span><div class="orch-feedback-archive-text">${esc(comment)}</div></div>
           <button type="button" class="orch-feedback-edit">Редактировать</button>
         </div>
@@ -8030,9 +8034,9 @@
             <button type="button" class="orch-feedback-cancel" hidden>Отмена</button>
             <button type="button" class="orch-feedback-save">Сохранить комментарий</button>
           </div>
-        </div>`;
-      })()}
-    </div>`;
+        </div>
+      </div>
+    </details>`;
   }
   function orchMessageHtml(row) {
     const humanMessage = row.sender_type === 'human' || !!row.sender_profile_id;
