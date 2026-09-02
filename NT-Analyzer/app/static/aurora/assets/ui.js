@@ -7262,6 +7262,10 @@
       fab.title = skin.fabTitle;
       fab.setAttribute('aria-label', `Открыть ${skin.fabTitle}`);
     }
+    // The header chip and the selector button name the skin that is actually
+    // applied. They used to be CSS `content` strings, which kept reading
+    // "Orbital Glass" no matter which of the six skins was live.
+    qsa('.orch-head-skin, .orch-skin-label').forEach((node) => { node.textContent = skin.title; });
     const menu = qs('#orch-skin-menu');
     if (menu && !menu.hidden) orchRenderSkinMenu();
   }
@@ -7342,6 +7346,54 @@
       }).format(new Date(iso));
     } catch (e) { return String(iso).slice(0, 16); }
   }
+  // Day separators are bucketed in the same zone orchFmtTime prints in, so a
+  // separator can never disagree with the timestamps sitting under it.
+  function orchZone() {
+    return (window.AuroraDomain && AuroraDomain.PT_ZONE) || 'America/Los_Angeles';
+  }
+  function orchDayKey(iso) {
+    if (!iso) return '';
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: orchZone(), year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(new Date(iso));
+    } catch (e) { return String(iso).slice(0, 10); }
+  }
+  function orchDayLabel(iso) {
+    const key = orchDayKey(iso);
+    if (!key) return '';
+    const now = Date.now();
+    if (key === orchDayKey(new Date(now).toISOString())) return 'Сегодня';
+    if (key === orchDayKey(new Date(now - 86400000).toISOString())) return 'Вчера';
+    try {
+      return new Intl.DateTimeFormat('ru-RU', {
+        timeZone: orchZone(), day: 'numeric', month: 'long',
+      }).format(new Date(iso));
+    } catch (e) { return key; }
+  }
+  function orchDayMarkHtml(iso) {
+    return `<div class="orch-day" data-day="${esc(orchDayKey(iso))}" role="separator"><span>${esc(orchDayLabel(iso))}</span></div>`;
+  }
+  // Renders the list with a separator wherever the calendar day changes. The
+  // header used to be a fixed CSS `content: 'Сегодня'` that sat above every
+  // conversation, including ones whose newest message was days old.
+  function orchMessagesHtml(messages) {
+    let day = '';
+    return messages.map((row) => {
+      const key = orchDayKey(row && row.timestamp_utc);
+      let mark = '';
+      if (key && key !== day) { day = key; mark = orchDayMarkHtml(row.timestamp_utc); }
+      return mark + orchMessageHtml(row);
+    }).join('');
+  }
+  // Optimistic appends carry their own separator when they open a new day.
+  function orchAppendMessage(box, row) {
+    const marks = qsa('.orch-day', box);
+    const last = marks.length ? (marks[marks.length - 1].dataset.day || '') : '';
+    const key = orchDayKey(row && row.timestamp_utc);
+    const mark = key && key !== last ? orchDayMarkHtml(row.timestamp_utc) : '';
+    box.insertAdjacentHTML('beforeend', mark + orchMessageHtml(row));
+  }
   function buildOrchestratorWidget() {
     if (ORCH.built || qs('.orch-fab')) return;
     ORCH.built = true;
@@ -7353,11 +7405,11 @@
       <header class="orch-head">
         <button class="orch-icon-btn orch-list-toggle" id="orch-list-toggle" type="button" title="Список диалогов" aria-label="Список диалогов">${icon('list')}</button>
         <div class="orch-head-brand">${sfChatMark()}</div>
-        <div class="orch-head-title" title="SF Chat"><span class="orch-head-name">SF Chat</span><span class="orch-head-sub" id="orch-head-sub">Люди и AI-помощники</span><span class="orch-task-state open" id="orch-task-state">Тема открыта</span></div>
+        <div class="orch-head-title" title="SF Chat"><span class="orch-head-name">SF Chat<span class="orch-head-skin" id="orch-head-skin">${esc(skin.title)}</span></span><span class="orch-head-sub" id="orch-head-sub">Люди и AI-помощники</span><span class="orch-task-state open" id="orch-task-state">Тема открыта</span></div>
         <button class="orch-icon-btn" id="orch-thread-state" type="button" title="Закрыть завершённую тему" aria-label="Закрыть тему">${icon('check')}</button>
         <button class="orch-icon-btn" id="orch-new" type="button" title="Новый диалог" aria-label="Новый диалог">${icon('plus')}</button>
         <div class="orch-skin-wrap">
-          <button class="orch-icon-btn" id="orch-skin-btn" type="button" title="Облик чата" aria-label="Облик чата" aria-haspopup="menu" aria-expanded="false">${icon('palette')}</button>
+          <button class="orch-icon-btn" id="orch-skin-btn" type="button" title="Облик чата" aria-label="Облик чата" aria-haspopup="menu" aria-expanded="false">${icon('palette')}<span class="orch-skin-label" id="orch-skin-label">${esc(skin.title)}</span></button>
           <div class="orch-skin-menu" id="orch-skin-menu" role="menu" hidden></div>
         </div>
         <button class="orch-icon-btn" id="orch-close" type="button" title="Свернуть" aria-label="Свернуть">${icon('close')}</button>
@@ -7389,6 +7441,7 @@
               <button class="orch-mic" id="orch-mic" type="button" title="Голосовой ввод" aria-label="Голосовой ввод" hidden>${icon('mic')}</button>
               <button class="orch-send" id="orch-send" type="submit" title="Отправить" aria-label="Отправить" ${offline ? 'disabled' : ''}>${icon('send')}</button>
             </form>
+            <p class="orch-disclaimer" id="orch-disclaimer">SF Chat может ошибаться. Проверяйте важную информацию.</p>
           </div>
         </div>
       </div>
@@ -7668,6 +7721,10 @@
   function orchUpdateHeader() {
     const current = orchCurrentConversation();
     const sub = qs('#orch-head-sub');
+    // The model caveat belongs to AI answers only; a person-to-person thread
+    // is not the model talking, so it must not carry the warning.
+    const note = qs('#orch-disclaimer');
+    if (note) note.hidden = orchIsHumanConversation(current);
     if (!sub) return;
     if (orchIsHumanConversation(current)) {
       sub.textContent = String((current && current.subtitle) || (current && current.title) || 'Личная переписка');
@@ -8280,7 +8337,7 @@
     if (silent && (ORCH.feedbackVoice || qsa('.orch-feedback-text', box).some(ta => ta.dataset.dirty === '1'))) return;
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
     orchStopFeedbackVoice();
-    box.innerHTML = messages.length ? messages.map(orchMessageHtml).join('') : (human
+    box.innerHTML = messages.length ? orchMessagesHtml(messages) : (human
       ? '<div class="empty-state">Личная переписка начнётся с первого сообщения.</div>'
       : '<div class="empty-state">Начните диалог: например «Разработай простую стратегию максимально быстро».</div>');
     if (ORCH.transientError && ORCH.transientError.cid === cid) {
@@ -8316,12 +8373,12 @@
       ORCH.pendingAttachments = [];
       orchRenderPendingAttachments();
       if (box.querySelector('.empty-state')) box.innerHTML = '';
-      box.insertAdjacentHTML('beforeend', orchMessageHtml({
+      orchAppendMessage(box, {
         sender_type: 'human', sender_profile_id: ORCH.viewerProfileId,
         outgoing: true, content: text, attachments: attachments.map(row => ({
           url: row.data_url, name: row.name, mime_type: row.mime_type,
         })), timestamp_utc: new Date().toISOString(),
-      }));
+      });
       box.scrollTop = box.scrollHeight;
       try {
         await API.http.sfChatMessage(cid, text, attachments);
@@ -8342,7 +8399,7 @@
     }
     // optimistic render: show the owner message immediately
     if (box.querySelector('.empty-state')) box.innerHTML = '';
-    box.insertAdjacentHTML('beforeend', orchMessageHtml({ role: 'user', content: text, timestamp_utc: new Date().toISOString(), source: 'app' }));
+    orchAppendMessage(box, { role: 'user', content: text, timestamp_utc: new Date().toISOString(), source: 'app' });
     // Live block contains only public progress labels. Provider chain-of-thought
     // is never rendered or persisted in the owner-facing conversation.
     const live = el(`<div class="orch-live" id="orch-live">

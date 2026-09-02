@@ -1716,6 +1716,10 @@ body.notices-cramped .sf-notice-wrap { display: none; }
 .orch-head { display: flex; align-items: center; gap: 8px; padding: 12px 12px; border-bottom: 1px solid var(--line-2); background: var(--bg-3); }
 .orch-head-title { flex: 1; min-width: 0; }
 .orch-head-name { display: block; font-weight: 800; font-size: 13.5px; color: var(--tx); }
+/* The active-skin name is real state written by orchApplySkin. It only earns
+   header room on the wide SF Chat shell, so it stays out of the way elsewhere
+   rather than being a second, unstyled copy of the same word. */
+.orch-head-skin, .orch-skin-label { display: none; }
 .orch-head-sub { display: block; font-size: 10.5px; color: var(--tx-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .orch-task-state { display: inline-block; margin-top: 3px; padding: 2px 6px; border-radius: 999px; font-size: 9px; font-weight: 800; line-height: 1.2; background: var(--bg-1); color: var(--tx-3); }
 .orch-task-state.running, .orch-convo-state.running { color: var(--brand); }
@@ -1828,6 +1832,7 @@ body.notices-cramped .sf-notice-wrap { display: none; }
 .orch-icon-btn.sm.on { color: var(--brand); }
 
 .orch-msgs { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.orch-day { align-self: center; flex: 0 0 auto; max-width: 100%; margin: 2px 0; padding: 0 10px; color: var(--tx-3); font-size: 10px; font-weight: 700; letter-spacing: .04em; }
 .orch-msg { max-width: 86%; padding: 9px 12px; border-radius: 13px; font-size: 13px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
 .orch-msg.assistant { display: flex; align-items: flex-start; gap: 10px; align-self: flex-start; background: var(--bg-3); border: 1px solid var(--line-2); color: var(--tx-2); border-bottom-left-radius: 4px; }
 .orch-msg.user { align-self: flex-end; background: var(--brand-soft); border: 1px solid var(--brand-line); color: var(--tx); border-bottom-right-radius: 4px; }
@@ -2059,6 +2064,8 @@ html[data-reduce-motion="on"] .agent-face:not(.orch-msg-face).playing { box-shad
 .orch-convo .orch-convo-sys { opacity: 1; }
 
 .orch-input { display: flex; align-items: flex-end; gap: 8px; padding: 8px 10px 10px; background: transparent; }
+.orch-disclaimer { margin: 0; padding: 0 12px 9px; color: var(--tx-3); font-size: 10px; line-height: 1.3; text-align: center; }
+.orch-disclaimer[hidden] { display: none; }
 .orch-input textarea {
   flex: 1; resize: none; min-height: 40px; max-height: 120px; padding: 10px 12px;
   background: var(--bg-1); border: 1px solid var(--line-2); border-radius: 11px;
@@ -3262,20 +3269,23 @@ body.community-modal-open { overflow: hidden; }
   transform: none; transition: opacity .3s ease, right .28s cubic-bezier(.22, 1, .36, 1), bottom .25s ease;
 }
 body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
-.sf-notice { padding: 13px; gap: 7px; transform: translateY(12px) scale(.98); border-color: rgba(117, 88, 255, .62); background: linear-gradient(150deg, rgba(13, 29, 49, .97), rgba(20, 19, 48, .97)); box-shadow: 0 0 28px rgba(107, 68, 255, .21), 0 18px 44px rgba(0,0,0,.58); }
+/* The card sits directly above the SF Chat launcher, so it carries the same
+   cyan accent the launcher and the shell do. It used to rest on a violet
+   border and glow, which read as a second, unrelated accent system. */
+.sf-notice { padding: 13px; gap: 7px; transform: translateY(12px) scale(.98); border-color: rgba(104, 200, 255, .46); background: linear-gradient(150deg, rgba(12, 31, 51, .97), rgba(6, 18, 33, .97)); box-shadow: 0 0 0 1px rgba(177, 235, 255, .05), 0 0 26px rgba(38, 167, 240, .16), 0 18px 44px rgba(0,0,0,.58); }
 .sf-notice.in { transform: translateY(0) scale(1); }
 .sf-notice.leaving { transform: translateY(10px) scale(.98) !important; }
 .sf-notice-source { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .sf-notice-avatar { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: 0 0 auto; overflow: hidden; border-radius: 50%; border: 1px solid rgba(69, 205, 255, .34); background: #0b1d2f; color: #64d9ff; font-size: 10px; font-weight: 800; }
 .sf-notice-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .sf-notice-avatar.ai { width: 26px; height: 26px; }
-.sf-notice-avatar .sf-chat-mark { min-width: 22px; height: 20px; line-height: 20px; letter-spacing: -5px; transform: scale(.62); }
+.sf-notice-avatar .sf-chat-mark { min-width: 22px; height: 20px; transform: scale(.62); }
 .sf-notice-kicker { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; letter-spacing: .1px; color: #9bb1c8; }
 .sf-notice-actions { position: relative; z-index: 1; display: flex; gap: 7px; margin-top: 2px; }
-.sf-notice-actions > span { padding: 7px 10px; border-radius: 8px; background: linear-gradient(135deg, #32caff, #7664ff); color: #fff; font-size: 10.5px; font-weight: 750; }
+.sf-notice-actions > span { padding: 7px 10px; border-radius: 8px; background: linear-gradient(140deg, #55d8ff, #5a82f5); color: #03101a; font-size: 10.5px; font-weight: 750; }
 .sf-notice-actions > span.ghost { background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.09); color: #c5d2e0; }
 .sf-notice-more { position: relative; z-index: 1; display: flex; align-items: center; justify-content: space-between; margin: 2px -13px -13px; padding: 8px 13px; border-top: 1px solid rgba(255,255,255,.08); color: #7990a8; font-size: 10px; }
-.sf-notice-more strong { padding: 3px 7px; border-radius: 999px; background: rgba(107, 91, 255, .18); color: #ccd2ff; }
+.sf-notice-more strong { padding: 3px 7px; border-radius: 999px; background: rgba(64, 182, 255, .16); color: #bfe4ff; }
 
 @media (max-width: 760px) {
   .orch-fab { right: 14px; bottom: 70px; width: 52px; height: 52px; }
@@ -3538,8 +3548,7 @@ body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
     letter-spacing: -.02em;
     text-transform: none;
   }
-  .sf-chat-panel .orch-head-name::after {
-    content: 'Orbital Glass';
+  .sf-chat-panel .orch-head-skin {
     display: inline-flex;
     align-items: center;
     min-height: 24px;
@@ -3564,8 +3573,8 @@ body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
     border-radius: 11px;
     background: rgba(11, 28, 47, .8);
   }
-  .sf-chat-panel #orch-skin-btn::after {
-    content: 'Orbital Glass';
+  .sf-chat-panel .orch-skin-label {
+    display: inline-flex;
     color: #c6d8e9;
     font: 650 11px/1 Inter, "Segoe UI", sans-serif;
     white-space: nowrap;
@@ -3690,10 +3699,10 @@ body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
     scrollbar-color: rgba(89, 188, 241, .34) transparent;
     scrollbar-width: thin;
   }
-  .sf-chat-panel .orch-msgs::before {
-    content: 'Сегодня';
+  .sf-chat-panel .orch-day {
     align-self: center;
     flex: 0 0 auto;
+    max-width: 100%;
     padding: 0 12px;
     color: #7894ad;
     font-size: 10px;
@@ -4097,7 +4106,7 @@ body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
     padding: 22px 28px 18px;
     gap: 14px;
   }
-  .sf-chat-panel .orch-msgs::before { margin-bottom: 1px; }
+  .sf-chat-panel .orch-day { margin-bottom: 1px; }
   .sf-chat-panel .orch-msg { font-size: 13.5px; line-height: 1.48; }
 }
 
@@ -4145,7 +4154,8 @@ body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
     background: linear-gradient(180deg, rgba(3, 11, 21, .64), rgba(2, 8, 16, .98));
     border-top-color: rgba(112, 202, 248, .16);
   }
-  .sf-chat-panel .orch-input { padding: 11px 18px 15px; gap: 8px; }
+  .sf-chat-panel .orch-input { padding: 11px 18px 7px; gap: 8px; }
+  .sf-chat-panel .orch-disclaimer { padding: 0 18px 12px; color: #62798d; font-size: 10.5px; }
   .sf-chat-panel .orch-input textarea {
     min-height: 52px;
     padding: 13px 15px;
@@ -4211,7 +4221,8 @@ body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
   }
   .sf-chat-panel .orch-msg-face.agent-face,
   .sf-chat-panel .orch-human-face { width: 34px; height: 34px; margin: 2px 0 0; border-radius: 10px; }
-  .sf-chat-panel .orch-input { padding: 9px 10px 12px; gap: 7px; }
+  .sf-chat-panel .orch-input { padding: 9px 10px 6px; gap: 7px; }
+  .sf-chat-panel .orch-disclaimer { padding: 0 12px 10px; font-size: 9.5px; }
   .sf-chat-panel .orch-input textarea { min-height: 46px; padding: 11px 12px; border-radius: 14px; }
   .sf-chat-panel .orch-mic,
   .sf-chat-panel .orch-attach { width: 40px; height: 40px; border-radius: 12px; }

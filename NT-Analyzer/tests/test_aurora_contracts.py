@@ -591,7 +591,7 @@ def test_sf_chat_preserves_vitek_metadata_without_exposing_internal_model_beside
     assert "orchFmtTime(row.timestamp_utc)" in ui
     assert "!isUser && row.model ? esc(row.model)" not in ui
     assert "SF Chat · люди и AI-помощники" in ui
-    assert '<span class="orch-head-name">SF Chat</span>' in ui
+    assert '<span class="orch-head-name">SF Chat<span class="orch-head-skin"' in ui
     assert "AI · Виктор и агенты" in ui
     assert "function openSFChat" in ui
     assert "conversation_type === 'human'" in ui
@@ -603,6 +603,24 @@ def test_sf_chat_preserves_vitek_metadata_without_exposing_internal_model_beside
     assert "row.thinking" not in ui
     assert "orchThinkBlock" not in ui
     assert "Анализирую задачу…" in ui
+
+
+def test_sf_chat_header_chip_and_day_marks_render_real_state_not_css_literals():
+    """The skin chip and the day separators must come from live state.
+
+    Both used to be CSS `content` strings: the header read "Orbital Glass" no
+    matter which of the six skins was applied, and every conversation was
+    headed "Сегодня" even when its newest message was days old.
+    """
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    css = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
+    assert "content: 'Orbital Glass'" not in css
+    assert "content: 'Сегодня'" not in css
+    assert "qsa('.orch-head-skin, .orch-skin-label')" in ui
+    assert "function orchDayKey" in ui
+    assert "function orchDayLabel" in ui
+    assert "orchMessagesHtml(messages)" in ui
+    assert "orchAppendMessage(box," in ui
 
 
 def test_global_and_chat_polling_do_not_overlap_or_hammer_rate_limits():

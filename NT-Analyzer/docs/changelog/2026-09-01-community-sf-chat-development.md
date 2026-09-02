@@ -87,6 +87,43 @@ Release impact: Development only; Canary/Production не изменялись.
   только действующие Search/create-flow/filters, console и horizontal overflow
   равны нулю. Визуальная owner acceptance остаётся отдельным ручным решением.
 
+## Final design-audit pass — honest header state, real day marks
+
+Финальный дизайн-аудит сравнил работающий `8875` с owner-reference изображениями
+и нашёл три расхождения, каждое из которых нарушало собственное правило задачи
+«не использовать fake UI». Пройдены только presentation layer и UI bindings;
+backend, Community API, storage, PostgreSQL, ACL, Orchestrator, Backtest,
+Connector, `МИР АГЕНТОВ` и trading/payment logic не изменялись.
+
+- Имя активного облика чата перестало быть CSS-литералом. `.orch-head-name::after`
+  и `#orch-skin-btn::after` печатали строку `Orbital Glass` в двух местах header,
+  тогда как фактически применённый skin был `forge` («Forge»), и подпись не
+  менялась ни при одном из шести обликов. Оба места стали реальными элементами
+  (`.orch-head-skin`, `.orch-skin-label`), которые `orchApplySkin` заполняет
+  названием действительно применённого облика; проверено переключением
+  Forge → Terminal → Forge.
+- Разделитель дня стал настоящим. `.sf-chat-panel .orch-msgs::before` печатал
+  фиксированное `Сегодня` над каждым диалогом независимо от дат сообщений —
+  в основном чате он стоял над перепиской от 01 сентября. Разделители теперь
+  строятся из `timestamp_utc` (`orchDayKey`/`orchDayLabel`/`orchMessagesHtml`),
+  бакетятся в той же зоне, в которой печатает `orchFmtTime`, и дают
+  `Сегодня` / `Вчера` / дату; оптимистичные отправки открывают новый день через
+  `orchAppendMessage`.
+- Карточка уведомления вернулась в единую cyan/blue систему. Она стоит прямо над
+  SF Chat launcher, но несла фиолетовые border, glow, action-gradient и
+  count-pill — второй, ничем не связанный акцент вместо Orbital Glass. Позиция,
+  группировка `+N`, скрытие при открытом чате и mobile-вариант сохранены без
+  изменений.
+- Composer получил честную строку `SF Chat может ошибаться. Проверяйте важную
+  информацию.` Она показывается только в AI-диалогах: личная переписка человека
+  с человеком не является ответом модели и предупреждение не несёт.
+
+Намеренно сохранено: popup-геометрия shell и launcher, orbit link, desktop
+conversation rail, модель bubbles, вторичные AI-controls внутри disclosure,
+Community-архитектура (dock, feed, profile/wall, rich cards, independent scroll)
+и все честные empty state. Реальные аватары агентов оставлены вместо SF-знака в
+bubble: это действующие данные, а не декорация.
+
 ## Storage, migration and security
 
 - Development использует атомарные local documents. Explicit Canary/Production
@@ -103,6 +140,18 @@ Release impact: Development only; Canary/Production не изменялись.
   idempotency, pagination, privacy и non-enumerating ACL.
 
 ## Verification and honest remaining scope
+
+- Design-audit pass: focused Community/SF Chat/storage/UI contract suite
+  `89 passed`; полная регрессия `2506 passed, 33 skipped` за `424.92s`.
+- Новый contract-тест
+  `test_sf_chat_header_chip_and_day_marks_render_real_state_not_css_literals`
+  закрывает возврат обеих подписей в CSS `content`.
+- Browser QA этого прохода в Development runtime `8875`: desktop `1600x1000`
+  (SF Chat panel `1040x740`, launcher не перекрыт, `scrollWidth 1590 < 1600`),
+  desktop `1120x780`, Community `1600x1000` и mobile `375x812`
+  (`scrollWidth 375 = 375`). Console errors и warnings равны нулю на всех
+  проверенных экранах; разделители `Вчера`/`Сегодня` и disclaimer подтверждены
+  из DOM, а не только визуально.
 
 - Focused Community/SF Chat/storage/UI contract suite: `106 passed`.
 - Latest presentation-focused Community/SF Chat/UI suite: `101 passed`.
