@@ -5,66 +5,61 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
 <title>Сообщество — StratForge AI</title>
-<link rel="stylesheet" href="assets/theme.css?v=20260901-community-chat1">
+<link rel="stylesheet" href="assets/theme.css?v=20260901-community-workspace1">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 </head>
 <body data-page="community" data-title="Сообщество" data-kicker="Лента, профили и каналы StratForge">
   <div class="community-v2" id="community-v2">
-    <header class="community-hero">
-      <div>
-        <span class="community-eyebrow">STRATFORGE COMMUNITY</span>
-        <h1>Торговое сообщество внутри StratForge</h1>
-        <p>Идеи, разборы и подтверждённые результаты — отдельно от AI-задач и приватных рабочих данных.</p>
-      </div>
-      <label class="community-search" for="community-search">
-        <span aria-hidden="true">⌕</span>
-        <input id="community-search" type="search" maxlength="80" placeholder="Найти участника или публикацию…" autocomplete="off">
-        <kbd>⌘ K</kbd>
-      </label>
-    </header>
-
     <div class="community-layout">
-      <aside class="community-rail community-left" aria-label="Навигация сообщества">
-        <div class="community-self-card" id="community-self-card"><div class="community-skeleton compact"></div></div>
-        <nav class="community-nav" id="community-nav">
-          <button type="button" class="active" data-community-view="for-you"><span>⌂</span>Рекомендации</button>
-          <button type="button" data-community-view="following"><span>◎</span>Подписки</button>
-          <button type="button" data-community-view="saved"><span>◇</span>Сохранённое</button>
-          <button type="button" data-community-view="channels"><span>#</span>Каналы</button>
-          <button type="button" data-community-view="profile"><span>◉</span>Моя стена</button>
+      <aside class="community-social-dock community-left" aria-label="Навигация сообщества">
+        <button type="button" class="community-dock-button community-dock-primary" id="community-find-people" title="Найти людей" aria-label="Найти людей">
+          <span aria-hidden="true">⌕</span>
+        </button>
+        <nav class="community-dock-nav" id="community-nav">
+          <button type="button" class="active" data-community-view="for-you" title="Рекомендации" aria-label="Рекомендации"><span aria-hidden="true">⌂</span></button>
+          <button type="button" data-community-view="following" title="Подписки" aria-label="Подписки"><span aria-hidden="true">◎</span></button>
+          <button type="button" data-community-view="saved" title="Сохранённое" aria-label="Сохранённое"><span aria-hidden="true">◇</span></button>
+          <button type="button" data-community-view="channels" title="Каналы" aria-label="Каналы"><span aria-hidden="true">#</span></button>
+          <button type="button" data-community-view="profile" title="Моя стена" aria-label="Моя стена"><span aria-hidden="true">◉</span></button>
         </nav>
-        <div class="community-rail-section">
-          <div class="community-rail-title"><span>Подписки</span><button type="button" class="linklike" id="community-find-people">Найти</button></div>
-          <div class="community-following-list" id="community-following-list"><div class="community-skeleton compact"></div></div>
+        <div class="community-dock-people" id="community-following-list" aria-label="Люди, которых вы читаете">
+          <div class="community-skeleton compact"></div>
         </div>
-        <div class="community-boundary-note">
-          <strong>Приватность по умолчанию</strong>
-          В ленту попадает только то, что вы опубликовали здесь явно. Код стратегий и данные workspace не раскрываются автоматически.
-        </div>
+        <span class="community-dock-count" id="community-social-count" title="Участников в подборке">0</span>
       </aside>
 
       <main class="community-center">
-        <div class="community-tabs" role="tablist" aria-label="Режим ленты">
-          <button type="button" role="tab" aria-selected="true" class="active" data-community-tab="for-you">Для вас</button>
-          <button type="button" role="tab" aria-selected="false" data-community-tab="following">Подписки</button>
-          <button type="button" role="tab" aria-selected="false" data-community-tab="channels">Каналы</button>
-          <span class="community-tab-status" id="community-tab-status">Лента обновляется</span>
-        </div>
+        <header class="community-stream-toolbar">
+          <label class="community-search" for="community-search">
+            <span aria-hidden="true">⌕</span>
+            <input id="community-search" type="search" maxlength="80" placeholder="Поиск людей, @username или #hashtag..." autocomplete="off">
+            <kbd>Ctrl K</kbd>
+          </label>
+          <div class="community-stream-heading">
+            <span class="community-heading-icon" aria-hidden="true">◎</span>
+            <h1 id="community-stream-title">Recommendation</h1>
+            <span class="community-tab-status" id="community-tab-status">Загрузка…</span>
+          </div>
+          <div class="community-sort" role="group" aria-label="Сортировка публикаций">
+            <button type="button" class="active" data-community-sort="recent"><span aria-hidden="true">◷</span>По времени</button>
+            <button type="button" data-community-sort="relevant"><span aria-hidden="true">♨</span>По релевантности</button>
+          </div>
+        </header>
 
         <section class="community-composer-v2" id="community-composer-card">
           <div class="community-avatar" id="community-composer-avatar" aria-hidden="true">SF</div>
           <div class="community-compose-main">
-            <textarea id="community-post-text" rows="2" maxlength="4000" placeholder="Поделитесь идеей, наблюдением или вопросом…"></textarea>
+            <textarea id="community-post-text" rows="1" maxlength="4000" placeholder="Поделитесь сетапом, мыслями или прикрепите объект..."></textarea>
             <div class="community-pending-media" id="community-pending-media"></div>
             <div class="community-compose-actions">
-              <label class="community-action" for="community-post-files"><span>▧</span>Изображение</label>
-              <input id="community-post-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
-              <button type="button" class="community-action" data-community-object="strategy" disabled title="Будет подключено только через server-attested snapshot"><span>⌁</span>Стратегия</button>
-              <button type="button" class="community-action" data-community-object="result" title="Выбрать завершённый server-attested результат"><span>↗</span>Результат</button>
               <button type="button" class="community-action" data-community-object="chart" disabled title="Будет подключено только через server-attested snapshot"><span>⌗</span>График</button>
+              <button type="button" class="community-action" data-community-object="strategy" disabled title="Будет подключено только через server-attested snapshot"><span>▱</span>Стратегия</button>
+              <button type="button" class="community-action" data-community-object="result" title="Выбрать завершённый server-attested результат"><span>↗</span>Результат</button>
+              <label class="community-action" for="community-post-files" title="PNG, JPEG или WebP до 2 МБ"><span>⌕</span>Файл</label>
+              <input id="community-post-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
               <div class="community-compose-spacer"></div>
               <select id="community-post-visibility" aria-label="Видимость публикации"><option value="network">Вся сеть</option><option value="followers">Подписчики</option></select>
-              <button type="button" class="btn primary" id="community-post-submit">Опубликовать</button>
+              <button type="button" class="btn primary community-publish" id="community-post-submit"><span aria-hidden="true">➤</span>Опубликовать</button>
             </div>
           </div>
         </section>
@@ -92,13 +87,13 @@
         </section>
       </main>
 
-      <aside class="community-rail community-right">
+      <aside class="community-right community-wall" aria-label="Профиль и стена">
         <section class="community-profile-summary" id="community-profile-summary"><div class="community-skeleton profile"></div></section>
-        <section class="community-side-card">
-          <div class="community-side-head"><h3>Участники для вас</h3><button type="button" class="linklike" id="community-refresh-people">Обновить</button></div>
-          <div id="community-recommended"><div class="community-skeleton compact"></div></div>
-        </section>
-        <section class="community-side-card community-safety-card"><span class="community-side-icon">✓</span><div><strong>Контролируемый обмен</strong><p>Копирование стратегии создаёт только запрос <code>pending_import</code>. Никакого автоматического запуска.</p></div></section>
+        <div class="community-wall-tabs" role="tablist" aria-label="Стена профиля">
+          <button type="button" class="active" role="tab" aria-selected="true" data-community-wall-tab="posts"><span aria-hidden="true">◉</span>Публикации <b id="community-wall-post-count">0</b></button>
+          <button type="button" role="tab" aria-selected="false" data-community-wall-tab="saved"><span aria-hidden="true">◇</span>Закладки <b id="community-wall-saved-count">0</b></button>
+        </div>
+        <section class="community-wall-feed" id="community-profile-wall-feed" aria-live="polite"><div class="community-skeleton post"></div></section>
       </aside>
     </div>
   </div>
@@ -116,6 +111,6 @@
 <script src="assets/ambient.js?v=20260703-stratforge1"></script>
 <script src="assets/ui.js?v=20260901-community-chat1"></script>
 <script src="assets/victor.js?v=20260718-contours2"></script>
-<script src="assets/pages/community.js?v=20260901-community-v2"></script>
+<script src="assets/pages/community.js?v=20260901-community-workspace1"></script>
 </body>
 </html>

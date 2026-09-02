@@ -4,8 +4,9 @@
   const UI = window.UI;
   const API = window.API;
   const STATE = {
-    view: 'for-you', query: '', cursor: '', loading: false,
-    feed: null, profiles: [], pendingPostFiles: [],
+    view: 'for-you', query: '', cursor: '', loading: false, sort: 'recent',
+    feed: null, profiles: [], viewer: null, pendingPostFiles: [],
+    wallTab: 'posts', wallRequest: 0, wallSavedCount: 0,
     channel: 'general', channelFeed: null, threadRootId: '', pendingChannelFiles: [],
   };
 
@@ -65,48 +66,123 @@
       <span><strong>${shortNumber(stats.following)}</strong>подписок</span>
     </div>`;
   }
+  function wallStats(profile) {
+    const stats = (profile && profile.stats) || {};
+    return `<div class="community-wall-stats">
+      <span><small>Публикации</small><strong>${shortNumber(stats.posts)}</strong></span>
+      <span><small>Подписчики</small><strong>${shortNumber(stats.followers)}</strong></span>
+      <span><small>Подписки</small><strong>${shortNumber(stats.following)}</strong></span>
+      <span><small>Закладки</small><strong id="community-profile-saved-stat">${shortNumber(STATE.wallSavedCount)}</strong></span>
+    </div>`;
+  }
   function renderViewer(profile) {
     if (!profile) return;
-    const self = q('#community-self-card');
-    if (self) self.innerHTML = `${avatar(profile, 'sm')}<button type="button" class="community-self-main" data-profile="${esc(profile.profile_id)}"><strong>${esc(profile.display_name)}</strong><span>@${esc(profile.username)}</span></button><button type="button" class="community-mini-action" data-edit-profile title="Настроить профиль">•••</button>`;
+    STATE.viewer = profile;
     const composeAvatar = q('#community-composer-avatar');
     if (composeAvatar) composeAvatar.outerHTML = avatar(profile, '').replace('<span ', '<span id="community-composer-avatar" ');
     const summary = q('#community-profile-summary');
     if (summary) summary.innerHTML = `
-      <div class="community-profile-cover"><span>SF</span></div>
-      <div class="community-profile-summary-body">
+      <div class="community-wall-profile-head">
         ${avatar(profile, 'xl')}
-        <span class="community-role">${esc(profile.role_label)}</span>
-        <button type="button" class="community-profile-name" data-profile="${esc(profile.profile_id)}">${esc(profile.display_name)}</button>
-        <span class="community-handle">@${esc(profile.username)}</span>
-        <p>${esc(profile.bio || 'Добавьте несколько слов о себе и своём стиле торговли.')}</p>
-        ${profileStats(profile)}
-        <button type="button" class="btn ghost" data-edit-profile>Редактировать профиль</button>
-      </div>`;
+        <div class="community-wall-identity">
+          <div><button type="button" class="community-profile-name" data-profile="${esc(profile.profile_id)}">${esc(profile.display_name)}</button><span class="community-role">${esc(profile.role_label)}</span></div>
+          <span class="community-handle">@${esc(profile.username)}</span>
+          <p>${esc(profile.bio || 'Добавьте несколько слов о себе и своём стиле торговли.')}</p>
+        </div>
+        <button type="button" class="community-wall-settings" data-edit-profile title="Настроить профиль" aria-label="Настроить профиль">⚙</button>
+      </div>
+      <div class="community-wall-actions"><button type="button" class="btn ghost" data-focus-composer><span aria-hidden="true">＋</span>Создать пост</button></div>
+      ${wallStats(profile)}`;
     qa('[data-edit-profile]').forEach(button => { button.onclick = () => editProfile(profile); });
+    qa('[data-focus-composer]').forEach(button => { button.onclick = () => { const input = q('#community-post-text'); if (input) { input.focus(); input.scrollIntoView({ behavior: 'smooth', block: 'center' }); } }; });
     qa(`[data-profile="${cssEscape(profile.profile_id || '')}"]`).forEach(button => { button.onclick = () => openProfile(profile.profile_id); });
   }
 
   function renderPeople(profiles) {
     const rows = Array.isArray(profiles) ? profiles.filter(item => !item.is_self) : [];
     STATE.profiles = rows;
-    const recommended = q('#community-recommended');
-    if (recommended) recommended.innerHTML = rows.slice(0, 5).map(profile => `
-      <article class="community-person-row">
-        <button type="button" class="community-person-main" data-profile="${esc(profile.profile_id)}">${avatar(profile, 'sm')}<span><strong>${esc(profile.display_name)}</strong><small>@${esc(profile.username)} · ${esc(profile.role_label)}</small></span></button>
-        <button type="button" class="community-follow-button ${profile.is_following ? 'following' : ''}" data-follow="${esc(profile.profile_id)}" data-following="${profile.is_following ? '1' : '0'}">${profile.is_following ? 'Вы читаете' : 'Подписаться'}</button>
-      </article>`).join('') || '<p class="muted">Другие участники появятся после первого входа в Community.</p>';
     const following = q('#community-following-list');
     const followed = rows.filter(profile => profile.is_following);
-    if (following) following.innerHTML = followed.slice(0, 8).map(profile => `<button type="button" class="community-followed-person" data-profile="${esc(profile.profile_id)}">${avatar(profile, 'xs')}<span><strong>${esc(profile.display_name)}</strong><small>@${esc(profile.username)}</small></span></button>`).join('') || '<p class="muted">Вы пока ни на кого не подписаны.</p>';
+    const ordered = followed.concat(rows.filter(profile => !profile.is_following)).slice(0, 7);
+    if (following) following.innerHTML = ordered.map(profile => `<button type="button" class="community-followed-person ${profile.is_following ? 'following' : ''}" data-profile="${esc(profile.profile_id)}" title="${esc(profile.display_name)} · @${esc(profile.username)}">${avatar(profile, 'sm')}<span class="community-dock-person-label">${esc(profile.display_name)}</span>${profile.is_following ? '<i class="community-following-mark" aria-label="В подписках"></i>' : ''}</button>`).join('') || '<span class="community-dock-empty" title="Другие участники появятся позже">SF</span>';
+    const count = q('#community-social-count'); if (count) count.textContent = shortNumber(rows.length);
     wirePeopleActions(document);
   }
 
+  function objectType(object) {
+    const raw = `${object.source_type || ''} ${object.result_type || ''} ${object.kind || ''}`.toLowerCase();
+    if (raw.includes('backtest')) return { key: 'backtest', label: 'БЭКТЕСТ', icon: '▧' };
+    if (raw.includes('demo') || raw.includes('result') || raw.includes('результ')) return { key: 'result', label: 'РЕЗУЛЬТАТ', icon: '↗' };
+    if (raw.includes('chart') || raw.includes('график')) return { key: 'chart', label: 'ГРАФИК', icon: '⌗' };
+    if (raw.includes('strategy') || raw.includes('стратег')) return { key: 'strategy', label: 'СТРАТЕГИЯ', icon: '▱' };
+    return { key: 'object', label: String(object.kind || 'ОБЪЕКТ').toUpperCase(), icon: '◇' };
+  }
+  function objectMetricLabel(key) {
+    const normalized = String(key || '').trim().toLowerCase().replace(/[_-]+/g, ' ');
+    const aliases = {
+      'net p&l': 'ПРИБЫЛЬ (P&L)', 'net pnl': 'ПРИБЫЛЬ (P&L)', 'net profit': 'ПРИБЫЛЬ (P&L)', pnl: 'ПРИБЫЛЬ (P&L)', profit: 'ПРИБЫЛЬ (P&L)',
+      'win rate': 'ВИНРЕЙТ', 'winning pct': 'ВИНРЕЙТ', 'profit factor': 'PROFIT FACTOR', 'max drawdown': 'МАКС. ПРОСАДКА', drawdown: 'МАКС. ПРОСАДКА',
+      trades: 'СДЕЛКИ', 'trade count': 'СДЕЛКИ', timeframe: 'ТАЙМФРЕЙМ', instrument: 'ИНСТРУМЕНТ',
+    };
+    return aliases[normalized] || String(key || '').replace(/_/g, ' ').toUpperCase();
+  }
+  function objectMetricValue(key, value) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return String(value == null ? '—' : value);
+    const normalized = String(key || '').toLowerCase();
+    if (normalized.includes('win') || normalized.includes('pct') || normalized.includes('rate')) return `${value.toLocaleString('ru-RU', { maximumFractionDigits: 1 })}%`;
+    if (normalized.includes('factor')) return value.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const formatted = Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: Number.isInteger(value) ? 0 : 2, maximumFractionDigits: 2 });
+    return `${value > 0 && (normalized.includes('profit') || normalized.includes('pnl') || normalized.includes('p&l')) ? '+' : value < 0 ? '-' : ''}${formatted}`;
+  }
+  function objectMetricTone(key, value) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '';
+    const normalized = String(key || '').toLowerCase();
+    if (normalized.includes('drawdown')) return value === 0 ? '' : 'negative';
+    if (normalized.includes('profit') || normalized.includes('pnl') || normalized.includes('p&l')) return value > 0 ? 'positive' : value < 0 ? 'negative' : '';
+    return '';
+  }
+  function objectChartSeries(object) {
+    const source = Array.isArray(object.chart_points) ? object.chart_points
+      : Array.isArray(object.equity_curve) ? object.equity_curve
+        : object.chart && Array.isArray(object.chart.points) ? object.chart.points : [];
+    return source.slice(0, 80).map(item => {
+      const raw = typeof item === 'number' ? item : item && (item.value != null ? item.value : item.equity != null ? item.equity : item.close);
+      const value = Number(raw); return Number.isFinite(value) ? value : null;
+    }).filter(value => value != null);
+  }
+  function objectChart(object) {
+    const preview = safeUrl(object.chart_preview_url || object.preview_url, '/api/');
+    if (preview) return `<div class="community-object-chart"><img src="${esc(preview)}" alt="Превью графика ${esc(object.title || '')}" loading="lazy"></div>`;
+    const series = objectChartSeries(object);
+    if (series.length < 2) return `<div class="community-object-chart community-object-chart-empty" role="img" aria-label="График не включён в публичный snapshot"><span>⌁</span><strong>Превью графика</strong><small>Серия не включена в публичный snapshot</small></div>`;
+    const min = Math.min(...series); const max = Math.max(...series); const span = max - min || 1;
+    const points = series.map((value, index) => `${(index / (series.length - 1) * 348 + 6).toFixed(1)},${(96 - ((value - min) / span) * 82).toFixed(1)}`).join(' ');
+    const tone = series[series.length - 1] >= series[0] ? 'positive' : 'negative';
+    return `<div class="community-object-chart ${tone}" role="img" aria-label="Превью серии из ${series.length} точек"><svg viewBox="0 0 360 104" preserveAspectRatio="none" aria-hidden="true"><path class="grid" d="M0 26H360M0 52H360M0 78H360M90 0V104M180 0V104M270 0V104"></path><polyline points="${points}"></polyline></svg></div>`;
+  }
   function objectCard(object) {
     if (!object || typeof object !== 'object') return '';
-    const metrics = object.metrics && typeof object.metrics === 'object'
-      ? Object.entries(object.metrics).slice(0, 4).map(([key, value]) => `<span><small>${esc(key)}</small><strong>${esc(value)}</strong></span>`).join('') : '';
-    return `<section class="community-object-card"><div><span class="community-object-kind">${esc(object.kind || 'Объект')}</span><h4>${esc(object.title || 'Публикация StratForge')}</h4><p>${esc(object.summary || '')}</p></div>${metrics ? `<div class="community-object-metrics">${metrics}</div>` : ''}</section>`;
+    const type = objectType(object);
+    const rawMetrics = object.metrics && typeof object.metrics === 'object' ? Object.entries(object.metrics) : [];
+    const priority = key => {
+      const normalized = String(key).toLowerCase();
+      if (normalized.includes('p&l') || normalized.includes('pnl') || normalized.includes('net profit')) return 0;
+      if (normalized.includes('win')) return 1;
+      if (normalized.includes('factor')) return 2;
+      if (normalized.includes('drawdown')) return 3;
+      if (normalized.includes('trade')) return 4;
+      return 8;
+    };
+    const metrics = rawMetrics.sort((a, b) => priority(a[0]) - priority(b[0])).slice(0, 5).map(([key, value]) => `<span class="${objectMetricTone(key, value)}"><small>${esc(objectMetricLabel(key))}</small><strong>${esc(objectMetricValue(key, value))}</strong></span>`).join('');
+    const attested = object.attestation && String(object.attestation.algorithm || '').toLowerCase() === 'sha256';
+    const source = [object.instrument, object.timeframe].filter(Boolean).map(esc).join(' · ');
+    return `<section class="community-object-card community-object-type-${esc(type.key)}" data-community-rich-object="${esc(type.key)}">
+      <header class="community-object-head"><span class="community-object-icon" aria-hidden="true">${esc(type.icon)}</span><div><span class="community-object-kind">${esc(type.label)}</span><h4>${esc(object.title || 'Объект StratForge')}</h4></div>${attested ? '<span class="community-attested" title="Server-attested SHA-256 snapshot">✓ подтверждено</span>' : ''}</header>
+      ${object.summary ? `<p class="community-object-summary">${esc(object.summary)}</p>` : ''}${source ? `<p class="community-object-source">${source}</p>` : ''}
+      ${objectChart(object)}
+      ${metrics ? `<div class="community-object-metrics">${metrics}</div>` : ''}
+      <footer class="community-object-foot"><span>${attested ? 'Immutable public snapshot' : 'StratForge object'}</span>${object.timestamp_utc ? `<time>${esc(fmtDate(object.timestamp_utc))}</time>` : ''}</footer>
+    </section>`;
   }
   function postMedia(items) {
     const rows = Array.isArray(items) ? items : [];
@@ -120,12 +196,12 @@
     const author = comment.author || {};
     return `<div class="community-comment" data-comment-id="${esc(comment.comment_id || '')}">${avatar(author, 'xs')}<div><button type="button" data-profile="${esc(author.profile_id || '')}">${esc(author.display_name || 'Участник')}</button><p>${esc(comment.text || '')}</p><small>${esc(fmtDate(comment.created_at_utc))}</small>${comment.can_delete ? `<button type="button" class="linklike" data-delete-comment="${esc(comment.comment_id || '')}">Удалить</button>` : ''}</div></div>`;
   }
-  function postHtml(post) {
+  function postHtml(post, surface) {
     const author = post.author || {};
     const reactions = post.reactions || {};
     const active = String(post.viewer_reaction || '');
     const comments = (post.recent_comments || []).map(commentHtml).join('');
-    return `<article class="community-post-card" data-post-id="${esc(post.post_id)}" data-viewer-reaction="${esc(active)}">
+    return `<article class="community-post-card ${surface === 'wall' ? 'community-post-compact' : ''}" data-post-id="${esc(post.post_id)}" data-viewer-reaction="${esc(active)}">
       <header class="community-post-head">
         <button type="button" class="community-post-author" data-profile="${esc(author.profile_id || '')}">${avatar(author, '')}<span><strong>${esc(author.display_name || 'Участник')}</strong><small>@${esc(author.username || '')} · ${esc(author.role_label || '')}</small></span></button>
         <div class="community-post-meta"><time>${esc(fmtDate(post.created_at_utc))}</time><span title="Видимость">${post.visibility === 'followers' ? '◎' : '◉'}</span>${post.can_delete ? `<button type="button" data-delete-post="${esc(post.post_id)}" title="Удалить публикацию">×</button>` : `<button type="button" data-report-post="${esc(post.post_id)}" title="Пожаловаться">•••</button>`}</div>
@@ -173,7 +249,10 @@
       });
       const bookmark = q('[data-bookmark]', card);
       if (bookmark) bookmark.onclick = async () => {
-        try { const out = await API.http.communityV2Bookmark(postId, bookmark.dataset.bookmark !== '1'); replacePost(out.post); }
+        try {
+          const out = await API.http.communityV2Bookmark(postId, bookmark.dataset.bookmark !== '1'); replacePost(out.post);
+          if (STATE.wallTab === 'saved') await loadWall();
+        }
         catch (error) { UI.reportError(error); }
       };
       const remove = q('[data-delete-post]', card);
@@ -181,7 +260,8 @@
         if (!confirm('Удалить публикацию? Она будет скрыта, а запись останется в журнале модерации.')) return;
         try {
           await API.http.communityV2DeletePost(postId);
-          card.remove();
+          qa(`.community-post-card[data-post-id="${cssEscape(postId)}"]`).forEach(node => node.remove());
+          await loadWall();
           UI.toast('Публикация удалена');
         } catch (error) { UI.reportError(error); }
       };
@@ -216,10 +296,70 @@
   function replacePost(post) {
     if (!post) return;
     const selector = `.community-post-card[data-post-id="${cssEscape(post.post_id || '')}"]`;
-    const existing = q(selector);
-    if (!existing) { loadFeed(true); return; }
-    const shell = document.createElement('div'); shell.innerHTML = postHtml(post);
-    const next = shell.firstElementChild; existing.replaceWith(next); wirePostActions(next);
+    const existing = qa(selector);
+    if (!existing.length) { loadFeed(true); return; }
+    existing.forEach(card => {
+      const shell = document.createElement('div'); shell.innerHTML = postHtml(post, card.classList.contains('community-post-compact') ? 'wall' : 'feed');
+      const next = shell.firstElementChild; card.replaceWith(next); wirePostActions(next);
+    });
+  }
+
+  function relevanceScore(post) {
+    const reactions = post && post.reactions && typeof post.reactions === 'object' ? post.reactions : {};
+    const reactionTotal = Object.values(reactions).reduce((sum, value) => sum + (Number(value) || 0), 0);
+    return reactionTotal + (Number(post && post.comment_count) || 0) * 2 + (Number(post && post.share_count) || 0) * 3;
+  }
+  function sortPosts(posts) {
+    const rows = Array.isArray(posts) ? posts.slice() : [];
+    return rows.sort((left, right) => {
+      if (STATE.sort === 'relevant') {
+        const delta = relevanceScore(right) - relevanceScore(left);
+        if (delta) return delta;
+      }
+      return new Date(right.created_at_utc || 0).getTime() - new Date(left.created_at_utc || 0).getTime();
+    });
+  }
+  function updateWallCounts(profile, savedCount) {
+    const postCount = q('#community-wall-post-count');
+    const saved = q('#community-wall-saved-count');
+    const savedStat = q('#community-profile-saved-stat');
+    const stats = (profile && profile.stats) || {};
+    if (postCount) postCount.textContent = `(${shortNumber(stats.posts)})`;
+    if (saved) saved.textContent = `(${shortNumber(savedCount)})`;
+    if (savedStat) savedStat.textContent = shortNumber(savedCount);
+  }
+  async function loadWall() {
+    const host = q('#community-profile-wall-feed');
+    const viewer = STATE.viewer || (STATE.feed && STATE.feed.viewer);
+    if (!host || !viewer || !viewer.profile_id) return;
+    const requestId = ++STATE.wallRequest;
+    host.innerHTML = '<div class="community-skeleton post"></div>';
+    try {
+      let doc; let savedDoc = null;
+      if (STATE.wallTab === 'saved') {
+        doc = await API.http.communityV2Saved({ limit: 30 });
+        savedDoc = doc;
+      } else {
+        [doc, savedDoc] = await Promise.all([
+          API.http.communityV2Profile(viewer.profile_id, { posts_limit: 30 }),
+          API.http.communityV2Saved({ limit: 1 }),
+        ]);
+      }
+      if (requestId !== STATE.wallRequest) return;
+      const profile = doc.profile || viewer;
+      const savedCount = Number((savedDoc && savedDoc.total_visible) || (savedDoc && savedDoc.posts && savedDoc.posts.length) || 0);
+      STATE.wallSavedCount = savedCount;
+      if (doc.profile) renderViewer(profile);
+      updateWallCounts(profile, savedCount);
+      const posts = sortPosts(doc.posts || []);
+      host.innerHTML = posts.map(post => postHtml(post, 'wall')).join('') || renderEmpty(
+        STATE.wallTab === 'saved' ? 'Закладок пока нет' : 'На стене пока тихо',
+        STATE.wallTab === 'saved' ? 'Сохранённые rich-публикации появятся здесь.' : 'Опубликуйте идею или подтверждённый результат.',
+      );
+      wirePostActions(host);
+    } catch (error) {
+      if (requestId === STATE.wallRequest) UI.renderError(host, error, loadWall);
+    }
   }
 
   async function loadFeed(reset, filters) {
@@ -240,7 +380,7 @@
       STATE.feed = doc; STATE.cursor = doc.next_cursor || '';
       renderViewer(doc.viewer);
       renderPeople((people && people.profiles) || doc.recommended_profiles || []);
-      const posts = doc.posts || [];
+      const posts = sortPosts(doc.posts || []);
       if (host) {
         const peopleSearch = STATE.query && people && (people.profiles || []).length
           ? `<section class="community-search-results"><h3>Участники</h3>${(people.profiles || []).slice(0, 6).map(profile => `<button type="button" data-profile="${esc(profile.profile_id)}">${avatar(profile, 'sm')}<span><strong>${esc(profile.display_name)}</strong><small>@${esc(profile.username)}</small></span></button>`).join('')}</section>` : '';
@@ -254,6 +394,7 @@
       }
       const more = q('#community-load-more'); if (more) more.hidden = !STATE.cursor;
       setStatus(`${Number(doc.total_visible || posts.length)} публикаций`, 'ready');
+      await loadWall();
     } catch (error) {
       if (host) UI.renderError(host, error, () => loadFeed(true));
       setStatus('Не удалось обновить', 'error');
@@ -337,6 +478,10 @@
     const channels = STATE.view === 'channels';
     const channelsView = q('#community-channels-view'); const feed = q('#community-feed');
     const composer = q('#community-composer-card'); const more = q('#community-load-more');
+    const sort = q('.community-sort'); const title = q('#community-stream-title');
+    const titles = { 'for-you': 'Recommendation', following: 'Подписки', saved: 'Сохранённое', channels: 'Каналы' };
+    if (title) title.textContent = titles[STATE.view] || titles['for-you'];
+    if (sort) sort.hidden = channels;
     if (channelsView) channelsView.hidden = !channels;
     if (feed) feed.hidden = channels;
     if (composer) composer.hidden = channels || STATE.view === 'saved';
@@ -351,6 +496,18 @@
     STATE.view = ['for-you', 'following', 'saved', 'channels'].includes(view) ? view : 'for-you';
     STATE.cursor = ''; syncViewButtons();
     if (STATE.view === 'channels') await loadChannels(); else await loadFeed(true);
+  }
+  function syncSortButtons() {
+    qa('[data-community-sort]').forEach(button => {
+      const active = button.dataset.communitySort === STATE.sort;
+      button.classList.toggle('active', active); button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+  function syncWallTabs() {
+    qa('[data-community-wall-tab]').forEach(button => {
+      const active = button.dataset.communityWallTab === STATE.wallTab;
+      button.classList.toggle('active', active); button.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
   }
 
   async function openProfile(profileId) {
@@ -447,6 +604,14 @@
   UI.ready(() => {
     qa('[data-community-view]').forEach(button => button.onclick = () => setView(button.dataset.communityView));
     qa('[data-community-tab]').forEach(button => button.onclick = () => setView(button.dataset.communityTab));
+    qa('[data-community-sort]').forEach(button => button.onclick = () => {
+      STATE.sort = button.dataset.communitySort === 'relevant' ? 'relevant' : 'recent';
+      syncSortButtons(); loadFeed(true);
+    });
+    qa('[data-community-wall-tab]').forEach(button => button.onclick = () => {
+      STATE.wallTab = button.dataset.communityWallTab === 'saved' ? 'saved' : 'posts';
+      syncWallTabs(); loadWall();
+    });
     qa('[data-community-profile-close]').forEach(button => button.onclick = closeProfile);
     q('#community-post-submit').onclick = submitPost;
     const resultButton = q('[data-community-object="result"]'); if (resultButton) resultButton.onclick = openResultPublisher;
@@ -456,12 +621,17 @@
     q('#c-send').onclick = sendChannelMessage;
     const search = q('#community-search'); let searchTimer = null;
     if (search) {
-      search.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { const raw = search.value.trim(); STATE.query = raw.startsWith('#') ? '' : raw; loadFeed(true, raw.startsWith('#') ? { hashtag: raw.slice(1) } : {}); }, 350); });
+      search.addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => {
+        const raw = search.value.trim();
+        const profileQuery = raw.startsWith('@') ? raw.slice(1).trim() : raw;
+        STATE.query = raw.startsWith('#') ? '' : profileQuery;
+        loadFeed(true, raw.startsWith('#') ? { hashtag: raw.slice(1) } : {});
+      }, 350); });
       document.addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); search.focus(); } });
     }
     const findPeople = q('#community-find-people'); if (findPeople) findPeople.onclick = () => { search.focus(); search.value = ''; search.dispatchEvent(new Event('input')); };
     const refreshPeople = q('#community-refresh-people'); if (refreshPeople) refreshPeople.onclick = () => loadFeed(true);
-    syncViewButtons(); renderPending('post'); renderPending('channel'); loadFeed(true);
+    syncViewButtons(); syncSortButtons(); syncWallTabs(); renderPending('post'); renderPending('channel'); loadFeed(true);
     setInterval(() => { if (STATE.view === 'channels' && !document.hidden) loadChannels(); }, 10000);
   });
 })();
