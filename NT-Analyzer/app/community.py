@@ -1107,6 +1107,11 @@ def ensure_social_profile(
             username=username, role_label=role_label, joined_at_utc=joined_at_utc,
             has_avatar=has_avatar,
         )
+        # The StratForge owner owns the StratForge AI page. It is created once,
+        # here, rather than by a separate signup: the organization is a
+        # publishing identity, not an account somebody registers.
+        if _account_is_owner(user_id):
+            _ensure_default_organization(doc, str(row["profile_id"]))
         _save(doc)
         return {"ok": True, "profile": _public_profile(doc, row, str(row["profile_id"]))}
 
@@ -1244,6 +1249,9 @@ def social_profile(
             _public_social_post(doc, row, viewer_id)
             for row in reversed(doc.get("posts") or [])
             if str(row.get("author_profile_id") or "") == str(profile_id)
+            # A post published as an organization belongs to that page, even
+            # though a person created it.
+            and not str(row.get("publisher_org_id") or "")
             and _post_visible(doc, row, viewer_id)
         ][:max(1, min(100, _safe_int(posts_limit, 20)))]
         _save(doc)
@@ -1352,7 +1360,9 @@ def _public_social_post(doc: Dict[str, Any], row: Dict[str, Any], viewer_profile
         "object": dict(row.get("object_snapshot") or {}) if isinstance(row.get("object_snapshot"), dict) else None,
         "created_at_utc": str(row.get("created_at_utc") or ""),
         "updated_at_utc": str(row.get("updated_at_utc") or ""),
-        "author": _public_profile(doc, author, viewer_profile_id) if author else None,
+        "author": _publisher_identity(doc, row, viewer_profile_id),
+        "attribution": _post_attribution(doc, row),
+        "publisher_org_id": str(row.get("publisher_org_id") or ""),
         "reactions": _post_reaction_summary(doc, pid),
         "viewer_reaction": viewer_reaction,
         "comment_count": len(comments),
@@ -1433,11 +1443,311 @@ def attested_result_snapshot(
     return public
 
 
+def _account_is_owner(user_id: Any) -> bool:
+    """Whether this StratForge account is the platform owner.
+
+    Read from the account store rather than from anything the client sends, so
+    ownership of the company page cannot be claimed by asking for it.
+    """
+    uid = _safe_int(user_id)
+    if uid <= 0:
+        return False
+    try:
+        from . import account_auth
+        return bool((account_auth.find_active_user(uid) or {}).get("is_owner"))
+    except Exception:
+        return False
+
+
+DEFAULT_ORG_HANDLE = "stratforge_ai"
+DEFAULT_ORG_NAME = "StratForge AI"
+DEFAULT_ORG_DESCRIPTION = (
+    "Официальная страница StratForge AI: продукт, релизы и материалы команды."
+)
+_ORG_ROLES = ("owner", "editor")
+
+
+def _org_row(doc: Dict[str, Any], org_id: str) -> Optional[Dict[str, Any]]:
+    wanted = str(org_id or "").strip()
+    if not wanted:
+        return None
+    for row in doc.get("organizations") or []:
+        if str(row.get("org_id") or "") == wanted:
+            return row
+        if str(row.get("handle") or "").lower() == wanted.lower().lstrip("@"):
+            return row
+    return None
+
+
+def _org_role(doc: Dict[str, Any], org: Dict[str, Any], profile_id: str) -> str:
+    """The caller's role on an organization, or "" when they have none.
+
+    Roles are read from the stored organization rather than inferred from who
+    is asking, so a client cannot claim one. AI publishers are deliberately not
+    a role a person can hold: they are agent identities checked separately.
+    """
+    pid = str(profile_id or "")
+    if not pid or not org:
+        return ""
+    if str(org.get("owner_profile_id") or "") == pid:
+        return "owner"
+    if pid in [str(value) for value in org.get("editor_profile_ids") or []]:
+        return "editor"
+    return ""
+
+
+def _org_can_publish(doc: Dict[str, Any], org: Dict[str, Any], profile_id: str) -> bool:
+    return _org_role(doc, org, profile_id) in _ORG_ROLES
+
+
+def _ensure_default_organization(
+    doc: Dict[str, Any], owner_profile_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Create the StratForge AI page once, owned by the StratForge owner.
+
+    The organization is a publishing identity, not a second account: it has no
+    login, no password and no Telegram identity of its own. `created_at_utc` is
+    the moment the page itself was created and is never the owner's account
+    registration — the two milestones answer different questions.
+    """
+    pid = str(owner_profile_id or "")
+    if not pid:
+        return None
+    existing = _org_row(doc, DEFAULT_ORG_HANDLE)
+    if existing is not None:
+        return existing
+    now = _now_iso()
+    row = {
+        "org_id": "sforg_" + secrets.token_hex(8),
+        "name": DEFAULT_ORG_NAME,
+        "handle": DEFAULT_ORG_HANDLE,
+        "description": DEFAULT_ORG_DESCRIPTION,
+        "has_logo": False,
+        "created_at_utc": now,
+        "updated_at_utc": now,
+        "owner_profile_id": pid,
+        "editor_profile_ids": [],
+        # An agent may only publish when it is listed here *and* the flow below
+        # is enabled. Both are empty/false until a permissioned Orchestrator
+        # path exists, so nothing can publish as the company on AI's behalf yet.
+        "ai_publisher_agent_ids": [],
+        "ai_publishing_enabled": False,
+    }
+    doc.setdefault("organizations", []).append(row)
+    return row
+
+
+def _org_follower_count(doc: Dict[str, Any], org_id: str) -> int:
+    return sum(1 for row in doc.get("org_follows") or []
+               if str(row.get("org_id") or "") == str(org_id))
+
+
+def _org_follows(doc: Dict[str, Any], profile_id: str, org_id: str) -> bool:
+    return any(str(row.get("org_id") or "") == str(org_id)
+               and str(row.get("profile_id") or "") == str(profile_id)
+               for row in doc.get("org_follows") or [])
+
+
+def _org_post_count(doc: Dict[str, Any], org_id: str) -> int:
+    return sum(1 for row in doc.get("posts") or []
+               if str(row.get("publisher_org_id") or "") == str(org_id)
+               and not row.get("deleted_at_utc"))
+
+
+def _organization_milestone(org: Dict[str, Any]) -> Dict[str, Any]:
+    """The organization's own first record.
+
+    Deliberately distinct from a member's registration milestone: this is when
+    the page was created, not when anybody registered an account.
+    """
+    return {
+        "kind": "organization_created",
+        "org_id": str(org.get("org_id") or ""),
+        "name": str(org.get("name") or ""),
+        "created_at_utc": str(org.get("created_at_utc") or ""),
+    }
+
+
+def _public_organization(
+    doc: Dict[str, Any], org: Dict[str, Any], viewer_profile_id: str = "",
+) -> Dict[str, Any]:
+    org_id = str(org.get("org_id") or "")
+    role = _org_role(doc, org, viewer_profile_id)
+    return {
+        "identity_kind": "organization",
+        "org_id": org_id,
+        "display_name": str(org.get("name") or DEFAULT_ORG_NAME)[:80],
+        "username": str(org.get("handle") or DEFAULT_ORG_HANDLE)[:30],
+        "role_label": "Организация",
+        "description": str(org.get("description") or "")[:500],
+        "has_logo": bool(org.get("has_logo")),
+        "avatar_url": "",
+        "created_at_utc": str(org.get("created_at_utc") or ""),
+        "stats": {
+            "posts": _org_post_count(doc, org_id),
+            "followers": _org_follower_count(doc, org_id),
+            "editors": len([v for v in org.get("editor_profile_ids") or [] if v]),
+        },
+        "is_following": bool(viewer_profile_id and _org_follows(doc, viewer_profile_id, org_id)),
+        "viewer_role": role,
+        "can_publish": role in _ORG_ROLES,
+        "can_manage": role == "owner",
+        # Reported so the interface can say the flow is pending rather than
+        # pretending an AI publish path exists.
+        "ai_publishing_enabled": bool(org.get("ai_publishing_enabled")),
+    }
+
+
+def _publisher_identity(
+    doc: Dict[str, Any], row: Dict[str, Any], viewer_profile_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Who the reader sees as the author of a post."""
+    org_id = str(row.get("publisher_org_id") or "")
+    if org_id:
+        org = _org_row(doc, org_id)
+        return _public_organization(doc, org, viewer_profile_id) if org else None
+    author = _profile_row(doc, str(row.get("author_profile_id") or ""))
+    if author is None:
+        return None
+    projected = _public_profile(doc, author, viewer_profile_id)
+    projected["identity_kind"] = "profile"
+    return projected
+
+
+def _post_attribution(doc: Dict[str, Any], row: Dict[str, Any]) -> Dict[str, Any]:
+    """Who actually created the post, kept apart from who published it.
+
+    A company post shows StratForge AI to readers; this records the person or
+    the agent behind it. An agent is never reported as a person — the two are
+    separate fields precisely so nothing has to guess.
+    """
+    actor_id = str(row.get("published_by_profile_id") or row.get("author_profile_id") or "")
+    actor = _profile_row(doc, actor_id)
+    agent = str(row.get("published_by_ai_agent") or "")
+    return {
+        "published_by_profile_id": actor_id,
+        "published_by": str((actor or {}).get("display_name") or "") if actor else "",
+        "published_by_ai_agent": agent,
+        "is_ai": bool(agent),
+    }
+
+
+def publishable_identities(
+    user_id: Any, *, user_uuid: Any = "",
+) -> Dict[str, Any]:
+    """Identities the caller may publish as: always their own profile, plus any
+    organization on which they hold owner or editor."""
+    with _LOCK:
+        doc = _load()
+        viewer = _viewer_profile(doc, user_id, user_uuid)
+        viewer_id = str(viewer["profile_id"])
+        rows = [{
+            "identity_kind": "profile",
+            "id": viewer_id,
+            "display_name": str(viewer.get("display_name") or "Участник"),
+            "username": str(viewer.get("username") or ""),
+        }]
+        for org in doc.get("organizations") or []:
+            if not _org_can_publish(doc, org, viewer_id):
+                continue
+            rows.append({
+                "identity_kind": "organization",
+                "id": str(org.get("org_id") or ""),
+                "display_name": str(org.get("name") or ""),
+                "username": str(org.get("handle") or ""),
+            })
+        return {"ok": True, "identities": rows, "viewer_profile_id": viewer_id}
+
+
+def organization_document(
+    user_id: Any, org_id: str, *, user_uuid: Any = "", posts_limit: int = 20,
+) -> Dict[str, Any]:
+    """The company wall, projected like a member wall so the centre column can
+    render either without a second layout."""
+    with _LOCK:
+        doc = _load()
+        viewer = _viewer_profile(doc, user_id, user_uuid)
+        viewer_id = str(viewer["profile_id"])
+        org = _org_row(doc, org_id)
+        if org is None:
+            raise CommunityError("Организация не найдена.", 404)
+        org_key = str(org.get("org_id") or "")
+        posts = [
+            _public_social_post(doc, row, viewer_id)
+            for row in reversed(doc.get("posts") or [])
+            if str(row.get("publisher_org_id") or "") == org_key
+            and _post_visible(doc, row, viewer_id)
+        ][:max(1, min(100, _safe_int(posts_limit, 20)))]
+        _save(doc)
+        return {
+            "ok": True,
+            "organization": _public_organization(doc, org, viewer_id),
+            "registration": _organization_milestone(org),
+            "posts": posts,
+        }
+
+
+def follow_organization(
+    user_id: Any, org_id: str, *, following: bool = True, user_uuid: Any = "",
+) -> Dict[str, Any]:
+    with _LOCK:
+        doc = _load()
+        viewer = _viewer_profile(doc, user_id, user_uuid)
+        viewer_id = str(viewer["profile_id"])
+        org = _org_row(doc, org_id)
+        if org is None:
+            raise CommunityError("Организация не найдена.", 404)
+        org_key = str(org.get("org_id") or "")
+        rows = doc.setdefault("org_follows", [])
+        rows[:] = [row for row in rows if not (
+            str(row.get("org_id") or "") == org_key
+            and str(row.get("profile_id") or "") == viewer_id
+        )]
+        if following:
+            rows.append({"org_id": org_key, "profile_id": viewer_id,
+                         "created_at_utc": _now_iso()})
+        _save(doc)
+        return {"ok": True, "organization": _public_organization(doc, org, viewer_id)}
+
+
+def update_organization(
+    user_id: Any, org_id: str, *, user_uuid: Any = "",
+    description: Any = None, editors: Any = None,
+) -> Dict[str, Any]:
+    """Owner-only page management. Editors may publish, never re-assign roles."""
+    with _LOCK:
+        doc = _load()
+        viewer = _viewer_profile(doc, user_id, user_uuid)
+        viewer_id = str(viewer["profile_id"])
+        org = _org_row(doc, org_id)
+        if org is None:
+            raise CommunityError("Организация не найдена.", 404)
+        if _org_role(doc, org, viewer_id) != "owner":
+            raise CommunityError("Управлять страницей может только владелец.", 403)
+        if description is not None:
+            org["description"] = str(description or "").strip()[:500]
+        if editors is not None:
+            wanted = []
+            for value in list(editors)[:50]:
+                pid = str(value or "").strip()
+                if not pid or pid == str(org.get("owner_profile_id") or ""):
+                    continue
+                if _profile_row(doc, pid) is None:
+                    raise CommunityError("Редактор должен быть участником.", 400)
+                if pid not in wanted:
+                    wanted.append(pid)
+            org["editor_profile_ids"] = wanted
+        org["updated_at_utc"] = _now_iso()
+        _save(doc)
+        return {"ok": True, "organization": _public_organization(doc, org, viewer_id)}
+
+
 def create_social_post(
     user_id: Any, *, text: str = "", attachments: Any = None,
     visibility: str = "network", workspace_id: str = "", user_uuid: Any = "",
     idempotency_key: str = "", object_snapshot: Any = None,
-    trusted_snapshot: bool = False,
+    trusted_snapshot: bool = False, publish_as: str = "",
+    ai_agent_id: str = "",
 ) -> Dict[str, Any]:
     uid = _safe_int(user_id)
     body = str(text or "").strip()
@@ -1466,6 +1776,23 @@ def create_social_post(
         stored_attachments = _validate_attachments(
             attachments, workspace_id=workspace, owner_id=post_id,
         )
+        # Publishing as an organization is a permission, checked here on the
+        # server. The client only names the identity it wants; it cannot grant
+        # itself one.
+        organization = None
+        if str(publish_as or "").strip():
+            organization = _org_row(doc, str(publish_as).strip())
+            if organization is None:
+                raise CommunityError("Организация не найдена.", 404)
+            if str(ai_agent_id or "").strip():
+                # An agent needs both an explicit allowlist entry and the flow
+                # switched on. Neither is true yet, so this refuses rather than
+                # letting an AI publish under the company name.
+                allowed = [str(v) for v in organization.get("ai_publisher_agent_ids") or []]
+                if not organization.get("ai_publishing_enabled") or str(ai_agent_id) not in allowed:
+                    raise CommunityError("Публикация от имени AI ещё не разрешена.", 403)
+            elif not _org_can_publish(doc, organization, author_id):
+                raise CommunityError("Нет прав публиковать от имени организации.", 403)
         row = {
             "post_id": post_id,
             "author_profile_id": author_id,
@@ -1478,6 +1805,13 @@ def create_social_post(
             "created_at_utc": _now_iso(),
             "updated_at_utc": _now_iso(),
         }
+        if organization is not None:
+            # Publisher and actor are stored apart: readers see the company,
+            # the audit trail keeps the person or the agent who created it.
+            row["publisher_org_id"] = str(organization.get("org_id") or "")
+            row["published_by_profile_id"] = author_id
+            if str(ai_agent_id or "").strip():
+                row["published_by_ai_agent"] = str(ai_agent_id).strip()[:80]
         if object_snapshot:
             row["object_snapshot"] = _json_safe(dict(object_snapshot))
         if idem_hash:
