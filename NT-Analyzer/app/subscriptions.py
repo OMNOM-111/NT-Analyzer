@@ -51,7 +51,7 @@ PLAN_FEATURES: Tuple[Dict[str, str], ...] = (
     {"id": "personal_nt",     "label": "Свой NinjaTrader"},
     {"id": "paper_commands",  "label": "Paper/Demo команды"},
     {"id": "practice_trading","label": "Учебная торговля (виртуальные деньги)"},
-    {"id": "community",       "label": "SF Link (социальный слой)"},
+    {"id": "community",       "label": "SF Chat (социальная платформа)"},
     {"id": "live_read",       "label": "Live-чтение счёта"},
     {"id": "live_commands",   "label": "Live-управление"},
 )
