@@ -136,6 +136,10 @@ Key admin capability names already in the contract: `admin.view`,
 - Global governance mutation is separated from workspace/strategy documents.
 - Per-environment cookies, CSRF keys, storage namespaces, bots and connector
   sessions are part of the isolation model.
+- The owner Preview sandbox (Development only) is a separate loopback process
+  with its own data root, cookie name and synthetic non-owner identity. It has
+  no localhost-owner bypass, cannot open outbound connections, and is rejected
+  fail-closed in Canary and Production.
 
 ## Canonical evidence
 
@@ -143,6 +147,7 @@ Key admin capability names already in the contract: `admin.view`,
 - [../adr/0003-trusted-devices-and-step-up.md](../adr/0003-trusted-devices-and-step-up.md)
 - [../adr/0004-admin-panel-and-capabilities.md](../adr/0004-admin-panel-and-capabilities.md)
 - [Device Confirmation Development record](../changelog/2026-09-02-device-confirmation-trusted-access.md)
+- [Owner Preview sandbox Development record](../changelog/2026-09-03-owner-preview-synthetic-sandbox.md)
 - `app/account_auth.py`
 - `app/auth_identity.py`
 - `app/security_devices.py`

@@ -73,6 +73,7 @@ if __package__ is None or __package__ == "":
     from app import ninjatrader_resources  # type: ignore[no-redef]
     from app import agent_allocation  # type: ignore[no-redef]
     from app import dev_preview  # type: ignore[no-redef]
+    from app import preview_sandbox  # type: ignore[no-redef]
     from app import dev_service_accounts  # type: ignore[no-redef]
     from app import release_center  # type: ignore[no-redef]
     from app import platform_secrets  # type: ignore[no-redef]
@@ -176,6 +177,7 @@ else:
     from . import ninjatrader_resources
     from . import agent_allocation
     from . import dev_preview
+    from . import preview_sandbox
     from . import dev_service_accounts
     from . import release_center
     from . import platform_secrets
@@ -2654,6 +2656,24 @@ class Handler(BaseHTTPRequestHandler):
     def _device_cookie_name(self) -> str:
         return runtime_env.session_cookie_name() + "_device"
 
+    def _set_device_credential_cookie(self, credential: str) -> None:
+        secure = self._is_remote_api_request() or str(
+            self.headers.get("X-Forwarded-Proto") or ""
+        ).lower() == "https"
+        self._extra_headers.append(("Set-Cookie", (
+            f"{self._device_cookie_name()}={credential}; Path=/; Max-Age={400 * 24 * 3600}; "
+            "HttpOnly; SameSite=Lax" + ("; Secure" if secure else "")
+        )))
+
+    def _clear_device_credential_cookie(self) -> None:
+        secure = self._is_remote_api_request() or str(
+            self.headers.get("X-Forwarded-Proto") or ""
+        ).lower() == "https"
+        self._extra_headers.append(("Set-Cookie", (
+            f"{self._device_cookie_name()}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax"
+            + ("; Secure" if secure else "")
+        )))
+
     def _device_credential(self) -> str:
         """Stable per-browser credential, minted on first contact.
 
@@ -2680,6 +2700,19 @@ class Handler(BaseHTTPRequestHandler):
         )))
         return minted
 
+    @staticmethod
+    def _dev_preview_mode_cookie_name() -> str:
+        """Per-process name for the Development "stay signed out" marker.
+
+        Cookies are not port-scoped, so a bare name is shared by every local
+        contour on 127.0.0.1. Logging out inside the isolated Preview sandbox
+        would otherwise sign the owner out of their real Development session.
+        """
+        if runtime_env.preview_sandbox_enabled():
+            preview_id = str(os.environ.get("STRATFORGE_PREVIEW_ID") or "")[:24]
+            return f"sf_preview_{preview_id}_dev_preview_mode"
+        return _DEV_PREVIEW_MODE_COOKIE
+
     def _hold_local_logout(self) -> None:
         """Keep a localhost Development session logged out after "Выйти".
 
@@ -2693,7 +2726,7 @@ class Handler(BaseHTTPRequestHandler):
         if not runtime_env.is_development():
             return
         value = (
-            f"{_DEV_PREVIEW_MODE_COOKIE}=unauthenticated; Path=/; Max-Age=43200; "
+            f"{self._dev_preview_mode_cookie_name()}=unauthenticated; Path=/; Max-Age=43200; "
             "HttpOnly; SameSite=Strict"
         )
         self._extra_headers.append(("Set-Cookie", value))
@@ -2703,7 +2736,7 @@ class Handler(BaseHTTPRequestHandler):
             self.headers.get("X-Forwarded-Proto") or ""
         ).lower() == "https"
         value = (
-            f"{_DEV_PREVIEW_MODE_COOKIE}={str(mode or '').strip()}; Path=/; Max-Age=300; "
+            f"{self._dev_preview_mode_cookie_name()}={str(mode or '').strip()}; Path=/; Max-Age=300; "
             "HttpOnly; SameSite=Strict" + ("; Secure" if secure else "")
         )
         self._extra_headers.append(("Set-Cookie", value))
@@ -2713,7 +2746,7 @@ class Handler(BaseHTTPRequestHandler):
             self.headers.get("X-Forwarded-Proto") or ""
         ).lower() == "https"
         value = (
-            f"{_DEV_PREVIEW_MODE_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict"
+            f"{self._dev_preview_mode_cookie_name()}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict"
             + ("; Secure" if secure else "")
         )
         self._extra_headers.append(("Set-Cookie", value))
@@ -2722,6 +2755,23 @@ class Handler(BaseHTTPRequestHandler):
         secure = self._is_remote_api_request() or str(self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
         value = f"{runtime_env.session_cookie_name()}=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict" + ("; Secure" if secure else "")
         self._extra_headers.append(("Set-Cookie", value))
+
+    def _set_preview_control_cookie(self) -> None:
+        secure = str(self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
+        self._extra_headers.append(("Set-Cookie", (
+            f"{preview_sandbox.control_cookie_name()}={preview_sandbox.control_cookie_value()}; "
+            "Path=/; Max-Age=43200; HttpOnly; SameSite=Strict"
+            + ("; Secure" if secure else "")
+        )))
+
+    def _clear_preview_control_cookie(self) -> None:
+        if not runtime_env.preview_sandbox_enabled():
+            return
+        secure = str(self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
+        self._extra_headers.append(("Set-Cookie", (
+            f"{preview_sandbox.control_cookie_name()}=; Path=/; Max-Age=0; "
+            "HttpOnly; SameSite=Strict" + ("; Secure" if secure else "")
+        )))
 
     @staticmethod
     def _request_hostname(value: str) -> str:
@@ -2761,6 +2811,10 @@ class Handler(BaseHTTPRequestHandler):
           * otherwise it is allowed when the environment is Development (the
             local default, no flag needed) or the explicit test bypass is set.
         """
+        if runtime_env.preview_sandbox_enabled():
+            # A Preview child intentionally has no owner row and must exercise
+            # the real public auth/session/device gates as a synthetic user.
+            return False
         if self._is_remote_api_request():
             return False
         tunnel_ip, forwarded_ip = self._request_ips()
@@ -2804,7 +2858,7 @@ class Handler(BaseHTTPRequestHandler):
         if (
             runtime_env.is_development()
             and runtime_env.test_auth_enabled()
-            and self._cookie_value(_DEV_PREVIEW_MODE_COOKIE) == "unauthenticated"
+            and self._cookie_value(self._dev_preview_mode_cookie_name()) == "unauthenticated"
         ):
             # The explicit View-As persona must reach the genuine unauthenticated
             # path instead of being immediately converted back to local owner.
@@ -2976,6 +3030,23 @@ class Handler(BaseHTTPRequestHandler):
                     section for section in permissions.NAV_SECTIONS
                     if section != "overview" and not nav.get(section)
                 ]
+        if preview_sandbox.synthetic_product_access_allowed(context):
+            # This process contains only disposable synthetic stores and blocks
+            # external side effects before route dispatch. Its non-owner test
+            # identity may therefore exercise every professional user surface,
+            # including the normally strict AI Agents rail, without acquiring
+            # owner identity or any administrative capability.
+            preview_caps = {
+                capability_id: True for capability_id in permissions.CAPABILITY_IDS
+            }
+            preview_nav = {section: True for section in permissions.NAV_SECTIONS}
+            preview_nav["practice"] = False
+            context["capabilities"] = preview_caps
+            if isinstance(resolved, dict):
+                resolved["capabilities"] = dict(preview_caps)
+                resolved["nav"] = preview_nav
+                resolved["locked_nav"] = []
+                resolved["demo_tier"] = False
         context["_permissions"] = resolved
         return context
 
@@ -4364,6 +4435,7 @@ class Handler(BaseHTTPRequestHandler):
                     device_credential=self._device_credential(),
                 )
                 if out.get("status") == "authenticated":
+                    preview_sandbox.after_public_auth(out)
                     self._set_session_cookie(
                         str(out.pop("session_token")),
                         persistent=bool(out.get("session_cookie_persistent")),
@@ -4398,6 +4470,7 @@ class Handler(BaseHTTPRequestHandler):
                     api_call=telegram_service._api_call, owner_chat_id=owner_id,
                 )
                 if out.get("status") == "authenticated":
+                    preview_sandbox.after_public_auth(out)
                     self._set_session_cookie(
                         str(out.pop("session_token")),
                         persistent=bool(out.get("session_cookie_persistent")),
@@ -4419,6 +4492,7 @@ class Handler(BaseHTTPRequestHandler):
                     api_call=telegram_service._api_call, owner_chat_id=owner_id,
                 )
                 if out.get("status") == "authenticated":
+                    preview_sandbox.after_public_auth(out)
                     self._set_session_cookie(
                         str(out.pop("session_token")),
                         persistent=bool(out.get("session_cookie_persistent")),
@@ -4427,6 +4501,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.NOT_FOUND, f"no auth route: {path}"); return
             self._json(HTTPStatus.OK, out)
         except (account_auth.AccountAuthError, google_auth.GoogleAuthError,
+                preview_sandbox.PreviewSandboxError,
                 runtime_env.RuntimeEnvError) as exc:
             self._err(getattr(exc, "status", 400), str(exc), code=getattr(exc, "code", "") or "")
 
@@ -4889,6 +4964,119 @@ class Handler(BaseHTTPRequestHandler):
         except workspaces.WorkspaceError as exc:
             self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
 
+    def _preview_loopback_request(self) -> bool:
+        tunnel_ip, forwarded_ip = self._request_ips()
+        client_ip = str(forwarded_ip or tunnel_ip or "")
+        return bool(
+            self._is_loopback_ip(client_ip)
+            and not self._is_remote_api_request()
+        )
+
+    def _preview_control_authorized(self) -> bool:
+        if not runtime_env.preview_sandbox_enabled() or not self._preview_loopback_request():
+            return False
+        return preview_sandbox.control_authorized(
+            self._cookie_value(preview_sandbox.control_cookie_name())
+        )
+
+    def _preview_sandbox_enter(self, qs: Dict[str, Any]) -> None:
+        """Redeem the one-time owner link inside the isolated child process."""
+        if not runtime_env.preview_sandbox_enabled():
+            self._err(HTTPStatus.NOT_FOUND, "Preview sandbox route unavailable.",
+                      code="preview_sandbox_disabled")
+            return
+        if not self._preview_loopback_request():
+            self._err(HTTPStatus.FORBIDDEN, "Preview доступен только с localhost.",
+                      code="loopback_required")
+            return
+        token = str((qs.get("token") or [""])[0] or "")
+        credential = account_auth.new_device_credential()
+        try:
+            out = preview_sandbox.enter(token, device_credential=credential)
+        except preview_sandbox.PreviewSandboxError as exc:
+            self._err(exc.status, str(exc), code=exc.code)
+            return
+        self._clear_session_cookie()
+        self._clear_device_credential_cookie()
+        self._set_device_credential_cookie(credential)
+        self._set_preview_control_cookie()
+        session_token = str(out.get("session_token") or "")
+        if session_token:
+            self._set_session_cookie(
+                session_token,
+                persistent=bool(out.get("session_cookie_persistent")),
+            )
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", "/ui/")
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+
+    def _preview_sandbox_control_post(self, path: str) -> None:
+        """Mutable Preview controls, authorized by the HttpOnly control cookie."""
+        if not runtime_env.preview_sandbox_enabled():
+            self._err(HTTPStatus.NOT_FOUND, "Preview sandbox route unavailable.",
+                      code="preview_sandbox_disabled")
+            return
+        if not self._check_local_post():
+            return
+        if not self._preview_control_authorized():
+            self._err(HTTPStatus.FORBIDDEN, "Preview control cookie недействителен.",
+                      code="preview_control_required")
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            if path == "/api/dev/preview/exit":
+                self._clear_session_cookie()
+                self._clear_device_credential_cookie()
+                self._clear_dev_preview_mode_cookie()
+                self._clear_preview_control_cookie()
+                self._json(HTTPStatus.OK, {
+                    "ok": True,
+                    "redirect_url": preview_sandbox.exit_url(),
+                })
+                return
+            credential = account_auth.new_device_credential()
+            if path == "/api/dev/preview/reset":
+                scenario = body.get("scenario") or (
+                    preview_sandbox.status().get("state") or {}
+                ).get("scenario")
+                out = preview_sandbox.reset(scenario, device_credential=credential)
+            elif path == "/api/dev/preview/new-user":
+                out = preview_sandbox.new_user(device_credential=credential)
+            elif path == "/api/dev/preview/simulate-client":
+                out = preview_sandbox.simulate_new_client(device_credential=credential)
+            else:
+                self._err(HTTPStatus.NOT_FOUND, "no preview control route",
+                          code="preview_route_not_found")
+                return
+            self._clear_session_cookie()
+            self._clear_device_credential_cookie()
+            self._set_device_credential_cookie(credential)
+            session_token = str(out.pop("session_token", "") or "")
+            if session_token:
+                self._set_session_cookie(
+                    session_token,
+                    persistent=bool(out.get("session_cookie_persistent")),
+                )
+            out["redirect_url"] = "/ui/"
+            self._json(HTTPStatus.OK, out)
+        except (preview_sandbox.PreviewSandboxError, account_auth.AccountAuthError) as exc:
+            self._err(getattr(exc, "status", 400), str(exc),
+                      code=getattr(exc, "code", "") or "preview_control_failed")
+
+    def _reject_preview_external_side_effect(self) -> bool:
+        path = urllib.parse.urlparse(self.path).path
+        if not preview_sandbox.external_side_effect_blocked(self.command, path):
+            return False
+        self._err(
+            HTTPStatus.FORBIDDEN,
+            "В Preview sandbox внешние вызовы и реальные операции заблокированы.",
+            code="preview_external_side_effect_blocked",
+        )
+        return True
+
     def _dev_bootstrap_redeem(self, qs: Dict[str, Any]) -> None:
         """Public Development-only redeem: single-use loopback bootstrap link."""
         tunnel_ip, forwarded_ip = self._request_ips()
@@ -4995,7 +5183,13 @@ class Handler(BaseHTTPRequestHandler):
         tunnel_ip, forwarded_ip = self._request_ips()
         ip = str(forwarded_ip or tunnel_ip or "127.0.0.1")
         try:
-            if path == "/api/dev/preview/view-as":
+            if path == "/api/dev/preview/launch":
+                out = dev_preview.launch_sandbox(
+                    user_id,
+                    body.get("scenario"),
+                    origin=self._self_origin(),
+                )
+            elif path == "/api/dev/preview/view-as":
                 out = dev_preview.start_view_as(
                     user_id, str(body.get("persona") or ""), ip=ip,
                     user_agent=str(self.headers.get("User-Agent") or "dev-preview"),
@@ -5810,6 +6004,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self._reject_isolated_legacy_surface():
                 return
+            if self._reject_preview_external_side_effect():
+                return
             self._route_get()
         except Exception:
             self._handle_unexpected("GET")
@@ -5831,6 +6027,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             if self._reject_isolated_legacy_surface():
                 return
+            if self._reject_preview_external_side_effect():
+                return
             self._route_post()
         except Exception:
             self._handle_unexpected("POST")
@@ -5851,6 +6049,8 @@ class Handler(BaseHTTPRequestHandler):
             if not self._check_deployment_edge():
                 return
             if self._reject_isolated_legacy_surface():
+                return
+            if self._reject_preview_external_side_effect():
                 return
             self._route_delete()
         except Exception:
@@ -5886,6 +6086,21 @@ class Handler(BaseHTTPRequestHandler):
                 HTTPStatus.OK if payload["ok"] else HTTPStatus.SERVICE_UNAVAILABLE,
                 payload,
             )
+            return
+
+        if path == "/api/dev/preview/enter":
+            self._preview_sandbox_enter(qs)
+            return
+
+        if path == "/api/dev/preview/status" and runtime_env.preview_sandbox_enabled():
+            if not self._preview_control_authorized():
+                self._err(HTTPStatus.FORBIDDEN, "Preview control cookie недействителен.",
+                          code="preview_control_required")
+                return
+            try:
+                self._json(HTTPStatus.OK, preview_sandbox.status())
+            except preview_sandbox.PreviewSandboxError as exc:
+                self._err(exc.status, str(exc), code=exc.code)
             return
 
         if path == "/api/auth/status":
@@ -9738,6 +9953,18 @@ class Handler(BaseHTTPRequestHandler):
     def _route_post(self) -> None:
         url = urllib.parse.urlparse(self.path)
         path = url.path
+
+        if (
+            runtime_env.preview_sandbox_enabled()
+            and path in {
+                "/api/dev/preview/reset",
+                "/api/dev/preview/new-user",
+                "/api/dev/preview/simulate-client",
+                "/api/dev/preview/exit",
+            }
+        ):
+            self._preview_sandbox_control_post(path)
+            return
 
         if path in {
             "/api/auth/login/start", "/api/auth/login/status", "/api/auth/profile",

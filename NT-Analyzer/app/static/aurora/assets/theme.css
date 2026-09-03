@@ -2481,7 +2481,13 @@ html[data-orch-skin="day"] .orch-skin-menu {
 html.auth-locked .rail,
 html.auth-locked .topbar,
 html.auth-locked .global-news-strip { display: none !important; }
+/* The application shell remains a two-column grid even after the rail is
+   hidden. Without collapsing that grid, auth and Device Confirmation are
+   squeezed into the old 240px rail column. */
+html.auth-locked .app { display: block !important; width: 100%; min-height: 100vh; }
 html.auth-locked .main { margin-left: 0 !important; min-height: 100vh; }
+html.auth-locked .main,
+html.auth-locked .content { width: 100% !important; }
 html.auth-locked .content { padding: 0 !important; min-height: 100vh; }
 .auth-screen {
   min-height: 100vh; display: grid; place-items: center; padding: max(20px, env(safe-area-inset-top)) 16px max(20px, env(safe-area-inset-bottom));
@@ -2581,6 +2587,21 @@ html.auth-locked .content { padding: 0 !important; min-height: 100vh; }
 }
 .device-code-inputs input:focus { border-color: var(--brand); outline: 3px solid var(--brand-soft); }
 .device-code-message { min-height: 20px; margin-top: 10px; color: var(--tx-3); font-size: 12px; }
+.preview-otp-panel {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 8px 0 12px; padding: 11px 12px; border: 1px solid rgba(255,183,3,.48);
+  border-radius: 12px; color: var(--tx); background: rgba(255,183,3,.1); text-align: left;
+}
+.preview-otp-panel[hidden] { display: none; }
+/* The explanatory column needs a usable basis: inside the narrow login card it
+   otherwise shrinks to a few characters per line while the code and the button
+   keep their intrinsic width. Below that basis the panel wraps into rows. */
+.preview-otp-panel > div { display: flex; flex: 1 1 210px; min-width: 190px; flex-direction: column; gap: 2px; }
+.preview-otp-panel strong { color: #ffd166; font-size: 12px; letter-spacing: .02em; }
+.preview-otp-panel span { color: var(--tx-2); font-size: 11px; line-height: 1.35; }
+.preview-otp-panel code { flex: 0 0 auto; padding: 5px 9px; border-radius: 8px; background: rgba(0,0,0,.24); color: #fff; font-size: 17px; letter-spacing: .12em; }
+.preview-otp-panel .btn { flex: 0 0 auto; white-space: normal; }
+.auth-preview-otp { margin: 0 0 14px; }
 .device-code-life { margin: 3px 0 14px; color: var(--tx-3); font-size: 12px; }
 .device-code-life strong { color: var(--ok); font-family: var(--mono); }
 .device-code-submit, .device-enter { width: 100%; min-height: 46px; justify-content: center; }
@@ -2884,8 +2905,37 @@ body:has(#dev-view-as-banner) { padding-top: 48px; }
 body:has(#impersonation-banner):has(#dev-view-as-banner) { padding-top: 92px; }
 .dev-view-as-banner ~ #impersonation-banner { top: 46px; }
 .dev-persona-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.dev-persona { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; }
+.dev-persona { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; white-space: normal; }
+.dev-persona strong, .dev-persona span { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .dev-bootstrap-url { margin-top: 8px; padding: 8px 10px; border-radius: 8px; background: var(--bg-2, rgba(0,0,0,.15)); word-break: break-all; }
+.preview-sandbox-banner {
+  justify-content: flex-start; color: #fff;
+  background: linear-gradient(92deg, #3e2400 0%, #755000 44%, #382000 100%);
+  border-bottom: 1px solid rgba(255,209,102,.72);
+}
+.preview-sandbox-banner .dev-view-as-tag { color: #2b1a00; background: #ffd166; }
+.preview-sandbox-banner .dev-view-as-role { flex: 0 0 auto; }
+.preview-sandbox-banner .dev-view-as-note { min-width: 0; margin-right: auto; overflow: hidden; color: rgba(255,255,255,.82); text-overflow: ellipsis; white-space: nowrap; }
+.preview-sandbox-actions { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; }
+.preview-sandbox-actions .btn { flex: 0 0 auto; white-space: nowrap; }
+.preview-sandbox-banner .btn { color: #2b1a00; background: #ffd166; }
+.preview-sandbox-banner .btn.preview-exit { color: #fff; background: #a62b35; }
+.preview-active-note { margin: 10px 0; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; color: var(--tx-2); background: var(--bg-3); font-size: 12px; }
+.preview-scenario-grid .dev-persona { min-height: 104px; justify-content: center; }
+
+@media (max-width: 900px) {
+  body:has(#dev-view-as-banner.preview-sandbox-banner) { padding-top: 98px; }
+  .preview-sandbox-banner { align-items: flex-start; }
+  .preview-sandbox-actions { flex-basis: 100%; justify-content: flex-start; }
+}
+
+@media (max-width: 600px) {
+  body:has(#dev-view-as-banner.preview-sandbox-banner) { padding-top: 150px; }
+  .preview-sandbox-banner { padding: 8px 10px; gap: 5px 8px; font-size: 11px; }
+  .preview-sandbox-actions .btn { min-height: 32px; padding: 6px 8px; font-size: 10.5px; }
+  .dev-persona-grid { grid-template-columns: 1fr; }
+  .preview-otp-panel { align-items: stretch; flex-direction: column; }
+}
 
 .demo-watermark {
   position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); z-index: 90;

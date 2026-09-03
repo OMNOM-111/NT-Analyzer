@@ -1348,7 +1348,8 @@ def _public_user(user: Dict[str, Any], *, include_contact: bool = False,
         "last_login_source", "last_login_device", "last_login_machine",
         "last_login_device_id", "blocked_at_utc",
         "google_linked_at_utc", "google_email", "email_verified_at_utc",
-        "primary_login_provider", "is_virtual", "virtual_preset", "ux_mode",
+        "primary_login_provider", "is_virtual", "virtual_preset",
+        "is_preview_user", "preview_sandbox_id", "ux_mode",
     )}
     out["id"] = str(user.get("user_uuid") or "")
     if include_legacy:
@@ -4156,7 +4157,10 @@ def email_auth_status() -> Dict[str, Any]:
     return {
         "available": test_backend,
         "operational": test_backend,
-        "provider": "development_test" if test_backend else (configured_provider or "unconfigured"),
+        "provider": (
+            "preview_synthetic" if runtime_env.preview_sandbox_enabled()
+            else "development_test"
+        ) if test_backend else (configured_provider or "unconfigured"),
         "test_backend": test_backend,
         "production_ready": False,
         "code": "ok" if test_backend else "transactional_provider_not_configured",
@@ -4317,7 +4321,10 @@ def start_email_auth(
             "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(),
         })
         _write_doc(doc)
-    delivery = "development_test"
+    delivery = (
+        "preview_synthetic" if runtime_env.preview_sandbox_enabled()
+        else "development_test"
+    )
     message_id = ""
     if _email_provider_live():
         receipt = _deliver_email_code(normalized, code, purpose=purpose_id)
@@ -4341,7 +4348,7 @@ def start_email_auth(
         "expires_in_sec": EMAIL_CHALLENGE_TTL_SEC,
         "delivery": delivery,
     }
-    if delivery == "development_test":
+    if delivery in {"development_test", "preview_synthetic"}:
         # Test credentials are disclosed only behind the explicit Development
         # test auth gate. A real provider delivers them out-of-band instead.
         out["test_code"] = code
@@ -4398,6 +4405,18 @@ def _new_external_user(
         "terms_version": legal.TERMS_VERSION,
         "terms_digest": legal.TERMS_DIGEST,
     }
+    if runtime_env.preview_sandbox_enabled():
+        # The Preview process owns a separate data root and can never become an
+        # owner.  Persist an explicit marker as defence in depth and for visual
+        # audit evidence; this field is never inferred from client input.
+        user.update({
+            "is_virtual": True,
+            "is_preview_user": True,
+            "virtual_preset": "preview_sandbox",
+            "preview_sandbox_id": str(
+                os.environ.get("STRATFORGE_PREVIEW_ID") or ""
+            )[:48],
+        })
     _activate_verified_human_in_doc(user, source=f"{provider}_verified_registration")
     doc["users"].append(user)
     return user

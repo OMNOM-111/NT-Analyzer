@@ -59,6 +59,7 @@
   const APP_KICKER = 'StratForge AI · NTA Edition';
   let CURRENT_AUTH = null;
   let BUILD_IDENTITY = null;
+  let PREVIEW_CONTEXT = { enabled: false };
 
   // ---- per-environment localStorage namespace --------------------------------
   // Each environment prefixes its persisted UI state so no two contours share
@@ -120,6 +121,12 @@
     const source = payload || {};
     const deployment = source.deployment && typeof source.deployment === 'object'
       ? source.deployment : source;
+    const preview = source.preview_sandbox && typeof source.preview_sandbox === 'object'
+      ? source.preview_sandbox
+      : (deployment.preview_sandbox && typeof deployment.preview_sandbox === 'object'
+        ? deployment.preview_sandbox : { enabled: false });
+    PREVIEW_CONTEXT = Object.assign({ enabled: false }, preview);
+    document.documentElement.classList.toggle('preview-sandbox', !!PREVIEW_CONTEXT.enabled);
     const environment = String(deployment.deployment_environment || deployment.environment || source.deployment_environment || '').toLowerCase();
     const channel = String(deployment.release_channel || '').toLowerCase();
     const version = String(deployment.app_version || deployment.build_version || '').trim();
@@ -129,12 +136,16 @@
     const artifactSha = String(deployment.artifact_sha256 || '').trim();
     const dirty = deployment.dirty === true;
     const label = releasePresentation(environment, channel);
-    if (!version || !timestamp || !gitSha || !label) return;
+    if (!version || !timestamp || !gitSha || !label) {
+      renderDevPreviewBanner();
+      return;
+    }
     const shortSha = gitSha.slice(0, 7);
     const visibleParts = [`v${version}`, shortSha];
     if (dirty) visibleParts.push('dirty');
     BUILD_IDENTITY = {
       environment, channel, version, timestamp, buildId, gitSha, artifactSha, dirty, label,
+      preview_sandbox: PREVIEW_CONTEXT,
     };
     document.documentElement.dataset.deploymentEnvironment = environment;
     document.documentElement.dataset.releaseChannel = channel;
@@ -161,10 +172,10 @@
     applyReleaseIcon(label.icon);
     const baseTitle = String(document.title || APP_NAME).replace(/^\[(DEV|CANARY|BETA|STABLE)\]\s*/, '');
     document.title = label.short ? `[${label.short}] ${baseTitle}` : baseTitle;
+    renderDevPreviewBanner();
     if (CURRENT_AUTH) {
       wireAdminEnvironmentButton();
       wireDevPreviewButton();
-      renderDevPreviewBanner();
     }
   }
 
@@ -1049,7 +1060,10 @@
       </div>`;
       const dialog = qs('#device-confirmation-gate', content);
       trapDialogFocus(dialog);
-      requestAnimationFrame(() => (qs('button:not([disabled]), input:not([disabled])', dialog) || dialog).focus());
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+        (qs('button:not([disabled]), input:not([disabled])', dialog) || dialog).focus();
+      });
       return dialog;
     };
     const wirePendingCountdown = (scope) => {
@@ -1116,6 +1130,22 @@
       inputs.forEach((input, index) => { input.value = digits[index] || ''; });
       (inputs[Math.min(digits.length, 5)] || inputs[0])?.focus();
     };
+    const updatePreviewOtp = (scope, payload) => {
+      const panel = qs('[data-preview-otp-panel]', scope);
+      if (!panel) return;
+      const code = String((payload || {}).test_code || '');
+      const visible = !!(
+        PREVIEW_CONTEXT && PREVIEW_CONTEXT.enabled
+        && (payload || {}).delivery === 'preview_synthetic'
+        && /^\d{6}$/.test(code)
+      );
+      panel.hidden = !visible;
+      if (!visible) return;
+      const value = qs('[data-preview-otp-value]', panel);
+      if (value) value.textContent = code;
+      const fill = qs('[data-preview-otp-fill]', panel);
+      if (fill) fill.onclick = () => fillCode(scope, code);
+    };
     const startChallenge = async (scope, provider) => {
       const message = qs('[data-device-code-message]', scope);
       const submit = qs('[data-device-submit]', scope);
@@ -1127,6 +1157,7 @@
       qsa('[data-device-code-digit]', scope).forEach(input => { input.disabled = true; });
       if (submit) submit.disabled = true;
       if (resend) resend.disabled = true;
+      updatePreviewOtp(scope, null);
       if (message) { message.className = 'device-code-message'; message.textContent = 'Отправляем код…'; }
       try {
         challenge = await API.http.accountSecurityChallenge({
@@ -1143,6 +1174,7 @@
         if (message) {
           message.textContent = `Код отправлен: ${SEC_PROVIDER_LABEL[challenge.provider] || challenge.provider} ${challenge.masked_target || ''}`.trim();
         }
+        updatePreviewOtp(scope, challenge);
         fillCode(scope, '');
         wireChallengeCountdown(scope);
       } catch (error) {
@@ -1223,6 +1255,11 @@
             ${[1, 2, 3, 4, 5, 6].map(index => `<input data-device-code-digit type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="${index === 1 ? 'one-time-code' : 'off'}" maxlength="${index === 1 ? 6 : 1}" aria-label="Цифра ${index} из 6">`).join('')}
           </div>
           <div class="device-code-message" data-device-code-message role="status" aria-live="polite"></div>
+          <div class="preview-otp-panel" data-preview-otp-panel hidden>
+            <div><strong>Preview synthetic OTP</strong><span>Код существует только внутри изолированного test process.</span></div>
+            <code class="mono" data-preview-otp-value>------</code>
+            <button type="button" class="btn sm" data-preview-otp-fill>Подставить тестовый код</button>
+          </div>
           <div class="device-code-life">Код действителен <strong data-device-code-time>--:--</strong></div>
           <button type="submit" class="btn primary device-code-submit" data-device-submit>Подтвердить</button>
         </form>
@@ -1261,6 +1298,7 @@
           challenge = await API.http.accountSecurityChallengeResend({ challenge_id: challenge.challenge_id });
           resendReadyAt = Date.now() + Number(challenge.resend_available_in_sec || 0) * 1000;
           if (message) { message.className = 'device-code-message'; message.textContent = `Новый код отправлен: ${challenge.masked_target || ''}`; }
+          updatePreviewOtp(scope, challenge);
           qsa('[data-device-code-digit]', scope).forEach(input => { input.disabled = false; });
           const submit = qs('[data-device-submit]', scope);
           if (submit) { delete submit.dataset.busy; submit.disabled = false; }
@@ -1326,6 +1364,7 @@
       return;
     }
     CURRENT_AUTH = result.auth || { role: 'owner', is_owner: true, user: {} };
+    renderDevPreviewBanner();
     if (CURRENT_AUTH.device_access && CURRENT_AUTH.device_access.required) {
       renderDeviceConfirmationGate(CURRENT_AUTH, newsStrip);
       return;
@@ -1509,6 +1548,47 @@
   function renderDevPreviewBanner() {
     const old = qs('#dev-view-as-banner');
     if (old) old.remove();
+    document.documentElement.classList.remove('dev-view-as-active', 'preview-sandbox-active');
+    if (PREVIEW_CONTEXT && PREVIEW_CONTEXT.enabled) {
+      const scenarioLabels = {
+        new_user: 'Новый пользователь',
+        active_user: 'Активный пользователь',
+        trusted_device: 'Доверенное устройство',
+        pending_access: 'Новый неподтверждённый доступ',
+      };
+      const scenario = String(PREVIEW_CONTEXT.scenario || 'new_user');
+      const bar = el(`<div id="dev-view-as-banner" class="dev-view-as-banner preview-sandbox-banner" role="status" aria-live="polite">
+        <span class="dev-view-as-tag">PREVIEW / TEST USER</span>
+        <span class="dev-view-as-role">${esc(scenarioLabels[scenario] || scenario)}</span>
+        <span class="dev-view-as-note">Только synthetic data · внешние действия заблокированы</span>
+        <span class="preview-sandbox-actions">
+          <button class="btn sm" type="button" data-preview-control="reset">Reset Preview</button>
+          <button class="btn sm" type="button" data-preview-control="new-user">New Preview User</button>
+          <button class="btn sm" type="button" data-preview-control="new-client"${CURRENT_AUTH ? '' : ' disabled'}>Новый browser/client</button>
+          <button class="btn sm preview-exit" type="button" data-preview-control="exit">Exit Preview</button>
+        </span>
+      </div>`);
+      document.body.appendChild(bar);
+      document.documentElement.classList.add('preview-sandbox-active');
+      const run = async (button, action) => {
+        qsa('[data-preview-control]', bar).forEach(item => { item.disabled = true; });
+        try {
+          const out = await action();
+          location.assign((out && out.redirect_url) || '/ui/');
+        } catch (error) {
+          reportError(error);
+          qsa('[data-preview-control]', bar).forEach(item => { item.disabled = false; });
+          const newClient = qs('[data-preview-control="new-client"]', bar);
+          if (newClient && !CURRENT_AUTH) newClient.disabled = true;
+        }
+      };
+      qs('[data-preview-control="reset"]', bar).onclick = event => run(event.currentTarget, () => API.http.previewSandboxReset(scenario));
+      qs('[data-preview-control="new-user"]', bar).onclick = event => run(event.currentTarget, () => API.http.previewSandboxNewUser());
+      const newClient = qs('[data-preview-control="new-client"]', bar);
+      if (newClient) newClient.onclick = event => run(event.currentTarget, () => API.http.previewSandboxSimulateClient());
+      qs('[data-preview-control="exit"]', bar).onclick = event => run(event.currentTarget, () => API.http.previewSandboxExit());
+      return;
+    }
     const label = devPreviewLabel();
     // Only Development ever shows the banner; it is absent/forbidden elsewhere.
     if (!label || (CURRENT_AUTH && !isDevelopmentEnv())) return;
@@ -1580,50 +1660,28 @@
     let status;
     try { status = await API.http.devPreviewStatus(); }
     catch (e) { return renderError(body, e, () => { closeDrawer(); openDevPreviewPanel(); }); }
-    const personas = Array.isArray(status.personas) ? status.personas : [];
+    const scenarios = Array.isArray(status.sandbox_scenarios) ? status.sandbox_scenarios : [];
+    const active = status.active_sandbox || {};
     body.innerHTML = `
-      <div class="finance-note"><strong>Только Development.</strong> Переключатель показывает приложение глазами роли, применяя реальные серверные права выбранной роли. Реальные роли и права не меняются. В Canary и Production функция отключена.</div>
-      <div class="section-title">Смотреть как</div>
-      <div class="dev-persona-grid">${personas.map(p => `<button class="btn ghost dev-persona" data-persona="${esc(p.id)}"><strong>${esc(p.label)}</strong><span class="cab-sub">${esc(p.description || '')}</span></button>`).join('')}</div>
-      <div class="section-title">Открыть Development как разработчик</div>
-      <div class="finance-note">Создаёт одноразовую ссылку для входа как владелец из отдельного браузера. Ссылка действует только с localhost и один раз.</div>
-      <div class="flex gap-sm"><button class="btn" id="dev-bootstrap-mint">Получить ссылку</button></div>
-      <div id="dev-bootstrap-url" class="dev-bootstrap-url" hidden></div>
-      <div class="section-title">Обслуживание</div>
-      <div class="flex gap-sm"><button class="btn ghost" id="dev-personas-reset">Сбросить тестовые персоны</button></div>`;
-    qsa('.dev-persona', body).forEach(btn => {
+      <div class="finance-note"><strong>Изолированный Preview sandbox.</strong> Каждый запуск создаёт отдельный процесс, synthetic user, собственные identity/session/device/workspace/trading stores и уникальные cookies. Owner data не копируются и не изменяются; e-mail, Telegram, платежи, брокеры, cloud AI и live orders заблокированы.</div>
+      ${active.running ? `<div class="preview-active-note"><span class="badge pending">активен</span> Предыдущий sandbox: ${esc(active.scenario || '')}. Новый запуск безопасно заменит его.</div>` : ''}
+      <div class="section-title">Acceptance-сценарий</div>
+      <div class="dev-persona-grid preview-scenario-grid">${scenarios.map(item => `<button class="btn ghost dev-persona" data-preview-scenario="${esc(item.id)}"><strong>${esc(item.label)}</strong><span class="cab-sub">${esc(item.description || '')}</span></button>`).join('')}</div>
+      <div class="finance-note">После запуска вы перейдёте в настоящий Aurora UI на отдельном localhost origin. Постоянная полоса <strong>PREVIEW / TEST USER</strong> позволяет сбросить данные, создать нового synthetic user, имитировать новый browser/client и выйти обратно.</div>`;
+    qsa('[data-preview-scenario]', body).forEach(btn => {
       btn.onclick = async () => {
-        const persona = btn.dataset.persona;
-        const label = (btn.querySelector('strong') || {}).textContent || persona;
-        qsa('.dev-persona', body).forEach(b => { b.disabled = true; });
+        const scenario = btn.dataset.previewScenario;
+        qsa('[data-preview-scenario]', body).forEach(item => { item.disabled = true; });
         try {
-          await API.http.devPreviewViewAs(persona);
-          setDevPreviewLabel(label);
-          toast('Предпросмотр роли активирован');
-          setTimeout(() => location.reload(), 300);
-        } catch (e) { reportError(e); qsa('.dev-persona', body).forEach(b => { b.disabled = false; }); }
+          const out = await API.http.devPreviewLaunch(scenario);
+          if (!out || !out.url) throw new Error('Preview sandbox не вернул безопасную ссылку входа.');
+          location.assign(out.url);
+        } catch (e) {
+          reportError(e);
+          qsa('[data-preview-scenario]', body).forEach(item => { item.disabled = false; });
+        }
       };
     });
-    const mint = qs('#dev-bootstrap-mint', body);
-    if (mint) mint.onclick = async () => {
-      mint.disabled = true;
-      try {
-        const out = await API.http.devBootstrapMint();
-        const target = qs('#dev-bootstrap-url', body);
-        if (target) {
-          target.hidden = false;
-          target.innerHTML = `<code class="mono">${esc(out.url || out.token || '')}</code><div class="cab-sub">Одноразовая ссылка. Действует ${esc(String(out.expires_in_sec || ''))} сек. Откройте её в отдельном браузере на этом компьютере.</div>`;
-        }
-      } catch (e) { reportError(e); }
-      finally { mint.disabled = false; }
-    };
-    const reset = qs('#dev-personas-reset', body);
-    if (reset) reset.onclick = async () => {
-      reset.disabled = true;
-      try { await API.http.devPreviewResetPersonas(); toast('Тестовые персоны сброшены'); }
-      catch (e) { reportError(e); }
-      finally { reset.disabled = false; }
-    };
   }
 
   function renderGoogleLinkGate(auth) {
@@ -3245,6 +3303,24 @@
     return `<span title="${esc(abs)}">${esc(rel)}</span>`;
   }
 
+  // Forward-looking label for a deadline (session expiry, temporary access).
+  // secWhen() measures elapsed time and renders every future moment as
+  // «только что», which reads as if the access had already ended.
+  function secUntil(iso) {
+    if (!iso) return '—';
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return esc(String(iso));
+    const min = Math.round((t - Date.now()) / 60000);
+    let rel;
+    if (min <= 0) rel = 'истекло';
+    else if (min < 60) rel = `через ${min} мин`;
+    else if (min < 1440) rel = `через ${Math.floor(min / 60)} ч`;
+    else rel = `через ${Math.floor(min / 1440)} дн`;
+    let abs = iso;
+    try { abs = new Date(t).toLocaleString(); } catch (_) { /* keep iso */ }
+    return `<span title="${esc(abs)}">${esc(rel)}</span>`;
+  }
+
   function securityDeviceRow(device) {
     const type = String(device.device_type || 'browser');
     const icon = SEC_DEVICE_ICONS[type] || '🌐';
@@ -3853,7 +3929,7 @@
       <div class="security-client-main">
         <div class="security-client-title"><strong>${esc(session.client || 'Сессия')}</strong>${session.current ? '<span class="badge live">Текущая</span>' : ''}${securityAccessBadge(access)}</div>
         <div class="security-client-meta">Начало: ${secWhen(session.created_at_utc)}${audit.masked_ip ? ` · IP: ${esc(audit.masked_ip)}` : ''}${audit.location ? ` · ${esc(audit.location)}` : ''}</div>
-        <div class="security-client-meta">Завершение по серверу: ${session.expires_at_utc ? secWhen(session.expires_at_utc) : '—'}</div>
+        <div class="security-client-meta">Завершение по серверу: ${session.expires_at_utc ? secUntil(session.expires_at_utc) : '—'}</div>
       </div>
       <button type="button" class="btn sm danger" data-sec-session-end="${esc(session.id)}" data-sec-current="${session.current ? '1' : '0'}">Завершить сессию</button>
     </article>`;
@@ -4657,8 +4733,19 @@
     const renderEmailCode = (started, profile) => {
       stopPolling();
       const testCode = String((started || {}).test_code || '');
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Подтвердите e-mail</h1><p>${testCode ? 'Development test-backend: используйте показанный одноразовый код.' : 'Код отправлен через настроенного почтового провайдера.'}</p></div>${testCode ? `<div class="finance-note"><strong>Тестовый код:</strong> <span class="mono">${esc(testCode)}</span></div>` : ''}<form id="auth-email-verify-form" class="auth-form"><div class="field"><label for="auth-email-code">Одноразовый код</label><input id="auth-email-code" inputmode="numeric" autocomplete="one-time-code" required pattern="[0-9]{6}" maxlength="6" value="${esc(testCode)}"></div><label class="auth-terms"><input type="checkbox" id="auth-email-verify-accept" ${profile.accept_terms ? 'checked' : ''}> <span>Для нового профиля я соглашаюсь с <button type="button" class="linklike" id="auth-email-verify-terms">договором StratForge AI</button>.</span></label><button class="btn primary auth-main-action" type="submit">Подтвердить e-mail</button></form><button class="btn ghost auth-main-action" id="auth-email-back" type="button">Другой способ входа</button>`);
+      const previewCode = !!(
+        PREVIEW_CONTEXT && PREVIEW_CONTEXT.enabled
+        && (started || {}).delivery === 'preview_synthetic'
+        && /^\d{6}$/.test(testCode)
+      );
+      const devCode = !!testCode && !previewCode;
+      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Подтвердите e-mail</h1><p>${previewCode ? 'Synthetic-код создан внутри Preview sandbox; реальное письмо не отправлялось.' : (devCode ? 'Development test-backend: используйте показанный одноразовый код.' : 'Код отправлен через настроенного почтового провайдера.')}</p></div>${previewCode ? `<div class="preview-otp-panel auth-preview-otp"><div><strong>Preview synthetic OTP</strong><span>Только для этого изолированного test user.</span></div><code class="mono">${esc(testCode)}</code><button class="btn sm" id="auth-preview-otp-fill" type="button">Подставить тестовый код</button></div>` : (devCode ? `<div class="finance-note"><strong>Тестовый код:</strong> <span class="mono">${esc(testCode)}</span></div>` : '')}<form id="auth-email-verify-form" class="auth-form"><div class="field"><label for="auth-email-code">Одноразовый код</label><input id="auth-email-code" inputmode="numeric" autocomplete="one-time-code" required pattern="[0-9]{6}" maxlength="6" value="${previewCode ? '' : esc(testCode)}"></div><label class="auth-terms"><input type="checkbox" id="auth-email-verify-accept" ${profile.accept_terms ? 'checked' : ''}> <span>Для нового профиля я соглашаюсь с <button type="button" class="linklike" id="auth-email-verify-terms">договором StratForge AI</button>.</span></label><button class="btn primary auth-main-action" type="submit">Подтвердить e-mail</button></form><button class="btn ghost auth-main-action" id="auth-email-back" type="button">Другой способ входа</button>`);
       const form = qs('#auth-email-verify-form', content);
+      const fillPreview = qs('#auth-preview-otp-fill', content);
+      if (fillPreview) fillPreview.onclick = () => {
+        const input = qs('#auth-email-code', form);
+        if (input) { input.value = testCode; input.focus(); }
+      };
       const terms = qs('#auth-email-verify-terms', form); if (terms) terms.onclick = () => showTermsModal();
       form.onsubmit = async (event) => {
         event.preventDefault();

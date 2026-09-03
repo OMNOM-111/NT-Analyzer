@@ -203,6 +203,11 @@ def _classify(user_agent: str, source: str, connector_installation_id: str) -> D
         }
     os_family = _os_family(user_agent)
     client = account_auth._device_label(user_agent)
+    if client.startswith("Браузер") and "mozilla/" not in str(user_agent or "").lower():
+        # A User-Agent carrying no browser engine token belongs to an app or an
+        # API client. Calling that access "Браузер" in Security would describe
+        # the wrong thing; the neutral label states only what is known.
+        client = "Приложение" + (f" · {os_family}" if os_family else "")
     if os_family in {"iOS", "Android"}:
         device_type = "phone"
     elif os_family == "iPadOS":
@@ -978,7 +983,12 @@ def create_challenge(
             )
             raise
 
-    delivery = "development_test" if echo else str(receipt.get("provider") or provider_id)
+    delivery = (
+        "preview_synthetic"
+        if echo and runtime_env.preview_sandbox_enabled()
+        else "development_test" if echo
+        else str(receipt.get("provider") or provider_id)
+    )
     account_auth._audit(
         "security.challenge_created",
         user_id=uid,
@@ -1442,6 +1452,12 @@ def _normalized_client(
     auto_name = public["client"] or "Web Browser"
     if os_text and os_text.lower() not in auto_name.lower():
         auto_name = f"{auto_name} · {os_text}"
+    # A session row is one login of exactly this client, so it must carry the
+    # client's current name. The raw session copy keeps the label parsed at
+    # login time and would still show the old auto name after a rename.
+    client_label = public["display_name"] or public["client"] or "Web Browser"
+    for row in session_rows:
+        row["client"] = client_label
     return {
         "id": public["device_id"],
         "device_id": public["device_id"],
