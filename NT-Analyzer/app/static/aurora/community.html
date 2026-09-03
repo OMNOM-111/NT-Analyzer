@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
 <title>SF Chat — StratForge AI</title>
-<link rel="stylesheet" href="assets/theme.css?v=20260902-notice-routing">
+<link rel="stylesheet" href="assets/theme.css?v=20260902-permanent-record">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 </head>
 <body data-page="community" data-title="SF Chat" data-kicker="Социальная и коммуникационная платформа StratForge">
@@ -79,6 +79,7 @@
         <section class="community-composer-v2 community-wall-composer" id="community-composer-card">
           <div class="community-avatar" id="community-composer-avatar" aria-hidden="true">SF</div>
           <div class="community-compose-main">
+            <div class="community-correction-target" id="community-correction-target" hidden></div>
             <textarea id="community-post-text" rows="1" maxlength="4000" placeholder="Опубликовать на своей стене..."></textarea>
             <div class="community-pending-media" id="community-pending-media"></div>
             <div class="community-compose-actions">
@@ -98,6 +99,9 @@
               </div>
               <button type="button" class="btn primary community-publish" id="community-post-submit"><span aria-hidden="true">➤</span>Опубликовать</button>
             </div>
+            <!-- The rule the server enforces, stated where the decision is made
+                 rather than discovered afterwards. Text comes from the feed. -->
+            <p class="community-permanence-note" id="community-permanence-note">Опубликованное становится частью постоянной истории профиля: удалить или переписать запись нельзя. Ошибку исправляет новая публикация — обе останутся.</p>
           </div>
         </section>
 
@@ -142,7 +146,7 @@
 <script src="assets/api.js?v=20260901-community-chat1"></script>
 <script src="assets/domain.js?v=20260629-final4"></script>
 <script src="assets/ambient.js?v=20260703-stratforge1"></script>
-<script src="assets/ui.js?v=20260902-notice-routing"></script>
+<script src="assets/ui.js?v=20260902-permanent-record"></script>
 <script src="assets/victor.js?v=20260718-contours2"></script>
 <script src="assets/pages/community.js?v=20260901-community-workspace3"></script>
 </body>

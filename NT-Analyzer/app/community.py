@@ -884,6 +884,67 @@ _REACTIONS = frozenset({"support", "insightful", "fire"})
 # by _post_visible, and social_feed excludes it from Recommendation even for
 # the author, because Recommendation is the public surface rather than a
 # second copy of the wall.
+# --------------------------------------------------------------------------- #
+# Permanent record — Original ideas. Permanent history. Transparent corrections.
+#
+# SF Social's founding rule. Once published, a member cannot delete the
+# original, rewrite its content, or change its date or authorship. A mistake is
+# corrected by publishing again -- optionally as an explicit correction linked
+# to the original -- and both records stand. A timeline you can prune after the
+# fact says nothing about a person; it says what they chose to leave standing.
+#
+# The rule binds the owner as an author exactly as it binds everyone else.
+#
+# The one exception is administrative removal, and it is disclosed rather than
+# hidden: a hidden backdoor would make the public promise a lie, while a
+# disclosed procedure that cannot be used without leaving a trace is a stronger
+# claim than a promise nobody can audit. It requires owner authority, a reason
+# code and a written reason, and it writes an append-only audit record *before*
+# it touches anything. Nothing in this module can delete an audit record.
+#
+# Two operations, deliberately unequal in reach:
+#   - `moderation_removal` (the default): the object stops being shown and a
+#     tombstone takes its place. Stored content is retained for the record.
+#   - `hard_erasure`: the content itself is cleared. Reserved for privacy,
+#     legal, security and illegal-content grounds. Even then a non-content
+#     audit record remains -- who, when, why, and a hash of what was erased,
+#     so the act stays provable after the content is gone.
+#
+# An AI never holds this authority. An agent may carry out a removal that an
+# authenticated owner asked for; the audit record then shows the owner as the
+# authority and the agent as the hand. The agent is never written as the owner.
+#
+# Clearing a Development or test database is a maintenance operation on the
+# store as a whole. It is not this flow, and this flow is not a way to reach a
+# Production database.
+# --------------------------------------------------------------------------- #
+PERMANENT_RECORD = True
+PERMANENT_RECORD_PRINCIPLE = "Original ideas. Permanent history. Transparent corrections."
+PERMANENT_RECORD_NOTICE = (
+    "Опубликованное становится частью постоянной истории профиля: удалить или "
+    "переписать запись нельзя. Ошибку исправляет новая публикация — обе останутся."
+)
+TOMBSTONE_POST_TEXT = "Публикация удалена администрацией"
+TOMBSTONE_COMMENT_TEXT = "Комментарий удалён администрацией"
+
+_REMOVAL_OPERATIONS = ("moderation_removal", "hard_erasure")
+# Reason codes are a closed set so the audit trail can be read as data, and the
+# human-readable reason is required alongside so it can be read as an account.
+_REMOVAL_REASON_CODES = {
+    "legal_request": "Законное требование или решение суда",
+    "privacy_request": "Требование об удалении персональных данных",
+    "illegal_content": "Незаконное или опасное содержимое",
+    "security_incident": "Инцидент безопасности",
+    "moderation_policy": "Нарушение правил сообщества",
+}
+# Clearing content is the heavier act, so it is available only where a policy
+# actually demands it. A rules violation is answered by a tombstone.
+_HARD_ERASURE_REASON_CODES = frozenset({
+    "legal_request", "privacy_request", "illegal_content", "security_incident",
+})
+_REMOVAL_SOURCES = ("owner_ui", "owner_api", "ai_assisted", "moderation_queue")
+_REMOVAL_TARGETS = {"post": ("posts", "post_id"), "comment": ("comments", "comment_id")}
+
 _POST_VISIBILITY = frozenset({"network", "followers", "private"})
 _RECOMMENDABLE_VISIBILITY = frozenset({"network", "followers"})
 _PROFILE_VISIBILITY = frozenset({"network", "followers"})
@@ -1245,14 +1306,22 @@ def social_profile(
         target = _profile_row(doc, profile_id)
         if target is None or _social_blocked(doc, viewer_id, str(profile_id)):
             raise CommunityError("Профиль не найден.", 404)
+        # On your own wall an administratively removed post leaves a tombstone:
+        # a record that vanished without a word teaches the author nothing, and
+        # they are entitled to know their publication was taken down. Elsewhere
+        # -- Recommendation, search, another member's view of this wall -- a
+        # removed post is not surfaced at all.
+        own_wall = str(profile_id) == viewer_id
         posts = [
-            _public_social_post(doc, row, viewer_id)
+            _post_tombstone(row) if row.get("removed_at_utc")
+            else _public_social_post(doc, row, viewer_id)
             for row in reversed(doc.get("posts") or [])
             if str(row.get("author_profile_id") or "") == str(profile_id)
             # A post published as an organization belongs to that page, even
             # though a person created it.
             and not str(row.get("publisher_org_id") or "")
-            and _post_visible(doc, row, viewer_id)
+            and ((own_wall and row.get("removed_at_utc"))
+                 or _post_visible(doc, row, viewer_id))
         ][:max(1, min(100, _safe_int(posts_limit, 20)))]
         _save(doc)
         return {
@@ -1323,7 +1392,53 @@ def _post_reaction_summary(doc: Dict[str, Any], post_id: str) -> Dict[str, int]:
     return result
 
 
+def _tombstone(row: Dict[str, Any], kind: str) -> Dict[str, Any]:
+    """What a removed object looks like to every reader.
+
+    The original content is not carried here for anyone: a tombstone reports
+    that the record was removed and when, never what it said.
+    """
+    return {
+        "removed": True,
+        "removed_at_utc": str(row.get("removed_at_utc") or row.get("deleted_at_utc") or ""),
+        "removal_operation": str(row.get("removal_operation") or "moderation_removal"),
+        "removal_reason_code": str(row.get("removal_reason_code") or ""),
+        "content_erased": bool(row.get("content_erased")),
+        "text": TOMBSTONE_POST_TEXT if kind == "post" else TOMBSTONE_COMMENT_TEXT,
+        "permanent": True,
+        "can_delete": False,
+        "is_author": False,
+    }
+
+
+def _post_tombstone(row: Dict[str, Any]) -> Dict[str, Any]:
+    marker = _tombstone(row, "post")
+    marker.update({
+        "post_id": str(row.get("post_id") or ""),
+        "kind": "removed",
+        "created_at_utc": str(row.get("created_at_utc") or ""),
+        "author": None, "attachments": [], "object": None, "hashtags": [],
+        "reactions": {}, "viewer_reaction": "", "comment_count": 0,
+        "recent_comments": [], "bookmarked": False, "visibility": "network",
+    })
+    return marker
+
+
+def _comment_tombstone(row: Dict[str, Any]) -> Dict[str, Any]:
+    marker = _tombstone(row, "comment")
+    marker.update({
+        "comment_id": str(row.get("comment_id") or ""),
+        "post_id": str(row.get("post_id") or ""),
+        "created_at_utc": str(row.get("created_at_utc") or ""),
+        "author": None,
+    })
+    return marker
+
+
 def _public_comment(doc: Dict[str, Any], row: Dict[str, Any], viewer_profile_id: str) -> Dict[str, Any]:
+    if row.get("removed_at_utc") or row.get("deleted_at_utc"):
+        return _comment_tombstone(row)
+
     author = _profile_row(doc, str(row.get("author_profile_id") or ""))
     return {
         "comment_id": str(row.get("comment_id") or ""),
@@ -1331,7 +1446,12 @@ def _public_comment(doc: Dict[str, Any], row: Dict[str, Any], viewer_profile_id:
         "text": str(row.get("text") or "")[:1200],
         "created_at_utc": str(row.get("created_at_utc") or ""),
         "author": _public_profile(doc, author, viewer_profile_id) if author else None,
-        "can_delete": str(row.get("author_profile_id") or "") == viewer_profile_id,
+        "is_author": str(row.get("author_profile_id") or "") == viewer_profile_id,
+        # Never true for anyone. Kept in the projection so a client reading the
+        # old field cannot infer a control that no longer exists.
+        "can_delete": False,
+        "permanent": True,
+        "removed": False,
     }
 
 
@@ -1343,8 +1463,11 @@ def _public_social_post(doc: Dict[str, Any], row: Dict[str, Any], viewer_profile
         if str(item.get("post_id") or "") == pid
         and str(item.get("profile_id") or "") == viewer_profile_id
     ), "")
+    # Removed comments stay in the thread as tombstones: a reader who sees a
+    # reply to nothing has been told less than one who sees that it was removed.
     comments = [item for item in doc.get("comments") or []
-                if str(item.get("post_id") or "") == pid and not item.get("deleted_at_utc")]
+                if str(item.get("post_id") or "") == pid]
+    live_comments = [item for item in comments if not item.get("deleted_at_utc")]
     bookmarked = any(
         str(item.get("post_id") or "") == pid
         and str(item.get("profile_id") or "") == viewer_profile_id
@@ -1365,10 +1488,18 @@ def _public_social_post(doc: Dict[str, Any], row: Dict[str, Any], viewer_profile
         "publisher_org_id": str(row.get("publisher_org_id") or ""),
         "reactions": _post_reaction_summary(doc, pid),
         "viewer_reaction": viewer_reaction,
-        "comment_count": len(comments),
+        "comment_count": len(live_comments),
         "recent_comments": [_public_comment(doc, item, viewer_profile_id) for item in comments[-3:]],
         "bookmarked": bookmarked,
-        "can_delete": str(row.get("author_profile_id") or "") == viewer_profile_id,
+        "is_author": str(row.get("author_profile_id") or "") == viewer_profile_id,
+        "can_delete": False,
+        "permanent": True,
+        "removed": False,
+        "corrects_post_id": str(row.get("corrects_post_id") or ""),
+        "corrected_by_post_ids": [
+            str(item.get("post_id") or "") for item in doc.get("posts") or []
+            if str(item.get("corrects_post_id") or "") == pid and not item.get("deleted_at_utc")
+        ],
     }
 
 
@@ -1747,7 +1878,7 @@ def create_social_post(
     visibility: str = "network", workspace_id: str = "", user_uuid: Any = "",
     idempotency_key: str = "", object_snapshot: Any = None,
     trusted_snapshot: bool = False, publish_as: str = "",
-    ai_agent_id: str = "",
+    ai_agent_id: str = "", corrects_post_id: str = "",
 ) -> Dict[str, Any]:
     uid = _safe_int(user_id)
     body = str(text or "").strip()
@@ -1772,6 +1903,18 @@ def create_social_post(
                              and str(row.get("idempotency_key_hash") or "") == idem_hash), None)
             if existing:
                 return {"ok": True, "post": _public_social_post(doc, existing, author_id), "deduplicated": True}
+        # A correction points at one of the author's own standing publications.
+        # It never edits it: the original keeps its text, date and authorship,
+        # and the two are read together.
+        corrected = ""
+        if str(corrects_post_id or "").strip():
+            original = next((item for item in doc.get("posts") or []
+                             if str(item.get("post_id") or "") == str(corrects_post_id).strip()), None)
+            if original is None or original.get("deleted_at_utc"):
+                raise CommunityError("Исправляемая публикация не найдена.", 404)
+            if str(original.get("author_profile_id") or "") != author_id:
+                raise CommunityError("Исправить можно только собственную публикацию.", 403)
+            corrected = str(original.get("post_id") or "")
         post_id = "cpost_" + secrets.token_hex(8)
         stored_attachments = _validate_attachments(
             attachments, workspace_id=workspace, owner_id=post_id,
@@ -1805,6 +1948,8 @@ def create_social_post(
             "created_at_utc": _now_iso(),
             "updated_at_utc": _now_iso(),
         }
+        if corrected:
+            row["corrects_post_id"] = corrected
         if organization is not None:
             # Publisher and actor are stored apart: readers see the company,
             # the audit trail keeps the person or the agent who created it.
@@ -1894,6 +2039,10 @@ def social_feed(
             "next_cursor": f"c_{next_offset}" if next_offset < len(rows) else "",
             "recommended_profiles": profiles[:8],
             "total_visible": len(rows),
+            # One source of truth for the rule, so the interface states exactly
+            # what the server enforces rather than a paraphrase of it.
+            "permanent_record": PERMANENT_RECORD,
+            "permanence_notice": PERMANENT_RECORD_NOTICE,
         }
 
 
@@ -1982,7 +2131,10 @@ def bookmark_post(
 def delete_social_post(
     user_id: Any, post_id: str, *, user_uuid: Any = "", moderator: bool = False,
 ) -> Dict[str, Any]:
-    """Soft-delete a post owned by the actor or selected by an owner moderator."""
+    """Refuse author deletion; owner moderation hides reported content only.
+
+    See the permanent-record contract above. Nothing here erases a row.
+    """
     with _LOCK:
         doc = _load()
         viewer = _viewer_profile(doc, user_id, user_uuid)
@@ -1991,19 +2143,25 @@ def delete_social_post(
                      if str(row.get("post_id") or "") == str(post_id or "")), None)
         if post is None or post.get("deleted_at_utc"):
             raise CommunityError("Публикация не найдена.", 404)
-        if str(post.get("author_profile_id") or "") != viewer_id and not moderator:
+        if str(post.get("author_profile_id") or "") == viewer_id:
+            raise CommunityError(PERMANENT_RECORD_NOTICE, 403)
+        if not moderator:
             raise CommunityError("Нельзя удалить чужую публикацию.", 403)
-        post["deleted_at_utc"] = _now_iso()
+        post["hidden_at_utc"] = _now_iso()
+        post["deleted_at_utc"] = post["hidden_at_utc"]
         post["deleted_by_profile_id"] = viewer_id
-        post["moderated"] = bool(moderator)
+        post["moderated"] = True
         _save(doc)
-        return {"ok": True, "post_id": str(post_id), "deleted": True, "soft_delete": True}
+        return {
+            "ok": True, "post_id": str(post_id), "deleted": True,
+            "soft_delete": True, "moderated": True, "record_retained": True,
+        }
 
 
 def delete_social_comment(
     user_id: Any, comment_id: str, *, user_uuid: Any = "", moderator: bool = False,
 ) -> Dict[str, Any]:
-    """Soft-delete a comment without rewriting the parent publication."""
+    """Refuse author deletion; owner moderation hides reported content only."""
     with _LOCK:
         doc = _load()
         viewer = _viewer_profile(doc, user_id, user_uuid)
@@ -2012,19 +2170,222 @@ def delete_social_comment(
                         if str(row.get("comment_id") or "") == str(comment_id or "")), None)
         if comment is None or comment.get("deleted_at_utc"):
             raise CommunityError("Комментарий не найден.", 404)
-        if str(comment.get("author_profile_id") or "") != viewer_id and not moderator:
+        if str(comment.get("author_profile_id") or "") == viewer_id:
+            raise CommunityError(PERMANENT_RECORD_NOTICE, 403)
+        if not moderator:
             raise CommunityError("Нельзя удалить чужой комментарий.", 403)
-        comment["deleted_at_utc"] = _now_iso()
+        comment["hidden_at_utc"] = _now_iso()
+        comment["deleted_at_utc"] = comment["hidden_at_utc"]
         comment["deleted_by_profile_id"] = viewer_id
-        comment["moderated"] = bool(moderator)
+        comment["moderated"] = True
         post = next((row for row in doc.get("posts") or []
                      if str(row.get("post_id") or "") == str(comment.get("post_id") or "")), None)
         _save(doc)
         return {
             "ok": True, "comment_id": str(comment_id), "deleted": True,
-            "soft_delete": True,
+            "soft_delete": True, "moderated": True, "record_retained": True,
             "post": _public_social_post(doc, post, viewer_id) if post else None,
         }
+
+
+def _content_hash(row: Dict[str, Any]) -> str:
+    """A fingerprint of what a removal covered.
+
+    Keeping the hash rather than the text is the point of a hard erasure: the
+    request is honoured in full, and a later claim about what the record said
+    can still be checked against the audit trail.
+    """
+    payload = json.dumps({
+        "text": str(row.get("text") or ""),
+        "attachments": _json_safe(row.get("attachments") or []),
+        "object": _json_safe(row.get("object_snapshot") or {}),
+    }, ensure_ascii=False, sort_keys=True)
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _removal_target(doc: Dict[str, Any], target_type: str, target_id: str):
+    kind = str(target_type or "").strip().lower()
+    if kind not in _REMOVAL_TARGETS:
+        raise CommunityError("Удалить можно публикацию или комментарий.", 400)
+    collection, key = _REMOVAL_TARGETS[kind]
+    row = next((item for item in doc.get(collection) or []
+                if str(item.get(key) or "") == str(target_id or "")), None)
+    if row is None:
+        raise CommunityError("Запись не найдена.", 404)
+    return kind, row
+
+
+def _removal_record(row: Dict[str, Any], kind: str) -> Dict[str, Any]:
+    """What the interface (or an agent) is told before anything is removed.
+
+    An administrative removal is shown before it is performed: which object,
+    whose it is, when it was published. The content itself is not echoed back.
+    """
+    author = str(row.get("author_profile_id") or "")
+    return {
+        "target_type": kind,
+        "target_id": str(row.get("post_id") or row.get("comment_id") or ""),
+        "author_profile_id": author,
+        "created_at_utc": str(row.get("created_at_utc") or ""),
+        "object_version": str(row.get("updated_at_utc") or row.get("created_at_utc") or ""),
+        "content_hash": _content_hash(row),
+        "content_length": len(str(row.get("text") or "")),
+        "attachment_count": len(list(row.get("attachments") or [])),
+        "already_removed": bool(row.get("removed_at_utc") or row.get("deleted_at_utc")),
+        "content_erased": bool(row.get("content_erased")),
+    }
+
+
+def _apply_removal(
+    doc: Dict[str, Any], kind: str, row: Dict[str, Any], *,
+    operation: str, reason_code: str, reason: str, source: str,
+    actor: str, ai_agent_id: str, authority_user_id: Any,
+    authority_user_uuid: str, correlation_id: str,
+) -> Dict[str, Any]:
+    """Write the audit record, then remove. Never the other way round.
+
+    The ledger entry is appended before the object is touched, so a removal
+    interrupted halfway still leaves its trace. Nothing in this module deletes
+    from `audit_log`.
+    """
+    audit_id = "sfa_" + secrets.token_hex(8)
+    chain = [f"owner:{_safe_int(authority_user_id)}"]
+    if actor == "ai":
+        # The agent is the hand, never the authority. It is appended to the
+        # chain rather than replacing the owner at the head of it.
+        chain.append(f"ai:{ai_agent_id}")
+    entry = dict(_removal_record(row, kind))
+    entry.update({
+        "audit_id": audit_id,
+        "correlation_id": str(correlation_id or "").strip()[:64] or audit_id,
+        "operation": operation,
+        "reason_code": reason_code,
+        "reason_label": _REMOVAL_REASON_CODES[reason_code],
+        "reason": str(reason or "").strip()[:1000],
+        "source": source,
+        "actor": actor,
+        "ai_agent_id": ai_agent_id,
+        "authority_user_id": _safe_int(authority_user_id),
+        "authority_user_uuid": str(authority_user_uuid or ""),
+        "actor_chain": chain,
+        "occurred_at_utc": _now_iso(),
+    })
+    doc.setdefault("audit_log", []).append(entry)
+
+    now = entry["occurred_at_utc"]
+    row["removed_at_utc"] = now
+    # Kept in step so every existing visibility filter keeps excluding the row.
+    row["deleted_at_utc"] = now
+    row["removal_operation"] = operation
+    row["removal_reason_code"] = reason_code
+    row["removal_audit_id"] = audit_id
+    row["removed_by_user_id"] = _safe_int(authority_user_id)
+    row["moderated"] = True
+    if operation == "hard_erasure":
+        row["content_erased"] = True
+        row["text"] = ""
+        row["hashtags"] = []
+        row["attachments"] = []
+        row.pop("object_snapshot", None)
+    return entry
+
+
+def preview_owner_removal(
+    owner_id: Any, target_type: str, target_id: str,
+) -> Dict[str, Any]:
+    """Show what an administrative removal would cover, changing nothing.
+
+    This is the step an AI must take before acting on an owner's instruction:
+    name the object and the grounds, then let the owner's authority carry it.
+    """
+    if not _account_is_owner(owner_id):
+        raise CommunityError("Административное удаление доступно только владельцу.", 403)
+    with _LOCK:
+        doc = _load()
+        kind, row = _removal_target(doc, target_type, target_id)
+        author = _profile_row(doc, str(row.get("author_profile_id") or ""))
+        preview = _removal_record(row, kind)
+    preview["author_display_name"] = str((author or {}).get("display_name") or "")
+    preview["author_username"] = str((author or {}).get("username") or "")
+    preview["reason_codes"] = dict(_REMOVAL_REASON_CODES)
+    preview["hard_erasure_reason_codes"] = sorted(_HARD_ERASURE_REASON_CODES)
+    preview["default_operation"] = "moderation_removal"
+    return {"ok": True, "preview": preview}
+
+
+def owner_remove_content(
+    owner_id: Any, target_type: str, target_id: str, *,
+    reason_code: str, reason: str, operation: str = "moderation_removal",
+    actor: str = "owner", ai_agent_id: str = "", source: str = "owner_api",
+    correlation_id: str = "", owner_user_uuid: Any = "",
+) -> Dict[str, Any]:
+    """The disclosed administrative exception to the permanent record.
+
+    Owner authority is read from the account store, never from what the caller
+    claims. A reason code and a written reason are both required: the code so
+    the trail can be read as data, the text so it can be read as an account of
+    a decision. Clearing content is available only on grounds that demand it.
+    """
+    if not _account_is_owner(owner_id):
+        raise CommunityError("Административное удаление доступно только владельцу.", 403)
+    op = str(operation or "moderation_removal").strip().lower()
+    if op not in _REMOVAL_OPERATIONS:
+        raise CommunityError("Неизвестный тип операции удаления.", 400)
+    code = str(reason_code or "").strip().lower()
+    if code not in _REMOVAL_REASON_CODES:
+        raise CommunityError("Укажите код основания удаления.", 400)
+    if op == "hard_erasure" and code not in _HARD_ERASURE_REASON_CODES:
+        raise CommunityError(
+            "Полное стирание содержимого допустимо только по правовым, "
+            "приватным или security-основаниям.", 400,
+        )
+    grounds = str(reason or "").strip()
+    if len(grounds) < 8:
+        raise CommunityError("Укажите основание удаления (не короче 8 символов).", 400)
+    who = str(actor or "owner").strip().lower()
+    if who not in ("owner", "ai"):
+        raise CommunityError("Неизвестный исполнитель удаления.", 400)
+    agent = str(ai_agent_id or "").strip()[:64]
+    if who == "ai" and not agent:
+        raise CommunityError("Для удаления по просьбе владельца укажите агента.", 400)
+    origin = str(source or "owner_api").strip().lower()
+    if origin not in _REMOVAL_SOURCES:
+        raise CommunityError("Неизвестный источник запроса.", 400)
+
+    with _LOCK:
+        doc = _load()
+        kind, row = _removal_target(doc, target_type, target_id)
+        if row.get("removed_at_utc") and op != "hard_erasure":
+            raise CommunityError("Запись уже удалена администрацией.", 409)
+        if row.get("content_erased"):
+            raise CommunityError("Содержимое уже стёрто.", 409)
+        entry = _apply_removal(
+            doc, kind, row, operation=op, reason_code=code, reason=grounds,
+            source=origin, actor=who, ai_agent_id=agent,
+            authority_user_id=owner_id,
+            authority_user_uuid=_resolved_user_uuid(owner_id, owner_user_uuid),
+            correlation_id=correlation_id,
+        )
+        _save(doc)
+        return {"ok": True, "removed": True, "operation": op, "audit": dict(entry)}
+
+
+def owner_audit_log(owner_id: Any, *, limit: int = 100) -> Dict[str, Any]:
+    """The append-only record of every administrative removal.
+
+    Owner-visible and never pruned. There is deliberately no function here that
+    removes an entry: an audit trail a user can edit is not an audit trail.
+    """
+    if not _account_is_owner(owner_id):
+        raise CommunityError("Журнал удалений доступен только владельцу.", 403)
+    lim = max(1, min(500, _safe_int(limit, 100)))
+    with _LOCK:
+        doc = _load()
+        entries = list(doc.get("audit_log") or [])
+    return {
+        "ok": True, "entries": entries[-lim:][::-1], "total": len(entries),
+        "reason_codes": dict(_REMOVAL_REASON_CODES),
+    }
 
 
 def block_social_profile(
@@ -2140,8 +2501,21 @@ def moderate_social_report(
             if target is None:
                 raise CommunityError("Объект жалобы не найден.", 404)
             if not target.get("deleted_at_utc"):
-                target["deleted_at_utc"] = _now_iso()
-                target["moderated"] = True
+                # One removal path, one audit trail: content taken down from
+                # the report queue is recorded exactly like any other.
+                grounds = str(note or "").strip()
+                if len(grounds) < 8:
+                    raise CommunityError(
+                        "Укажите основание удаления (не короче 8 символов).", 400,
+                    )
+                _apply_removal(
+                    doc, "post" if collection == "posts" else "comment", target,
+                    operation="moderation_removal", reason_code="moderation_policy",
+                    reason=grounds, source="moderation_queue", actor="owner",
+                    ai_agent_id="", authority_user_id=owner_id,
+                    authority_user_uuid=_resolved_user_uuid(owner_id, owner_user_uuid),
+                    correlation_id=str(report_id or ""),
+                )
                 removed = True
         now = _now_iso()
         report["status"] = "dismissed" if decision == "dismiss" else "resolved"

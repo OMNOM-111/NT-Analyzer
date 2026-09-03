@@ -442,9 +442,12 @@ def test_social_soft_delete_and_owner_moderation_queue(community_store):
     assert stored["deleted_at_utc"] and stored["moderated"] is True
     assert community.social_moderation_queue(status="resolved")["reports"][0]["resolution"] == "remove"
 
+    # Permanent record: the author's own publication has no delete at all.
     own = community.create_social_post(42, text="Own post")["post"]
-    deleted = community.delete_social_post(42, own["post_id"])
-    assert deleted == {"ok": True, "post_id": own["post_id"], "deleted": True, "soft_delete": True}
+    with pytest.raises(community.CommunityError) as own_delete:
+        community.delete_social_post(42, own["post_id"])
+    assert own_delete.value.status == 403
+    assert community.social_profile(42, alice["profile_id"])["posts"]
     assert alice["profile_id"]
 
 
