@@ -4406,3 +4406,23 @@ body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
 }
 .tb-brand-mark .sf-chat-mark { min-width: 34px; width: 34px; height: 22px; }
 @media (max-width: 760px) { .tb-brand-mark { display: none; } }
+
+/* Company page: the same centre layout a member wall uses, so the reader keeps
+   one mental model. Only the identity chrome differs. */
+.community-org-avatar {
+  display: inline-flex; align-items: center; justify-content: center;
+  margin: -46px 0 0 28px;
+  border: 1px solid rgba(104, 196, 255, .4);
+  background: linear-gradient(150deg, #10314f, #061423);
+  color: #7fd4ff; font-weight: 750; letter-spacing: .08em;
+}
+.community-publish-as {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--tx-3); font-size: 9.5px; font-weight: 700;
+}
+.community-publish-as[hidden] { display: none; }
+.community-publish-as select {
+  min-height: 25px; padding: 0 6px;
+  border: 1px solid var(--line-2); border-radius: 8px;
+  background: var(--bg-1); color: var(--tx); font: inherit; font-size: 10px;
+}

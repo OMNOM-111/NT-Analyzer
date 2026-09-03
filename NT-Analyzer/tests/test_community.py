@@ -628,3 +628,150 @@ def test_visibility_values_are_validated_server_side():
         assert community.create_social_post(6005, text=f"v-{value}", visibility=value)["post"]
     with pytest.raises(community.CommunityError):
         community.create_social_post(6005, text="bad", visibility="everyone")
+
+
+@pytest.fixture()
+def company(monkeypatch):
+    """The StratForge owner, their profile, and the StratForge AI page."""
+    monkeypatch.setattr(
+        account_auth, "find_active_user",
+        lambda uid: {"user_id": int(uid), "status": "active", "is_owner": int(uid) == 7001,
+                     "created_at_utc": "2026-08-18T17:36:05Z",
+                     "approved_at_utc": "2026-08-18T17:36:05Z"},
+    )
+    owner = community.ensure_social_profile(
+        7001, display_name="Platform Owner", username="platform_owner",
+    )["profile"]
+    editor = community.ensure_social_profile(
+        7002, display_name="Company Editor", username="company_editor",
+    )["profile"]
+    outsider = community.ensure_social_profile(
+        7003, display_name="Plain Member", username="plain_member",
+    )["profile"]
+    doc = community._load()
+    org = community._org_row(doc, community.DEFAULT_ORG_HANDLE)
+    return {"owner": owner, "editor": editor, "outsider": outsider, "org": dict(org or {})}
+
+
+def test_the_platform_owner_owns_the_company_page_without_a_second_account(company):
+    """The organization is a publishing identity, not a login."""
+    org = company["org"]
+    assert org, "the StratForge AI page is created for the platform owner"
+    assert org["name"] == "StratForge AI" and org["handle"] == "stratforge_ai"
+    assert org["owner_profile_id"] == company["owner"]["profile_id"]
+    assert org["ai_publishing_enabled"] is False
+    assert org["ai_publisher_agent_ids"] == []
+
+    # It is not a member: it never appears among profiles, and it has no account.
+    profiles = community._load().get("profiles") or []
+    assert all(str(row.get("profile_id")) != org["org_id"] for row in profiles)
+    assert all("org_id" not in row for row in profiles)
+
+    # Created once, whoever asks and however often.
+    for _ in range(3):
+        community.ensure_social_profile(7001, display_name="Platform Owner",
+                                        username="platform_owner")
+    assert len(community._load().get("organizations") or []) == 1
+
+
+def test_only_owner_and_editors_may_publish_as_the_company(company):
+    org_id = company["org"]["org_id"]
+
+    owned = community.create_social_post(7001, text="От компании", publish_as=org_id)["post"]
+    assert owned["author"]["identity_kind"] == "organization"
+    assert owned["author"]["display_name"] == "StratForge AI"
+
+    # A plain member cannot borrow the company identity.
+    with pytest.raises(community.CommunityError) as refused:
+        community.create_social_post(7003, text="Не моё", publish_as=org_id)
+    assert refused.value.status == 403
+
+    # An editor appointed by the owner can.
+    community.update_organization(7001, org_id, editors=[company["editor"]["profile_id"]])
+    edited = community.create_social_post(7002, text="От редактора", publish_as=org_id)["post"]
+    assert edited["author"]["identity_kind"] == "organization"
+
+    # An editor still cannot re-assign roles.
+    with pytest.raises(community.CommunityError) as denied:
+        community.update_organization(7002, org_id, editors=[])
+    assert denied.value.status == 403
+
+
+def test_publisher_and_actor_are_recorded_separately(company):
+    org_id = company["org"]["org_id"]
+    post = community.create_social_post(7001, text="Аудит", publish_as=org_id)["post"]
+
+    assert post["author"]["display_name"] == "StratForge AI"
+    assert post["attribution"]["published_by_profile_id"] == company["owner"]["profile_id"]
+    assert post["attribution"]["published_by"] == "Platform Owner"
+    assert post["attribution"]["is_ai"] is False
+    assert post["attribution"]["published_by_ai_agent"] == ""
+
+
+def test_ai_publishing_is_refused_until_it_is_explicitly_permitted(company):
+    """No AI may publish as the company while the flow is off — and an agent is
+    never recorded as a person."""
+    org_id = company["org"]["org_id"]
+    with pytest.raises(community.CommunityError) as exc:
+        community.create_social_post(7001, text="AI draft", publish_as=org_id,
+                                     ai_agent_id="vitek")
+    assert exc.value.status == 403
+
+
+def test_company_posts_live_on_the_company_wall_not_the_actor_wall(company):
+    org_id = company["org"]["org_id"]
+    personal = community.create_social_post(7001, text="Личное")["post"]
+    corporate = community.create_social_post(7001, text="Компания", publish_as=org_id)["post"]
+
+    own_wall = [row["post_id"] for row in
+                community.social_profile(7001, company["owner"]["profile_id"])["posts"]]
+    company_wall = [row["post_id"] for row in
+                    community.organization_document(7001, org_id)["posts"]]
+
+    assert personal["post_id"] in own_wall and corporate["post_id"] not in own_wall
+    assert corporate["post_id"] in company_wall and personal["post_id"] not in company_wall
+
+
+def test_company_visibility_follows_the_same_recommendation_contract(company):
+    org_id = company["org"]["org_id"]
+    public = community.create_social_post(7001, text="Публично от компании",
+                                          publish_as=org_id, visibility="network")["post"]
+    private = community.create_social_post(7001, text="Внутреннее",
+                                           publish_as=org_id, visibility="private")["post"]
+
+    feed = [row["post_id"] for row in community.social_feed(7003)["posts"]]
+    assert public["post_id"] in feed
+    assert private["post_id"] not in feed
+
+    owner_feed = [row["post_id"] for row in community.social_feed(7001)["posts"]]
+    assert private["post_id"] not in owner_feed
+
+    wall = [row["post_id"] for row in community.organization_document(7001, org_id)["posts"]]
+    assert private["post_id"] in wall
+
+
+def test_publishable_identities_are_offered_only_to_those_with_the_right(company):
+    org_id = company["org"]["org_id"]
+    owner_kinds = [row["identity_kind"] for row in
+                   community.publishable_identities(7001)["identities"]]
+    outsider_kinds = [row["identity_kind"] for row in
+                      community.publishable_identities(7003)["identities"]]
+    assert owner_kinds == ["profile", "organization"]
+    assert outsider_kinds == ["profile"]
+
+    community.update_organization(7001, org_id, editors=[company["editor"]["profile_id"]])
+    editor_kinds = [row["identity_kind"] for row in
+                    community.publishable_identities(7002)["identities"]]
+    assert editor_kinds == ["profile", "organization"]
+
+
+def test_company_milestone_uses_the_page_creation_date_not_an_account(company):
+    org_id = company["org"]["org_id"]
+    doc = community.organization_document(7001, org_id)
+    milestone = doc["registration"]
+    assert milestone["kind"] == "organization_created"
+    assert milestone["created_at_utc"] == company["org"]["created_at_utc"]
+    # Distinct from the owner's own account registration.
+    own = community.social_profile(7001, company["owner"]["profile_id"])["registration"]
+    assert own["kind"] == "registration"
+    assert milestone["created_at_utc"] != own["registered_at_utc"]

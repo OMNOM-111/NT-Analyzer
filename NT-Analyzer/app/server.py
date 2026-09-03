@@ -6788,6 +6788,34 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(exc.status, str(exc))
             return
 
+        if path == "/api/community/v2/identities":
+            try:
+                actor = self._community_actor()
+                community.ensure_social_profile(**actor)
+                self._json(HTTPStatus.OK, community.publishable_identities(
+                    actor["user_id"], user_uuid=actor["user_uuid"],
+                ))
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path.startswith("/api/community/v2/organizations/"):
+            org_id = path.rsplit("/", 1)[-1]
+            try:
+                posts_limit = int((qs.get("posts_limit") or ["20"])[0])
+            except (TypeError, ValueError):
+                posts_limit = 20
+            try:
+                actor = self._community_actor()
+                community.ensure_social_profile(**actor)
+                self._json(HTTPStatus.OK, community.organization_document(
+                    actor["user_id"], org_id, user_uuid=actor["user_uuid"],
+                    posts_limit=posts_limit,
+                ))
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
         if path.startswith("/api/community/v2/profiles/"):
             profile_id = path.rsplit("/", 1)[-1]
             try:
@@ -10145,6 +10173,40 @@ class Handler(BaseHTTPRequestHandler):
                     workspace_id=str(context.get("workspace_id") or ""),
                     user_uuid=actor["user_uuid"],
                     idempotency_key=str(self.headers.get("Idempotency-Key") or ""),
+                    publish_as=str(body.get("publish_as") or ""),
+                ))
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/community/v2/organizations/follow":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            try:
+                actor = self._community_actor()
+                community.ensure_social_profile(**actor)
+                self._json(HTTPStatus.OK, community.follow_organization(
+                    actor["user_id"], str(body.get("org_id") or ""),
+                    following=bool(body.get("following", True)),
+                    user_uuid=actor["user_uuid"],
+                ))
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        if path == "/api/community/v2/organizations/update":
+            if not self._check_local_post():
+                return
+            body = self._read_body() or {}
+            try:
+                actor = self._community_actor()
+                community.ensure_social_profile(**actor)
+                self._json(HTTPStatus.OK, community.update_organization(
+                    actor["user_id"], str(body.get("org_id") or ""),
+                    user_uuid=actor["user_uuid"],
+                    description=body.get("description"),
+                    editors=body.get("editors"),
                 ))
             except community.CommunityError as exc:
                 self._err(exc.status, str(exc))

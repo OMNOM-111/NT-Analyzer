@@ -8,7 +8,8 @@
     feed: null, profiles: [], viewer: null, pendingPostFiles: [],
     wallTab: 'posts', wallRequest: 0, wallSavedCount: 0,
     channel: 'general', channelFeed: null, threadRootId: '', pendingChannelFiles: [],
-    centerMode: 'stream', openProfileId: '', loadMoreVisible: false,
+    centerMode: 'stream', openProfileId: '', openOrgId: '', loadMoreVisible: false,
+    identities: [],
   };
   // The centre column's heading, reused by the back control so it names the
   // stream the reader actually came from.
@@ -226,7 +227,7 @@
     const comments = (post.recent_comments || []).map(commentHtml).join('');
     return `<article id="community-post-${esc(domId(post.post_id))}" class="community-post-card ${surface === 'wall' ? 'community-post-compact' : ''}" data-post-id="${esc(post.post_id)}" data-viewer-reaction="${esc(active)}">
       <header class="community-post-head">
-        <button type="button" class="community-post-author" data-profile="${esc(author.profile_id || '')}">${avatar(author, '')}<span><strong>${esc(author.display_name || 'Участник')}</strong><small>@${esc(author.username || '')} · ${esc(author.role_label || '')}</small></span></button>
+        <button type="button" class="community-post-author" ${author.identity_kind === 'organization' ? `data-org="${esc(author.org_id || '')}"` : `data-profile="${esc(author.profile_id || '')}"`}>${avatar(author, '')}<span><strong>${esc(author.display_name || 'Участник')}</strong><small>@${esc(author.username || '')} · ${esc(author.role_label || '')}</small></span></button>
         <div class="community-post-meta"><time>${esc(fmtDate(post.created_at_utc))}</time><span title="Видимость">${post.visibility === 'followers' ? '◎' : '◉'}</span>${post.can_delete ? `<button type="button" data-delete-post="${esc(post.post_id)}" title="Удалить публикацию">×</button>` : `<button type="button" data-report-post="${esc(post.post_id)}" title="Пожаловаться">•••</button>`}</div>
       </header>
       ${post.text ? `<div class="community-post-text">${esc(post.text)}</div>` : ''}
@@ -244,6 +245,9 @@
   }
 
   function wirePeopleActions(root) {
+    qa('[data-org]', root).forEach(button => {
+      button.onclick = () => openOrganization(button.dataset.org);
+    });
     qa('[data-profile]', root).forEach(button => {
       button.onclick = () => { const id = button.dataset.profile; if (id) openProfile(id); };
     });
@@ -479,6 +483,30 @@
   // Exactly one composer exists, and it lives on the member's own wall. The
   // control is a two-state radio group rather than a settings row: the reader
   // is choosing where this post goes, not configuring the product.
+  // The selector appears only when the server reports an identity the caller
+  // may publish as beyond their own profile. A member without company rights
+  // never sees it, and the server checks the permission again on publish.
+  async function loadPublishIdentities() {
+    const wrap = q('#community-publish-as-wrap');
+    const select = q('#community-publish-as');
+    if (!wrap || !select) return;
+    try {
+      const doc = await API.http.communityV2Identities();
+      const rows = (doc && doc.identities) || [];
+      STATE.identities = rows;
+      const extra = rows.filter(row => row.identity_kind !== 'profile');
+      if (!extra.length) { wrap.hidden = true; select.innerHTML = ''; return; }
+      select.innerHTML = rows.map(row => `<option value="${esc(row.identity_kind === 'organization' ? row.id : '')}">${esc(row.identity_kind === 'organization' ? row.display_name : 'Мой профиль')}</option>`).join('');
+      wrap.hidden = false;
+    } catch (error) {
+      // Not being able to ask is not a reason to offer the choice.
+      wrap.hidden = true;
+    }
+  }
+  function composerPublishAs() {
+    const select = q('#community-publish-as');
+    return select && !q('#community-publish-as-wrap').hidden ? String(select.value || '') : '';
+  }
   function composerVisibility() {
     const active = q('[data-post-visibility].active');
     const value = active ? String(active.dataset.postVisibility || '') : '';
@@ -507,12 +535,15 @@
       // company identity be added later without moving the publish path.
       await API.http.communityV2Post({
         text, attachments: STATE.pendingPostFiles, visibility: composerVisibility(),
+        publish_as: composerPublishAs(),
       });
       if (input) input.value = '';
       STATE.pendingPostFiles = []; renderPending('post');
       // The post belongs to my wall either way; Recommendation only refreshes
       // because a public post may now be eligible for it.
-      await loadWall();
+      const publishedAs = composerPublishAs();
+      if (publishedAs) { if (STATE.openOrgId === publishedAs) await openOrganization(publishedAs); }
+      else await loadWall();
       if (composerVisibility() === 'network') { STATE.view = 'for-you'; syncViewButtons(); await loadFeed(true); }
       UI.toast(composerVisibility() === 'network'
         ? 'Опубликовано на вашей стене и в SF Link'
@@ -639,11 +670,69 @@
       + '<div class="community-milestone-facts">' + facts.join('') + '</div>'
       + '</article>';
   }
+  // An organization opens in the centre exactly like a member, so the reader
+  // keeps one mental model and the right column keeps belonging to them.
+  async function openOrganization(orgId) {
+    if (!orgId) return;
+    const host = q('#community-profile-detail-center');
+    if (!host) return;
+    STATE.openOrgId = orgId; STATE.openProfileId = '';
+    setCenterMode('profile');
+    const backLabel = q('#community-profile-back-label');
+    if (backLabel) backLabel.textContent = STREAM_TITLES[STATE.view] || 'Recommendation';
+    host.innerHTML = '<div class="community-skeleton profile"></div>';
+    try {
+      const doc = await API.http.communityV2Organization(orgId, { posts_limit: 30 });
+      if (STATE.openOrgId !== orgId) return;
+      const org = doc.organization || {};
+      const stats = org.stats || {};
+      const follow = '<button type="button" class="btn ' + (org.is_following ? 'ghost' : 'primary')
+        + '" data-follow-org="' + esc(org.org_id) + '" data-following="' + (org.is_following ? '1' : '0')
+        + '">' + (org.is_following ? 'Вы читаете' : 'Подписаться') + '</button>';
+      const wall = (doc.posts || []).map(postHtml).join('')
+        || renderEmpty('На странице пока тихо', 'Публикации компании появятся здесь.');
+      host.innerHTML = '<div class="community-profile-hero"><div class="community-profile-cover"><span>SF</span></div>'
+        + '<div class="community-avatar xxl community-org-avatar" aria-hidden="true">SF</div>'
+        + '<div class="community-profile-identity"><span class="community-role">Организация</span>'
+        + '<h2 id="community-profile-name">' + esc(org.display_name) + '</h2>'
+        + '<span>@' + esc(org.username) + '</span>'
+        + '<p>' + esc(org.description || 'Описание пока не заполнено.') + '</p>'
+        + '<div class="community-profile-stats">'
+        + '<span><small>Публикации</small><strong>' + shortNumber(stats.posts) + '</strong></span>'
+        + '<span><small>Подписчики</small><strong>' + shortNumber(stats.followers) + '</strong></span>'
+        + '<span><small>Редакторы</small><strong>' + shortNumber(stats.editors) + '</strong></span></div>'
+        + '<div class="community-profile-actions">' + follow + '</div></div></div>'
+        + '<div class="community-profile-wall"><h3>Стена ' + esc(org.display_name) + '</h3>'
+        + orgMilestoneHtml(doc.registration, org) + wall + '</div>';
+      wirePeopleActions(host); wirePostActions(host);
+      const followBtn = q('[data-follow-org]', host);
+      if (followBtn) followBtn.onclick = async () => {
+        followBtn.disabled = true;
+        try {
+          await API.http.communityV2FollowOrganization(org.org_id, followBtn.dataset.following !== '1');
+          await openOrganization(org.org_id);
+        } catch (error) { UI.reportError(error); followBtn.disabled = false; }
+      };
+    } catch (error) { UI.renderError(host, error, () => openOrganization(orgId)); }
+  }
+  // The organization's own first record: when the page was created, which is
+  // not when anybody registered an account.
+  function orgMilestoneHtml(registration, org) {
+    if (!registration || !registration.created_at_utc) return '';
+    return '<article class="community-milestone" aria-label="Системная запись">'
+      + '<header><span class="community-milestone-mark" aria-hidden="true">◈</span>'
+      + '<div><strong>' + esc(org.display_name) + ' — официальная страница создана</strong>'
+      + '<small>Системная запись · StratForge</small></div>'
+      + '<span class="community-milestone-tag">Защищённая запись</span></header>'
+      + '<div class="community-milestone-facts"><span><small>Дата создания</small><strong>'
+      + esc(fmtDate(registration.created_at_utc)) + '</strong></span></div>'
+      + '</article>';
+  }
   async function openProfile(profileId) {
     if (!profileId) return;
     const host = q('#community-profile-detail-center');
     if (!host) return;
-    STATE.openProfileId = profileId;
+    STATE.openProfileId = profileId; STATE.openOrgId = '';
     setCenterMode('profile');
     const backLabel = q('#community-profile-back-label');
     if (backLabel) backLabel.textContent = STREAM_TITLES[STATE.view] || 'Recommendation';
@@ -680,7 +769,7 @@
     } catch (error) { UI.renderError(host, error, () => openProfile(profileId)); }
   }
   function closeProfile() {
-    STATE.openProfileId = '';
+    STATE.openProfileId = ''; STATE.openOrgId = '';
     setCenterMode(STATE.view === 'channels' ? 'channels' : 'stream');
     syncModalLock();
   }
@@ -817,6 +906,7 @@
     });
     q('#community-post-submit').onclick = submitPost;
     wireComposerVisibility();
+    loadPublishIdentities();
     const resultButton = q('[data-community-object="result"]'); if (resultButton) resultButton.onclick = openResultPublisher;
     q('#community-load-more').onclick = () => loadFeed(false);
     q('#community-post-files').onchange = async event => { try { await readImages(event.target.files, 'post'); } catch (error) { UI.reportError(error); } finally { event.target.value = ''; } };

@@ -88,6 +88,10 @@
               <label class="community-action" for="community-post-files" title="PNG, JPEG или WebP до 2 МБ"><span>⌕</span>Файл</label>
               <input id="community-post-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
               <div class="community-compose-spacer"></div>
+              <label class="community-publish-as" id="community-publish-as-wrap" hidden>
+                <span>Публиковать как</span>
+                <select id="community-publish-as" aria-label="Публиковать как"></select>
+              </label>
               <div class="community-visibility-toggle" role="radiogroup" aria-label="Видимость публикации">
                 <button type="button" class="active" role="radio" aria-checked="true" data-post-visibility="network" title="Виден в SF Link и может попасть в Recommendation"><span aria-hidden="true">◉</span>Публично</button>
                 <button type="button" role="radio" aria-checked="false" data-post-visibility="private" title="Остаётся только на вашей стене"><span aria-hidden="true">◇</span>Только на моей странице</button>
