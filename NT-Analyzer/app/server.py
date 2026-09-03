@@ -325,6 +325,19 @@ _SELF_SERVICE_POSTS = {
 }
 
 
+# A pending browser session is authenticated only far enough to complete its
+# own confirmation ceremony. Keep this exact-path allowlist small: prefix
+# matching here would silently expose every future account route.
+_DEVICE_CONFIRMATION_ALLOWLIST = frozenset({
+    ("POST", "/api/account/security/challenge"),
+    ("POST", "/api/account/security/challenge/resend"),
+    ("POST", "/api/account/security/challenge/confirm"),
+    ("POST", "/api/account/devices/approve"),
+    ("POST", "/api/account/devices/reject"),
+    ("POST", "/api/auth/logout"),
+})
+
+
 def _is_self_service_post(path: str) -> bool:
     """POSTs a read-only account may perform on its own behalf."""
     return (
@@ -2627,12 +2640,13 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return ""
 
-    def _set_session_cookie(self, token: str) -> None:
+    def _set_session_cookie(self, token: str, *, persistent: bool = True) -> None:
         secure = self._is_remote_api_request() or str(self.headers.get("X-Forwarded-Proto") or "").lower() == "https"
         # Canary uses an isolated cookie so cross-environment tokens are never
         # accepted; Development/Production keep the canonical name.
+        max_age = f"; Max-Age={account_auth.SESSION_TTL_SEC}" if persistent else ""
         value = (
-            f"{runtime_env.session_cookie_name()}={token}; Path=/; Max-Age={account_auth.SESSION_TTL_SEC}; "
+            f"{runtime_env.session_cookie_name()}={token}; Path=/{max_age}; "
             f"HttpOnly; SameSite=Strict" + ("; Secure" if secure else "")
         )
         self._extra_headers.append(("Set-Cookie", value))
@@ -3135,6 +3149,50 @@ class Handler(BaseHTTPRequestHandler):
             )
         return False
 
+    def _enforce_device_confirmation(self, path: str, context: Dict[str, Any]) -> bool:
+        """Fail closed before workspace, permission or business-route work."""
+        if not context.get("session_id"):
+            # A Telegram Mini App request is still a browser/client access. It
+            # must first call /api/auth/status, which mints a pending session;
+            # raw initData alone must not bypass device confirmation.
+            if context.get("source") == telegram_remote.SOURCE:
+                self._err(
+                    HTTPStatus.FORBIDDEN,
+                    "Откройте экран подтверждения нового доступа.",
+                    code="DEVICE_CONFIRMATION_REQUIRED",
+                )
+                return False
+            # Local owner/service contexts and service-to-service callers have
+            # their own explicit authentication boundary and are not browser
+            # sessions.
+            return True
+        # Contexts produced by sessions issued before this rollout do not have
+        # either confirmation field. account_auth deliberately grandfathers
+        # only those already-issued sessions until their original expiry; keep
+        # the request guard aligned with that bounded compatibility rule.
+        if ("device_confirmation_state" not in context
+                and "device_confirmation_required" not in context):
+            return True
+        state = str(context.get("device_confirmation_state") or "")
+        if state == "active" or context.get("device_trust_mode") == "exempt":
+            return True
+        if state == "expired":
+            self._clear_session_cookie()
+            self._err(
+                HTTPStatus.UNAUTHORIZED,
+                "Время подтверждения доступа истекло. Войдите снова.",
+                code="device_confirmation_expired",
+            )
+            return False
+        if (self.command.upper(), str(path or "")) in _DEVICE_CONFIRMATION_ALLOWLIST:
+            return True
+        self._err(
+            HTTPStatus.FORBIDDEN,
+            "Подтвердите новый доступ, прежде чем продолжить.",
+            code="DEVICE_CONFIRMATION_REQUIRED",
+        )
+        return False
+
     def _authorize_api(self, path: str) -> bool:
         # Internal owner market-data consumers authenticate with a shared
         # token on chart endpoints only.  This never grants Admin, Documents
@@ -3206,7 +3264,10 @@ class Handler(BaseHTTPRequestHandler):
                         "session_id", "device_id", "csrf_hash", "csrf_token",
                         "nt_elevated_until", "impersonating",
                         "impersonator_owner_id", "impersonation_started_at_utc",
-                        "impersonation_preset",
+                        "impersonation_preset", "trusted_device_id",
+                        "physical_device_id", "device_confirmation_state",
+                        "device_confirmation_required", "device_trust_mode",
+                        "pending_expires_at", "device_access",
                     ):
                         if key in browser_session:
                             self._remote_context[key] = browser_session[key]
@@ -3225,6 +3286,14 @@ class Handler(BaseHTTPRequestHandler):
                 if account:
                     self._remote_context["user"] = account_auth._public_user(
                         account, include_contact=True)
+                if not Handler._enforce_device_confirmation(self, path, self._remote_context):
+                    return False
+                if (str(self._remote_context.get("device_confirmation_state") or "") == "pending"
+                        or bool(self._remote_context.get("device_confirmation_required"))):
+                    # Pending sessions are authorized only for the exact
+                    # confirmation allowlist above. Do not load workspace,
+                    # permissions or any business subsystem for that bootstrap.
+                    return True
                 self._remote_context = self._decorate_workspace_context(self._remote_context)
                 method = self.command.upper()
                 admin_route = bool(permissions.required_admin_capability(path, method))
@@ -3281,8 +3350,25 @@ class Handler(BaseHTTPRequestHandler):
         except account_auth.AccountAuthError as exc:
             self._err(exc.status, str(exc), code=getattr(exc, "code", "") or ""); return False
         if not context:
-            self._err(HTTPStatus.UNAUTHORIZED, "Требуется вход через Telegram.")
+            failure = account_auth.session_auth_failure(
+                self._cookie_value(runtime_env.session_cookie_name())
+            )
+            if failure:
+                self._clear_session_cookie()
+                self._err(
+                    HTTPStatus.UNAUTHORIZED,
+                    str(failure.get("error") or "Сессия завершена."),
+                    code=str(failure.get("code") or ""),
+                )
+            else:
+                self._err(HTTPStatus.UNAUTHORIZED, "Требуется вход через Telegram.")
             return False
+        if not Handler._enforce_device_confirmation(self, path, context):
+            return False
+        if (str(context.get("device_confirmation_state") or "") == "pending"
+                or bool(context.get("device_confirmation_required"))):
+            self._remote_context = context
+            return True
         context = self._decorate_workspace_context(context)
         method = self.command.upper()
         admin_route = bool(permissions.required_admin_capability(path, method))
@@ -3557,6 +3643,9 @@ class Handler(BaseHTTPRequestHandler):
                         "authenticated": True, "source": context.get("source"),
                         "role": context.get("role"), "is_owner": bool(context.get("is_owner")),
                         "csrf_token": "", "user": context.get("user") or {},
+                        "device_access": {
+                            "required": False, "state": "active", "trust_mode": "exempt",
+                        },
                         "workspaces": context.get("workspaces") or [],
                         "active_workspace": context.get("active_workspace") or {},
                         "active_membership": context.get("active_membership") or {},
@@ -3570,26 +3659,47 @@ class Handler(BaseHTTPRequestHandler):
             context = None
             if init_data:
                 tunnel_ip, forwarded_ip = self._request_ips()
-                context = telegram_remote.authorize(
+                telegram_context = telegram_remote.authorize(
                     init_data, str(os.environ.get(telegram_service.TOKEN_ENV) or ""),
                     method="GET", path="/api/auth/status", tunnel_ip=tunnel_ip,
                     forwarded_ip=forwarded_ip,
                 )
-                user = account_auth.find_active_user(context.get("user_id"))
-                context["user"] = account_auth._public_user(user or {}, include_contact=True)
-                context["role"] = str((user or {}).get("role") or context.get("role") or "read_only")
-                context["is_owner"] = bool((user or {}).get("is_owner"))
-                # Record the Mini App session for the admin login history (throttled
-                # so repeated status polls during one session don't spam the log).
-                account_auth.record_login(
-                    context.get("user_id"), source=telegram_remote.SOURCE,
-                    ip=forwarded_ip or tunnel_ip,
-                    user_agent=str(self.headers.get("User-Agent") or ""),
-                    throttle_sec=6 * 3600)
+                user = account_auth.find_active_user(telegram_context.get("user_id"))
+                browser_session = account_auth.authenticate_session(
+                    self._cookie_value(runtime_env.session_cookie_name())
+                )
+                if (browser_session and user
+                        and int(browser_session.get("user_id") or 0) == int(user.get("user_id") or 0)
+                        and str(browser_session.get("user_uuid") or "") == account_auth._user_uuid(user)):
+                    context = browser_session
+                elif user:
+                    # Telegram initData proves the account identity, but it does
+                    # not prove this browser/client. Mint the same pending,
+                    # five-minute browser session used by the other login paths.
+                    issued = account_auth.create_session_for_user(
+                        user.get("user_id"), ip=forwarded_ip or tunnel_ip,
+                        user_agent=str(self.headers.get("User-Agent") or ""),
+                        source=telegram_remote.SOURCE, require_google=False,
+                        skip_dual_auth_gate=True,
+                        device_credential=self._device_credential(),
+                        device_confirmation_required=True,
+                    )
+                    token = str(issued.pop("session_token", ""))
+                    if token:
+                        self._set_session_cookie(
+                            token,
+                            persistent=bool(issued.get("session_cookie_persistent")),
+                        )
+                    context = account_auth.authenticate_session(token)
+                else:
+                    # Preserve the pre-registration Telegram bootstrap. No
+                    # protected API accepts this context as a browser session.
+                    context = telegram_context
+                    context["user"] = {}
+                    context["role"] = str(context.get("role") or "read_only")
+                    context["is_owner"] = False
             else:
                 context = account_auth.authenticate_session(self._cookie_value(runtime_env.session_cookie_name()))
-            if context:
-                context = self._decorate_workspace_context(context)
             if not context:
                 failure = account_auth.session_auth_failure(self._cookie_value(runtime_env.session_cookie_name()))
                 if failure:
@@ -3611,11 +3721,50 @@ class Handler(BaseHTTPRequestHandler):
                     "providers": self._auth_providers_payload()["providers"],
                 })
                 return
+            if (context.get("session_id")
+                    and context.get("device_trust_mode") != "exempt"
+                    and context.get("trusted_device_id")):
+                access = security_devices.current_session_access(
+                    context.get("user_id"), str(context.get("session_id") or ""),
+                )
+                context["device_access"] = access
+                context["device_confirmation_state"] = access.get("state")
+                context["device_confirmation_required"] = bool(access.get("required"))
+                context["device_trust_mode"] = str(access.get("trust_mode") or "")
+                if access.get("state") == "expired":
+                    self._clear_session_cookie()
+                    self._json(HTTPStatus.UNAUTHORIZED, {
+                        "error": "Время подтверждения доступа истекло. Войдите снова.",
+                        "code": "device_confirmation_expired",
+                        "authenticated": False,
+                    })
+                    return
+                if access.get("required"):
+                    # Deliberately omit workspaces, permissions and business
+                    # state. This is the complete bootstrap surface available
+                    # to a pending client.
+                    self._json(HTTPStatus.OK, {
+                        "authenticated": True,
+                        "source": context.get("source"),
+                        "role": context.get("role"),
+                        "is_owner": bool(context.get("is_owner")),
+                        "csrf_token": str(context.get("csrf_token") or ""),
+                        "user": context.get("user") or {},
+                        "device_access": access,
+                        "providers": self._auth_providers_payload()["providers"],
+                    })
+                    return
+            else:
+                context["device_access"] = {
+                    "required": False, "state": "active", "trust_mode": "exempt",
+                }
+            context = self._decorate_workspace_context(context)
             payload = {
                 "authenticated": True, "source": context.get("source"),
                 "role": context.get("role"), "is_owner": bool(context.get("is_owner")),
                 "csrf_token": str(context.get("csrf_token") or ""),
                 "user": context.get("user") or {},
+                "device_access": context.get("device_access") or {},
                 "workspaces": context.get("workspaces") or [],
                 "active_workspace": context.get("active_workspace") or {},
                 "active_membership": context.get("active_membership") or {},
@@ -3867,7 +4016,10 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 token = str(out.pop("session_token", ""))
                 if token:
-                    self._set_session_cookie(token)
+                    self._set_session_cookie(
+                        token,
+                        persistent=bool(out.get("session_cookie_persistent")),
+                    )
                     suffix = "google_login=1"
                 else:
                     suffix = "auth_challenge=" + urllib.parse.quote(str(out.get("challenge_id") or ""))
@@ -4212,7 +4364,10 @@ class Handler(BaseHTTPRequestHandler):
                     device_credential=self._device_credential(),
                 )
                 if out.get("status") == "authenticated":
-                    self._set_session_cookie(str(out.pop("session_token")))
+                    self._set_session_cookie(
+                        str(out.pop("session_token")),
+                        persistent=bool(out.get("session_cookie_persistent")),
+                    )
                     # An actual login releases the LOCAL "stay signed out" hold.
                     self._clear_dev_preview_mode_cookie()
             elif path == "/api/auth/profile":
@@ -4243,7 +4398,10 @@ class Handler(BaseHTTPRequestHandler):
                     api_call=telegram_service._api_call, owner_chat_id=owner_id,
                 )
                 if out.get("status") == "authenticated":
-                    self._set_session_cookie(str(out.pop("session_token")))
+                    self._set_session_cookie(
+                        str(out.pop("session_token")),
+                        persistent=bool(out.get("session_cookie_persistent")),
+                    )
             elif path == "/api/auth/test/google-login":
                 runtime_env.require_test_auth()
                 identity = google_auth.fake_identity(
@@ -4261,7 +4419,10 @@ class Handler(BaseHTTPRequestHandler):
                     api_call=telegram_service._api_call, owner_chat_id=owner_id,
                 )
                 if out.get("status") == "authenticated":
-                    self._set_session_cookie(str(out.pop("session_token")))
+                    self._set_session_cookie(
+                        str(out.pop("session_token")),
+                        persistent=bool(out.get("session_cookie_persistent")),
+                    )
             else:
                 self._err(HTTPStatus.NOT_FOUND, f"no auth route: {path}"); return
             self._json(HTTPStatus.OK, out)
@@ -4278,14 +4439,17 @@ class Handler(BaseHTTPRequestHandler):
         """
         routes = {
             "/api/account/security/challenge",
+            "/api/account/security/challenge/resend",
             "/api/account/security/challenge/confirm",
             "/api/account/devices/approve",
             "/api/account/devices/reject",
             "/api/account/devices/revoke",
+            "/api/account/devices/rename",
             # Machine level. Separate routes from the client ones on purpose:
             # revoking a machine cascades to every client on it, and that must
             # never be reachable by an extra flag on the client route.
             "/api/account/machines/revoke",
+            "/api/account/machines/rename",
             "/api/account/machines/pair",
             "/api/account/machines/pair/redeem",
             "/api/account/sessions/revoke",
@@ -4303,6 +4467,31 @@ class Handler(BaseHTTPRequestHandler):
             return
         context = getattr(self, "_remote_context", None) or {}
         user_id = context.get("user_id")
+        pending_access = (
+            str(context.get("device_confirmation_state") or "") == "pending"
+            or bool(context.get("device_confirmation_required"))
+        )
+        if pending_access:
+            own_client_id = str(context.get("trusted_device_id") or "")
+            if (path == "/api/account/security/challenge"
+                    and str(body.get("purpose") or "") != security_devices.PURPOSE_DEVICE_CONFIRM):
+                self._err(
+                    HTTPStatus.FORBIDDEN,
+                    "До подтверждения доступен только код для текущего клиента.",
+                    code="DEVICE_CONFIRMATION_REQUIRED",
+                )
+                return
+            if path in {
+                "/api/account/security/challenge",
+                "/api/account/devices/approve",
+                "/api/account/devices/reject",
+            } and str(body.get("device_id") or "") != own_client_id:
+                self._err(
+                    HTTPStatus.FORBIDDEN,
+                    "Сессия в ожидании может управлять только своим клиентом.",
+                    code="device_confirmation_target_mismatch",
+                )
+                return
         tunnel_ip, forwarded_ip = self._request_ips()
         ip = forwarded_ip or tunnel_ip
         try:
@@ -4312,8 +4501,17 @@ class Handler(BaseHTTPRequestHandler):
                     purpose=str(body.get("purpose") or ""),
                     device_id=str(body.get("device_id") or ""),
                     provider=str(body.get("provider") or ""),
+                    trust_mode=str(body.get("trust_mode") or ""),
+                    session_id=str(context.get("session_id") or ""),
                     ip=ip,
                     user_agent=str(self.headers.get("User-Agent") or ""),
+                )
+            elif path == "/api/account/security/challenge/resend":
+                out = security_devices.resend_challenge(
+                    user_id=user_id,
+                    challenge_id=str(body.get("challenge_id") or ""),
+                    session_id=str(context.get("session_id") or ""),
+                    ip=ip,
                 )
             elif path == "/api/account/security/challenge/confirm":
                 out = security_devices.confirm_challenge(
@@ -4321,6 +4519,7 @@ class Handler(BaseHTTPRequestHandler):
                     challenge_id=str(body.get("challenge_id") or ""),
                     code=str(body.get("code") or ""),
                     ip=ip,
+                    session_id=str(context.get("session_id") or ""),
                 )
             elif path == "/api/account/devices/approve":
                 out = security_devices.approve_device(
@@ -4329,6 +4528,8 @@ class Handler(BaseHTTPRequestHandler):
                     challenge_id=str(body.get("challenge_id") or ""),
                     code=str(body.get("code") or ""),
                     ip=ip,
+                    trust_mode=str(body.get("trust_mode") or ""),
+                    session_id=str(context.get("session_id") or ""),
                 )
             elif path == "/api/account/devices/reject":
                 out = security_devices.reject_device(
@@ -4342,10 +4543,24 @@ class Handler(BaseHTTPRequestHandler):
                     device_id=str(body.get("device_id") or ""),
                     ip=ip,
                 )
+            elif path == "/api/account/devices/rename":
+                out = security_devices.rename_device(
+                    user_id=user_id,
+                    device_id=str(body.get("device_id") or ""),
+                    display_name=str(body.get("display_name") or ""),
+                    ip=ip,
+                )
             elif path == "/api/account/machines/revoke":
                 out = security_devices.revoke_physical_device(
                     user_id=user_id,
                     physical_device_id=str(body.get("physical_device_id") or ""),
+                    ip=ip,
+                )
+            elif path == "/api/account/machines/rename":
+                out = security_devices.rename_physical_device(
+                    user_id=user_id,
+                    physical_device_id=str(body.get("physical_device_id") or ""),
+                    display_name=str(body.get("display_name") or ""),
                     ip=ip,
                 )
             elif path == "/api/account/machines/pair":
@@ -4372,6 +4587,13 @@ class Handler(BaseHTTPRequestHandler):
                 except account_auth.AccountAuthError as exc:
                     self._err(exc.status, str(exc), code="session_revoke_failed")
                     return
+            if out.get("session_cookie_persistent"):
+                # The same authenticated session changes from a temporary
+                # browser cookie to a persistent one only after permanent
+                # trust has been proved.
+                token = self._cookie_value(runtime_env.session_cookie_name())
+                if token:
+                    self._set_session_cookie(token, persistent=True)
             self._json(HTTPStatus.OK, out)
         except security_devices.SecurityDeviceError as exc:
             self._err(exc.status, str(exc), code=exc.code)
@@ -5783,7 +6005,10 @@ class Handler(BaseHTTPRequestHandler):
             context = getattr(self, "_remote_context", None) or {}
             try:
                 if path.endswith("/security"):
-                    payload = security_devices.account_security(context.get("user_id"))
+                    payload = security_devices.account_security(
+                        context.get("user_id"),
+                        current_session_id=str(context.get("session_id") or ""),
+                    )
                 elif path.endswith("/machines"):
                     payload = security_devices.list_physical_devices(context.get("user_id"))
                 else:

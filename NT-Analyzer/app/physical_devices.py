@@ -49,6 +49,7 @@ ACTIVE_STATUSES = (STATUS_PENDING, STATUS_TRUSTED)
 
 BOUND_VIA_CONNECTOR_SELF = "connector_self"
 BOUND_VIA_ATTESTED_PAIRING = "attested_pairing"
+BINDING_METHODS = (BOUND_VIA_CONNECTOR_SELF, BOUND_VIA_ATTESTED_PAIRING)
 
 # A pairing code is read off one screen and typed into another, so it is short
 # lived by design and single use. It is also the only path by which a browser
@@ -238,7 +239,7 @@ def bind_client(
     """Attach a client to a machine. The only two callers are the Connector
     registering itself and a redeemed pairing code -- there is deliberately no
     third way in."""
-    if bound_via not in (BOUND_VIA_CONNECTOR_SELF, BOUND_VIA_ATTESTED_PAIRING):
+    if bound_via not in BINDING_METHODS:
         raise PhysicalDeviceError("Недопустимый способ привязки.", 400, code="bind_via_invalid")
     client["physical_device_id"] = str(machine.get("physical_device_id") or "")
     client["bound_via"] = bound_via

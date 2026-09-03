@@ -246,6 +246,7 @@ def start_view_as(
         session = account_auth.create_session_for_user(
             actor, ip=ip, user_agent=user_agent, source="view_as_owner",
             skip_dual_auth_gate=True,
+            device_confirmation_required=False,
         )
         account_auth._audit("dev.view_as_started", user_id=actor, owner_id=actor,
                             extra={"persona": persona_id})
@@ -259,6 +260,7 @@ def start_view_as(
         uid, ip=ip, user_agent=user_agent, source="view_as",
         skip_dual_auth_gate=True, impersonator_owner_id=actor,
         impersonation_preset="dev_preview",
+        device_confirmation_required=False,
     )
     account_auth._audit("dev.view_as_started", user_id=uid, owner_id=actor,
                         extra={"persona": persona_id})
@@ -295,6 +297,7 @@ def exit_view_as(
     restored = account_auth.create_session_for_user(
         owner, ip=ip, user_agent=user_agent, source="view_as_return",
         skip_dual_auth_gate=True,
+        device_confirmation_required=False,
     )
     account_auth._audit("dev.view_as_ended", user_id=owner, owner_id=owner, extra={})
     return {"ok": True, "restored": True, "session_token": restored.get("session_token")}
@@ -328,6 +331,7 @@ def return_to_developer(*, ip: str = "127.0.0.1", user_agent: str = "dev-return"
     restored = account_auth.create_session_for_user(
         owner, ip=ip, user_agent=user_agent, source="view_as_return",
         skip_dual_auth_gate=True,
+        device_confirmation_required=False,
     )
     account_auth._audit("dev.view_as_ended", user_id=owner, owner_id=owner, extra={})
     return {"ok": True, "restored": True, "session_token": restored.get("session_token")}
@@ -419,6 +423,7 @@ def redeem_bootstrap_token(
     session = account_auth.create_session_for_user(
         owner, ip=ip, user_agent=user_agent, source="dev_bootstrap",
         skip_dual_auth_gate=True,
+        device_confirmation_required=False,
     )
     account_auth._audit("dev.bootstrap_redeemed", user_id=owner, owner_id=owner, extra={})
     return {"ok": True, "session_token": session.get("session_token"), "owner_id": owner}

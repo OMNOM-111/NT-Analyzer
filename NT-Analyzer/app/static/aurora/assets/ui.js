@@ -986,6 +986,313 @@
     const content = qs('.content'); if (content) obs.observe(content, { childList: true, subtree: true });
   }
 
+  function formatSecurityCountdown(totalSeconds) {
+    const seconds = Math.max(0, Math.ceil(Number(totalSeconds || 0)));
+    const min = Math.floor(seconds / 60);
+    return `${String(min).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  }
+
+  function trapDialogFocus(dialog, onEscape) {
+    const focusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
+    const onKey = (event) => {
+      if (event.key === 'Escape' && onEscape) { event.preventDefault(); onEscape(); return; }
+      if (event.key !== 'Tab') return;
+      const items = qsa(focusableSelector, dialog).filter(node => !node.hidden && node.offsetParent !== null);
+      if (!items.length) { event.preventDefault(); return; }
+      const first = items[0], last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    dialog.addEventListener('keydown', onKey);
+    return () => dialog.removeEventListener('keydown', onKey);
+  }
+
+  function renderDeviceConfirmationGate(auth, newsStrip) {
+    const content = qs('.content');
+    if (!content) return;
+    document.documentElement.classList.add('auth-locked');
+    if (newsStrip) newsStrip.hidden = true;
+    const access = auth.device_access || {};
+    const client = access.client || {};
+    const machine = access.machine || null;
+    const channels = Array.isArray(access.confirmation_channels) ? access.confirmation_channels : [];
+    const pendingDeadline = Date.parse(access.pending_expires_at_utc || '')
+      || (Date.now() + Number(access.pending_expires_in_sec || 0) * 1000);
+    let trustMode = '';
+    let challenge = null;
+    let pendingTick = null;
+    let challengeTick = null;
+    let resendReadyAt = 0;
+    let expired = false;
+
+    const stopTicks = () => {
+      if (pendingTick) clearInterval(pendingTick);
+      if (challengeTick) clearInterval(challengeTick);
+      pendingTick = null; challengeTick = null;
+    };
+    const logout = async (message) => {
+      stopTicks();
+      try { await API.http.authLogout(); } catch (_) { /* expiry may already invalidate it */ }
+      renderTelegramLogin(message || 'Сессия завершена. Войдите снова.');
+    };
+    const auditLine = () => {
+      const audit = client.audit || {};
+      return [audit.masked_ip ? `IP: ${esc(audit.masked_ip)}` : '', audit.location ? esc(audit.location) : '']
+        .filter(Boolean).join(' · ');
+    };
+    const shell = (inner, label) => {
+      content.innerHTML = `<div id="device-confirmation-gate" class="auth-screen device-confirmation-screen" role="dialog" aria-modal="true" aria-label="${esc(label)}">
+        <section class="device-confirmation-card">
+          <div class="auth-brand"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Защищённый доступ</span></div></div>
+          ${inner}
+        </section>
+      </div>`;
+      const dialog = qs('#device-confirmation-gate', content);
+      trapDialogFocus(dialog);
+      requestAnimationFrame(() => (qs('button:not([disabled]), input:not([disabled])', dialog) || dialog).focus());
+      return dialog;
+    };
+    const wirePendingCountdown = (scope) => {
+      if (pendingTick) clearInterval(pendingTick);
+      const paint = () => {
+        const node = qs('[data-device-pending-time]', scope);
+        const left = pendingDeadline ? Math.max(0, (pendingDeadline - Date.now()) / 1000) : Number(access.pending_expires_in_sec || 0);
+        if (node) node.textContent = formatSecurityCountdown(left);
+        if (left <= 0 && !expired) {
+          expired = true;
+          logout('Время подтверждения доступа истекло. Войдите снова.');
+        }
+      };
+      paint(); pendingTick = setInterval(paint, 1000);
+    };
+    const logoutButton = (scope) => {
+      const button = qs('[data-device-logout]', scope);
+      if (button) button.onclick = () => logout('Вы вышли из аккаунта.');
+    };
+
+    const renderChoice = () => {
+      if (challengeTick) clearInterval(challengeTick);
+      challengeTick = null; challenge = null;
+      const scope = shell(`
+        <div class="device-confirmation-heading">
+          <span class="device-confirmation-symbol" aria-hidden="true">✓</span>
+          <p class="device-confirmation-kicker">Новый доступ</p>
+          <h1>Подтвердите доступ с этого устройства</h1>
+          <p>Это новый браузер или приложение. Выберите, как долго ему разрешён доступ.</p>
+        </div>
+        <div class="device-access-summary">
+          <strong>${esc(machine?.display_name || client.display_name || client.client || 'Новый клиент')}</strong>
+          <span>${esc([client.os_family, client.os_version, client.client].filter(Boolean).join(' · ') || 'Браузер или приложение')}</span>
+          ${auditLine() ? `<small>${auditLine()}</small>` : ''}
+        </div>
+        <div class="device-trust-choices">
+          <button type="button" class="device-trust-choice permanent" data-device-mode="permanent">
+            <span class="device-choice-icon" aria-hidden="true">∞</span>
+            <strong>Доверять постоянно</strong>
+            <span>Этот клиент будет доверен до тех пор, пока вы не отзовёте доступ в разделе «Безопасность».</span>
+            <em>Продолжить</em>
+          </button>
+          <button type="button" class="device-trust-choice session" data-device-mode="session">
+            <span class="device-choice-icon" aria-hidden="true">◷</span>
+            <strong>Разрешить до конца сессии</strong>
+            <span>Доступ действует только сейчас. При следующем входе потребуется новый код.</span>
+            <em>Разрешить только сейчас</em>
+          </button>
+        </div>
+        ${channels.length ? '' : '<div class="device-confirmation-error" role="alert">Нет подтверждённого Telegram или e-mail. Завершите вход и восстановите способ подтверждения.</div>'}
+        <div class="device-pending-footer"><span>Если не подтвердить, доступ завершится через</span> <strong data-device-pending-time>--:--</strong></div>
+        <button type="button" class="btn ghost device-logout" data-device-logout>Выйти из аккаунта</button>
+      `, 'Подтверждение нового доступа');
+      qsa('[data-device-mode]', scope).forEach(button => {
+        button.disabled = !channels.length;
+        button.onclick = () => renderCode(String(button.dataset.deviceMode || ''));
+      });
+      logoutButton(scope); wirePendingCountdown(scope);
+    };
+
+    const fillCode = (scope, value) => {
+      const digits = String(value || '').replace(/\D/g, '').slice(0, 6).split('');
+      const inputs = qsa('[data-device-code-digit]', scope);
+      inputs.forEach((input, index) => { input.value = digits[index] || ''; });
+      (inputs[Math.min(digits.length, 5)] || inputs[0])?.focus();
+    };
+    const startChallenge = async (scope, provider) => {
+      const message = qs('[data-device-code-message]', scope);
+      const submit = qs('[data-device-submit]', scope);
+      const resend = qs('[data-device-resend]', scope);
+      challenge = null;
+      if (challengeTick) clearInterval(challengeTick);
+      challengeTick = null;
+      qsa('[data-device-channel]', scope).forEach(button => { button.disabled = true; });
+      qsa('[data-device-code-digit]', scope).forEach(input => { input.disabled = true; });
+      if (submit) submit.disabled = true;
+      if (resend) resend.disabled = true;
+      if (message) { message.className = 'device-code-message'; message.textContent = 'Отправляем код…'; }
+      try {
+        challenge = await API.http.accountSecurityChallenge({
+          purpose: 'device_confirm', device_id: client.id,
+          provider, trust_mode: trustMode,
+        });
+        resendReadyAt = Date.now() + Number(challenge.resend_available_in_sec || 0) * 1000;
+        qsa('[data-device-channel]', scope).forEach(button => {
+          button.disabled = false;
+          button.classList.toggle('on', button.dataset.deviceChannel === challenge.provider);
+        });
+        qsa('[data-device-code-digit]', scope).forEach(input => { input.disabled = false; });
+        if (submit) submit.disabled = false;
+        if (message) {
+          message.textContent = `Код отправлен: ${SEC_PROVIDER_LABEL[challenge.provider] || challenge.provider} ${challenge.masked_target || ''}`.trim();
+        }
+        fillCode(scope, '');
+        wireChallengeCountdown(scope);
+      } catch (error) {
+        qsa('[data-device-channel]', scope).forEach(button => { button.disabled = false; });
+        if (message) { message.className = 'device-code-message error'; message.textContent = error.message || String(error); }
+      }
+    };
+    const wireChallengeCountdown = (scope) => {
+      if (challengeTick) clearInterval(challengeTick);
+      const paint = () => {
+        const expires = Date.parse((challenge || {}).expires_at_utc || '') || Date.now();
+        const codeLeft = Math.max(0, (expires - Date.now()) / 1000);
+        const codeNode = qs('[data-device-code-time]', scope);
+        if (codeNode) codeNode.textContent = formatSecurityCountdown(codeLeft);
+        const submit = qs('[data-device-submit]', scope);
+        const inputs = qsa('[data-device-code-digit]', scope);
+        const codeExpired = !!challenge && codeLeft <= 0;
+        if (submit && submit.dataset.busy !== '1') submit.disabled = !challenge || codeExpired;
+        inputs.forEach(input => { input.disabled = !challenge || codeExpired; });
+        if (codeExpired) {
+          const message = qs('[data-device-code-message]', scope);
+          if (message && !message.classList.contains('error')) {
+            message.className = 'device-code-message error';
+            message.textContent = 'Код истёк. Запросите новый код.';
+          }
+        }
+        const resend = qs('[data-device-resend]', scope);
+        const resendLeft = Math.max(0, (resendReadyAt - Date.now()) / 1000);
+        if (resend) {
+          resend.disabled = !challenge || resendLeft > 0;
+          resend.textContent = resendLeft > 0
+            ? `Отправить код повторно (${Math.ceil(resendLeft)} сек)`
+            : 'Отправить код повторно';
+        }
+      };
+      paint(); challengeTick = setInterval(paint, 1000);
+    };
+    const submitCode = async (scope) => {
+      const code = qsa('[data-device-code-digit]', scope).map(input => input.value).join('');
+      const message = qs('[data-device-code-message]', scope);
+      const submit = qs('[data-device-submit]', scope);
+      if (!challenge || !/^\d{6}$/.test(code)) {
+        if (message) { message.className = 'device-code-message error'; message.textContent = 'Введите все 6 цифр кода.'; }
+        return;
+      }
+      submit.dataset.busy = '1';
+      submit.disabled = true;
+      if (message) { message.className = 'device-code-message'; message.textContent = 'Проверяем код…'; }
+      try {
+        const result = await API.http.accountDeviceApprove({
+          device_id: client.id, challenge_id: challenge.challenge_id,
+          code, trust_mode: trustMode,
+        });
+        stopTicks(); renderSuccess(result);
+      } catch (error) {
+        delete submit.dataset.busy;
+        const expires = Date.parse((challenge || {}).expires_at_utc || '') || 0;
+        submit.disabled = !challenge || (expires && expires <= Date.now());
+        if (message) { message.className = 'device-code-message error'; message.textContent = error.message || String(error); }
+        fillCode(scope, '');
+      }
+    };
+    const renderCode = (mode) => {
+      trustMode = mode === 'session' ? 'session' : 'permanent';
+      const scope = shell(`
+        <button type="button" class="device-back" data-device-back aria-label="Вернуться к выбору режима">←</button>
+        <div class="device-confirmation-heading compact">
+          <p class="device-confirmation-kicker">${trustMode === 'permanent' ? 'Постоянное доверие' : 'Только текущая сессия'}</p>
+          <h1>Подтвердите доступ</h1>
+          <p>Мы отправим 6-значный код только на подтверждённый канал.</p>
+        </div>
+        <div class="device-channel-list" role="group" aria-label="Канал подтверждения">
+          ${channels.map(channel => `<button type="button" class="device-channel" data-device-channel="${esc(channel.provider)}"><strong>${esc(channel.label)}</strong><span>${esc(channel.masked_target)}</span></button>`).join('')}
+        </div>
+        <form class="device-code-form" data-device-code-form>
+          <label id="device-code-label">Введите код из сообщения</label>
+          <div class="device-code-inputs" role="group" aria-labelledby="device-code-label">
+            ${[1, 2, 3, 4, 5, 6].map(index => `<input data-device-code-digit type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="${index === 1 ? 'one-time-code' : 'off'}" maxlength="${index === 1 ? 6 : 1}" aria-label="Цифра ${index} из 6">`).join('')}
+          </div>
+          <div class="device-code-message" data-device-code-message role="status" aria-live="polite"></div>
+          <div class="device-code-life">Код действителен <strong data-device-code-time>--:--</strong></div>
+          <button type="submit" class="btn primary device-code-submit" data-device-submit>Подтвердить</button>
+        </form>
+        <button type="button" class="device-resend" data-device-resend disabled>Отправить код повторно</button>
+        <div class="device-code-warning">StratForge никогда не запрашивает этот код в других сообщениях.</div>
+        <div class="device-pending-footer"><span>Доступ завершится через</span> <strong data-device-pending-time>--:--</strong></div>
+        <button type="button" class="btn ghost device-logout" data-device-logout>Выйти из аккаунта</button>
+      `, 'Ввод кода подтверждения');
+      qs('[data-device-back]', scope).onclick = renderChoice;
+      qsa('[data-device-channel]', scope).forEach(button => {
+        button.onclick = () => startChallenge(scope, button.dataset.deviceChannel);
+      });
+      const inputs = qsa('[data-device-code-digit]', scope);
+      inputs.forEach((input, index) => {
+        input.oninput = () => {
+          const entered = input.value.replace(/\D/g, '');
+          if (entered.length > 1) { fillCode(scope, entered); return; }
+          input.value = entered.slice(-1);
+          if (input.value && inputs[index + 1]) inputs[index + 1].focus();
+        };
+        input.onkeydown = (event) => {
+          if (event.key === 'Backspace' && !input.value && inputs[index - 1]) inputs[index - 1].focus();
+          if (event.key === 'Enter') { event.preventDefault(); submitCode(scope); }
+        };
+        input.onpaste = (event) => {
+          const pasted = (event.clipboardData || window.clipboardData).getData('text');
+          if (/\d/.test(pasted)) { event.preventDefault(); fillCode(scope, pasted); }
+        };
+      });
+      qs('[data-device-code-form]', scope).onsubmit = (event) => { event.preventDefault(); submitCode(scope); };
+      qs('[data-device-resend]', scope).onclick = async () => {
+        const message = qs('[data-device-code-message]', scope);
+        const resend = qs('[data-device-resend]', scope);
+        resend.disabled = true;
+        try {
+          challenge = await API.http.accountSecurityChallengeResend({ challenge_id: challenge.challenge_id });
+          resendReadyAt = Date.now() + Number(challenge.resend_available_in_sec || 0) * 1000;
+          if (message) { message.className = 'device-code-message'; message.textContent = `Новый код отправлен: ${challenge.masked_target || ''}`; }
+          qsa('[data-device-code-digit]', scope).forEach(input => { input.disabled = false; });
+          const submit = qs('[data-device-submit]', scope);
+          if (submit) { delete submit.dataset.busy; submit.disabled = false; }
+          fillCode(scope, ''); wireChallengeCountdown(scope);
+        } catch (error) {
+          if (message) { message.className = 'device-code-message error'; message.textContent = error.message || String(error); }
+        }
+      };
+      logoutButton(scope); wirePendingCountdown(scope);
+      startChallenge(scope, channels[0].provider);
+    };
+    const renderSuccess = (result) => {
+      const permanent = (result || {}).trust_mode === 'permanent';
+      const scope = shell(`
+        <div class="device-confirmation-heading success">
+          <span class="device-confirmation-symbol" aria-hidden="true">✓</span>
+          <p class="device-confirmation-kicker">Готово</p>
+          <h1>Доступ подтверждён</h1>
+          <p>${permanent ? 'Этот клиент останется доверенным до вашего отзыва.' : 'Доступ разрешён только для текущей сессии.'}</p>
+        </div>
+        <div class="device-success-card">
+          <div><strong>${esc(machine?.display_name || client.display_name || client.client || 'Клиент')}</strong><span class="badge ${permanent ? 'live' : 'trial'}">${permanent ? 'Доверено' : 'Только текущая сессия'}</span></div>
+          <p>${esc([client.os_family, client.os_version, client.client].filter(Boolean).join(' · ') || 'Браузер или приложение')}</p>
+          ${auditLine() ? `<small>${auditLine()}</small>` : ''}
+        </div>
+        <button type="button" class="btn primary device-enter" data-device-enter>Перейти в кабинет</button>
+      `, 'Доступ подтверждён');
+      qs('[data-device-enter]', scope).onclick = () => location.reload();
+    };
+    renderChoice();
+  }
+
   async function authenticateAndStart(newsStrip, refresh = false) {
     const result = window.API
       ? await (refresh && API.refreshAuth ? API.refreshAuth() : API.authReady)
@@ -1011,10 +1318,18 @@
         renderTelegramLogin('Сессия завершена администратором. Войдите снова.');
         return;
       }
+      if (result.error.code === 'device_confirmation_expired') {
+        renderTelegramLogin('Время подтверждения доступа истекло. Войдите снова.');
+        return;
+      }
       renderTelegramLogin('');
       return;
     }
     CURRENT_AUTH = result.auth || { role: 'owner', is_owner: true, user: {} };
+    if (CURRENT_AUTH.device_access && CURRENT_AUTH.device_access.required) {
+      renderDeviceConfirmationGate(CURRENT_AUTH, newsStrip);
+      return;
+    }
     document.documentElement.classList.remove('auth-locked');
     const user = CURRENT_AUTH.user || {};
     applyChipUser(user);
@@ -3319,7 +3634,7 @@
     }
   }
 
-  async function renderSecurityInto(cb, me) {
+  async function renderSecurityLegacyInto(cb, me) {
     cb.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка устройств…</div>';
     let data, nt = null;
     try {
@@ -3465,6 +3780,278 @@
         btn.disabled = true;
         try { await API.http.accountDeviceRevoke(btn.dataset.secRevoke); toast('Устройство отозвано'); renderSecurityInto(cb, me); }
         catch (e) { reportError(e); btn.disabled = false; }
+      };
+    });
+  }
+
+  function securityAccessBadge(access, fallbackStatus) {
+    const state = String((access || {}).state || fallbackStatus || 'pending');
+    const mode = String((access || {}).trust_mode || '');
+    if (state === 'active' && mode === 'session') return '<span class="badge trial">Только текущая сессия</span>';
+    if (state === 'active' || mode === 'permanent' || fallbackStatus === 'trusted') return '<span class="badge live">Доверено</span>';
+    if (state === 'pending') return '<span class="badge pending">Ожидает подтверждения</span>';
+    if (state === 'revoked') return '<span class="badge failed">Отозвано</span>';
+    return '<span class="badge archived">Сессия завершена</span>';
+  }
+
+  function securityClientHtml(client, nested) {
+    const audit = client.audit || {};
+    const access = client.access || {};
+    const facts = [client.auto_name, audit.masked_ip ? `IP: ${audit.masked_ip}` : '', audit.location || ''].filter(Boolean);
+    const active = Number(client.active_sessions || 0);
+    const canRename = !!(client.actions || {}).rename;
+    const canRevoke = !!(client.actions || {}).revoke;
+    const pending = String(access.state || client.status || '') === 'pending';
+    return `<article class="security-client ${nested ? 'nested' : 'standalone'}" data-security-client="${esc(client.id)}">
+      <div class="security-client-icon" aria-hidden="true">${client.kind === 'connector' ? '↔' : '◉'}</div>
+      <div class="security-client-main">
+        <div class="security-client-title"><strong>${esc(client.display_name || 'Web Browser')}</strong>${securityAccessBadge(access, client.status)}</div>
+        <div class="security-client-meta">${facts.length ? facts.map(esc).join(' · ') : 'Браузер или приложение'}</div>
+        <div class="security-client-meta">Последняя активность: ${client.last_seen_at_utc ? secWhen(client.last_seen_at_utc) : '—'} · Активных сессий: ${active}</div>
+      </div>
+      <div class="security-row-actions">
+        ${pending ? `<button type="button" class="btn sm primary" data-sec-client-approve="${esc(client.id)}">Подтвердить постоянно</button>` : ''}
+        ${canRename ? `<button type="button" class="btn sm ghost" data-sec-client-rename="${esc(client.id)}" data-sec-name="${esc(client.display_name || '')}">Переименовать</button>` : ''}
+        ${canRevoke ? `<button type="button" class="btn sm danger" data-sec-client-${pending ? 'reject' : 'revoke'}="${esc(client.id)}" data-sec-name="${esc(client.display_name || '')}">${pending ? 'Отклонить' : 'Отозвать клиент'}</button>` : ''}
+      </div>
+    </article>`;
+  }
+
+  function securityMachineHtml(machine, index) {
+    const trust = machine.trust || {};
+    const audit = machine.audit || {};
+    const clients = Array.isArray(machine.clients) ? machine.clients : [];
+    const panelId = `security-machine-clients-${index}`;
+    const canRename = !!(machine.actions || {}).rename;
+    const canRevoke = !!(machine.actions || {}).revoke;
+    return `<article class="security-machine" data-security-machine="${esc(machine.id)}">
+      <div class="security-machine-head">
+        <div class="security-machine-icon" aria-hidden="true">▣</div>
+        <div class="security-machine-main">
+          <div class="security-machine-title"><strong>${esc(machine.display_name || 'Компьютер')}</strong>${securityAccessBadge({ state: trust.status === 'trusted' ? 'active' : trust.status, trust_mode: trust.mode }, trust.status)}</div>
+          <div class="security-client-meta">${esc(machine.auto_name || 'Физическое устройство')}${audit.masked_ip ? ` · IP: ${esc(audit.masked_ip)}` : ''}${audit.location ? ` · ${esc(audit.location)}` : ''}</div>
+          <div class="security-client-meta">Последняя активность: ${machine.last_seen_at_utc ? secWhen(machine.last_seen_at_utc) : '—'} · Клиентов: ${clients.length}</div>
+        </div>
+        <div class="security-row-actions">
+          ${canRename ? `<button type="button" class="btn sm ghost" data-sec-machine-rename="${esc(machine.id)}" data-sec-name="${esc(machine.display_name || '')}">Переименовать</button>` : ''}
+          ${canRevoke ? `<button type="button" class="btn sm danger" data-sec-machine-revoke="${esc(machine.id)}" data-sec-name="${esc(machine.display_name || '')}">Отозвать устройство</button>` : ''}
+          <button type="button" class="btn sm ghost security-expand" data-sec-machine-expand aria-expanded="true" aria-controls="${panelId}">Свернуть</button>
+        </div>
+      </div>
+      <div class="security-machine-clients" id="${panelId}">
+        <div class="security-group-label">На этом устройстве подтверждённо используются</div>
+        ${clients.length ? clients.map(client => securityClientHtml(client, true)).join('') : '<div class="security-empty">Связанные клиенты не найдены.</div>'}
+      </div>
+    </article>`;
+  }
+
+  function securitySessionHtml(session) {
+    const audit = session.audit || {};
+    const access = { state: session.state, trust_mode: session.trust_mode };
+    return `<article class="security-session-row">
+      <div class="security-client-icon" aria-hidden="true">◷</div>
+      <div class="security-client-main">
+        <div class="security-client-title"><strong>${esc(session.client || 'Сессия')}</strong>${session.current ? '<span class="badge live">Текущая</span>' : ''}${securityAccessBadge(access)}</div>
+        <div class="security-client-meta">Начало: ${secWhen(session.created_at_utc)}${audit.masked_ip ? ` · IP: ${esc(audit.masked_ip)}` : ''}${audit.location ? ` · ${esc(audit.location)}` : ''}</div>
+        <div class="security-client-meta">Завершение по серверу: ${session.expires_at_utc ? secWhen(session.expires_at_utc) : '—'}</div>
+      </div>
+      <button type="button" class="btn sm danger" data-sec-session-end="${esc(session.id)}" data-sec-current="${session.current ? '1' : '0'}">Завершить сессию</button>
+    </article>`;
+  }
+
+  function securityActionDialog(options) {
+    const opts = options || {};
+    return new Promise(resolve => {
+      const previous = document.activeElement;
+      const overlay = el(`<div class="security-dialog-overlay" role="presentation">
+        <section class="security-dialog" role="dialog" aria-modal="true" aria-labelledby="security-dialog-title">
+          <h3 id="security-dialog-title">${esc(opts.title || 'Подтвердите действие')}</h3>
+          ${opts.body ? `<p>${esc(opts.body)}</p>` : ''}
+          ${opts.input ? `<label class="field"><span>${esc(opts.inputLabel || 'Название')}</span><input data-security-dialog-input value="${esc(opts.inputValue || '')}" maxlength="${Number(opts.maxlength || 80)}" ${opts.inputMode ? `inputmode="${esc(opts.inputMode)}"` : ''}></label>` : ''}
+          <div class="security-dialog-error" data-security-dialog-error role="alert"></div>
+          <div class="security-dialog-actions"><button type="button" class="btn ghost" data-security-dialog-cancel>Отмена</button><button type="button" class="btn ${opts.danger ? 'danger' : 'primary'}" data-security-dialog-confirm>${esc(opts.confirmLabel || 'Продолжить')}</button></div>
+        </section>
+      </div>`);
+      document.body.appendChild(overlay);
+      const dialog = qs('.security-dialog', overlay);
+      const input = qs('[data-security-dialog-input]', overlay);
+      const finish = value => {
+        releaseTrap(); overlay.remove();
+        if (previous && previous.focus) previous.focus();
+        resolve(value);
+      };
+      const releaseTrap = trapDialogFocus(dialog, () => finish(null));
+      qs('[data-security-dialog-cancel]', overlay).onclick = () => finish(null);
+      qs('[data-security-dialog-confirm]', overlay).onclick = () => {
+        if (!input) { finish(true); return; }
+        const value = input.value.trim();
+        if (!value || (opts.pattern && !opts.pattern.test(value))) {
+          qs('[data-security-dialog-error]', overlay).textContent = opts.inputError || 'Проверьте введённое значение.';
+          input.focus(); return;
+        }
+        finish(value);
+      };
+      overlay.onclick = event => { if (event.target === overlay) finish(null); };
+      requestAnimationFrame(() => (input || qs('[data-security-dialog-cancel]', overlay)).focus());
+    });
+  }
+
+  async function renderSecurityInto(cb, me, selectedTab) {
+    cb.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка доступов…</div>';
+    let data, nt = null;
+    try {
+      [data, nt] = await Promise.all([
+        API.http.accountSecurity(),
+        API.http.accountNtSecurity().catch(() => null),
+      ]);
+    } catch (e) { renderError(cb, e, () => renderSecurityInto(cb, me, selectedTab)); return; }
+
+    const machines = Array.isArray(data.machines) ? data.machines : [];
+    const standalone = Array.isArray(data.standalone_clients) ? data.standalone_clients : [];
+    const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+    const history = Array.isArray(data.login_history) ? data.login_history : [];
+    const identities = Array.isArray(data.identities) ? data.identities : [];
+    const channels = Array.isArray(data.confirmation_channels) ? data.confirmation_channels : [];
+    const activeTab = ['devices', 'sessions', 'history'].includes(selectedTab) ? selectedTab : 'devices';
+    const channelText = channels.length
+      ? channels.map(channel => `${esc(channel.label)} ${esc(channel.masked_target || '')}`.trim()).join(' · ')
+      : 'Нет подтверждённого Telegram или e-mail.';
+
+    const LOGIN_PROVIDERS = ['telegram', 'google', 'email'];
+    const linkedSet = new Set(identities.map(identity => String(identity.provider || '')));
+    const loginCount = identities.filter(identity => LOGIN_PROVIDERS.includes(String(identity.provider || ''))).length;
+    const idRows = identities.length ? identities.map(identity => {
+      const provider = String(identity.provider || '');
+      const isLast = LOGIN_PROVIDERS.includes(provider) && loginCount <= 1;
+      return `<div class="sec-id-row">
+        <div><strong>${esc(SEC_PROVIDER_LABEL[provider] || provider)}${identity.label ? ` · ${esc(identity.label)}` : ''}</strong><span class="badge ${identity.verified ? 'live' : 'pending'}">${identity.verified ? 'Подтверждён' : 'Не подтверждён'}</span></div>
+        ${isLast ? '<span class="cab-sub">Единственный способ входа</span>' : `<button class="btn sm ghost" data-id-unlink="${esc(identity.identity_id)}" data-id-prov="${esc(provider)}">Отвязать</button>`}
+      </div>`;
+    }).join('') : '<div class="security-empty">Нет привязанных способов входа.</div>';
+
+    let ntCard = '';
+    if (nt && nt.factors && !nt.is_owner) {
+      ntCard = `<div class="cab-card"><h4>Личный NinjaTrader — безопасность</h4><div class="chips-in"><span class="chip-tag">${nt.factors.telegram ? '✓' : '•'} Telegram</span><span class="chip-tag">${nt.factors.email ? '✓' : '•'} e-mail</span></div><div class="cab-sub">Критические действия требуют отдельного step-up подтверждения.</div></div>`;
+    }
+
+    cb.innerHTML = `<section class="security-access">
+      <div class="security-access-head"><div><p class="device-confirmation-kicker">Безопасность аккаунта</p><h3>Устройства и доступы</h3><p>Здесь видно, кто сейчас может войти в аккаунт и где этот доступ отключить.</p></div><div class="security-channel-note"><strong>Коды подтверждения</strong><span>${channelText}</span></div></div>
+      <div class="security-main-tabs" role="tablist" aria-label="Разделы безопасности">
+        <button type="button" role="tab" data-security-tab="devices" aria-selected="${activeTab === 'devices'}" class="${activeTab === 'devices' ? 'on' : ''}">Устройства</button>
+        <button type="button" role="tab" data-security-tab="sessions" aria-selected="${activeTab === 'sessions'}" class="${activeTab === 'sessions' ? 'on' : ''}">Мои сессии <span>${sessions.length}</span></button>
+        <button type="button" role="tab" data-security-tab="history" aria-selected="${activeTab === 'history'}" class="${activeTab === 'history' ? 'on' : ''}">История входов</button>
+      </div>
+      <div class="security-panel" role="tabpanel" data-security-panel="devices" ${activeTab === 'devices' ? '' : 'hidden'}>
+        <div class="security-section-heading"><div><h4>Известные устройства</h4><p>Клиенты объединены с компьютером только при подтверждённой аппаратной привязке или pairing.</p></div></div>
+        <div class="security-machine-list">${machines.length ? machines.map(securityMachineHtml).join('') : '<div class="security-empty">Пока нет физического устройства с доказанной привязкой.</div>'}</div>
+        <div class="security-section-heading"><div><h4>Другие клиенты / удалённый доступ</h4><p>Эти браузеры и приложения показаны отдельно: система не приписывает их компьютеру по IP, VPN или User-Agent.</p></div></div>
+        <div class="security-standalone-list">${standalone.length ? standalone.map(client => securityClientHtml(client, false)).join('') : '<div class="security-empty">Отдельных клиентов нет.</div>'}</div>
+      </div>
+      <div class="security-panel" role="tabpanel" data-security-panel="sessions" ${activeTab === 'sessions' ? '' : 'hidden'}>
+        <div class="security-section-heading"><div><h4>Активные сессии</h4><p>Завершение сессии не отзывает постоянное доверие клиента.</p></div></div>
+        <div class="security-session-list">${sessions.length ? sessions.map(securitySessionHtml).join('') : '<div class="security-empty">Активных сессий нет.</div>'}</div>
+      </div>
+      <div class="security-panel" role="tabpanel" data-security-panel="history" ${activeTab === 'history' ? '' : 'hidden'}>
+        <div class="security-section-heading"><div><h4>История входов</h4><p>IP и местоположение — только аудит, а не идентификатор устройства.</p></div></div>
+        <div class="security-history-list">${history.length ? history.map(row => `<div class="security-history-row"><strong>${esc(row.client || row.source || 'Вход')}</strong><span>${secWhen(row.at_utc)}${row.masked_ip ? ` · IP: ${esc(row.masked_ip)}` : ''}</span><small>${esc(row.source || '')}</small></div>`).join('') : '<div class="security-empty">История входов пока пуста.</div>'}</div>
+      </div>
+    </section>
+    <div class="cab-card security-identities"><h4>Способы входа</h4><div class="list">${idRows}</div><div class="flex gap-sm wrap security-id-actions">${!linkedSet.has('email') ? '<button class="btn" data-id-link="email">Привязать e-mail</button>' : ''}${!linkedSet.has('google') ? '<button class="btn" data-id-link="google">Привязать Google</button>' : ''}</div></div>
+    ${ntCard}`;
+
+    const currentTab = () => String((qs('[data-security-tab].on', cb) || {}).dataset?.securityTab || 'devices');
+    const reload = () => renderSecurityInto(cb, me, currentTab());
+    qsa('[data-security-tab]', cb).forEach(button => {
+      button.onclick = () => {
+        const tab = button.dataset.securityTab;
+        qsa('[data-security-tab]', cb).forEach(item => { item.classList.toggle('on', item === button); item.setAttribute('aria-selected', item === button ? 'true' : 'false'); });
+        qsa('[data-security-panel]', cb).forEach(panel => { panel.hidden = panel.dataset.securityPanel !== tab; });
+      };
+    });
+    qsa('[data-sec-machine-expand]', cb).forEach(button => {
+      button.onclick = () => {
+        const panel = document.getElementById(button.getAttribute('aria-controls'));
+        const open = button.getAttribute('aria-expanded') === 'true';
+        button.setAttribute('aria-expanded', open ? 'false' : 'true'); button.textContent = open ? 'Развернуть' : 'Свернуть';
+        if (panel) panel.hidden = open;
+      };
+    });
+    qsa('[data-sec-client-rename]', cb).forEach(button => {
+      button.onclick = async () => {
+        const name = await securityActionDialog({ title: 'Переименовать клиент', body: 'Это имя будете видеть только вы.', input: true, inputValue: button.dataset.secName, confirmLabel: 'Сохранить' });
+        if (!name) return;
+        try { await API.http.accountDeviceRename(button.dataset.secClientRename, name); toast('Клиент переименован'); reload(); } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-sec-machine-rename]', cb).forEach(button => {
+      button.onclick = async () => {
+        const name = await securityActionDialog({ title: 'Переименовать устройство', body: 'Например: Домашний ПК или MacBook.', input: true, inputValue: button.dataset.secName, confirmLabel: 'Сохранить' });
+        if (!name) return;
+        try { await API.http.accountMachineRename(button.dataset.secMachineRename, name); toast('Устройство переименовано'); reload(); } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-sec-client-revoke]', cb).forEach(button => {
+      button.onclick = async () => {
+        const ok = await securityActionDialog({ title: `Отозвать клиент «${button.dataset.secName || 'клиент'}»?`, body: 'Будут завершены только сессии этого клиента. Другие клиенты не изменятся.', confirmLabel: 'Отозвать клиент', danger: true });
+        if (!ok) return;
+        try { await API.http.accountDeviceRevoke(button.dataset.secClientRevoke); toast('Доступ клиента отозван'); reload(); } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-sec-client-reject]', cb).forEach(button => {
+      button.onclick = async () => {
+        const ok = await securityActionDialog({ title: 'Отклонить новый доступ?', body: 'Неподтверждённые сессии этого клиента будут завершены.', confirmLabel: 'Отклонить', danger: true });
+        if (!ok) return;
+        try { await API.http.accountDeviceReject(button.dataset.secClientReject); toast('Новый доступ отклонён'); reload(); } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-sec-machine-revoke]', cb).forEach(button => {
+      button.onclick = async () => {
+        const ok = await securityActionDialog({ title: `Отозвать устройство «${button.dataset.secName || 'устройство'}»?`, body: 'Все его клиенты и активные сессии будут завершены.', confirmLabel: 'Отозвать устройство', danger: true });
+        if (!ok) return;
+        try { await API.http.accountMachineRevoke(button.dataset.secMachineRevoke); toast('Доступ устройства отозван'); reload(); } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-sec-session-end]', cb).forEach(button => {
+      button.onclick = async () => {
+        const current = button.dataset.secCurrent === '1';
+        const ok = await securityActionDialog({ title: current ? 'Завершить текущую сессию?' : 'Завершить эту сессию?', body: current ? 'Вы выйдете из аккаунта на этом клиенте.' : 'Постоянное доверие клиента сохранится.', confirmLabel: 'Завершить сессию', danger: true });
+        if (!ok) return;
+        try { await API.http.accountSessionRevoke(button.dataset.secSessionEnd); if (current) location.reload(); else { toast('Сессия завершена'); reload(); } } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-sec-client-approve]', cb).forEach(button => {
+      button.onclick = async () => {
+        try {
+          const started = await API.http.accountSecurityChallenge({ purpose: 'device_confirm', device_id: button.dataset.secClientApprove, trust_mode: 'permanent' });
+          const code = started.test_code || await securityActionDialog({ title: 'Подтвердить клиент постоянно', body: `Введите 6-значный код: ${SEC_PROVIDER_LABEL[started.provider] || started.provider} ${started.masked_target || ''}`, input: true, inputLabel: 'Код подтверждения', inputMode: 'numeric', maxlength: 6, pattern: /^\d{6}$/, inputError: 'Введите ровно 6 цифр.', confirmLabel: 'Подтвердить' });
+          if (!code) return;
+          await API.http.accountDeviceApprove({ device_id: button.dataset.secClientApprove, challenge_id: started.challenge_id, code, trust_mode: 'permanent' });
+          toast('Клиент подтверждён'); reload();
+        } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-id-unlink]', cb).forEach(button => {
+      button.onclick = async () => {
+        const ok = await securityActionDialog({ title: 'Отвязать способ входа?', body: 'Войти через него больше не получится, пока вы не привяжете его заново.', confirmLabel: 'Отвязать', danger: true });
+        if (!ok) return;
+        try { await API.http.accountIdentityUnlink({ identity_id: button.dataset.idUnlink }); toast('Способ входа отвязан'); reload(); } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-id-link]', cb).forEach(button => {
+      button.onclick = async () => {
+        try {
+          if (button.dataset.idLink === 'google') {
+            const out = await API.http.authGoogleLinkStart({ return_path: location.pathname + location.search });
+            if (!out?.auth_url) throw new Error('Google-линковка недоступна.');
+            location.href = out.auth_url; return;
+          }
+          const email = await securityActionDialog({ title: 'Привязать e-mail', body: 'Код будет отправлен на этот адрес.', input: true, inputLabel: 'E-mail', maxlength: 254, pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, inputError: 'Введите корректный e-mail.', confirmLabel: 'Отправить код' });
+          if (!email) return;
+          const started = await API.http.authEmailLinkStart({ email });
+          const code = started.test_code || await securityActionDialog({ title: 'Подтвердить e-mail', body: `Введите код, отправленный на ${email}.`, input: true, inputLabel: 'Код', inputMode: 'numeric', maxlength: 6, pattern: /^\d{6}$/, inputError: 'Введите ровно 6 цифр.', confirmLabel: 'Подтвердить' });
+          if (!code) return;
+          await API.http.authEmailLinkVerify({ challenge_id: started.challenge_id, code }); toast('E-mail привязан'); reload();
+        } catch (e) { reportError(e); }
       };
     });
   }

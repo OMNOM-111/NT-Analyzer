@@ -1,8 +1,9 @@
 # 08. UI, UX and Product Contracts
 
 - Context Pack document: 08_UI_UX_AND_PRODUCT_CONTRACTS.md
-- Last verified UTC: 2026-08-31T00:00:00Z
+- Last verified UTC: 2026-09-03T02:47:29Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
+- Device-confirmation Development implementation SHA: `PENDING_GIT_CLOSEOUT` (isolated branch; not deployed)
 - Scope: Major UI areas, visibility rules and important UX contracts
 - Status: DONE
 
@@ -19,6 +20,7 @@
 | AI Agents / API Keys | owner + allowed operators | `PARTIAL` | local provider configuration, role routes, budgets, masked secrets only |
 | News | ordinary user + owner | `DONE` | calendar events, live headlines, provider status |
 | Telegram / auth entry | ordinary user + owner | `PARTIAL` | login, profile, pairing, notifications, session revoke |
+| Device confirmation / Security | ordinary user + owner | `IN DEVELOPMENT` | first-access choice, six-digit Telegram/email confirmation, explicit success state, and separate Devices / My sessions / Login history views |
 | Legacy Viewer | owner local reference | `AVAILABLE` | separate localhost-only read-only classic viewer over an isolated data snapshot |
 | Documents | ordinary user + owner | `PARTIAL` | governance/public docs with actor/reason aware saves and revisions |
 | Environment Switcher | owner / developer / admin | `PARTIAL` | separate-origin navigation by capability, not an in-place backend swap |
@@ -46,6 +48,16 @@
 6. A fresh TopstepX quote heartbeat keeps the right-side price marker live even
    when the numeric price has not changed; candle direction and marker direction
    remain independent.
+7. A pending login must take over the auth surface before the application shell
+   starts. Product data is not rendered behind the confirmation card.
+8. The two user choices are permanent Client trust and current-Session-only
+   access. UI text must not promise a 24-hour window.
+9. OTP entry uses six single-character numeric fields with keyboard, paste,
+   Backspace and Enter support; resend availability and both deadlines come
+   from server state.
+10. Security UI may nest Clients under a Machine only for a proven binding.
+    Remote, AI-hosted and ordinary browsers without signed identity are shown
+    neutrally as standalone Clients, without invented hardware names.
 
 ## Admin and Release Center visibility
 
@@ -72,6 +84,7 @@
 - [../adr/0004-admin-panel-and-capabilities.md](../adr/0004-admin-panel-and-capabilities.md)
 - [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md)
 - [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md)
+- [Device Confirmation Development record](../changelog/2026-09-02-device-confirmation-trusted-access.md)
 - `app/static/aurora/assets/ui.js`
 - `app/static/aurora/assets/api.js`
 - `app/static/aurora/assets/pages/desktop.js`

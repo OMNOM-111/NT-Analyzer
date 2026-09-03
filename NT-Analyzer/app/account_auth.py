@@ -1173,17 +1173,35 @@ def _observe_session_device(
     the document is persisted. Impersonation sessions never register a device.
     """
     if session.get("impersonator_owner_id"):
+        session["device_confirmation_exempt"] = True
+        session["device_confirmation_required"] = False
+        session["device_confirmation_state"] = "active"
+        session["device_trust_mode"] = "exempt"
         return []
+    from . import security_devices
     try:
-        from . import security_devices
-        return security_devices.observe_session(
+        events = security_devices.observe_session(
             doc, session, user, ip=ip, user_agent=user_agent, source=source,
             connector_installation_id=connector_installation_id,
             device_credential=device_credential,
         )
+    except security_devices.SecurityDeviceError as exc:
+        raise AccountAuthError(
+            "Не удалось безопасно зарегистрировать новый доступ.",
+            503, code=exc.code or "device_security_unavailable",
+        ) from None
     except Exception:
-        # Device correlation must never block a legitimate login.
-        return []
+        raise AccountAuthError(
+            "Не удалось безопасно зарегистрировать новый доступ.",
+            503, code="device_security_unavailable",
+        ) from None
+    if (not session.get("device_confirmation_exempt")
+            and not session.get("trusted_device_id")):
+        raise AccountAuthError(
+            "Не удалось безопасно зарегистрировать новый доступ.",
+            503, code="device_security_unavailable",
+        )
+    return events
 
 
 def _user(doc: Dict[str, Any], user_id: int) -> Optional[Dict[str, Any]]:
@@ -3342,24 +3360,27 @@ def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str,
         token = secrets.token_urlsafe(48)
         csrf = secrets.token_urlsafe(32)
         now = time.time()
-        doc["sessions"].append({
+        session = {
             "session_id": "sess_" + secrets.token_hex(8),
             "token_hash": hashlib.sha256(token.encode()).hexdigest(), "csrf_hash": hashlib.sha256(csrf.encode()).hexdigest(),
             "csrf_token": csrf,
             "user_id": uid, "user_uuid": _user_uuid(user),
             "created_at_utc": _now_iso(), "expires_at": now + SESSION_TTL_SEC,
+            "normal_expires_at": now + SESSION_TTL_SEC,
             "ip_hash": hashlib.sha256(str(ip or "").encode()).hexdigest(),
             "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(), "revoked": False,
             "device_id": _device_id(user_agent, device_credential=device_credential),
             "client": _device_label(user_agent),
             "machine": _machine_label(), "ip": _mask_ip(ip),
             "source": source,
-        })
+            "device_confirmation_exempt": False,
+        }
+        doc["sessions"].append(session)
         challenge["status"] = "consumed"
         _append_login(user, source=source, ip=ip, user_agent=user_agent,
                       device_credential=device_credential)
         device_events = _observe_session_device(
-            doc, doc["sessions"][-1], user, ip=ip, user_agent=user_agent, source=source,
+            doc, session, user, ip=ip, user_agent=user_agent, source=source,
             device_credential=device_credential,
         )
         _cleanup(doc)
@@ -3367,7 +3388,72 @@ def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str,
     _audit("login_succeeded", user_id=uid, ip=ip)
     for _event, _extra in device_events:
         _audit(_event, user_id=uid, ip=ip, extra=_extra)
-    return {"status": "authenticated", "session_token": token, "csrf_token": csrf, "user": _public_user(user, include_contact=True)}
+    access = _device_access_snapshot(session)
+    return {
+        "status": "authenticated",
+        "session_token": token,
+        "csrf_token": csrf,
+        "user": _public_user(user, include_contact=True),
+        "device_access": access,
+        "session_cookie_persistent": access["trust_mode"] == "permanent",
+    }
+
+
+def _session_pending_deadline(session: Dict[str, Any]) -> float:
+    deadline = float(session.get("pending_expires_at") or 0)
+    if deadline:
+        return deadline
+    created = str(session.get("created_at_utc") or "").strip()
+    try:
+        created_at = datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        created_at = 0.0
+    if not created_at:
+        return 0.0
+    from . import security_devices
+    return created_at + security_devices.PENDING_SESSION_TTL_SEC
+
+
+def _session_confirmation_state(session: Dict[str, Any]) -> str:
+    if session.get("device_confirmation_exempt"):
+        return "active"
+    # Sessions issued before the trusted-client registry existed have no
+    # client UUID to confirm. Preserve them until their already-recorded expiry
+    # instead of turning a rollout into an account-wide forced logout. Every
+    # newly issued session goes through device observation and cannot take this
+    # compatibility branch.
+    if (not session.get("trusted_device_id")
+            and "device_confirmation_state" not in session
+            and "device_confirmation_required" not in session):
+        return "active"
+    explicit = str(session.get("device_confirmation_state") or "")
+    if explicit == "active":
+        return explicit
+    if str(session.get("device_trust_status") or "") == "trusted":
+        return "active"
+    deadline = _session_pending_deadline(session)
+    return "expired" if deadline and deadline <= time.time() else "pending"
+
+
+def _device_access_snapshot(session: Dict[str, Any]) -> Dict[str, Any]:
+    state = _session_confirmation_state(session)
+    deadline = _session_pending_deadline(session) if state == "pending" else 0.0
+    return {
+        "required": state == "pending",
+        "state": state,
+        "trust_mode": str(session.get("device_trust_mode") or (
+            "permanent" if str(session.get("device_trust_status") or "") == "trusted" else ""
+        )),
+        "session_id": _session_id(session),
+        "client_id": str(session.get("trusted_device_id") or ""),
+        "physical_device_id": str(session.get("physical_device_id") or ""),
+        "pending_expires_at": deadline,
+        "pending_expires_at_utc": (
+            datetime.fromtimestamp(deadline, tz=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+            if deadline else ""
+        ),
+        "session_expires_at": float(session.get("expires_at") or 0),
+    }
 
 
 def _session_context(user: Dict[str, Any], session: Dict[str, Any]) -> Dict[str, Any]:
@@ -3383,6 +3469,16 @@ def _session_context(user: Dict[str, Any], session: Dict[str, Any]) -> Dict[str,
         "device_id": str(session.get("device_id") or ""),
         "csrf_hash": str(session.get("csrf_hash") or ""),
         "csrf_token": str(session.get("csrf_token") or ""),
+        "trusted_device_id": str(session.get("trusted_device_id") or ""),
+        "physical_device_id": str(session.get("physical_device_id") or ""),
+        "device_confirmation_state": _session_confirmation_state(session),
+        "device_confirmation_required": bool(
+            not session.get("device_confirmation_exempt")
+            and _session_confirmation_state(session) == "pending"
+        ),
+        "device_trust_mode": str(session.get("device_trust_mode") or ""),
+        "pending_expires_at": _session_pending_deadline(session),
+        "device_access": _device_access_snapshot(session),
         "user": _public_user(user, include_contact=True),
         "needs_google": user_needs_google(user),
         "dual_auth_complete": True,
@@ -3461,6 +3557,8 @@ def _authenticate_authoritative_session(digest: str) -> Optional[Dict[str, Any]]
         "status": str(row.get("user_status") or ""),
         "is_owner": bool(row.get("is_owner")),
     })
+    if _session_confirmation_state(session) == "expired":
+        return None
     return _session_context(user, session)
 
 
@@ -3476,6 +3574,8 @@ def authenticate_session(token: str) -> Optional[Dict[str, Any]]:
         now = time.time()
         session = next((row for row in doc["sessions"] if not row.get("revoked") and float(row.get("expires_at") or 0) > now and hmac.compare_digest(str(row.get("token_hash") or ""), digest)), None)
         if session is None:
+            return None
+        if _session_confirmation_state(session) == "expired":
             return None
         user = _user(doc, int(session.get("user_id") or 0))
         if not user or user.get("status") != "active":
@@ -3669,6 +3769,12 @@ def session_auth_failure(token: str) -> Optional[Dict[str, Any]]:
         for row in doc.get("sessions") or []:
             if not hmac.compare_digest(str(row.get("token_hash") or ""), digest):
                 continue
+            if _session_confirmation_state(row) == "expired":
+                return {
+                    "code": "device_confirmation_expired",
+                    "error": "Время подтверждения доступа истекло. Войдите снова.",
+                    "user_id": int(row.get("user_id") or 0),
+                }
             if row.get("revoked") and row.get("revoked_reason") in _REVOKE_NOTICE_REASONS:
                 notice_until = float(row.get("revoke_notice_until") or 0)
                 if notice_until and notice_until < now:
@@ -3926,6 +4032,7 @@ def create_session_for_user(
     impersonation_preset: str = "",
     ttl_sec: int = 0,
     device_credential: str = "",
+    device_confirmation_required: bool = True,
 ) -> Dict[str, Any]:
     uid = int(user_id)
     if not impersonator_owner_id:
@@ -3955,6 +4062,7 @@ def create_session_for_user(
             "user_uuid": _user_uuid(user),
             "created_at_utc": _now_iso(),
             "expires_at": now + ttl,
+            "normal_expires_at": now + ttl,
             "ip_hash": hashlib.sha256(str(ip or "").encode()).hexdigest(),
             "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(),
             "revoked": False,
@@ -3963,6 +4071,7 @@ def create_session_for_user(
             "machine": _machine_label(),
             "ip": _mask_ip(ip),
             "source": str(source or "desktop_session")[:40],
+            "device_confirmation_exempt": not bool(device_confirmation_required),
         }
         if impersonator_owner_id:
             row["impersonator_owner_id"] = int(impersonator_owner_id)
@@ -3988,11 +4097,14 @@ def create_session_for_user(
     )
     for _event, _extra in device_events:
         _audit(_event, user_id=uid, ip=ip, extra=_extra)
+    access = _device_access_snapshot(row)
     return {
         "status": "authenticated",
         "session_token": token,
         "csrf_token": csrf,
         "user": public,
+        "device_access": access,
+        "session_cookie_persistent": access["trust_mode"] == "permanent",
         "needs_google": user_needs_google(user),
         "impersonating": bool(impersonator_owner_id),
     }
@@ -4505,6 +4617,7 @@ def login_via_google_identity(
             active_uid, ip=ip, user_agent=user_agent,
             source="google_login", require_google=False,
             device_credential=device_credential,
+            device_confirmation_required=True,
         )
     _audit("google_login_pending", user_id=int(user.get("user_id") or 0), ip=ip)
     return {
@@ -4670,6 +4783,7 @@ def start_impersonation(
         skip_dual_auth_gate=True,
         impersonator_owner_id=oid,
         impersonation_preset=target_preset,
+        device_confirmation_required=False,
     )
     _audit(
         "impersonation_started",
@@ -4720,6 +4834,7 @@ def end_impersonation(token: str, *, owner_id: Any, ip: str = "", user_agent: st
         user_agent=user_agent or "owner-return",
         source="impersonation_return",
         skip_dual_auth_gate=True,
+        device_confirmation_required=False,
     )
     _audit("impersonation_ended", user_id=target_uid, owner_id=oid, ip=ip)
     return {"ok": True, "impersonating": False, "restored_owner": True, **restored}

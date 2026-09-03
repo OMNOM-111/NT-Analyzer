@@ -225,6 +225,7 @@ def login_virtual(*, user_id: int, ip: str = "127.0.0.1", user_agent: str = "sta
         source="test_auth",
         require_google=False,  # virtual login may be used to test no_google preset
         skip_dual_auth_gate=True,
+        device_confirmation_required=False,
     )
 
 
