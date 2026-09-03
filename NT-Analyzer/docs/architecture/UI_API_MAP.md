@@ -1,7 +1,8 @@
 # Aurora UI API map
 
-Актуально на 2026-07-14. Виктор является собеседником по умолчанию, а StratForge
-Orchestrator — единым внутренним шлюзом. Единственный HTTP-адаптер интерфейса находится в
+Актуально на 2026-09-01. Виктор является AI-собеседником по умолчанию, а StratForge
+Orchestrator — единым внутренним AI-шлюзом внутри пользовательской оболочки
+`SF Chat`. Единственный HTTP-адаптер интерфейса находится в
 `app/static/aurora/assets/api.js`. Production не загружает mock-данные.
 
 Планируемый multi-user слой не должен расширять текущую роль auth до подписки
@@ -30,10 +31,29 @@ Orchestrator — единым внутренним шлюзом. Единств�
 | Новости | `/api/news`, `/api/news/live`, `/api/ai-lab/news-analysis` | read-only; официальный календарь, анализ Никиты, рекомендации, здоровье источников и приоритетные ленты |
 | TopStep | `/api/topstep/status` | read-only scaffold; live-действия принудительно отключены до отдельной валидации |
 | Telegram и вход | `/api/auth/status`, `/api/auth/login/*`, `/api/auth/profile`, `/api/auth/me`, `/api/telegram/status` | одноразовый Telegram-вход, ручная команда `/login КОД`, профиль, pairing, уведомления и отзыв сессий; секреты не возвращаются |
+| Сообщество (`BETA` в DEV-ветке) | `/api/community/v2/*`, совместимые `/api/community/*` Channels | профили/privacy, server-side feed/search/pagination, follow/block, реакции, комментарии, bookmarks, soft delete, жалобы/moderation; публикация завершённого Demo/Backtest result только через server-attested snapshot |
+| SF Chat (`BETA` в DEV-ветке) | `/api/sf-chat/*` + существующие `/api/ai-lab/orchestrator*` | единые human conversations/messages/attachments/unread/read/block enforcement и прежние AI conversations в общей оболочке; Community не хранит отдельные DM |
 | Виктор | `/api/ai-lab/orchestrator*`, `/api/vitek/*` | единый естественный диалог; status/time-windows, event scan, rest/resume, plans, tasks and incident decisions; в сообщении видны фактический агент, модель/provider и проверяемые action-status без скрытых рассуждений |
 | Документы | governance documents, runtime defaults, history | save с actor/reason и подтверждением |
 
 ## Новые постоянные контракты
+
+- `GET /api/community/v2/feed|saved|profiles|search` выполняет social filtering,
+  privacy и cursor pagination на сервере. Мутации `profile`, `follows`, `posts`,
+  `reaction`, `comments`, `bookmark`, `blocks`, `reports` и owner-only
+  `moderation` требуют текущую authenticated/CSRF-сессию. Клиентский
+  `object_snapshot` запрещён.
+- `GET /api/community/v2/objects` перечисляет только завершённые job текущего
+  user/workspace scope. `POST /api/community/v2/objects` повторно проверяет
+  ownership и entitlement, читает allowlisted job summary и формирует
+  server-attested SHA-256 snapshot без raw trades, bars, paths, parameters или
+  source code. Пока подключены Demo/Backtest results; Strategy/Chart/Live кнопки
+  остаются честно выключенными до своих trusted adapters.
+- `/api/sf-chat/conversations*`, `/messages`, `/read` — единственный human chat
+  contract. ACL не раскрывает существование чужого диалога (404), block/privacy
+  запрещают новые сообщения немедленно, `Idempotency-Key` устраняет повторы.
+  AI conversation endpoints не мигрированы и продолжают работать через
+  прежний Orchestrator authority.
 
 - `GET /api/vitek/status` и `GET /api/vitek/time-windows` возвращают
   безопасную owner-only проекцию состояния, активности агентов и рабочих окон.

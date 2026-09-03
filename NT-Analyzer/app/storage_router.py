@@ -9,8 +9,10 @@ from urllib.parse import unquote, urlparse
 from . import runtime_env
 from .production_storage import (
     AuditRepository,
+    CommunityRepository,
     DocumentRepository,
     EnvironmentRegistryRepository,
+    SFChatRepository,
     Scope,
     StorageConfigurationError,
     StorageError,
@@ -57,6 +59,81 @@ def document_repository_readiness(repository: str) -> Dict[str, Any]:
 
 def write_document(repository: str, document: Mapping[str, Any]) -> int:
     return _documents().write(repository, document)
+
+
+def _global_scope() -> Scope:
+    return Scope.global_service_scope()
+
+
+def _relational_client():
+    if not production_enabled():
+        raise StorageConfigurationError("Relational SF Chat router used in Development.")
+    if _mode() != "postgresql":
+        raise StorageConfigurationError("Production storage mode must be postgresql.")
+    return get_client(production=True)
+
+
+def sf_chat_reader() -> SFChatRepository:
+    """Relational read side for the SF Chat hot path."""
+    return SFChatRepository(_relational_client())
+
+
+def community_reader() -> CommunityRepository:
+    """Relational read side for the Community rows SF Chat projects."""
+    return CommunityRepository(_relational_client())
+
+
+def sf_chat_conversation_page(viewer_profile_id: str, *, limit: int = 30,
+                              cursor: str = "") -> Dict[str, Any]:
+    return sf_chat_reader().conversation_page(
+        viewer_profile_id, scope=_global_scope(), limit=limit, cursor=cursor,
+    )
+
+
+def sf_chat_poll_state(viewer_profile_id: str) -> Dict[str, Any]:
+    return sf_chat_reader().poll_state(viewer_profile_id, scope=_global_scope())
+
+
+def sf_chat_unread_total(viewer_profile_id: str) -> int:
+    return sf_chat_reader().unread_total(viewer_profile_id, scope=_global_scope())
+
+
+def sf_chat_conversation(conversation_id: str, viewer_profile_id: str):
+    return sf_chat_reader().conversation(
+        conversation_id, viewer_profile_id, scope=_global_scope(),
+    )
+
+
+def sf_chat_participant_profile_ids(conversation_id: str) -> list:
+    return sf_chat_reader().participant_profile_ids(
+        conversation_id, scope=_global_scope(),
+    )
+
+
+def sf_chat_message_page(conversation_id: str, *, limit: int = 50,
+                         before_seq: int = 0) -> Dict[str, Any]:
+    return sf_chat_reader().message_page(
+        conversation_id, scope=_global_scope(), limit=limit,
+        before_seq=before_seq or None,
+    )
+
+
+def sf_chat_read_seq(conversation_id: str, profile_id: str) -> int:
+    return sf_chat_reader().read_seq(
+        conversation_id, profile_id, scope=_global_scope(),
+    )
+
+
+def community_profile_by_identity(user_id, user_uuid: str):
+    return community_reader().profile_by_identity(
+        int(user_id or 0), str(user_uuid or ""), scope=_global_scope(),
+    )
+
+
+def community_public_profiles(viewer_profile_id: str, profile_ids) -> list:
+    return community_reader().public_profiles(
+        viewer_profile_id, profile_ids, scope=_global_scope(),
+    )
 
 
 def read_workspace_ledger(workspace_id: str, default: Mapping[str, Any]) -> Dict[str, Any]:

@@ -146,7 +146,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260812-final-acceptance2"}, versions
+    assert set(versions.values()) == {"20260901-community-chat1"}, versions
 
 
 def test_every_aurora_page_uses_current_theme_cache_version():
@@ -156,7 +156,7 @@ def test_every_aurora_page_uses_current_theme_cache_version():
         marker = 'href="assets/theme.css?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260823-trial-access1"}, versions
+    assert set(versions.values()) == {"20260902-sfchat-messenger3"}, versions
 
 
 def test_development_preview_is_rewired_after_async_build_identity():
@@ -272,7 +272,7 @@ def test_every_aurora_page_uses_current_ui_cache_version():
             continue
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
     assert versions
-    assert set(versions.values()) == {"20260823-trial-access1"}, versions
+    assert set(versions.values()) == {"20260902-sfchat-messenger3"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():
@@ -586,13 +586,15 @@ def test_aurora_trading_exposes_reconnect_modeling_control():
     assert "#ctrl-reconnect" in trading
 
 
-def test_vitek_chat_hides_internal_model_beside_message_time():
+def test_sf_chat_preserves_vitek_metadata_without_exposing_internal_model_beside_time():
     ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
     assert "orchFmtTime(row.timestamp_utc)" in ui
     assert "!isUser && row.model ? esc(row.model)" not in ui
-    assert "StratForge Orchestrator · Витёк" in ui
-    assert '<span class="orch-head-name">StratForge Orchestrator</span>' in ui
-    assert "Витёк · ваша правая рука" in ui
+    assert "SF Chat · люди и AI-помощники" in ui
+    assert '<span class="orch-head-name">SF Chat<span class="orch-head-skin"' in ui
+    assert "AI · Виктор и агенты" in ui
+    assert "function openSFChat" in ui
+    assert "conversation_type === 'human'" in ui
     assert "Ваши чаты и данные сохранены" in ui
     assert "ORCH.conversations = []" not in ui
     assert "modelMeta" in ui and "модель:" in ui
@@ -601,6 +603,24 @@ def test_vitek_chat_hides_internal_model_beside_message_time():
     assert "row.thinking" not in ui
     assert "orchThinkBlock" not in ui
     assert "Анализирую задачу…" in ui
+
+
+def test_sf_chat_header_chip_and_day_marks_render_real_state_not_css_literals():
+    """The skin chip and the day separators must come from live state.
+
+    Both used to be CSS `content` strings: the header read "Orbital Glass" no
+    matter which of the six skins was applied, and every conversation was
+    headed "Сегодня" even when its newest message was days old.
+    """
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    css = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
+    assert "content: 'Orbital Glass'" not in css
+    assert "content: 'Сегодня'" not in css
+    assert "qsa('.orch-head-skin, .orch-skin-label')" in ui
+    assert "function orchDayKey" in ui
+    assert "function orchDayLabel" in ui
+    assert "orchMessagesHtml(messages)" in ui
+    assert "orchAppendMessage(box," in ui
 
 
 def test_global_and_chat_polling_do_not_overlap_or_hammer_rate_limits():
@@ -649,7 +669,8 @@ def test_ai_lab_uses_conversational_orchestrator_not_literal_mission_form():
     assert "openOrchestrator" in ui
     assert "orch-fab" in ui
     assert "API.http.aiOrchestratorMessage" in ui
-    assert "aiOrchestratorConversations" in ui
+    assert "sfChatConversations" in ui
+    assert "aiOrchestratorConversations" in api
     assert "/api/ai-lab/orchestrator/message" in api
     assert "/api/ai-lab/orchestrator/conversations" in api
     assert "aiOrchestratorSpeak" in api and "/api/ai-lab/orchestrator/speak" in api
@@ -661,6 +682,72 @@ def test_ai_lab_uses_conversational_orchestrator_not_literal_mission_form():
     html = (AURORA / "ai-agents.html").read_text(encoding="utf-8")
     page = (AURORA / "assets" / "pages" / "ai-agents.js").read_text(encoding="utf-8")
     assert "staff-voice-grid" in html and "openVoiceSettings" in page
+
+
+def test_community_v2_and_unified_sf_chat_are_real_api_backed_surfaces():
+    html = (AURORA / "community.html").read_text(encoding="utf-8")
+    page = (AURORA / "assets" / "pages" / "community.js").read_text(encoding="utf-8")
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+    server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
+
+    for contract in (
+        "community-social-dock",
+        "community-stream-toolbar",
+        "community-feed",
+        "community-composer-v2",
+        "community-profile-wall-feed",
+        "community-profile-view",
+        "community-channels-view",
+    ):
+        assert contract in html
+    # A member's wall is a place inside Community, not an overlay over it: the
+    # centre column swaps context and offers the way back.
+    assert "community-profile-modal" not in html
+    assert 'id="community-profile-back"' in html
+    assert 'id="community-profile-detail-center"' in html
+    assert "setCenterMode('profile')" in page and "setCenterMode(STATE.view === 'channels'" in page
+    assert "community-hero" not in html
+    assert "Торговое сообщество внутри StratForge" not in html
+    assert 'id="community-nav"' not in html
+    assert 'id="community-visibility-modal"' in html and 'id="community-visibility-form"' in html
+    assert 'data-community-sort="recent"' in html and 'data-community-sort="relevant"' in html
+    assert 'data-community-wall-tab="posts"' in html and 'data-community-wall-tab="saved"' in html
+    for action in ("График", "Стратегия", "Файл", "Опубликовать"):
+        assert action in html
+    assert "communityV2Feed" in page and "communityV2Post" in page
+    assert 'data-community-object="result"' in html and 'data-community-object="result" disabled' not in html
+    assert "communityV2Objects" in page and "communityV2PublishObject" in page
+    assert "data-community-rich-object" in page
+    assert "raw.startsWith('@')" in page
+    assert "data-share-post" in page and "Поделиться публикацией" in page
+    assert "openProfileVisibility" in page and "communityV2UpdateProfile" in page
+    assert "community-post-action" in page and "actionIcon" in page
+    assert "server-attested" in page
+
+    # The right column belongs to the signed-in member and never follows the
+    # profile opened in the centre.
+    assert "communityV2Profile(viewer.profile_id" in page
+    assert "communityV2Profile(profileId" in page
+    # The registration entry is rendered from the server's derived object; the
+    # page must not mint a date or a status of its own.
+    assert "registrationCardHtml(doc.registration" in page
+    assert "registration.registered_at_utc" in page
+    assert "Поздравляем с регистрацией в StratForge!" in page
+    assert "_registration_milestone" in (ROOT / "app" / "community.py").read_text(encoding="utf-8")
+    assert "sfChatStartConversation" in page and "UI.openSFChat" in page
+    assert "mock" not in page.lower()
+    assert "sfChatConversations" in ui and "sfChatConversation" in ui and "sfChatMessage" in ui
+    assert 'id="orch-convo-search"' in ui and 'id="orch-new-side"' in ui
+    assert 'data-orch-convo-filter="pinned"' in ui and 'data-orch-convo-filter="recent"' in ui
+    assert "ORCH.listQuery" in ui and "participant.username" in ui
+    assert "sideCreate.hidden = ORCH.aiAvailable === false" in ui
+    assert "NOTICE_MAX_VISIBLE = 1" in ui and "Открыть в чате" in ui
+    assert "/api/community/v2/feed" in api and "/api/sf-chat/conversations" in api
+    assert "/api/community/v2/objects" in api
+    assert 'path == "/api/community/v2/feed"' in server
+    assert 'path == "/api/sf-chat/conversations"' in server
+    assert 'path == "/api/community/v2/objects"' in server
 
 
 def test_named_domain_agents_and_unified_finance_page_contract():

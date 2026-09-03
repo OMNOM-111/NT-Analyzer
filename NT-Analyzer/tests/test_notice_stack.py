@@ -28,7 +28,7 @@ def _render_notice():
 def test_the_number_of_visible_banners_is_capped():
     match = re.search(r"const NOTICE_MAX_VISIBLE = (\d+);", UI)
     assert match, "the cap should be a named constant"
-    assert 1 <= int(match.group(1)) <= 4
+    assert int(match.group(1)) == 1
 
 
 def test_adding_a_banner_trims_the_stack():
@@ -93,10 +93,14 @@ def test_hovering_holds_the_banner_open():
     assert "clearTimeout" in body
 
 
-def test_the_hint_tells_the_reader_which_kind_it_is():
+def test_the_grouped_card_offers_chat_action_and_remaining_count():
     body = _render_notice()
-    assert "останется до вашего решения" in body
-    assert "скроется само" in body
+    assert "Открыть в чате" in body
+    assert "sf-notice-more" in body
+    assert "_more" in body
+    assert "noticeTitle(item)" in body
+    assert "noticeTimeLabel(item.created_at_utc)" in body
+    assert "unread_count: unread" in UI
 
 
 # --------------------------------------------------------------------------- #
@@ -142,19 +146,37 @@ def test_no_room_beside_the_panel_means_yielding_the_space():
     assert "body.notices-cramped .sf-notice-wrap { display: none; }" in CSS
 
 
-def test_a_phone_shows_at_most_two():
-    """The stylesheet has several 760px blocks; find the one that styles the
-    notice stack rather than whichever comes first."""
-    blocks = []
-    start = 0
-    while True:
-        found = CSS.find("@media (max-width: 760px) {", start)
-        if found < 0:
-            break
-        blocks.append(CSS[found:])
-        start = found + 1
-    phone = next(b[:b.index("\n}")] for b in blocks if ".sf-notice-wrap" in b[:900])
-    assert ".sf-notice + .sf-notice + .sf-notice { display: none; }" in phone
-    assert "top: 108px" in phone
-    assert "body.has-drawer .sf-notice-wrap { display: none; }" in phone
-    assert "body:has(.menu.open) .sf-notice-wrap { display: none; }" in phone
+def test_phone_and_desktop_cards_are_anchored_above_sf_chat_launcher():
+    final = CSS[CSS.rindex("SF Chat — unified human + AI shell"):]
+    assert ".sf-notice-wrap" in final
+    assert "bottom: 108px" in final
+    assert "bottom: 132px" in final
+    assert "top: auto" in final
+
+
+def test_open_desktop_chat_docks_one_grouped_notice_in_the_lower_rail():
+    final = CSS[CSS.rindex("SF Chat orbital launch"):]
+    selector = "body:has(.sf-chat-panel.open) .sf-notice-wrap"
+    assert selector in final
+    block = final[final.index(selector):]
+    block = block[:block.index("}")]
+    assert "right: 112px" in block
+    assert "bottom: 18px" in block
+    assert "max-height: 78px" in block
+    assert "opacity: 1" in block
+    assert "pointer-events: none" in block
+
+
+def test_chat_shell_has_a_presentation_only_orbital_link_to_the_launcher():
+    assert 'class="orch-orbit-link"' in UI
+    assert 'id="sf-chat-orbit-gradient"' in UI
+    final = CSS[CSS.rindex("SF Chat orbital launch"):]
+    assert ".sf-chat-panel.open ~ .orch-orbit-link" in final
+    assert "@keyframes sfOrbitFlow" in final
+
+
+def test_closing_a_human_notice_does_not_mark_the_conversation_read():
+    body = _render_notice()
+    close_branch = body[body.index("data-notice-close"):body.index("openNotice(item)")]
+    assert "dismissNoticeDom(id)" in close_branch
+    assert "sfChatRead" not in close_branch

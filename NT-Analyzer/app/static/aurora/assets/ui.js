@@ -18,6 +18,7 @@
     users: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>',
     chat: '<path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v10Z"/><path d="M8 9h8M8 13h5"/>',
     send: '<path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7Z"/>',
+    paperclip: '<path d="m21.4 11.6-8.5 8.5a6 6 0 0 1-8.5-8.5l9.2-9.2a4 4 0 0 1 5.7 5.7l-9.2 9.2a2 2 0 0 1-2.8-2.8l8.5-8.5"/>',
     mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8"/>',
     pin: '<path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6ZM12 14v7"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/>',
@@ -6621,17 +6622,24 @@
     setTimeout(() => { t.style.transition = 'opacity .3s, transform .3s'; t.style.opacity = '0'; t.style.transform = 'translateY(8px)'; setTimeout(() => t.remove(), 320); }, 2200);
   }
 
-  // ---- in-app notices: large top banners + bell inbox -------------------------
+  // ---- in-app notices: one grouped card above the SF Chat launcher ------------
   const NOTICE = {
     shown: new Set(), timers: new Map(), started: false,
     unreadByConversation: {}, unreadCount: 0, panelOpen: false,
     graceUntil: 0, fading: false, interactWired: false,
     retryAfter: 0, inflight: false,
   };
-  function canUseNotices() {
+  function canUseSFChatNotices() {
+    return !!(window.API && !API.config.offline && !isGuest()
+      && API.http && typeof API.http.sfChatConversations === 'function');
+  }
+  function canUseSystemNotices() {
     return !!(window.API && !API.config.offline && !isGuest()
       && CURRENT_AUTH && (CURRENT_AUTH.is_owner || CURRENT_AUTH.role === 'owner')
       && API.http && typeof API.http.notifications === 'function');
+  }
+  function canUseNotices() {
+    return canUseSFChatNotices() || canUseSystemNotices();
   }
   function noticeWrap() {
     let wrap = qs('.sf-notice-wrap');
@@ -6648,12 +6656,12 @@
     return cid === String(ORCH.currentId || '');
   }
   async function ackNotices(payload) {
-    if (!canUseNotices()) return null;
+    if (!canUseSystemNotices()) return null;
     try { return await API.http.notificationsAck(payload || {}); }
     catch (e) { return null; }
   }
   async function purgeReadNotices() {
-    if (!canUseNotices()) return;
+    if (!canUseSystemNotices()) return;
     try { await API.http.notificationsClear({ mode: 'read' }); } catch (e) { /* ignore */ }
   }
   function updateBellBadge(count) {
@@ -6759,6 +6767,11 @@
       NOTICE.shown.add(id);
     }
     if (cid) dismissNoticesForConversation(cid);
+    if (item.kind === 'human_message' && cid) {
+      try { await API.http.sfChatRead(cid); } catch (e) { return null; }
+      await refreshInAppNotices({ silent: true });
+      return { ok: true };
+    }
     const payload = {};
     if (id) payload.ids = [id];
     // Only clear the whole conversation when the user explicitly opened a notice
@@ -6776,6 +6789,12 @@
   }
   async function openNotice(item) {
     const cid = String(item.conversation_id || '');
+    if (item.kind === 'human_message' && cid) {
+      await openSFChat({ conversationId: cid, conversationType: 'human' });
+      await markNoticeRead(item, { ackConversation: true });
+      await refreshInAppNotices({ silent: true });
+      return;
+    }
     await markNoticeRead(item, { ackConversation: !!cid });
     if (cid) {
       await openOrchestrator();
@@ -6791,7 +6810,7 @@
   // stays. Nothing bounded the stack before, and only user interaction cleared
   // it, so a quiet session accumulated cards until they covered the right-hand
   // side of the page -- including the panel the reader was working in.
-  const NOTICE_MAX_VISIBLE = 3;
+  const NOTICE_MAX_VISIBLE = 1;
   const NOTICE_AUTO_DISMISS_MS = 7000;
 
   function trimNoticeStack() {
@@ -6801,6 +6820,16 @@
     for (const node of cards.slice(NOTICE_MAX_VISIBLE)) {
       dismissNoticeDom(String(node.dataset.nid || ''));
     }
+  }
+
+  function noticeTitle(item) {
+    const title = String(item.title || 'Уведомление');
+    const count = Math.max(0, Number(item.unread_count || 0));
+    if (item.kind !== 'human_message' || count <= 1) return title;
+    const mod10 = count % 10; const mod100 = count % 100;
+    const noun = mod10 === 1 && mod100 !== 11 ? 'сообщение'
+      : (mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14) ? 'сообщения' : 'сообщений');
+    return `${count} новых ${noun} · ${title}`;
   }
 
   function renderNotice(item) {
@@ -6814,21 +6843,27 @@
     wrap.classList.add('has-notices');
     const urgent = !!item.urgent;
     const cid = String(item.conversation_id || '');
-    const kicker = item.conversation_title
+    const timeLabel = noticeTimeLabel(item.created_at_utc);
+    const kickerBase = item.conversation_title
       ? String(item.conversation_title)
       : (urgent ? 'Срочно' : 'Уведомление');
+    const kicker = [kickerBase, timeLabel].filter(Boolean).join(' · ');
     const preview = String(item.body || '').trim();
+    const avatar = item.avatar_url
+      ? `<span class="sf-notice-avatar"><img src="${esc(item.avatar_url)}" alt=""></span>`
+      : `<span class="sf-notice-avatar ${item.kind === 'human_message' ? '' : 'ai'}">${item.kind === 'human_message'
+        ? esc(String(item.title || '?').slice(0, 1).toUpperCase()) : sfChatMark()}</span>`;
+    const more = Math.max(0, Number(item._more || 0));
     const card = el(`<button type="button" class="sf-notice ${urgent ? 'urgent' : ''}" data-nid="${esc(id)}" data-cid="${esc(cid)}">
       <span class="sf-notice-glow" aria-hidden="true"></span>
       <span class="sf-notice-top">
-        <span class="sf-notice-kicker">${esc(kicker)}</span>
+        <span class="sf-notice-source">${avatar}<span class="sf-notice-kicker">${esc(kicker)}</span></span>
         <span class="sf-notice-close" data-notice-close="${esc(id)}" title="Скрыть" aria-label="Скрыть">${icon('close')}</span>
       </span>
-      <span class="sf-notice-title">${esc(item.title || 'Уведомление')}</span>
+      <span class="sf-notice-title">${esc(noticeTitle(item))}</span>
       ${preview ? `<span class="sf-notice-body">${esc(preview)}</span>` : ''}
-      <span class="sf-notice-hint">${urgent
-        ? 'Открыть · останется до вашего решения'
-        : 'Открыть · скроется само'}</span>
+      <span class="sf-notice-actions"><span>Открыть в чате</span><span class="ghost">Подробнее</span></span>
+      ${more ? `<span class="sf-notice-more"><span>ещё ${more} уведомлен.</span><strong>+${more}</strong></span>` : ''}
     </button>`);
     card.addEventListener('click', (e) => {
       if (e.target.closest('[data-notice-close]')) {
@@ -6861,6 +6896,61 @@
       });
     }
   }
+  async function unifiedNoticeData() {
+    const items = [];
+    const unreadByConversation = {};
+    const humanConversations = [];
+    let humanUnread = 0;
+    let systemData = { items: [], unread_count: 0, unread_by_conversation: {} };
+    if (canUseSFChatNotices()) {
+      try {
+        // Ask for change markers first. This poller runs even with the chat
+        // closed, and in the common case — nothing unread — it can stop here
+        // instead of pulling titles, previews and participant profiles.
+        let unreadAhead = 1;
+        if (typeof API.http.sfChatState === 'function') {
+          const state = await API.http.sfChatState();
+          unreadAhead = Math.max(0, Number(state.unread_count || 0));
+          // The signature is a fixed handful of fields covering every thread,
+          // including the quiet ones that send no row of their own.
+          NOTICE.stateSignature = JSON.stringify(state.signature || {});
+        }
+        const data = unreadAhead > 0 ? await API.http.sfChatConversations() : { conversations: [] };
+        for (const conversation of data.conversations || []) {
+          const unread = Math.max(0, Number(conversation.unread_count || 0));
+          if (conversation.conversation_type !== 'human' || !unread) continue;
+          const cid = String(conversation.conversation_id || '');
+          humanConversations.push(conversation);
+          humanUnread += unread;
+          unreadByConversation[cid] = unread;
+          const participant = conversation.participant || {};
+          items.push({
+            id: `sfchat:${String(conversation.last_message_id || cid)}:${unread}`,
+            kind: 'human_message', conversation_id: cid,
+            conversation_title: 'SF Chat · личное сообщение',
+            title: String(conversation.title || participant.display_name || 'Новое сообщение'),
+            body: String(conversation.last_message_preview || 'Новое сообщение'),
+            created_at_utc: String(conversation.updated_at_utc || ''),
+            avatar_url: String(participant.avatar_url || ''), unread_count: unread, urgent: false,
+          });
+        }
+      } catch (e) { /* system notices may still remain available */ }
+    }
+    if (canUseSystemNotices()) {
+      try { systemData = await API.http.notifications({ unread: 1, limit: 40 }); }
+      catch (e) { systemData = { items: [], unread_count: 0, unread_by_conversation: {} }; }
+      for (const [cid, count] of Object.entries(systemData.unread_by_conversation || {})) {
+        unreadByConversation[cid] = Math.max(Number(unreadByConversation[cid] || 0), Number(count || 0));
+      }
+      items.push(...(systemData.items || []).map(row => ({ ...row, kind: row.kind || 'system' })));
+    }
+    items.sort((left, right) => String(right.created_at_utc || '').localeCompare(String(left.created_at_utc || '')));
+    return {
+      ok: true, items, human_conversations: humanConversations,
+      system_items: systemData.items || [], unread_by_conversation: unreadByConversation,
+      unread_count: humanUnread + Math.max(0, Number(systemData.unread_count || 0)),
+    };
+  }
   function noticeTimeLabel(iso) {
     if (!iso) return '';
     try {
@@ -6871,7 +6961,7 @@
     } catch (e) { return String(iso).slice(0, 16); }
   }
   async function showNotificationsCenter() {
-    if (!canUseNotices()) { toast('Уведомления доступны владельцу'); return; }
+    if (!canUseNotices()) { toast('Уведомления доступны после входа'); return; }
     fadeAwayVisibleNotices();
     const d = drawer(
       `<span style="display:inline-flex;align-items:center;gap:8px">${icon('bell')} Уведомления</span>`,
@@ -6881,7 +6971,7 @@
     const render = async () => {
       const body = qs('.drawer-b', d); if (!body) return;
       let data;
-      try { data = await API.http.notifications({ unread: 1, limit: 80 }); }
+      try { data = await unifiedNoticeData(); }
       catch (e) { renderError(body, e, render); return; }
       const items = (data && data.items) || [];
       const unread = Number((data && data.unread_count) || 0);
@@ -6893,7 +6983,7 @@
           <p class="sf-inbox-lead">Новые ответы и события, пока вы в приложении. Откройте — и пункт исчезнет.</p>
           <div class="sf-inbox-actions">
             <button type="button" class="btn sm ghost" data-inbox-ack-all ${unread ? '' : 'disabled'}>Прочитать все</button>
-            <button type="button" class="btn sm danger" data-inbox-clear-all ${unread ? '' : 'disabled'}>Очистить</button>
+            ${canUseSystemNotices() ? `<button type="button" class="btn sm danger" data-inbox-clear-all ${(data.system_items || []).length ? '' : 'disabled'}>Удалить системные</button>` : ''}
           </div>
         </div>`;
       if (!items.length) {
@@ -6912,7 +7002,7 @@
               ${preview ? `<div class="sf-inbox-body">${esc(preview)}</div>` : ''}
             </button>
             <div class="sf-inbox-acts">
-              <button type="button" class="btn sm ghost" data-inbox-del="${esc(item.id)}" title="Удалить">${icon('trash')}</button>
+              ${item.kind === 'human_message' ? '' : `<button type="button" class="btn sm ghost" data-inbox-del="${esc(item.id)}" title="Удалить">${icon('trash')}</button>`}
             </div>
           </article>`;
         }).join('')}</div>`;
@@ -6921,9 +7011,10 @@
       const ackAll = qs('[data-inbox-ack-all]', body);
       if (ackAll) ackAll.onclick = async () => {
         try {
-          const ids = items.map((row) => row.id).filter(Boolean);
-          if (!ids.length) return;
-          await API.http.notificationsAck({ ids });
+          const human = data.human_conversations || [];
+          await Promise.all(human.map(row => API.http.sfChatRead(row.conversation_id)));
+          const ids = (data.system_items || []).map((row) => row.id).filter(Boolean);
+          if (ids.length) await API.http.notificationsAck({ ids });
           await purgeReadNotices();
           toast('Все прочитаны');
           await render();
@@ -6932,7 +7023,7 @@
       };
       const clearAll = qs('[data-inbox-clear-all]', body);
       if (clearAll) clearAll.onclick = async () => {
-        if (!confirm('Удалить все уведомления?')) return;
+        if (!confirm('Удалить все системные уведомления? Личные сообщения останутся в SF Chat.')) return;
         try {
           await API.http.notificationsClear({ mode: 'all' });
           qsa('.sf-notice').forEach((n) => n.remove());
@@ -6997,7 +7088,7 @@
     NOTICE.inflight = true;
     let data;
     try {
-      data = await API.http.notifications({ unread: 1, limit: 40 });
+      data = await unifiedNoticeData();
       NOTICE.retryAfter = 0;
     } catch (e) {
       if (e && e.status === 429) {
@@ -7012,6 +7103,7 @@
     applyUnreadConversationMap((data && data.unread_by_conversation) || {});
     updateBellBadge(unread);
     updateNoticeFabBadge(unread);
+    const displayItems = items.filter(item => !noticeVisibleInOpenChat(item));
     for (const item of items) {
       // While the matching chat is open, skip the toast — but NEVER auto-ack.
       // Unread must stay in the bell until the user opens or clears it.
@@ -7019,7 +7111,10 @@
         dismissNoticeDom(String(item.id || ''));
         continue;
       }
-      if (!silent) renderNotice(item);
+    }
+    if (!silent && displayItems.length) {
+      const item = { ...displayItems[0], _more: Math.max(0, displayItems.length - 1) };
+      renderNotice(item);
     }
   }
 
@@ -7127,7 +7222,8 @@
     built: false, open: false, sending: false,
     conversations: [], currentId: 'default', loadingList: false, pollStop: null,
     mode: 'auto', messagesSignature: '', feedbackVoice: null, loadError: null,
-    retryAfter: 0, transientError: null,
+    retryAfter: 0, transientError: null, viewerProfileId: '', aiAvailable: null,
+    pendingAttachments: [], listQuery: '', listFilter: 'all',
   };
   const ORCH_KEY = lsKey('orch.currentConversationId');
   const ORCH_SKIN_KEY = lsKey('orch.skin');
@@ -7135,13 +7231,26 @@
     ledger: 'terminal', pulse: 'slate', atelier: 'studio', mica: 'glass', signal: 'day',
   };
   const ORCH_SKINS = [
-    { id: 'forge',    title: 'Forge',    sub: 'Стандарт · торговый терминал',     icon: 'chat',   fabTitle: 'StratForge Orchestrator · Forge' },
-    { id: 'terminal', title: 'Terminal', sub: 'Институциональный desk · amber',   icon: 'cpu',    fabTitle: 'StratForge Orchestrator · Terminal' },
-    { id: 'slate',    title: 'Slate',    sub: 'Современный продукт · Linear',     icon: 'spark',  fabTitle: 'StratForge Orchestrator · Slate' },
-    { id: 'studio',   title: 'Studio',   sub: 'Корпоративный светлый · Stripe',  icon: 'layers', fabTitle: 'StratForge Orchestrator · Studio' },
-    { id: 'glass',    title: 'Glass',    sub: 'Сдержанное стекло · Fluent',      icon: 'desktop', fabTitle: 'StratForge Orchestrator · Glass' },
-    { id: 'day',      title: 'Day',      sub: 'Светлый operations desk',         icon: 'chart',  fabTitle: 'StratForge Orchestrator · Day' },
+    { id: 'forge',    title: 'Forge',    sub: 'Стандарт · торговый терминал',     icon: 'chat',   fabTitle: 'SF Chat · Forge' },
+    { id: 'terminal', title: 'Terminal', sub: 'Институциональный desk · amber',   icon: 'cpu',    fabTitle: 'SF Chat · Terminal' },
+    { id: 'slate',    title: 'Slate',    sub: 'Современный продукт · Linear',     icon: 'spark',  fabTitle: 'SF Chat · Slate' },
+    { id: 'studio',   title: 'Studio',   sub: 'Корпоративный светлый · Stripe',  icon: 'layers', fabTitle: 'SF Chat · Studio' },
+    { id: 'glass',    title: 'Glass',    sub: 'Сдержанное стекло · Fluent',      icon: 'desktop', fabTitle: 'SF Chat · Glass' },
+    { id: 'day',      title: 'Day',      sub: 'Светлый operations desk',         icon: 'chart',  fabTitle: 'SF Chat · Day' },
   ];
+  function sfChatMark() {
+    return `<span class="sf-chat-mark" aria-hidden="true"><svg viewBox="0 0 72 40" focusable="false">
+      <path class="sf-chat-mark-s" d="M66 5H22C13 5 7 9.5 7 15.5S14 26 23 26h24c8 0 12 2.5 12 5.5S55 36 47 36H5"></path>
+      <path class="sf-chat-mark-f" d="M43 36V19c0-6 3.5-9 10-9h13M43 23h16"></path>
+    </svg></span>`;
+  }
+  function orchIsHumanConversation(value) {
+    const row = typeof value === 'object' && value
+      ? value
+      : ORCH.conversations.find(c => c.conversation_id === String(value || ORCH.currentId));
+    return !!((row && row.conversation_type === 'human')
+      || String((row && row.conversation_id) || value || ORCH.currentId).startsWith('sfh_'));
+  }
   function orchSkinMeta(id) {
     const mapped = ORCH_SKIN_LEGACY[id] || id;
     return ORCH_SKINS.find((s) => s.id === mapped) || ORCH_SKINS[0];
@@ -7158,10 +7267,16 @@
     if (document.documentElement) document.documentElement.setAttribute('data-orch-skin', skin.id);
     const fab = qs('#orch-fab');
     if (fab) {
-      fab.innerHTML = `${icon(skin.icon)}<span class="orch-fab-dot" aria-hidden="true"></span>`;
+      const badge = qs('.orch-fab-notice', fab);
+      const badgeText = badge ? badge.textContent : '';
+      fab.innerHTML = `${sfChatMark()}${badgeText ? `<span class="orch-fab-notice" aria-hidden="true">${esc(badgeText)}</span>` : ''}`;
       fab.title = skin.fabTitle;
       fab.setAttribute('aria-label', `Открыть ${skin.fabTitle}`);
     }
+    // The header chip and the selector button name the skin that is actually
+    // applied. They used to be CSS `content` strings, which kept reading
+    // "Orbital Glass" no matter which of the six skins was live.
+    qsa('.orch-head-skin, .orch-skin-label').forEach((node) => { node.textContent = skin.title; });
     const menu = qs('#orch-skin-menu');
     if (menu && !menu.hidden) orchRenderSkinMenu();
   }
@@ -7227,8 +7342,11 @@
     try { return localStorage.getItem(ORCH_KEY) || 'default'; } catch (e) { return 'default'; }
   }
   function orchSaveCurrentId(cid) {
-    ORCH.currentId = cid || 'default';
-    try { localStorage.setItem(ORCH_KEY, ORCH.currentId); } catch (e) { /* ignore */ }
+    ORCH.currentId = String(cid || '');
+    try {
+      if (ORCH.currentId) localStorage.setItem(ORCH_KEY, ORCH.currentId);
+      else localStorage.removeItem(ORCH_KEY);
+    } catch (e) { /* ignore */ }
   }
   function orchFmtTime(iso) {
     if (!iso) return '';
@@ -7239,56 +7357,157 @@
       }).format(new Date(iso));
     } catch (e) { return String(iso).slice(0, 16); }
   }
+  // Day separators are bucketed in the same zone orchFmtTime prints in, so a
+  // separator can never disagree with the timestamps sitting under it.
+  function orchZone() {
+    return (window.AuroraDomain && AuroraDomain.PT_ZONE) || 'America/Los_Angeles';
+  }
+  function orchDayKey(iso) {
+    if (!iso) return '';
+    try {
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: orchZone(), year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(new Date(iso));
+    } catch (e) { return String(iso).slice(0, 10); }
+  }
+  function orchDayLabel(iso) {
+    const key = orchDayKey(iso);
+    if (!key) return '';
+    const now = Date.now();
+    if (key === orchDayKey(new Date(now).toISOString())) return 'Сегодня';
+    if (key === orchDayKey(new Date(now - 86400000).toISOString())) return 'Вчера';
+    try {
+      return new Intl.DateTimeFormat('ru-RU', {
+        timeZone: orchZone(), day: 'numeric', month: 'long',
+      }).format(new Date(iso));
+    } catch (e) { return key; }
+  }
+  function orchDayMarkHtml(iso) {
+    return `<div class="orch-day" data-day="${esc(orchDayKey(iso))}" role="separator"><span>${esc(orchDayLabel(iso))}</span></div>`;
+  }
+  // Renders the list with a separator wherever the calendar day changes. The
+  // header used to be a fixed CSS `content: 'Сегодня'` that sat above every
+  // conversation, including ones whose newest message was days old.
+  function orchMessagesHtml(messages) {
+    let day = '';
+    return messages.map((row) => {
+      const key = orchDayKey(row && row.timestamp_utc);
+      let mark = '';
+      if (key && key !== day) { day = key; mark = orchDayMarkHtml(row.timestamp_utc); }
+      return mark + orchMessageHtml(row);
+    }).join('');
+  }
+  // Optimistic appends carry their own separator when they open a new day.
+  function orchAppendMessage(box, row) {
+    const marks = qsa('.orch-day', box);
+    const last = marks.length ? (marks[marks.length - 1].dataset.day || '') : '';
+    const key = orchDayKey(row && row.timestamp_utc);
+    const mark = key && key !== last ? orchDayMarkHtml(row.timestamp_utc) : '';
+    box.insertAdjacentHTML('beforeend', mark + orchMessageHtml(row));
+  }
   function buildOrchestratorWidget() {
     if (ORCH.built || qs('.orch-fab')) return;
-    const auth = CURRENT_AUTH || {};
-    const ux = String(auth.ux_mode || (auth.user && auth.user.ux_mode) || '').toLowerCase();
-    if (ux === 'beginner' || auth.ux_pending || (auth.user && auth.user.needs_ux_mode)) return;
     ORCH.built = true;
     const offline = !window.API || API.config.offline;
     const skin = orchSkinMeta(orchLoadSkin());
     orchApplySkin(skin.id);
-    const fab = el(`<button class="orch-fab" id="orch-fab" type="button" title="${esc(skin.fabTitle)}" aria-label="Открыть ${esc(skin.fabTitle)}">${icon(skin.icon)}<span class="orch-fab-dot" aria-hidden="true"></span></button>`);
-    const panel = el(`<section class="orch-panel" id="orch-panel" hidden aria-label="StratForge Orchestrator · чат с Витьком">
+    const fab = el(`<button class="orch-fab" id="orch-fab" type="button" title="${esc(skin.fabTitle)}" aria-label="Открыть ${esc(skin.fabTitle)}">${sfChatMark()}</button>`);
+    const panel = el(`<section class="orch-panel sf-chat-panel" id="orch-panel" hidden aria-label="SF Chat · люди и AI-помощники">
       <header class="orch-head">
         <button class="orch-icon-btn orch-list-toggle" id="orch-list-toggle" type="button" title="Список диалогов" aria-label="Список диалогов">${icon('list')}</button>
-        <div class="orch-head-title" title="StratForge Orchestrator · Витёк"><span class="orch-head-name">StratForge Orchestrator</span><span class="orch-head-sub" id="orch-head-sub">Витёк · ваша правая рука</span><span class="orch-task-state open" id="orch-task-state">Тема открыта</span></div>
+        <div class="orch-head-brand">${sfChatMark()}</div>
+        <div class="orch-head-title" title="SF Chat"><span class="orch-head-name">SF Chat<span class="orch-head-skin" id="orch-head-skin">${esc(skin.title)}</span></span><span class="orch-head-sub" id="orch-head-sub">Люди и AI-помощники</span><span class="orch-task-state open" id="orch-task-state">Тема открыта</span></div>
         <button class="orch-icon-btn" id="orch-thread-state" type="button" title="Закрыть завершённую тему" aria-label="Закрыть тему">${icon('check')}</button>
         <button class="orch-icon-btn" id="orch-new" type="button" title="Новый диалог" aria-label="Новый диалог">${icon('plus')}</button>
         <div class="orch-skin-wrap">
-          <button class="orch-icon-btn" id="orch-skin-btn" type="button" title="Облик чата" aria-label="Облик чата" aria-haspopup="menu" aria-expanded="false">${icon('palette')}</button>
+          <button class="orch-icon-btn" id="orch-skin-btn" type="button" title="Облик чата" aria-label="Облик чата" aria-haspopup="menu" aria-expanded="false">${icon('palette')}<span class="orch-skin-label" id="orch-skin-label">${esc(skin.title)}</span></button>
           <div class="orch-skin-menu" id="orch-skin-menu" role="menu" hidden></div>
         </div>
         <button class="orch-icon-btn" id="orch-close" type="button" title="Свернуть" aria-label="Свернуть">${icon('close')}</button>
       </header>
       <div class="orch-body">
         <button type="button" class="orch-drawer-scrim" id="orch-drawer-scrim" aria-label="Закрыть список диалогов" tabindex="-1"></button>
-        <aside class="orch-convos" id="orch-convos" aria-label="Диалоги"></aside>
+        <aside class="orch-convos" id="orch-convos" aria-label="Диалоги">
+          <div class="orch-convo-tools">
+            <div class="orch-convo-tools-head"><span>Диалоги</span><span id="orch-convo-count">0</span></div>
+            <label class="orch-convo-search" for="orch-convo-search">${icon('search')}<input id="orch-convo-search" type="search" autocomplete="off" placeholder="Поиск диалогов" aria-label="Поиск диалогов"></label>
+            <button class="orch-convo-new" id="orch-new-side" type="button">${icon('plus')}<span>Новый диалог</span></button>
+            <div class="orch-convo-filters" role="tablist" aria-label="Фильтр диалогов">
+              <button type="button" class="active" data-orch-convo-filter="all" role="tab" aria-selected="true">Все</button>
+              <button type="button" data-orch-convo-filter="pinned" role="tab" aria-selected="false">Закреплённые</button>
+              <button type="button" data-orch-convo-filter="recent" role="tab" aria-selected="false">Недавние</button>
+            </div>
+          </div>
+          <div class="orch-convo-list" id="orch-convo-list"></div>
+        </aside>
         <div class="orch-main">
           <div class="orch-msgs" id="orch-msgs"><div class="empty-state">Загрузка…</div></div>
           <div class="orch-compose">
             <div class="orch-model-picker" id="orch-model-picker" hidden aria-hidden="true"></div>
+            <div class="orch-attachments" id="orch-attachments" hidden></div>
             <form class="orch-input" id="orch-form" autocomplete="off">
+              <button class="orch-attach" id="orch-attach" type="button" title="Прикрепить изображение" aria-label="Прикрепить изображение" hidden>${icon('paperclip')}</button>
+              <input id="orch-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
               <textarea id="orch-text" rows="1" maxlength="6000" placeholder="Напишите задачу обычным текстом…" ${offline ? 'disabled' : ''}></textarea>
               <button class="orch-mic" id="orch-mic" type="button" title="Голосовой ввод" aria-label="Голосовой ввод" hidden>${icon('mic')}</button>
               <button class="orch-send" id="orch-send" type="submit" title="Отправить" aria-label="Отправить" ${offline ? 'disabled' : ''}>${icon('send')}</button>
             </form>
+            <p class="orch-disclaimer" id="orch-disclaimer">SF Chat может ошибаться. Проверяйте важную информацию.</p>
           </div>
         </div>
       </div>
     </section>`);
+    const orbitLink = el(`<span class="orch-orbit-link" aria-hidden="true">
+      <svg viewBox="0 0 132 72" focusable="false">
+        <defs>
+          <linearGradient id="sf-chat-orbit-gradient" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#dffaff" stop-opacity=".92"></stop>
+            <stop offset=".48" stop-color="#55d5ff" stop-opacity=".84"></stop>
+            <stop offset="1" stop-color="#6b76ff" stop-opacity=".68"></stop>
+          </linearGradient>
+        </defs>
+        <path class="orch-orbit-glow" d="M60 16 C58 32 54 50 80 50 C97 50 104 55 115 58"></path>
+        <path class="orch-orbit-path" d="M60 16 C58 32 54 50 80 50 C97 50 104 55 115 58"></path>
+        <path class="orch-orbit-spark" d="M60 16 C58 32 54 50 80 50 C97 50 104 55 115 58"></path>
+        <circle class="orch-orbit-node" cx="115" cy="58" r="3"></circle>
+      </svg>
+    </span>`);
     document.body.appendChild(fab);
     document.body.appendChild(panel);
+    document.body.appendChild(orbitLink);
 
     fab.addEventListener('click', () => { ORCH.open ? closeOrchestrator() : openOrchestrator(); });
     qs('#orch-close', panel).addEventListener('click', closeOrchestrator);
     qs('#orch-list-toggle', panel).addEventListener('click', () => { orchCloseSkinMenu(); panel.classList.toggle('show-convos'); });
     qs('#orch-drawer-scrim', panel).addEventListener('click', () => panel.classList.remove('show-convos'));
     qs('#orch-new', panel).addEventListener('click', () => { orchCloseSkinMenu(); orchNewConversation(); });
+    qs('#orch-new-side', panel).addEventListener('click', () => { orchCloseSkinMenu(); orchNewConversation(); });
+    qs('#orch-convo-search', panel).addEventListener('input', (e) => {
+      // Filtering rebuilt the whole rail on every character. One render per
+      // typing pause keeps the field responsive on a large list.
+      const value = String(e.target.value || '').trim().toLocaleLowerCase('ru-RU');
+      if (ORCH.searchTimer) clearTimeout(ORCH.searchTimer);
+      ORCH.searchTimer = setTimeout(() => {
+        ORCH.searchTimer = null;
+        if (ORCH.listQuery === value) return;
+        ORCH.listQuery = value;
+        orchRenderConversations();
+      }, 120);
+    });
+    qsa('[data-orch-convo-filter]', panel).forEach((button) => button.addEventListener('click', () => {
+      ORCH.listFilter = button.dataset.orchConvoFilter || 'all';
+      orchRenderConversations();
+    }));
     qs('#orch-thread-state', panel).addEventListener('click', () => { orchCloseSkinMenu(); orchToggleConversationState(); });
     qs('#orch-skin-btn', panel).addEventListener('click', (e) => { e.stopPropagation(); orchToggleSkinMenu(); });
     qs('#orch-skin-menu', panel).addEventListener('click', (e) => e.stopPropagation());
     qs('#orch-form', panel).addEventListener('submit', (e) => { e.preventDefault(); orchSend(); });
+    qs('#orch-attach', panel).addEventListener('click', () => qs('#orch-files', panel).click());
+    qs('#orch-files', panel).addEventListener('change', (e) => orchAddAttachments(e.target.files));
+    qs('#orch-msgs', panel).addEventListener('scroll', (e) => {
+      // Reaching the top of a human thread asks for the page before it.
+      if (e.target.scrollTop <= 48) orchLoadOlderMessages();
+    }, { passive: true });
     const ta = qs('#orch-text', panel);
     ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(120, ta.scrollHeight) + 'px'; });
     ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); orchSend(); } });
@@ -7312,7 +7531,7 @@
     const meta = ORCH_MODES[mode] ? mode : 'auto';
     ORCH.mode = meta;
     const info = ORCH_MODES[meta];
-    const sub = qs('#orch-head-sub'); if (sub) sub.textContent = 'Витёк · ваша правая рука';
+    orchUpdateHeader();
     const ta = qs('#orch-text'); if (ta) ta.placeholder = info.ph;
     if (!(opts && opts.silent) && ta && !ta.disabled) ta.focus();
   }
@@ -7373,27 +7592,84 @@
     });
     onLeave(stop);
   }
-  async function openOrchestrator() {
+  function orchRenderPendingAttachments() {
+    const wrap = qs('#orch-attachments');
+    if (!wrap) return;
+    const rows = ORCH.pendingAttachments || [];
+    wrap.hidden = !rows.length;
+    wrap.innerHTML = rows.map((row, index) => `<span class="orch-attachment-preview">
+      <img src="${esc(row.data_url)}" alt=""><span>${esc(row.name || 'image')}</span>
+      <button type="button" data-orch-remove-file="${index}" aria-label="Убрать вложение">${icon('close')}</button>
+    </span>`).join('');
+    qsa('[data-orch-remove-file]', wrap).forEach((button) => button.addEventListener('click', () => {
+      ORCH.pendingAttachments.splice(Number(button.dataset.orchRemoveFile), 1);
+      orchRenderPendingAttachments();
+    }));
+  }
+  async function orchAddAttachments(fileList) {
+    const files = Array.from(fileList || []);
+    const allowed = new Set(['image/png', 'image/jpeg', 'image/webp']);
+    for (const file of files) {
+      if (ORCH.pendingAttachments.length >= 3) { toast('Можно приложить до 3 изображений'); break; }
+      if (!allowed.has(String(file.type || '').toLowerCase())) { toast('Поддерживаются PNG, JPEG и WebP'); continue; }
+      if (Number(file.size || 0) > 2 * 1024 * 1024) { toast('Каждое изображение — не более 2 МБ'); continue; }
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(new Error('Не удалось прочитать изображение'));
+        reader.readAsDataURL(file);
+      }).catch((error) => { reportError(error); return ''; });
+      if (dataUrl) ORCH.pendingAttachments.push({
+        name: String(file.name || 'image').slice(0, 120),
+        mime_type: file.type,
+        size: file.size,
+        data_url: dataUrl,
+      });
+    }
+    const input = qs('#orch-files'); if (input) input.value = '';
+    orchRenderPendingAttachments();
+  }
+  async function openOrchestrator(options) {
     buildOrchestratorWidget();
     const panel = qs('#orch-panel'); const fab = qs('#orch-fab');
     if (!panel) return;
     ORCH.open = true;
+    if (ORCH.hideTimer) { clearTimeout(ORCH.hideTimer); ORCH.hideTimer = null; }
     panel.hidden = false;
     requestAnimationFrame(() => panel.classList.add('open'));
     if (fab) fab.classList.add('active');
     if (!window.API || API.config.offline) {
-      qs('#orch-msgs', panel).innerHTML = '<div class="empty-state">Чат оркестратора доступен только в работающем приложении (не в офлайн-превью).</div>';
+      qs('#orch-msgs', panel).innerHTML = '<div class="empty-state">SF Chat доступен только в работающем приложении (не в офлайн-превью).</div>';
       return;
     }
     if (isGuest()) {
       orchRenderAuthRequired(panel);
       return;
     }
-    // Restore the last opened conversation so a reload lands where you left off.
-    ORCH.currentId = orchLoadLastId();
+    // Restore the last opened conversation unless the caller requested an exact
+    // human or AI dialogue (for example from Community or a notification).
+    const requestedId = String((options && options.conversationId) || '').trim();
+    if (requestedId) {
+      if (ORCH.searchTimer) { clearTimeout(ORCH.searchTimer); ORCH.searchTimer = null; }
+      ORCH.listQuery = '';
+      ORCH.listFilter = 'all';
+      const search = qs('#orch-convo-search', panel); if (search) search.value = '';
+    }
+    ORCH.currentId = requestedId || orchLoadLastId();
+    // The list and the opened dialogue are independent reads. They used to run
+    // one after the other, so the shell waited for two round trips before it
+    // was usable; they now overlap.
+    const wanted = ORCH.currentId;
+    ORCH.historyRows = null; ORCH.historyMore = false; ORCH.historyBefore = undefined;
+    const messagesFirst = wanted ? orchLoadMessages(wanted).catch(() => false) : null;
     const loaded = await orchLoadConversations();
+    if (messagesFirst) await messagesFirst;
     if (!loaded) return;
-    await orchLoadMessages(ORCH.currentId);
+    // orchLoadConversations may retarget currentId when the stored dialogue is
+    // gone; in that case the prefetch above rendered nothing and the corrected
+    // conversation still has to be read.
+    if (ORCH.currentId && ORCH.currentId !== wanted) await orchLoadMessages(ORCH.currentId);
+    else if (!ORCH.currentId) qs('#orch-msgs', panel).innerHTML = '<div class="empty-state">Начните переписку из профиля участника в Сообществе.</div>';
     const ta = qs('#orch-text', panel); if (ta && !ta.disabled) ta.focus();
     if (ORCH.currentId) dismissNoticesForConversation(ORCH.currentId);
     // Fast local refresh while open: Telegram uses a separate long-poll receiver,
@@ -7414,13 +7690,22 @@
     }, 3000);
     ORCH.pollStop = () => { stopped = true; clearInterval(id); };
   }
+  async function openSFChat(options) {
+    return openOrchestrator(options || {});
+  }
   function orchRenderAuthRequired(panel) {
     const root = panel || qs('#orch-panel');
     if (!root) return;
     ORCH.loadError = { status: 401, message: 'Требуется вход через Telegram.' };
-    const wrap = qs('#orch-convos', root);
+    const wrap = qs('#orch-convo-list', root) || qs('#orch-convos', root);
     const box = qs('#orch-msgs', root);
-    if (wrap) wrap.innerHTML = '<div class="empty-state">История не удалена. Войдите, чтобы загрузить свои диалоги.</div>';
+    if (wrap) {
+      // Writing the rail directly bypasses the render cache below; clearing it
+      // keeps a later identical conversation render from being skipped and
+      // leaving this sign-in notice in place after the session is restored.
+      wrap._orchRows = '';
+      wrap.innerHTML = '<div class="empty-state">История не удалена. Войдите, чтобы загрузить свои диалоги.</div>';
+    }
     if (box) box.innerHTML = '<div class="empty-state"><strong>Войдите через Telegram</strong><br>После входа вернутся прежние чаты и станут доступны поручения.<div style="margin-top:12px"><button class="btn primary" id="orch-auth-login" type="button">Войти через Telegram</button></div></div>';
     const login = qs('#orch-auth-login', root);
     if (login) login.onclick = () => { closeOrchestrator(); renderTelegramLogin(''); };
@@ -7433,7 +7718,18 @@
     const panel = qs('#orch-panel'); const fab = qs('#orch-fab');
     ORCH.open = false;
     orchCloseSkinMenu();
-    if (panel) { panel.classList.remove('open'); setTimeout(() => { if (!ORCH.open) panel.hidden = true; }, 220); }
+    // The shell was held in the DOM for 460ms after the class came off while
+    // the longest transition ran 220ms, so close felt roughly twice as long as
+    // it looked. The timer is now matched to the transition and cleared on
+    // re-open, so a fast open/close/open cannot hide a panel that is opening.
+    if (panel) {
+      panel.classList.remove('open');
+      if (ORCH.hideTimer) clearTimeout(ORCH.hideTimer);
+      ORCH.hideTimer = setTimeout(() => {
+        ORCH.hideTimer = null;
+        if (!ORCH.open) panel.hidden = true;
+      }, 240);
+    }
     if (fab) fab.classList.remove('active');
     if (ORCH.pollStop) { ORCH.pollStop(); ORCH.pollStop = null; }
     orchStopFeedbackVoice();
@@ -7442,8 +7738,10 @@
   async function orchLoadConversations() {
     const wrap = qs('#orch-convos'); if (!wrap) return;
     try {
-      const data = await API.http.aiOrchestratorConversations();
+      const data = await API.http.sfChatConversations();
       ORCH.conversations = data.conversations || [];
+      ORCH.viewerProfileId = String(data.viewer_profile_id || '');
+      ORCH.aiAvailable = data.ai_available !== false;
       ORCH.loadError = null;
     } catch (e) {
       // Never replace a previously loaded list with an empty one because of a
@@ -7455,7 +7753,7 @@
       return false;
     }
     if (!ORCH.conversations.some(c => c.conversation_id === ORCH.currentId)) {
-      orchSaveCurrentId((ORCH.conversations[0] && ORCH.conversations[0].conversation_id) || 'default');
+      orchSaveCurrentId((ORCH.conversations[0] && ORCH.conversations[0].conversation_id) || '');
     }
     orchRenderConversations();
     orchRenderWorkState();
@@ -7469,16 +7767,35 @@
   function orchCurrentConversation() { return ORCH.conversations.find(c => c.conversation_id === ORCH.currentId) || null; }
   function orchHasUnfinishedCurrent() {
     const c = orchCurrentConversation();
-    return !!(c && !c.closed && ['awaiting_owner', 'in_progress', 'blocked'].includes(c.work_state));
+    return !!(c && !orchIsHumanConversation(c) && !c.closed
+      && ['awaiting_owner', 'in_progress', 'blocked'].includes(c.work_state));
+  }
+  function orchUpdateHeader() {
+    const current = orchCurrentConversation();
+    const sub = qs('#orch-head-sub');
+    // The model caveat belongs to AI answers only; a person-to-person thread
+    // is not the model talking, so it must not carry the warning.
+    const note = qs('#orch-disclaimer');
+    if (note) note.hidden = orchIsHumanConversation(current);
+    if (!sub) return;
+    if (orchIsHumanConversation(current)) {
+      sub.textContent = String((current && current.subtitle) || (current && current.title) || 'Личная переписка');
+      return;
+    }
+    sub.textContent = current
+      ? String(current.subtitle || 'AI · Виктор и агенты')
+      : 'Люди и AI-помощники';
   }
   function orchRenderWorkState() {
     const c = orchCurrentConversation();
+    const human = orchIsHumanConversation(c);
     const workState = (c && c.work_state) || 'open';
     const meta = ORCH_WORK_STATES[workState] || ORCH_WORK_STATES.open;
     const isDefault = !!(c && c.is_default);
+    orchUpdateHeader();
     const badge = qs('#orch-task-state');
     if (badge) {
-      if (isDefault) {
+      if (!c || human || isDefault) {
         // The main/system chat is a durable service inbox — never show topic
         // lifecycle badges such as «Тема открыта» / «Тема завершена».
         badge.hidden = true;
@@ -7491,37 +7808,96 @@
     const toggle = qs('#orch-thread-state');
     if (toggle) {
       // The main/system chat can never be closed — hide the close/reopen button.
-      toggle.hidden = isDefault;
+      toggle.hidden = !c || human || isDefault;
       toggle.innerHTML = icon(c && c.closed ? 'refresh' : 'check');
       toggle.title = c && c.closed ? 'Переоткрыть тему' : 'Закрыть тему';
       toggle.setAttribute('aria-label', toggle.title);
     }
     const ta = qs('#orch-text'); const send = qs('#orch-send'); const mic = qs('#orch-mic');
+    const attach = qs('#orch-attach'); const create = qs('#orch-new'); const sideCreate = qs('#orch-new-side');
     const closed = !!(c && c.closed);
-    if (ta) { ta.disabled = closed || (!window.API || API.config.offline); ta.placeholder = closed ? 'Тема закрыта. Переоткройте её, чтобы продолжить.' : (ORCH_MODES[ORCH.mode] || ORCH_MODES.auto).ph; }
-    if (send) send.disabled = closed || (!window.API || API.config.offline);
-    if (mic) mic.hidden = closed || !(window.SpeechRecognition || window.webkitSpeechRecognition) || (!window.API || API.config.offline);
+    const disabled = !c || closed || (!window.API || API.config.offline);
+    if (ta) {
+      ta.disabled = disabled;
+      ta.placeholder = !c ? 'Выберите диалог' : closed
+        ? 'Тема закрыта. Переоткройте её, чтобы продолжить.'
+        : human ? 'Напишите сообщение…' : (ORCH_MODES[ORCH.mode] || ORCH_MODES.auto).ph;
+      ta.maxLength = human ? 4000 : 6000;
+    }
+    if (send) send.disabled = disabled;
+    if (attach) attach.hidden = !human || disabled;
+    if (create) create.hidden = human || ORCH.aiAvailable === false;
+    // The sidebar is global navigation across both human and AI threads. Keep
+    // the existing AI topic create-flow available even while a human chat is
+    // selected; the compact header action remains conversation-contextual.
+    if (sideCreate) sideCreate.hidden = ORCH.aiAvailable === false;
+    if (mic) mic.hidden = human || closed || !(window.SpeechRecognition || window.webkitSpeechRecognition) || (!window.API || API.config.offline);
+    if (!human && ORCH.pendingAttachments.length) {
+      ORCH.pendingAttachments = [];
+      orchRenderPendingAttachments();
+    }
   }
+  // Upper bound on rows put in the DOM at once. Far above any realistic rail,
+  // so it never fires in ordinary use; it only stops a pathological list from
+  // freezing the click that produced it.
+  const ORCH_LIST_RENDER_CAP = 300;
   function orchRenderConversations() {
-    const wrap = qs('#orch-convos'); if (!wrap) return;
+    const wrap = qs('#orch-convo-list') || qs('#orch-convos'); if (!wrap) return;
     const unreadMap = NOTICE.unreadByConversation || {};
-    const rows = ORCH.conversations.map(c => {
+    const query = String(ORCH.listQuery || '').trim().toLocaleLowerCase('ru-RU');
+    const filter = ['all', 'pinned', 'recent'].includes(ORCH.listFilter) ? ORCH.listFilter : 'all';
+    let visible = ORCH.conversations.slice();
+    if (filter === 'pinned') visible = visible.filter(c => !!(c.pinned || c.is_default));
+    if (filter === 'recent') visible.sort((a, b) => String(b.updated_at_utc || '').localeCompare(String(a.updated_at_utc || '')));
+    if (query) visible = visible.filter(c => {
+      const participant = c.participant || {};
+      return [c.title, c.subtitle, c.last_message_preview, participant.display_name, participant.username]
+        .some(value => String(value || '').toLocaleLowerCase('ru-RU').includes(query));
+    });
+    const count = qs('#orch-convo-count');
+    if (count) count.textContent = visible.length === ORCH.conversations.length
+      ? String(visible.length) : `${visible.length}/${ORCH.conversations.length}`;
+    qsa('[data-orch-convo-filter]').forEach(button => {
+      const active = button.dataset.orchConvoFilter === filter;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+    // A filter or a cleared search re-renders every matching row. At 2000
+    // conversations that is ~30k nodes and ~1.2s of blocked main thread for one
+    // click. The rail renders a bounded window and says so; the counter above it
+    // keeps showing the true visible/total figures.
+    const total = visible.length;
+    const truncated = Math.max(0, total - ORCH_LIST_RENDER_CAP);
+    if (truncated) visible = visible.slice(0, ORCH_LIST_RENDER_CAP);
+    const rows = visible.map(c => {
       const active = c.conversation_id === ORCH.currentId;
-      const canEdit = !c.is_default;
+      const human = orchIsHumanConversation(c);
+      const canEdit = !human && !c.is_default;
       const pinned = !!c.pinned;
-      const unreadN = Math.max(0, Number(unreadMap[c.conversation_id] || 0));
+      const unreadN = Math.max(0, Number(c.unread_count || unreadMap[c.conversation_id] || 0));
       const unreadCls = unreadN ? ' unread' : '';
       const unreadBadge = unreadN
         ? `<span class="orch-convo-unread" title="${unreadN} непрочитанных">${unreadN > 9 ? '9+' : unreadN}</span>`
         : '';
+      const participant = c.participant || {};
+      const face = human ? `<span class="orch-convo-face">${participant.avatar_url
+        ? `<img src="${esc(participant.avatar_url)}" alt="">`
+        : esc(String(participant.display_name || c.title || '?').slice(0, 1).toUpperCase())}</span>` : '';
+      const subtitle = human
+        ? [String(c.last_message_preview || ''), orchFmtTime(c.updated_at_utc)].filter(Boolean).join(' · ')
+        : `${orchFmtTime(c.updated_at_utc)} · ${Number(c.message_count || 0)} сообщ.`;
+      const state = human
+        ? '<div class="orch-convo-state human">личная переписка</div>'
+        : `<div class="orch-convo-state ${(c.closed ? 'closed' : (c.is_default ? 'open' : (ORCH_WORK_STATES[c.work_state] || ORCH_WORK_STATES.open)[1]))}">${c.closed ? 'закрыта' : (c.is_default ? 'всегда открыт' : (ORCH_WORK_STATES[c.work_state] || ORCH_WORK_STATES.open)[0])}</div>`;
       return `<div class="orch-convo ${active ? 'active' : ''} ${pinned ? 'pinned' : ''}${unreadCls}" data-cid="${esc(c.conversation_id)}" role="button" tabindex="0">
+        ${face}
         <div class="orch-convo-main">
           <div class="orch-convo-title">${pinned ? icon('pin') : ''}${esc(c.title || 'Диалог')}${unreadBadge}</div>
-          <div class="orch-convo-sub">${orchFmtTime(c.updated_at_utc)} · ${Number(c.message_count || 0)} сообщ.</div>
-          <div class="orch-convo-state ${(c.closed ? 'closed' : (c.is_default ? 'open' : (ORCH_WORK_STATES[c.work_state] || ORCH_WORK_STATES.open)[1]))}">${c.closed ? 'закрыта' : (c.is_default ? 'всегда открыт' : (ORCH_WORK_STATES[c.work_state] || ORCH_WORK_STATES.open)[0])}</div>
+          <div class="orch-convo-sub">${esc(subtitle)}</div>
+          ${state}
         </div>
         <div class="orch-convo-acts">
-          ${c.is_default ? '<span class="orch-convo-sys" title="Системный чат — всегда закреплён">служебный</span>' : `<button class="orch-icon-btn sm ${pinned ? 'on' : ''}" data-pin="${esc(c.conversation_id)}" data-pinned="${pinned ? '1' : '0'}" title="${pinned ? 'Открепить' : 'Закрепить вверху'}" aria-label="Закрепить">${icon('pin')}</button>`}
+          ${human ? '' : (c.is_default ? '<span class="orch-convo-sys" title="Системный чат — всегда закреплён">AI</span>' : `<button class="orch-icon-btn sm ${pinned ? 'on' : ''}" data-pin="${esc(c.conversation_id)}" data-pinned="${pinned ? '1' : '0'}" title="${pinned ? 'Открепить' : 'Закрепить вверху'}" aria-label="Закрепить">${icon('pin')}</button>`)}
           ${canEdit ? `<button class="orch-icon-btn sm" data-rename="${esc(c.conversation_id)}" title="Переименовать" aria-label="Переименовать">${icon('edit')}</button><button class="orch-icon-btn sm" data-del="${esc(c.conversation_id)}" title="Удалить" aria-label="Удалить">${icon('trash')}</button>` : ''}
         </div>
       </div>`;
@@ -7529,24 +7905,48 @@
     const error = ORCH.loadError
       ? '<div class="empty-state">Не удалось обновить список. Показана сохранённая история; повторите после восстановления соединения.</div>'
       : '';
-    wrap.innerHTML = error + (rows || (ORCH.loadError ? '' : '<div class="empty-state">Создайте первый диалог.</div>'));
-    qsa('.orch-convo', wrap).forEach(node => {
-      node.addEventListener('click', (e) => {
-        if (e.target.closest('[data-rename]') || e.target.closest('[data-del]') || e.target.closest('[data-pin]')) return;
-        orchSelectConversation(node.dataset.cid);
+    const empty = query ? 'Диалоги не найдены.'
+      : filter === 'pinned' ? 'Нет закреплённых диалогов.'
+        : filter === 'recent' ? 'Нет недавних диалогов.' : 'Создайте первый диалог.';
+    const more = truncated
+      ? `<div class="empty-state orch-convo-empty">Показаны первые ${ORCH_LIST_RENDER_CAP} из ${total}. Уточните поиск, чтобы увидеть остальные.</div>`
+      : '';
+    const html = error + (rows || (ORCH.loadError ? '' : `<div class="empty-state orch-convo-empty">${empty}</div>`)) + more;
+    // The list is re-rendered by the 3s refresh whether or not anything moved.
+    // Writing identical markup back tore down and rebuilt every row, losing the
+    // rail's scroll position and, with a large list, blocking the main thread
+    // on each tick. Skipping an unchanged write costs one string compare.
+    if (wrap._orchRows !== html) {
+      wrap._orchRows = html;
+      wrap.innerHTML = html;
+    }
+    // One delegated listener for the whole rail. Binding four handlers per row
+    // meant a list of N conversations attached 4N listeners on every render.
+    if (!wrap._orchWired) {
+      wrap._orchWired = true;
+      wrap.addEventListener('click', (e) => {
+        const pin = e.target.closest('[data-pin]');
+        if (pin) { e.stopPropagation(); orchPin(pin.dataset.pin, pin.dataset.pinned !== '1'); return; }
+        const rename = e.target.closest('[data-rename]');
+        if (rename) { e.stopPropagation(); orchRename(rename.dataset.rename); return; }
+        const remove = e.target.closest('[data-del]');
+        if (remove) { e.stopPropagation(); orchDelete(remove.dataset.del); return; }
+        const row = e.target.closest('.orch-convo');
+        if (row) orchSelectConversation(row.dataset.cid);
       });
-    });
-    qsa('[data-pin]', wrap).forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); orchPin(b.dataset.pin, b.dataset.pinned !== '1'); }));
-    qsa('[data-rename]', wrap).forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); orchRename(b.dataset.rename); }));
-    qsa('[data-del]', wrap).forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); orchDelete(b.dataset.del); }));
+    }
   }
   async function orchPin(cid, pinned) {
     if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
+    if (orchIsHumanConversation(cid)) return;
     try { await API.http.aiOrchestratorPinConversation(cid, pinned); await orchLoadConversations(); }
     catch (e) { reportError(e); }
   }
   async function orchSelectConversation(cid) {
     if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
+    if (cid && cid !== ORCH.currentId) {
+      ORCH.historyRows = null; ORCH.historyMore = false; ORCH.historyBefore = undefined;
+    }
     if (!cid || cid === ORCH.currentId) {
       qs('#orch-panel').classList.remove('show-convos');
       if (cid) dismissNoticesForConversation(cid);
@@ -7560,15 +7960,23 @@
     qs('#orch-panel').classList.remove('show-convos');
     await orchLoadMessages(cid);
     orchRenderWorkState();
+    if (orchIsHumanConversation(cid)) {
+      try { await API.http.sfChatRead(cid); } catch (e) { /* visible dialogue remains usable */ }
+      await refreshInAppNotices({ silent: true });
+    }
     dismissNoticesForConversation(cid);
     const ta = qs('#orch-text'); if (ta && !ta.disabled) ta.focus();
   }
   async function orchNewConversation() {
     if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
     if (!window.API || API.config.offline) return;
+    if (ORCH.aiAvailable === false) return;
     if (orchHasUnfinishedCurrent() && !confirm('Текущая тема ещё не завершена. Создать новую тему всё равно?')) return;
     try {
       const res = await API.http.aiOrchestratorCreateConversation('');
+      ORCH.listQuery = '';
+      ORCH.listFilter = 'all';
+      const search = qs('#orch-convo-search'); if (search) search.value = '';
       orchSaveCurrentId((res.conversation && res.conversation.conversation_id) || 'default');
       await orchLoadConversations();
       await orchLoadMessages(ORCH.currentId);
@@ -7578,6 +7986,7 @@
   }
   async function orchRename(cid) {
     if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
+    if (orchIsHumanConversation(cid)) return;
     const current = ORCH.conversations.find(c => c.conversation_id === cid);
     const title = prompt('Название диалога:', (current && current.title) || '');
     if (title == null) return;
@@ -7588,6 +7997,7 @@
   }
   async function orchDelete(cid) {
     if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
+    if (orchIsHumanConversation(cid)) return;
     if (!confirm('Удалить этот диалог вместе с его историей?')) return;
     try {
       await API.http.aiOrchestratorDeleteConversation(cid);
@@ -7736,23 +8146,24 @@
         <button type="button" class="orch-fulfill-btn ${fulfillment === 'done' ? 'active done' : ''}" data-orch-fulfill="done" title="Выполнено" aria-label="Выполнено">${icon('check')}</button>
         <button type="button" class="orch-fulfill-btn ${fulfillment === 'failed' ? 'active failed' : ''}" data-orch-fulfill="failed" title="Не выполнено" aria-label="Не выполнено">${icon('close')}</button>
       </div>` : `<span class="orch-msg-kind soft">${esc(kindLabel)}</span>`;
-    return `<div class="orch-msg-footer" data-orch-message-id="${esc(row.message_id)}">
-      <div class="orch-msg-footer-row">
-        <div class="orch-msg-footer-left">
-          ${isInformational ? '' : `<div class="orch-rating compact" data-orch-message-id="${esc(row.message_id)}" data-rating="${Number(row.rating || 0) || ''}">
-            <div class="orch-rating-row"><span class="orch-rating-label">Оценка</span><div class="orch-rating-stars">${[1, 2, 3].map(n => `<button type="button" class="orch-rate-star ${Number(row.rating || 0) >= n ? 'active' : ''}" data-orch-rate="${n}" title="${({ 1: 'Слабый ответ', 2: 'Нормально', 3: 'Хороший ответ' })[n]}" aria-label="${({ 1: 'Слабый ответ', 2: 'Нормально', 3: 'Хороший ответ' })[n]}">${icon('star')}</button>`).join('')}</div></div>
-          </div>`}
-          ${isInformational ? `<span class="orch-msg-kind soft">${esc(kindLabel)}</span>` : `<span class="orch-fulfill-status ${statusCls}" title="${esc(fulfillLabel)}">${fulfillment === 'done' ? icon('check') : fulfillment === 'failed' ? icon('close') : ''}<span>${esc(fulfillLabel)}</span></span>`}
+    const comment = String(row.feedback_comment || '');
+    const hasComment = !!comment.trim();
+    const rating = Number(row.rating || 0);
+    const feedbackOpen = rating === 1 && !hasComment;
+    return `<details class="orch-msg-footer" data-orch-message-id="${esc(row.message_id)}" ${feedbackOpen ? 'open' : ''}>
+      <summary class="orch-msg-tools-summary"><span class="orch-msg-tools-label"><span aria-hidden="true">···</span> Детали ответа</span><time>${esc(orchFmtTime(row.timestamp_utc))}</time></summary>
+      <div class="orch-msg-footer-panel">
+        <div class="orch-msg-footer-row">
+          <div class="orch-msg-footer-left">
+            ${isInformational ? '' : `<div class="orch-rating compact" data-orch-message-id="${esc(row.message_id)}" data-rating="${rating || ''}">
+              <div class="orch-rating-row"><span class="orch-rating-label">Оценка</span><div class="orch-rating-stars">${[1, 2, 3].map(n => `<button type="button" class="orch-rate-star ${rating >= n ? 'active' : ''}" data-orch-rate="${n}" title="${({ 1: 'Слабый ответ', 2: 'Нормально', 3: 'Хороший ответ' })[n]}" aria-label="${({ 1: 'Слабый ответ', 2: 'Нормально', 3: 'Хороший ответ' })[n]}">${icon('star')}</button>`).join('')}</div></div>
+            </div>`}
+            ${isInformational ? `<span class="orch-msg-kind soft">${esc(kindLabel)}</span>` : `<span class="orch-fulfill-status ${statusCls}" title="${esc(fulfillLabel)}">${fulfillment === 'done' ? icon('check') : fulfillment === 'failed' ? icon('close') : ''}<span>${esc(fulfillLabel)}</span></span>`}
+          </div>
+          <div class="orch-msg-footer-right">${marks}</div>
         </div>
-        <div class="orch-msg-footer-right">${marks}</div>
-      </div>
-      <div class="orch-msg-meta">${metaBits}${orchChainHtml(row)}</div>
-      ${(() => {
-        const comment = String(row.feedback_comment || '');
-        const hasComment = !!comment.trim();
-        const rating = Number(row.rating || 0);
-        const feedbackOpen = rating === 1 && !hasComment;
-        return `<div class="orch-feedback-archive" ${hasComment ? '' : 'hidden'}>
+        <div class="orch-msg-meta">${metaBits}${orchChainHtml(row)}</div>
+        <div class="orch-feedback-archive" ${hasComment ? '' : 'hidden'}>
           <div><span class="orch-feedback-archive-label">Сохранённый комментарий</span><div class="orch-feedback-archive-text">${esc(comment)}</div></div>
           <button type="button" class="orch-feedback-edit">Редактировать</button>
         </div>
@@ -7763,11 +8174,25 @@
             <button type="button" class="orch-feedback-cancel" hidden>Отмена</button>
             <button type="button" class="orch-feedback-save">Сохранить комментарий</button>
           </div>
-        </div>`;
-      })()}
-    </div>`;
+        </div>
+      </div>
+    </details>`;
   }
   function orchMessageHtml(row) {
+    const humanMessage = row.sender_type === 'human' || !!row.sender_profile_id;
+    if (humanMessage) {
+      const sender = row.sender || {};
+      const outgoing = row.outgoing === true
+        || (!!ORCH.viewerProfileId && String(row.sender_profile_id || '') === ORCH.viewerProfileId);
+      const label = outgoing ? 'Вы' : String(sender.display_name || 'Участник');
+      const attachments = Array.isArray(row.attachments) ? row.attachments.filter(a => a && a.url) : [];
+      const media = attachments.map(a => `<a class="orch-msg-shot" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.name || 'Изображение')}"><img loading="lazy" src="${esc(a.url)}" alt="${esc(a.name || 'Изображение')}"></a>`).join('');
+      const face = outgoing ? '' : `<span class="orch-human-face">${sender.avatar_url
+        ? `<img src="${esc(sender.avatar_url)}" alt="">`
+        : esc(label.slice(0, 1).toUpperCase())}</span>`;
+      const meta = [label, orchFmtTime(row.timestamp_utc)].filter(Boolean).join(' · ');
+      return `<div class="orch-msg human ${outgoing ? 'user' : 'assistant'}">${face}<div class="orch-msg-stack">${row.content ? `<div class="orch-msg-body">${esc(row.content)}</div>` : ''}${media}<div class="orch-msg-meta">${esc(meta)}</div></div></div>`;
+    }
     const isUser = row.role === 'user';
     const actor = isUser
       ? (row.actor_is_owner ? String(row.actor_name || 'Вы') : String(row.actor_name || row.user_name || row.user_id || 'Пользователь'))
@@ -7801,6 +8226,7 @@
   async function orchToggleConversationState() {
     const current = orchCurrentConversation();
     if (!current || !window.API || API.config.offline) return;
+    if (orchIsHumanConversation(current)) return;
     const next = current.closed ? 'open' : 'closed';
     if (next === 'closed' && orchHasUnfinishedCurrent() && !confirm('Вопрос ещё не завершён. Закрыть тему без продолжения?')) return;
     try {
@@ -7960,13 +8386,73 @@
       }
     });
   }
+  // Matches the server's default history page. History is walked backwards by
+  // `seq` on an index, so an old page costs the same as a recent one.
+  const ORCH_HISTORY_PAGE = 50;
+  // Pulls the page before what is on screen and keeps the reader's position:
+  // the rail grows upwards instead of jumping to a new scroll offset.
+  async function orchLoadOlderMessages() {
+    const box = qs('#orch-msgs');
+    const cid = ORCH.currentId;
+    if (!box || !cid || ORCH.loadingOlder || !ORCH.historyMore) return;
+    if (!orchIsHumanConversation(cid) || !ORCH.historyBefore) return;
+    ORCH.loadingOlder = true;
+    const anchorHeight = box.scrollHeight;
+    const anchorTop = box.scrollTop;
+    try {
+      const data = await API.http.sfChatConversation(cid, {
+        limit: ORCH_HISTORY_PAGE, before_seq: ORCH.historyBefore,
+      });
+      if (ORCH.currentId !== cid) return;
+      const older = data.messages || [];
+      if (!older.length) { ORCH.historyMore = false; return; }
+      ORCH.historyRows = older.concat(ORCH.historyRows || []);
+      ORCH.historyMore = !!data.has_more;
+      ORCH.historyBefore = Number(data.next_before_seq || 0);
+      ORCH.messagesSignature = '';
+      box.innerHTML = orchMessagesHtml(ORCH.historyRows);
+      box.scrollTop = anchorTop + (box.scrollHeight - anchorHeight);
+    } catch (e) {
+      reportError(e);
+    } finally {
+      ORCH.loadingOlder = false;
+    }
+  }
   async function orchLoadMessages(cid, silent) {
     const box = qs('#orch-msgs'); if (!box) return;
+    if (!cid) return false;
     if (!silent) box.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка диалога…</div>';
     let messages = [];
+    const human = orchIsHumanConversation(cid);
     try {
-      const data = await API.http.aiOrchestratorConversation(cid, { limit: 200 });
+      const data = human
+        ? await API.http.sfChatConversation(cid, { limit: ORCH_HISTORY_PAGE })
+        : await API.http.aiOrchestratorConversation(cid, { limit: 200 });
       messages = data.messages || [];
+      if (human) {
+        // A human thread is read one page at a time from the newest end. Pages
+        // already scrolled into view are kept: the poll only replaces the range
+        // it just re-read, so loading older history is not undone every 3s.
+        const lowest = messages.length ? Number(messages[0].seq || 0) : 0;
+        const kept = (ORCH.currentId === cid ? ORCH.historyRows || [] : [])
+          .filter(row => !lowest || Number(row.seq || 0) < lowest);
+        ORCH.historyRows = kept.concat(messages);
+        if (!silent || ORCH.historyBefore === undefined) {
+          ORCH.historyMore = !!data.has_more;
+          ORCH.historyBefore = Number(data.next_before_seq || 0);
+        }
+        if (kept.length) {
+          ORCH.historyMore = ORCH.historyMore || !!data.has_more;
+        }
+        messages = ORCH.historyRows;
+      } else {
+        ORCH.historyRows = null; ORCH.historyMore = false; ORCH.historyBefore = 0;
+      }
+      if (data.viewer_profile_id) ORCH.viewerProfileId = String(data.viewer_profile_id);
+      if (data.conversation) {
+        const index = ORCH.conversations.findIndex(row => row.conversation_id === cid);
+        if (index >= 0) ORCH.conversations[index] = { ...ORCH.conversations[index], ...data.conversation };
+      }
     } catch (e) {
       if (e && e.status === 429) {
         ORCH.retryAfter = Math.max(Number(ORCH.retryAfter || 0), Date.now() + Number(e.retryAfterMs || 15000));
@@ -7979,19 +8465,27 @@
       row.message_id, row.timestamp_utc, row.content, row.rating,
       row.feedback_comment, row.feedback_timestamp_utc, row.model, row.provider,
       row.agent_name, row.actions, row.fulfillment, row.message_kind, row.participation_chain,
+      row.sender_profile_id, row.attachments,
     ]));
     if (silent && signature === ORCH.messagesSignature) return;
     if (silent && (ORCH.feedbackVoice || qsa('.orch-feedback-text', box).some(ta => ta.dataset.dirty === '1'))) return;
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
     orchStopFeedbackVoice();
-    box.innerHTML = messages.length ? messages.map(orchMessageHtml).join('') : '<div class="empty-state">Начните диалог: например «Разработай простую стратегию максимально быстро».</div>';
+    box.innerHTML = messages.length ? orchMessagesHtml(messages) : (human
+      ? '<div class="empty-state">Личная переписка начнётся с первого сообщения.</div>'
+      : '<div class="empty-state">Начните диалог: например «Разработай простую стратегию максимально быстро».</div>');
     if (ORCH.transientError && ORCH.transientError.cid === cid) {
       box.insertAdjacentHTML('beforeend', `<div class="orch-msg assistant"><span class="orch-err">${esc(ORCH.transientError.text)}</span></div>`);
     }
     ORCH.messagesSignature = signature;
-    wireOrchFeedback(box);
-    wireAgentFaces(box);
+    if (!human) {
+      wireOrchFeedback(box);
+      wireAgentFaces(box);
+    }
     if (!silent || atBottom) box.scrollTop = box.scrollHeight;
+    if (human && ORCH.open && ORCH.currentId === cid) {
+      try { await API.http.sfChatRead(cid); } catch (e) { /* read state retries on the next poll */ }
+    }
     return true;
   }
   async function orchSend() {
@@ -7999,16 +8493,47 @@
     const ta = qs('#orch-text'); const box = qs('#orch-msgs'); const sendBtn = qs('#orch-send');
     if (!ta || !box) return;
     const text = ta.value.trim();
-    if (!text) return;
+    const human = orchIsHumanConversation(ORCH.currentId);
+    if (!text && !(human && ORCH.pendingAttachments.length)) return;
     if (isGuest()) { orchRenderAuthRequired(qs('#orch-panel')); return; }
     if (!window.API || API.config.offline) { toast('Чат недоступен в офлайн-превью'); return; }
     ORCH.sending = true;
     ORCH.transientError = null;
     if (sendBtn) sendBtn.disabled = true;
     ta.value = ''; ta.style.height = 'auto';
+    if (human) {
+      const cid = ORCH.currentId;
+      const attachments = ORCH.pendingAttachments.slice();
+      ORCH.pendingAttachments = [];
+      orchRenderPendingAttachments();
+      if (box.querySelector('.empty-state')) box.innerHTML = '';
+      orchAppendMessage(box, {
+        sender_type: 'human', sender_profile_id: ORCH.viewerProfileId,
+        outgoing: true, content: text, attachments: attachments.map(row => ({
+          url: row.data_url, name: row.name, mime_type: row.mime_type,
+        })), timestamp_utc: new Date().toISOString(),
+      });
+      box.scrollTop = box.scrollHeight;
+      try {
+        await API.http.sfChatMessage(cid, text, attachments);
+        ORCH.messagesSignature = '';
+        await orchLoadMessages(cid);
+        await orchLoadConversations();
+        await refreshInAppNotices({ silent: true });
+      } catch (e) {
+        reportError(e);
+        ORCH.messagesSignature = '';
+        await orchLoadMessages(cid).catch(() => false);
+      } finally {
+        ORCH.sending = false;
+        if (sendBtn) sendBtn.disabled = false;
+        if (ta && !ta.disabled) ta.focus();
+      }
+      return;
+    }
     // optimistic render: show the owner message immediately
     if (box.querySelector('.empty-state')) box.innerHTML = '';
-    box.insertAdjacentHTML('beforeend', orchMessageHtml({ role: 'user', content: text, timestamp_utc: new Date().toISOString(), source: 'app' }));
+    orchAppendMessage(box, { role: 'user', content: text, timestamp_utc: new Date().toISOString(), source: 'app' });
     // Live block contains only public progress labels. Provider chain-of-thought
     // is never rendered or persisted in the owner-facing conversation.
     const live = el(`<div class="orch-live" id="orch-live">
@@ -8095,6 +8620,6 @@
     return true;
   }
 
-  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV, openOrchestrator, closeOrchestrator, isGuest, requireSignIn, agentAvatarId, agentAvatarUrl, agentAvatarHtml, wireAgentFaces, agentFacePlay, agentFacePause, openCabinet, openAdminPanel, showEnvironmentSwitcher, get CURRENT_AUTH() { return CURRENT_AUTH; } };
+  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV, openOrchestrator, openSFChat, closeOrchestrator, isGuest, requireSignIn, agentAvatarId, agentAvatarUrl, agentAvatarHtml, wireAgentFaces, agentFacePlay, agentFacePause, openCabinet, openAdminPanel, showEnvironmentSwitcher, get CURRENT_AUTH() { return CURRENT_AUTH; } };
   document.addEventListener('DOMContentLoaded', buildShell);
 })();

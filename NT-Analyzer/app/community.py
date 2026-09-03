@@ -1,8 +1,10 @@
 """Community contour — users among themselves (NOT owner Orchestrator).
 
-Storage: ``data/runtime/community.json`` (messages, posts, strategy cards,
-ratings, moderation). Telegram duplicate is a separate optional channel and
-must never write into owner Orchestrator topics.
+Development storage is ``data/runtime/community.json``. Explicit Canary and
+Production environments route the same compatibility document through the
+authoritative PostgreSQL repository without a local fallback. Telegram
+duplicate is a separate optional channel and must never write into owner
+Orchestrator topics.
 """
 from __future__ import annotations
 
@@ -30,12 +32,14 @@ class CommunityError(RuntimeError):
 
 _LOCK = threading.RLock()
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_STORE_KEY = "community"
 _MAX_MSG = 4000
 _MAX_ATTACHMENTS = 3
 _MAX_ATTACHMENT_BYTES = 2 * 1024 * 1024
 _COLLECTIONS = (
     "accounts", "messages", "posts", "strategies", "copies", "reports", "blocks",
-    "shared_reports", "requests",
+    "shared_reports", "requests", "profiles", "follows", "post_reactions",
+    "comments", "bookmarks", "social_blocks",
 )
 _WORKSPACE_RE = re.compile(r"[A-Za-z0-9_.:-]{1,96}")
 _CHANNELS = (
@@ -57,11 +61,13 @@ _IDENTITY_FIELDS = {
     "shared_reports": (("user_id", "user_uuid"),),
     "requests": (("from_user_id", "from_user_uuid"), ("recipient_user_id", "recipient_user_uuid")),
     "blocks": (("user_id", "user_uuid"), ("by_owner_id", "by_owner_uuid")),
+    "profiles": (("user_id", "user_uuid"),),
+    "comments": (("user_id", "user_uuid"),),
 }
 
 
 def _empty_doc() -> Dict[str, Any]:
-    return {"version": 3, **{key: [] for key in _COLLECTIONS}}
+    return {"version": 4, **{key: [] for key in _COLLECTIONS}}
 
 
 def _root() -> Path:
@@ -77,13 +83,23 @@ def _now_iso() -> str:
 
 
 def _load() -> Dict[str, Any]:
-    path = _store_path()
-    if not path.is_file():
-        return _empty_doc()
-    try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return _empty_doc()
+    from . import storage_router
+    if storage_router.production_enabled():
+        from .production_storage import StorageError
+        try:
+            doc = storage_router.read_document(_STORE_KEY, _empty_doc())
+        except StorageError as exc:
+            raise CommunityError(
+                f"Production Community repository unavailable ({exc.code}).", 503,
+            ) from None
+    else:
+        path = _store_path()
+        if not path.is_file():
+            return _empty_doc()
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return _empty_doc()
     if not isinstance(doc, dict):
         return _empty_doc()
     for key in _COLLECTIONS:
@@ -91,7 +107,7 @@ def _load() -> Dict[str, Any]:
         doc[key] = [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
     # Treat the on-disk version as untrusted input as well.  The normalized
     # document is always written in the current format.
-    doc["version"] = 3
+    doc["version"] = 4
     return doc
 
 
@@ -106,11 +122,22 @@ def _json_safe(value: Any) -> Any:
 
 
 def _save(doc: Dict[str, Any]) -> None:
+    from . import storage_router
+    payload = _json_safe(doc)
+    if storage_router.production_enabled():
+        from .production_storage import StorageError
+        try:
+            storage_router.write_document(_STORE_KEY, payload)
+        except StorageError as exc:
+            raise CommunityError(
+                f"Production Community repository unavailable ({exc.code}).", 503,
+            ) from None
+        return
     path = _store_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(
-        json.dumps(_json_safe(doc), ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+        json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
         encoding="utf-8",
     )
     os.replace(tmp, path)
@@ -236,6 +263,17 @@ def _idempotency_hash(value: Any) -> str:
     return hashlib.sha256(clean.encode("utf-8")).hexdigest()
 
 
+def _image_payload_matches_mime(mime: str, payload: bytes) -> bool:
+    """Reject a data URL whose declared MIME does not match its file magic."""
+    if mime == "image/png":
+        return payload.startswith(b"\x89PNG\r\n\x1a\n")
+    if mime == "image/jpeg":
+        return payload.startswith(b"\xff\xd8\xff")
+    if mime == "image/webp":
+        return len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP"
+    return False
+
+
 def _validate_attachments(value: Any, *, workspace_id: str, owner_id: str) -> List[Dict[str, Any]]:
     """Persist only small image attachments supplied as data URLs.
 
@@ -264,6 +302,8 @@ def _validate_attachments(value: Any, *, workspace_id: str, owner_id: str) -> Li
             raise CommunityError("Повреждённые данные изображения.") from None
         if not payload or len(payload) > _MAX_ATTACHMENT_BYTES:
             raise CommunityError("Размер каждого изображения не должен превышать 2 МБ.")
+        if not _image_payload_matches_mime(mime, payload):
+            raise CommunityError("Содержимое изображения не соответствует MIME-типу.")
         attachment_id = "catt_" + secrets.token_hex(9)
         extension = _MIME_EXTENSION[mime]
         stored_name = f"{owner_id}_{index}{extension}"
@@ -827,3 +867,1093 @@ def moderate_delete_message(owner_id: Any, message_id: str, *, workspace_id: str
                            if not (row.get("message_id") == mid and _same_workspace(row, workspace))]
         _save(doc)
     return {"ok": True, "deleted": before - len(doc.get("messages") or []), "by_owner_id": int(owner_id or 0)}
+
+
+# ---------------------------------------------------------------------------
+# Community v2 social layer
+# ---------------------------------------------------------------------------
+# The original workspace channels above remain the compatibility foundation.
+# The v2 layer adds explicit, sanitised publications to the environment-wide
+# internal network. A private workspace never crosses this boundary by merely
+# existing: only a user-created v2 post is visible in the social feed.
+
+_PROFILE_USERNAME_RE = re.compile(r"[A-Za-z0-9_]{3,30}")
+_HASHTAG_RE = re.compile(r"(?<![\w#])#([\w-]{2,40})", re.UNICODE)
+_REACTIONS = frozenset({"support", "insightful", "fire"})
+_POST_VISIBILITY = frozenset({"network", "followers"})
+_PROFILE_VISIBILITY = frozenset({"network", "followers"})
+_MESSAGE_POLICIES = frozenset({"everyone", "following", "nobody"})
+
+
+def _profile_id(user_id: Any, user_uuid: Any = "") -> str:
+    canonical = _resolved_user_uuid(user_id, user_uuid)
+    identity = canonical or f"legacy:{_safe_int(user_id)}"
+    return "sfp_" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
+
+
+def _normalise_username(value: Any, profile_id: str) -> str:
+    clean = str(value or "").strip().lstrip("@").lower()
+    if _PROFILE_USERNAME_RE.fullmatch(clean):
+        return clean
+    return "sf_" + profile_id[-10:]
+
+
+def _profile_row(doc: Dict[str, Any], profile_id: str) -> Optional[Dict[str, Any]]:
+    pid = str(profile_id or "").strip()
+    return next((row for row in doc.get("profiles") or []
+                 if str(row.get("profile_id") or "") == pid), None)
+
+
+def _profile_by_identity(doc: Dict[str, Any], user_id: Any, user_uuid: Any = "") -> Optional[Dict[str, Any]]:
+    canonical = _resolved_user_uuid(user_id, user_uuid)
+    uid = _safe_int(user_id)
+    for row in doc.get("profiles") or []:
+        if canonical and str(row.get("user_uuid") or "") == canonical:
+            return row
+        if not canonical and uid > 0 and _safe_int(row.get("user_id")) == uid:
+            return row
+    return None
+
+
+def _account_registered_at(user_id: Any) -> str:
+    """The StratForge account's own registration moment.
+
+    Community has no registration of its own: a profile is created on first
+    sight of an existing account and must inherit the date that account was
+    actually registered. Stamping the current time would tell a member who
+    registered in August that they joined the day they first opened Community.
+    """
+    uid = _safe_int(user_id)
+    if uid <= 0:
+        return ""
+    try:
+        from . import account_auth
+        account = account_auth.find_active_user(uid) or {}
+        return str(account.get("created_at_utc") or "")
+    except Exception:
+        return ""
+
+
+def _ensure_profile_in_doc(
+    doc: Dict[str, Any], user_id: Any, *, user_uuid: Any = "",
+    display_name: str = "", username: str = "", role_label: str = "Участник",
+    joined_at_utc: str = "", has_avatar: bool = False,
+) -> Dict[str, Any]:
+    uid = _safe_int(user_id)
+    if uid <= 0:
+        raise CommunityError("Требуется вход.", 401)
+    canonical = _resolved_user_uuid(uid, user_uuid)
+    row = _profile_by_identity(doc, uid, canonical)
+    now = _now_iso()
+    if row is None:
+        pid = _profile_id(uid, canonical)
+        row = {
+            "profile_id": pid,
+            "user_id": uid,
+            "display_name": str(display_name or username or f"Участник {pid[-4:]}").strip()[:80],
+            "username": _normalise_username(username, pid),
+            "role_label": str(role_label or "Участник").strip()[:40],
+            "bio": "",
+            "profile_visibility": "network",
+            "allow_messages": "everyone",
+            "joined_at_utc": str(joined_at_utc or _account_registered_at(uid) or now),
+            "created_at_utc": now,
+            "updated_at_utc": now,
+            "has_avatar": bool(has_avatar),
+        }
+        if canonical:
+            row["user_uuid"] = canonical
+        doc.setdefault("profiles", []).append(row)
+    else:
+        if canonical and not str(row.get("user_uuid") or ""):
+            row["user_uuid"] = canonical
+        # A profile created before the account date was consulted carries the
+        # moment Community first saw the member, not the moment they
+        # registered. The field mirrors account data, so correcting it towards
+        # the account is a repair, never a rewrite of anything user-authored —
+        # and it only ever moves the date earlier.
+        registered = _account_registered_at(uid)
+        stored_join = str(row.get("joined_at_utc") or "")
+        if registered and (not stored_join or stored_join > registered):
+            row["joined_at_utc"] = registered
+        # Account-sourced fields refresh only while the member has not chosen a
+        # custom value. User-edited bio/privacy are never overwritten here.
+        if display_name and not str(row.get("display_name") or "").strip():
+            row["display_name"] = str(display_name).strip()[:80]
+        if username and str(row.get("username") or "").startswith("sf_"):
+            candidate = _normalise_username(username, str(row.get("profile_id") or ""))
+            if not any(other is not row and str(other.get("username") or "") == candidate
+                       for other in doc.get("profiles") or []):
+                row["username"] = candidate
+        if role_label:
+            row["role_label"] = str(role_label).strip()[:40]
+        row["has_avatar"] = bool(has_avatar or row.get("has_avatar"))
+        row["updated_at_utc"] = now
+    _touch_account(doc, uid, "", display_name, canonical)
+    return row
+
+
+def _follows(doc: Dict[str, Any], follower: str, target: str) -> bool:
+    return any(
+        str(row.get("follower_profile_id") or "") == follower
+        and str(row.get("target_profile_id") or "") == target
+        for row in doc.get("follows") or []
+    )
+
+
+def _social_blocked(doc: Dict[str, Any], left: str, right: str) -> bool:
+    return any(
+        {str(row.get("blocker_profile_id") or ""), str(row.get("target_profile_id") or "")}
+        == {left, right}
+        for row in doc.get("social_blocks") or []
+    )
+
+
+def _profile_payload(
+    row: Dict[str, Any], viewer_profile_id: str, *,
+    followers: int, following: int, posts: int, blocked: bool,
+    viewer_follows: bool, follows_viewer: bool,
+) -> Dict[str, Any]:
+    """The single public shape of a profile.
+
+    Both read paths land here — the Development document store and the
+    Production relational mirrors — so visibility and messaging policy cannot
+    be evaluated differently between them. Only the counters and the two
+    follow predicates are supplied by the caller, because only their *source*
+    differs.
+    """
+    pid = str(row.get("profile_id") or "")
+    is_self = bool(viewer_profile_id and pid == viewer_profile_id)
+    profile_visibility = str(row.get("profile_visibility") or "network")
+    details_visible = bool(
+        profile_visibility == "network" or is_self
+        or (viewer_profile_id and viewer_follows)
+    )
+    policy = str(row.get("allow_messages") or "everyone")
+    can_message = bool(viewer_profile_id and viewer_profile_id != pid and not blocked)
+    if policy == "nobody":
+        can_message = False
+    elif policy == "following" and can_message:
+        can_message = follows_viewer
+    return {
+        "profile_id": pid,
+        "display_name": str(row.get("display_name") or "Участник")[:80],
+        "username": str(row.get("username") or "")[:30],
+        "role_label": str(row.get("role_label") or "Участник")[:40],
+        "bio": str(row.get("bio") or "")[:500] if details_visible else "",
+        "joined_at_utc": str(row.get("joined_at_utc") or row.get("created_at_utc") or ""),
+        "has_avatar": bool(row.get("has_avatar")),
+        "avatar_url": f"/api/community/v2/profiles/{pid}/avatar" if row.get("has_avatar") else "",
+        "stats": {"posts": posts, "followers": followers, "following": following},
+        "is_self": is_self,
+        "is_following": bool(viewer_profile_id and viewer_follows),
+        "follows_you": bool(viewer_profile_id and follows_viewer),
+        "can_message": can_message,
+        "blocked": blocked,
+        "profile_visibility": profile_visibility if is_self else "",
+        "allow_messages": policy if is_self else "",
+        "details_visible": details_visible,
+    }
+
+
+def _public_profile(doc: Dict[str, Any], row: Dict[str, Any], viewer_profile_id: str = "") -> Dict[str, Any]:
+    """Document-store projection: counters come from the loaded document."""
+    pid = str(row.get("profile_id") or "")
+    return _profile_payload(
+        row, viewer_profile_id,
+        followers=sum(1 for item in doc.get("follows") or []
+                      if str(item.get("target_profile_id") or "") == pid),
+        following=sum(1 for item in doc.get("follows") or []
+                      if str(item.get("follower_profile_id") or "") == pid),
+        posts=sum(1 for item in doc.get("posts") or []
+                  if str(item.get("author_profile_id") or "") == pid
+                  and not item.get("deleted_at_utc")),
+        blocked=bool(viewer_profile_id and _social_blocked(doc, viewer_profile_id, pid)),
+        viewer_follows=bool(viewer_profile_id and _follows(doc, viewer_profile_id, pid)),
+        follows_viewer=bool(viewer_profile_id and _follows(doc, pid, viewer_profile_id)),
+    )
+
+
+def _relational_profile(relational_row: Dict[str, Any], viewer_profile_id: str) -> Dict[str, Any]:
+    """Relational projection: counters come from the indexed mirrors."""
+    row = dict(relational_row.get("document") or {})
+    if not row.get("profile_id"):
+        row["profile_id"] = str(relational_row.get("profile_id") or "")
+    return _profile_payload(
+        row, viewer_profile_id,
+        followers=int(relational_row.get("followers") or 0),
+        following=int(relational_row.get("following") or 0),
+        posts=int(relational_row.get("posts") or 0),
+        blocked=bool(relational_row.get("blocked")),
+        viewer_follows=bool(relational_row.get("viewer_follows")),
+        follows_viewer=bool(relational_row.get("follows_viewer")),
+    )
+
+
+def ensure_social_profile(
+    user_id: Any, *, user_uuid: Any = "", display_name: str = "",
+    username: str = "", role_label: str = "Участник", joined_at_utc: str = "",
+    has_avatar: bool = False,
+) -> Dict[str, Any]:
+    with _LOCK:
+        doc = _load()
+        row = _ensure_profile_in_doc(
+            doc, user_id, user_uuid=user_uuid, display_name=display_name,
+            username=username, role_label=role_label, joined_at_utc=joined_at_utc,
+            has_avatar=has_avatar,
+        )
+        _save(doc)
+        return {"ok": True, "profile": _public_profile(doc, row, str(row["profile_id"]))}
+
+
+def update_social_profile(
+    user_id: Any, *, user_uuid: Any = "", display_name: Any = None,
+    username: Any = None, bio: Any = None, profile_visibility: Any = None,
+    allow_messages: Any = None,
+) -> Dict[str, Any]:
+    with _LOCK:
+        doc = _load()
+        row = _ensure_profile_in_doc(doc, user_id, user_uuid=user_uuid)
+        if display_name is not None:
+            clean_name = str(display_name or "").strip()
+            if not clean_name or len(clean_name) > 80:
+                raise CommunityError("Имя профиля должно содержать от 1 до 80 символов.")
+            row["display_name"] = clean_name
+        if username is not None:
+            clean_username = str(username or "").strip().lstrip("@").lower()
+            if not _PROFILE_USERNAME_RE.fullmatch(clean_username):
+                raise CommunityError("Username: 3–30 латинских букв, цифр или _. ")
+            if any(other is not row and str(other.get("username") or "") == clean_username
+                   for other in doc.get("profiles") or []):
+                raise CommunityError("Этот username уже занят.", 409)
+            row["username"] = clean_username
+        if bio is not None:
+            row["bio"] = str(bio or "").strip()[:500]
+        if profile_visibility is not None:
+            visibility = str(profile_visibility or "").strip().lower()
+            if visibility not in _PROFILE_VISIBILITY:
+                raise CommunityError("Неизвестная приватность профиля.")
+            row["profile_visibility"] = visibility
+        if allow_messages is not None:
+            policy = str(allow_messages or "").strip().lower()
+            if policy not in _MESSAGE_POLICIES:
+                raise CommunityError("Неизвестная политика сообщений.")
+            row["allow_messages"] = policy
+        row["updated_at_utc"] = _now_iso()
+        _save(doc)
+        return {"ok": True, "profile": _public_profile(doc, row, str(row["profile_id"]))}
+
+
+def _viewer_profile(doc: Dict[str, Any], user_id: Any, user_uuid: Any = "") -> Dict[str, Any]:
+    return _ensure_profile_in_doc(doc, user_id, user_uuid=user_uuid)
+
+
+def list_social_profiles(
+    user_id: Any, *, user_uuid: Any = "", query: str = "", limit: int = 30,
+) -> Dict[str, Any]:
+    clean_query = str(query or "").strip().lower()[:80]
+    lim = max(1, min(100, _safe_int(limit, 30)))
+    with _LOCK:
+        doc = _load()
+        viewer = _viewer_profile(doc, user_id, user_uuid)
+        viewer_id = str(viewer["profile_id"])
+        rows = []
+        for row in doc.get("profiles") or []:
+            pid = str(row.get("profile_id") or "")
+            if pid != viewer_id and _social_blocked(doc, viewer_id, pid):
+                continue
+            haystack = " ".join((str(row.get("display_name") or ""), str(row.get("username") or ""))).lower()
+            if clean_query and clean_query not in haystack:
+                continue
+            rows.append(_public_profile(doc, row, viewer_id))
+        rows.sort(key=lambda item: (
+            not bool(item.get("is_following")),
+            -int((item.get("stats") or {}).get("followers") or 0),
+            str(item.get("display_name") or "").lower(),
+        ))
+        _save(doc)
+        return {"ok": True, "profiles": rows[:lim], "viewer": _public_profile(doc, viewer, viewer_id)}
+
+
+def _registration_milestone(
+    row: Dict[str, Any], viewer_profile_id: str = "",
+) -> Dict[str, Any]:
+    """The permanent first entry on a profile wall.
+
+    Derived from the profile's own registration fields rather than stored as a
+    post, which makes every property the product asks for true by construction:
+    it exists exactly once, cannot be deleted or edited, carries a date nobody
+    can change, and neither a restart, a re-login, an import nor a migration can
+    produce a second copy. Nothing here is invented — an absent field is
+    reported as absent.
+
+    Account status is only ever reported for the member's own profile. Another
+    member's wall shows the registration date, which is already public, and
+    nothing about the state of their account.
+    """
+    pid = str(row.get("profile_id") or "")
+    # `joined_at_utc` carries the account's registration moment; the profile
+    # row's own `created_at_utc` is bookkeeping — it moves whenever the row is
+    # rewritten — so it is never reported as a date the member would recognise.
+    registered = str(row.get("joined_at_utc") or "")
+    is_self = bool(viewer_profile_id and pid == viewer_profile_id)
+    activated = ""
+    status = ""
+    if is_self:
+        try:
+            from . import account_auth
+            account = account_auth.find_active_user(_safe_int(row.get("user_id"))) or {}
+            status = str(account.get("status") or "")
+            # The account is the source of truth for one's own registration.
+            registered = str(account.get("created_at_utc") or "") or registered
+            # Activation is only a separate fact when the account was approved
+            # at a different moment than it was created. Where the two coincide
+            # there is nothing to report, and inventing a second date from
+            # unrelated bookkeeping would be worse than showing none.
+            approved = str(account.get("approved_at_utc") or "")
+            if approved and approved != str(account.get("created_at_utc") or ""):
+                activated = approved
+        except Exception:
+            status = ""
+    return {
+        "kind": "registration",
+        "profile_id": pid,
+        "registered_at_utc": registered,
+        "activated_at_utc": activated,
+        "account_status": status,
+        "is_self": is_self,
+    }
+
+
+def social_profile(
+    user_id: Any, profile_id: str, *, user_uuid: Any = "", posts_limit: int = 20,
+) -> Dict[str, Any]:
+    with _LOCK:
+        doc = _load()
+        viewer = _viewer_profile(doc, user_id, user_uuid)
+        viewer_id = str(viewer["profile_id"])
+        target = _profile_row(doc, profile_id)
+        if target is None or _social_blocked(doc, viewer_id, str(profile_id)):
+            raise CommunityError("Профиль не найден.", 404)
+        posts = [
+            _public_social_post(doc, row, viewer_id)
+            for row in reversed(doc.get("posts") or [])
+            if str(row.get("author_profile_id") or "") == str(profile_id)
+            and _post_visible(doc, row, viewer_id)
+        ][:max(1, min(100, _safe_int(posts_limit, 20)))]
+        _save(doc)
+        return {
+            "ok": True,
+            "profile": _public_profile(doc, target, viewer_id),
+            "registration": _registration_milestone(target, viewer_id),
+            "posts": posts,
+        }
+
+
+def follow_profile(
+    user_id: Any, target_profile_id: str, *, following: bool = True,
+    user_uuid: Any = "",
+) -> Dict[str, Any]:
+    with _LOCK:
+        doc = _load()
+        viewer = _viewer_profile(doc, user_id, user_uuid)
+        viewer_id = str(viewer["profile_id"])
+        target = _profile_row(doc, target_profile_id)
+        if target is None:
+            raise CommunityError("Профиль не найден.", 404)
+        target_id = str(target["profile_id"])
+        if target_id == viewer_id:
+            raise CommunityError("Нельзя подписаться на себя.")
+        if _social_blocked(doc, viewer_id, target_id):
+            raise CommunityError("Взаимодействие с профилем недоступно.", 403)
+        rows = doc.setdefault("follows", [])
+        rows[:] = [row for row in rows if not (
+            str(row.get("follower_profile_id") or "") == viewer_id
+            and str(row.get("target_profile_id") or "") == target_id
+        )]
+        if following:
+            rows.append({
+                "follower_profile_id": viewer_id,
+                "target_profile_id": target_id,
+                "created_at_utc": _now_iso(),
+            })
+        _save(doc)
+        return {
+            "ok": True,
+            "following": bool(following),
+            "profile": _public_profile(doc, target, viewer_id),
+        }
+
+
+def _post_visible(doc: Dict[str, Any], row: Dict[str, Any], viewer_profile_id: str) -> bool:
+    if row.get("deleted_at_utc"):
+        return False
+    author_id = str(row.get("author_profile_id") or "")
+    if not author_id or _social_blocked(doc, viewer_profile_id, author_id):
+        return False
+    if author_id == viewer_profile_id:
+        return True
+    visibility = str(row.get("visibility") or "network")
+    return visibility == "network" or (
+        visibility == "followers" and _follows(doc, viewer_profile_id, author_id)
+    )
+
+
+def _post_reaction_summary(doc: Dict[str, Any], post_id: str) -> Dict[str, int]:
+    result = {kind: 0 for kind in sorted(_REACTIONS)}
+    for row in doc.get("post_reactions") or []:
+        if str(row.get("post_id") or "") != post_id:
+            continue
+        kind = str(row.get("reaction") or "")
+        if kind in result:
+            result[kind] += 1
+    return result
+
+
+def _public_comment(doc: Dict[str, Any], row: Dict[str, Any], viewer_profile_id: str) -> Dict[str, Any]:
+    author = _profile_row(doc, str(row.get("author_profile_id") or ""))
+    return {
+        "comment_id": str(row.get("comment_id") or ""),
+        "post_id": str(row.get("post_id") or ""),
+        "text": str(row.get("text") or "")[:1200],
+        "created_at_utc": str(row.get("created_at_utc") or ""),
+        "author": _public_profile(doc, author, viewer_profile_id) if author else None,
+        "can_delete": str(row.get("author_profile_id") or "") == viewer_profile_id,
+    }
+
+
+def _public_social_post(doc: Dict[str, Any], row: Dict[str, Any], viewer_profile_id: str) -> Dict[str, Any]:
+    pid = str(row.get("post_id") or "")
+    author = _profile_row(doc, str(row.get("author_profile_id") or ""))
+    viewer_reaction = next((
+        str(item.get("reaction") or "") for item in doc.get("post_reactions") or []
+        if str(item.get("post_id") or "") == pid
+        and str(item.get("profile_id") or "") == viewer_profile_id
+    ), "")
+    comments = [item for item in doc.get("comments") or []
+                if str(item.get("post_id") or "") == pid and not item.get("deleted_at_utc")]
+    bookmarked = any(
+        str(item.get("post_id") or "") == pid
+        and str(item.get("profile_id") or "") == viewer_profile_id
+        for item in doc.get("bookmarks") or []
+    )
+    return {
+        "post_id": pid,
+        "text": str(row.get("text") or "")[:_MAX_MSG],
+        "kind": str(row.get("kind") or "text"),
+        "visibility": str(row.get("visibility") or "network"),
+        "hashtags": [str(tag) for tag in (row.get("hashtags") or [])[:20]],
+        "attachments": _public_attachments(row.get("attachments")),
+        "object": dict(row.get("object_snapshot") or {}) if isinstance(row.get("object_snapshot"), dict) else None,
+        "created_at_utc": str(row.get("created_at_utc") or ""),
+        "updated_at_utc": str(row.get("updated_at_utc") or ""),
+        "author": _public_profile(doc, author, viewer_profile_id) if author else None,
+        "reactions": _post_reaction_summary(doc, pid),
+        "viewer_reaction": viewer_reaction,
+        "comment_count": len(comments),
+        "recent_comments": [_public_comment(doc, item, viewer_profile_id) for item in comments[-3:]],
+        "bookmarked": bookmarked,
+        "can_delete": str(row.get("author_profile_id") or "") == viewer_profile_id,
+    }
+
+
+_RESULT_METRIC_FIELDS = (
+    ("net_profit_after_commission", "Net P&L"),
+    ("net_profit", "Net P&L"),
+    ("profit_factor", "Profit factor"),
+    ("max_drawdown", "Max drawdown"),
+    ("trade_count", "Trades"),
+    ("winning_pct", "Win rate"),
+)
+
+
+def attested_result_snapshot(
+    source_id: str, summary: Dict[str, Any], *, origin: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build a public result card exclusively from a scoped server job summary.
+
+    Scope/ownership is checked by the HTTP adapter before this sanitizer is
+    called. Only allowlisted summary fields cross into Community; raw trades,
+    bars, paths, strategy source and job parameters never do.
+    """
+    sid = str(source_id or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,96}", sid):
+        raise CommunityError("Некорректный source ID.")
+    if not isinstance(summary, dict) or str(summary.get("status") or "") != "done":
+        raise CommunityError("Публиковать можно только завершённый результат.", 409)
+    source_origin = dict(origin or {})
+    result_type = "demo" if str(source_origin.get("type") or "").lower() == "demo" else "backtest"
+    raw_metrics = summary.get("metrics") if isinstance(summary.get("metrics"), dict) else {}
+    metrics: Dict[str, Any] = {}
+    seen_labels = set()
+    for key, label in _RESULT_METRIC_FIELDS:
+        value = summary.get(key)
+        if value is None:
+            value = raw_metrics.get(key)
+        if value is None or label in seen_labels or isinstance(value, bool):
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if not math.isfinite(number):
+            continue
+        metrics[label] = int(number) if number.is_integer() else round(number, 4)
+        seen_labels.add(label)
+        if len(metrics) >= 5:
+            break
+    instrument = str(summary.get("instrument") or "").strip()[:40]
+    timeframe = str(summary.get("timeframe") or "").strip()[:40]
+    strategy = str(summary.get("strategy_name") or summary.get("class_name") or "Strategy").strip()[:120]
+    timestamp = str(summary.get("finished_at_utc") or summary.get("created_at_utc") or "")[:40]
+    public = {
+        "snapshot_version": 1,
+        "kind": "Demo Result" if result_type == "demo" else "Backtest Result",
+        "source_type": f"{result_type}_result",
+        "source_id": sid,
+        "result_type": result_type,
+        "timestamp_utc": timestamp,
+        "title": " · ".join(value for value in (instrument, strategy) if value)[:180],
+        "summary": " · ".join(value for value in (timeframe, "server-attested") if value),
+        "metrics": metrics,
+    }
+    canonical = json.dumps(
+        public, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    public["attestation"] = {
+        "algorithm": "sha256",
+        "digest": hashlib.sha256(canonical).hexdigest(),
+    }
+    return public
+
+
+def create_social_post(
+    user_id: Any, *, text: str = "", attachments: Any = None,
+    visibility: str = "network", workspace_id: str = "", user_uuid: Any = "",
+    idempotency_key: str = "", object_snapshot: Any = None,
+    trusted_snapshot: bool = False,
+) -> Dict[str, Any]:
+    uid = _safe_int(user_id)
+    body = str(text or "").strip()
+    if not body and not attachments and not object_snapshot:
+        raise CommunityError("Публикация не может быть пустой.")
+    if len(body) > _MAX_MSG:
+        raise CommunityError("Текст публикации слишком длинный.")
+    clean_visibility = str(visibility or "network").strip().lower()
+    if clean_visibility not in _POST_VISIBILITY:
+        raise CommunityError("Неизвестная видимость публикации.")
+    if object_snapshot and not trusted_snapshot:
+        raise CommunityError("Объект должен быть подтверждён сервером.", 403)
+    workspace = _workspace_id(workspace_id)
+    idem_hash = _idempotency_hash(idempotency_key)
+    with _LOCK:
+        doc = _load()
+        author = _viewer_profile(doc, uid, user_uuid)
+        author_id = str(author["profile_id"])
+        if idem_hash:
+            existing = next((row for row in doc.get("posts") or []
+                             if str(row.get("author_profile_id") or "") == author_id
+                             and str(row.get("idempotency_key_hash") or "") == idem_hash), None)
+            if existing:
+                return {"ok": True, "post": _public_social_post(doc, existing, author_id), "deduplicated": True}
+        post_id = "cpost_" + secrets.token_hex(8)
+        stored_attachments = _validate_attachments(
+            attachments, workspace_id=workspace, owner_id=post_id,
+        )
+        row = {
+            "post_id": post_id,
+            "author_profile_id": author_id,
+            "workspace_id": workspace,
+            "text": body,
+            "kind": "object" if object_snapshot else ("image" if stored_attachments else "text"),
+            "visibility": clean_visibility,
+            "hashtags": sorted(set(tag.lower() for tag in _HASHTAG_RE.findall(body)))[:20],
+            "attachments": stored_attachments,
+            "created_at_utc": _now_iso(),
+            "updated_at_utc": _now_iso(),
+        }
+        if object_snapshot:
+            row["object_snapshot"] = _json_safe(dict(object_snapshot))
+        if idem_hash:
+            row["idempotency_key_hash"] = idem_hash
+        doc.setdefault("posts", []).append(row)
+        doc["posts"] = doc["posts"][-5000:]
+        _save(doc)
+        return {"ok": True, "post": _public_social_post(doc, row, author_id), "deduplicated": False}
+
+
+def social_feed(
+    user_id: Any, *, user_uuid: Any = "", scope: str = "for-you",
+    cursor: str = "", limit: int = 20, query: str = "", hashtag: str = "",
+    saved_only: bool = False,
+) -> Dict[str, Any]:
+    lim = max(1, min(50, _safe_int(limit, 20)))
+    mode = str(scope or "for-you").strip().lower()
+    if mode not in {"for-you", "following"}:
+        raise CommunityError("Неизвестный режим ленты.")
+    offset = 0
+    token = str(cursor or "").strip()
+    if token:
+        match = re.fullmatch(r"c_(\d{1,8})", token)
+        if not match:
+            raise CommunityError("Некорректный cursor.")
+        offset = int(match.group(1))
+    clean_query = str(query or "").strip().lower()[:120]
+    clean_hashtag = str(hashtag or "").strip().lstrip("#").lower()[:40]
+    with _LOCK:
+        doc = _load()
+        viewer = _viewer_profile(doc, user_id, user_uuid)
+        viewer_id = str(viewer["profile_id"])
+        saved_ids = {
+            str(row.get("post_id") or "") for row in doc.get("bookmarks") or []
+            if str(row.get("profile_id") or "") == viewer_id
+        }
+        rows = []
+        for row in reversed(doc.get("posts") or []):
+            if not _post_visible(doc, row, viewer_id):
+                continue
+            author_id = str(row.get("author_profile_id") or "")
+            if mode == "following" and author_id != viewer_id and not _follows(doc, viewer_id, author_id):
+                continue
+            if saved_only and str(row.get("post_id") or "") not in saved_ids:
+                continue
+            if clean_hashtag and clean_hashtag not in [str(tag).lower() for tag in row.get("hashtags") or []]:
+                continue
+            if clean_query:
+                author = _profile_row(doc, author_id) or {}
+                haystack = " ".join((
+                    str(row.get("text") or ""), str(author.get("display_name") or ""),
+                    str(author.get("username") or ""), " ".join(row.get("hashtags") or []),
+                )).lower()
+                if clean_query not in haystack:
+                    continue
+            rows.append(row)
+        page = rows[offset:offset + lim]
+        next_offset = offset + len(page)
+        profiles = [
+            _public_profile(doc, row, viewer_id) for row in doc.get("profiles") or []
+            if str(row.get("profile_id") or "") != viewer_id
+            and not _social_blocked(doc, viewer_id, str(row.get("profile_id") or ""))
+        ]
+        profiles.sort(key=lambda item: (
+            item.get("is_following", False),
+            -int((item.get("stats") or {}).get("followers") or 0),
+        ))
+        _save(doc)
+        return {
+            "ok": True,
+            "scope": mode,
+            "viewer": _public_profile(doc, viewer, viewer_id),
+            "posts": [_public_social_post(doc, row, viewer_id) for row in page],
+            "next_cursor": f"c_{next_offset}" if next_offset < len(rows) else "",
+            "recommended_profiles": profiles[:8],
+            "total_visible": len(rows),
+        }
+
+
+def react_to_post(
+    user_id: Any, post_id: str, *, reaction: str = "support", user_uuid: Any = "",
+) -> Dict[str, Any]:
+    kind = str(reaction or "").strip().lower()
+    if kind and kind not in _REACTIONS:
+        raise CommunityError("Неизвестная реакция.")
+    with _LOCK:
+        doc = _load()
+        viewer = _viewer_profile(doc, user_id, user_uuid)
+        viewer_id = str(viewer["profile_id"])
+        post = next((row for row in doc.get("posts") or []
+                     if str(row.get("post_id") or "") == str(post_id or "")), None)
+        if post is None or not _post_visible(doc, post, viewer_id):
+            raise CommunityError("Публикация не найдена.", 404)
+        rows = doc.setdefault("post_reactions", [])
+        rows[:] = [row for row in rows if not (
+            str(row.get("post_id") or "") == str(post_id)
+            and str(row.get("profile_id") or "") == viewer_id
+        )]
+        if kind:
+            rows.append({"post_id": str(post_id), "profile_id": viewer_id,
+                         "reaction": kind, "created_at_utc": _now_iso()})
+        _save(doc)
+        return {"ok": True, "post": _public_social_post(doc, post, viewer_id)}
+
+
+def comment_on_post(
+    user_id: Any, post_id: str, *, text: str, user_uuid: Any = "",
+) -> Dict[str, Any]:
+    body = str(text or "").strip()
+    if not body or len(body) > 1200:
+        raise CommunityError("Комментарий пустой или слишком длинный.")
+    with _LOCK:
+        doc = _load()
+        viewer = _viewer_profile(doc, user_id, user_uuid)
+        viewer_id = str(viewer["profile_id"])
+        post = next((row for row in doc.get("posts") or []
+                     if str(row.get("post_id") or "") == str(post_id or "")), None)
+        if post is None or not _post_visible(doc, post, viewer_id):
+            raise CommunityError("Публикация не найдена.", 404)
+        row = {
+            "comment_id": "ccom_" + secrets.token_hex(7),
+            "post_id": str(post_id),
+            "author_profile_id": viewer_id,
+            "user_id": _safe_int(user_id),
+            "text": body,
+            "created_at_utc": _now_iso(),
+        }
+        canonical = _resolved_user_uuid(user_id, user_uuid)
+        if canonical:
+            row["user_uuid"] = canonical
+        doc.setdefault("comments", []).append(row)
+        doc["comments"] = doc["comments"][-10000:]
+        _save(doc)
+        return {"ok": True, "comment": _public_comment(doc, row, viewer_id),
+                "post": _public_social_post(doc, post, viewer_id)}
+
+
+def bookmark_post(
+    user_id: Any, post_id: str, *, bookmarked: bool = True, user_uuid: Any = "",
+) -> Dict[str, Any]:
+    with _LOCK:
+        doc = _load()
+        viewer = _viewer_profile(doc, user_id, user_uuid)
+        viewer_id = str(viewer["profile_id"])
+        post = next((row for row in doc.get("posts") or []
+                     if str(row.get("post_id") or "") == str(post_id or "")), None)
+        if post is None or not _post_visible(doc, post, viewer_id):
+            raise CommunityError("Публикация не найдена.", 404)
+        rows = doc.setdefault("bookmarks", [])
+        rows[:] = [row for row in rows if not (
+            str(row.get("post_id") or "") == str(post_id)
+            and str(row.get("profile_id") or "") == viewer_id
+        )]
+        if bookmarked:
+            rows.append({"post_id": str(post_id), "profile_id": viewer_id,
+                         "created_at_utc": _now_iso()})
+        _save(doc)
+        return {"ok": True, "bookmarked": bool(bookmarked),
+                "post": _public_social_post(doc, post, viewer_id)}
+
+
+def delete_social_post(
+    user_id: Any, post_id: str, *, user_uuid: Any = "", moderator: bool = False,
+) -> Dict[str, Any]:
+    """Soft-delete a post owned by the actor or selected by an owner moderator."""
+    with _LOCK:
+        doc = _load()
+        viewer = _viewer_profile(doc, user_id, user_uuid)
+        viewer_id = str(viewer["profile_id"])
+        post = next((row for row in doc.get("posts") or []
+                     if str(row.get("post_id") or "") == str(post_id or "")), None)
+        if post is None or post.get("deleted_at_utc"):
+            raise CommunityError("Публикация не найдена.", 404)
+        if str(post.get("author_profile_id") or "") != viewer_id and not moderator:
+            raise CommunityError("Нельзя удалить чужую публикацию.", 403)
+        post["deleted_at_utc"] = _now_iso()
+        post["deleted_by_profile_id"] = viewer_id
+        post["moderated"] = bool(moderator)
+        _save(doc)
+        return {"ok": True, "post_id": str(post_id), "deleted": True, "soft_delete": True}
+
+
+def delete_social_comment(
+    user_id: Any, comment_id: str, *, user_uuid: Any = "", moderator: bool = False,
+) -> Dict[str, Any]:
+    """Soft-delete a comment without rewriting the parent publication."""
+    with _LOCK:
+        doc = _load()
+        viewer = _viewer_profile(doc, user_id, user_uuid)
+        viewer_id = str(viewer["profile_id"])
+        comment = next((row for row in doc.get("comments") or []
+                        if str(row.get("comment_id") or "") == str(comment_id or "")), None)
+        if comment is None or comment.get("deleted_at_utc"):
+            raise CommunityError("Комментарий не найден.", 404)
+        if str(comment.get("author_profile_id") or "") != viewer_id and not moderator:
+            raise CommunityError("Нельзя удалить чужой комментарий.", 403)
+        comment["deleted_at_utc"] = _now_iso()
+        comment["deleted_by_profile_id"] = viewer_id
+        comment["moderated"] = bool(moderator)
+        post = next((row for row in doc.get("posts") or []
+                     if str(row.get("post_id") or "") == str(comment.get("post_id") or "")), None)
+        _save(doc)
+        return {
+            "ok": True, "comment_id": str(comment_id), "deleted": True,
+            "soft_delete": True,
+            "post": _public_social_post(doc, post, viewer_id) if post else None,
+        }
+
+
+def block_social_profile(
+    user_id: Any, target_profile_id: str, *, blocked: bool = True, user_uuid: Any = "",
+) -> Dict[str, Any]:
+    with _LOCK:
+        doc = _load()
+        viewer = _viewer_profile(doc, user_id, user_uuid)
+        viewer_id = str(viewer["profile_id"])
+        target = _profile_row(doc, target_profile_id)
+        if target is None:
+            raise CommunityError("Профиль не найден.", 404)
+        target_id = str(target["profile_id"])
+        if target_id == viewer_id:
+            raise CommunityError("Нельзя заблокировать себя.")
+        rows = doc.setdefault("social_blocks", [])
+        rows[:] = [row for row in rows if not (
+            str(row.get("blocker_profile_id") or "") == viewer_id
+            and str(row.get("target_profile_id") or "") == target_id
+        )]
+        if blocked:
+            rows.append({"blocker_profile_id": viewer_id, "target_profile_id": target_id,
+                         "created_at_utc": _now_iso()})
+            # Blocking severs both follow directions immediately.
+            doc["follows"] = [row for row in doc.get("follows") or [] if {
+                str(row.get("follower_profile_id") or ""),
+                str(row.get("target_profile_id") or ""),
+            } != {viewer_id, target_id}]
+        _save(doc)
+        return {"ok": True, "blocked": bool(blocked), "profile_id": target_id}
+
+
+def report_social_target(
+    user_id: Any, target_id: str, *, target_type: str = "post", reason: str = "",
+    user_uuid: Any = "",
+) -> Dict[str, Any]:
+    clean_type = str(target_type or "post").strip().lower()
+    if clean_type not in {"post", "profile", "comment"}:
+        raise CommunityError("Неизвестный тип жалобы.")
+    clean_target = str(target_id or "").strip()[:100]
+    clean_reason = str(reason or "").strip()[:500]
+    if not clean_target or not clean_reason:
+        raise CommunityError("Укажите объект и причину жалобы.")
+    with _LOCK:
+        doc = _load()
+        viewer = _viewer_profile(doc, user_id, user_uuid)
+        row = {
+            "report_id": "crep_" + secrets.token_hex(7),
+            "from_profile_id": str(viewer["profile_id"]),
+            "target_id": clean_target,
+            "target_type": clean_type,
+            "reason": clean_reason,
+            "status": "open",
+            "created_at_utc": _now_iso(),
+        }
+        doc.setdefault("reports", []).append(row)
+        _save(doc)
+        return {"ok": True, "report_id": row["report_id"], "status": "open"}
+
+
+def social_moderation_queue(*, status: str = "open", limit: int = 100) -> Dict[str, Any]:
+    """Owner-facing safe moderation queue; reporter account identifiers stay private."""
+    wanted = str(status or "open").strip().lower()
+    if wanted not in {"open", "resolved", "dismissed", "all"}:
+        raise CommunityError("Неизвестный статус moderation queue.")
+    lim = max(1, min(500, _safe_int(limit, 100)))
+    with _LOCK:
+        doc = _load()
+        rows = []
+        for row in reversed(doc.get("reports") or []):
+            row_status = str(row.get("status") or "open")
+            if wanted != "all" and row_status != wanted:
+                continue
+            rows.append({
+                "report_id": str(row.get("report_id") or ""),
+                "target_id": str(row.get("target_id") or ""),
+                "target_type": str(row.get("target_type") or "unknown"),
+                "reason": str(row.get("reason") or "")[:500],
+                "status": row_status,
+                "resolution": str(row.get("resolution") or ""),
+                "created_at_utc": str(row.get("created_at_utc") or ""),
+                "resolved_at_utc": str(row.get("resolved_at_utc") or ""),
+            })
+            if len(rows) >= lim:
+                break
+        return {"ok": True, "reports": rows, "status": wanted}
+
+
+def moderate_social_report(
+    owner_id: Any, report_id: str, *, action: str = "resolve", note: str = "",
+    owner_user_uuid: str = "",
+) -> Dict[str, Any]:
+    """Resolve/dismiss a report and optionally soft-delete reported content."""
+    decision = str(action or "resolve").strip().lower()
+    if decision not in {"resolve", "dismiss", "remove"}:
+        raise CommunityError("Неизвестное действие модерации.")
+    with _LOCK:
+        doc = _load()
+        report = next((row for row in doc.get("reports") or []
+                       if str(row.get("report_id") or "") == str(report_id or "")), None)
+        if report is None:
+            raise CommunityError("Жалоба не найдена.", 404)
+        removed = False
+        if decision == "remove":
+            target_id = str(report.get("target_id") or "")
+            target_type = str(report.get("target_type") or "")
+            collection = "posts" if target_type == "post" else "comments" if target_type == "comment" else ""
+            if not collection:
+                raise CommunityError("Для профиля доступно только решение жалобы; блокировка аккаунта выполняется через управление пользователями.")
+            target_key = "post_id" if collection == "posts" else "comment_id"
+            target = next((row for row in doc.get(collection) or []
+                           if str(row.get(target_key) or "") == target_id), None)
+            if target is None:
+                raise CommunityError("Объект жалобы не найден.", 404)
+            if not target.get("deleted_at_utc"):
+                target["deleted_at_utc"] = _now_iso()
+                target["moderated"] = True
+                removed = True
+        now = _now_iso()
+        report["status"] = "dismissed" if decision == "dismiss" else "resolved"
+        report["resolution"] = decision
+        report["moderation_note"] = str(note or "").strip()[:500]
+        report["resolved_at_utc"] = now
+        report["moderated_by_user_id"] = _safe_int(owner_id)
+        canonical = _resolved_user_uuid(owner_id, owner_user_uuid)
+        if canonical:
+            report["moderated_by_user_uuid"] = canonical
+        _save(doc)
+        return {
+            "ok": True, "report_id": str(report_id), "status": report["status"],
+            "resolution": decision, "content_removed": removed,
+        }
+
+
+def _identity_refresh_needed(
+    row: Dict[str, Any], *, user_uuid: str, display_name: str,
+    username: str, role_label: str,
+) -> bool:
+    """Would `_ensure_profile_in_doc` change anything a reader can observe?
+
+    Mirrors that function's update rules one for one. `updated_at_utc` is
+    deliberately not counted: bumping it on every poll is write amplification
+    with nothing behind it.
+    """
+    if user_uuid and not str(row.get("user_uuid") or ""):
+        return True
+    if display_name and not str(row.get("display_name") or "").strip():
+        return True
+    if username and str(row.get("username") or "").startswith("sf_"):
+        return True
+    if role_label and str(role_label).strip()[:40] != str(row.get("role_label") or ""):
+        return True
+    return False
+
+
+def chat_identity(
+    user_id: Any, *, user_uuid: Any = "", display_name: str = "",
+    username: str = "", role_label: str = "Участник",
+) -> Dict[str, Any]:
+    """Private service-to-service identity for SF Chat; never serialize raw."""
+    from . import storage_router
+    if storage_router.production_enabled():
+        # SF Chat resolves the caller on every request, including every poll
+        # tick, and this used to load *and rewrite* the whole Community
+        # document each time. When the stored profile already matches what the
+        # account would write, one indexed lookup answers it and nothing is
+        # written; anything that would actually change still takes the
+        # document path below.
+        from .production_storage import StorageError
+        try:
+            found = storage_router.community_profile_by_identity(
+                _safe_int(user_id), _resolved_user_uuid(user_id, user_uuid),
+            )
+        except StorageError as exc:
+            raise CommunityError(
+                f"Production Community repository unavailable ({exc.code}).", 503,
+            ) from None
+        if found is not None:
+            row = dict(found.get("document") or {})
+            if not row.get("profile_id"):
+                row["profile_id"] = str(found.get("profile_id") or "")
+            if not _identity_refresh_needed(
+                row, user_uuid=_resolved_user_uuid(user_id, user_uuid),
+                display_name=display_name, username=username, role_label=role_label,
+            ):
+                return {
+                    "profile_id": str(row["profile_id"]),
+                    "user_id": _safe_int(row.get("user_id")),
+                    "user_uuid": str(row.get("user_uuid") or ""),
+                    "display_name": str(row.get("display_name") or "Участник"),
+                    "username": str(row.get("username") or ""),
+                }
+    with _LOCK:
+        doc = _load()
+        row = _ensure_profile_in_doc(
+            doc, user_id, user_uuid=user_uuid, display_name=display_name,
+            username=username, role_label=role_label,
+        )
+        _save(doc)
+        return {
+            "profile_id": str(row["profile_id"]),
+            "user_id": _safe_int(row.get("user_id")),
+            "user_uuid": str(row.get("user_uuid") or ""),
+            "display_name": str(row.get("display_name") or "Участник"),
+            "username": str(row.get("username") or ""),
+        }
+
+
+def chat_target(sender_profile_id: str, target_profile_id: str) -> Dict[str, Any]:
+    """Resolve a permitted human recipient for the unified SF Chat service."""
+    sender = str(sender_profile_id or "").strip()
+    target_id = str(target_profile_id or "").strip()
+    with _LOCK:
+        doc = _load()
+        target = _profile_row(doc, target_id)
+        if target is None or not sender or sender == target_id:
+            raise CommunityError("Получатель не найден.", 404)
+        if _social_blocked(doc, sender, target_id):
+            raise CommunityError("Личные сообщения этому пользователю недоступны.", 403)
+        policy = str(target.get("allow_messages") or "everyone")
+        if policy == "nobody" or (policy == "following" and not _follows(doc, target_id, sender)):
+            raise CommunityError("Пользователь ограничил входящие сообщения.", 403)
+        return {
+            "profile_id": target_id,
+            "user_id": _safe_int(target.get("user_id")),
+            "user_uuid": str(target.get("user_uuid") or ""),
+            "public": _public_profile(doc, target, sender),
+        }
+
+
+def chat_public_profiles(viewer_profile_id: str, profile_ids: List[str]) -> Dict[str, Dict[str, Any]]:
+    """Profiles for a chat page.
+
+    SF Chat asks for this on every conversation list and every history read.
+    In Production it is one indexed statement over the requested ids; it used
+    to load the whole Community document — every profile, post, comment,
+    reaction and follow of every user — to project a handful of participants.
+    """
+    wanted = {str(value or "") for value in profile_ids if str(value or "")}
+    if not wanted:
+        return {}
+    from . import storage_router
+    if storage_router.production_enabled():
+        from .production_storage import StorageError
+        try:
+            rows = storage_router.community_public_profiles(viewer_profile_id, sorted(wanted))
+        except StorageError as exc:
+            raise CommunityError(
+                f"Production Community repository unavailable ({exc.code}).", 503,
+            ) from None
+        return {
+            str(row.get("profile_id") or ""): _relational_profile(row, viewer_profile_id)
+            for row in rows
+        }
+    with _LOCK:
+        doc = _load()
+        return {
+            str(row.get("profile_id") or ""): _public_profile(doc, row, viewer_profile_id)
+            for row in doc.get("profiles") or []
+            if str(row.get("profile_id") or "") in wanted
+        }
+
+
+def social_avatar(profile_id: str) -> Optional[Path]:
+    """Resolve a profile avatar internally without exposing account identifiers."""
+    with _LOCK:
+        row = _profile_row(_load(), profile_id)
+        if row is None or not row.get("has_avatar"):
+            return None
+        user_id = _safe_int(row.get("user_id"))
+    if user_id <= 0:
+        return None
+    try:
+        from . import account_auth
+        return account_auth.avatar_file(user_id)
+    except Exception:
+        return None

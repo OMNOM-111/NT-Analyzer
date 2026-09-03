@@ -1,12 +1,56 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-01T00:00:00Z
+- Last verified UTC: 2026-09-02T16:16:41Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
+- Development branch implementation SHA: `c0bcf7af1a460d52212a596d0cdcfc100aadfacb` (PR #270; Community IA plus browser QA scenarios A-D on the restored DEV contour; not deployed)
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`
-- Scope: beta.87 Owner Backtest Demo Gate Fix release
-- Status: DONE
+- Scope: beta.87 live baseline plus isolated Community/SF Chat Development branch
+- Status: PARTIAL
+
+## Active isolated development — Community / SF Chat
+
+- Worktree: isolated Community/SF Chat checkout; local absolute paths are intentionally omitted.
+- Branch: `codex/community-social-network`; implementation:
+  `27b4de3d65eb4e1d753302b90fec45c90a51765a`; PR #270.
+- Community owns profiles, privacy/social graph, feed/search/interactions,
+  moderation and existing Channels. SF Chat owns the only new human conversation
+  state. Community does not contain a second DM subsystem.
+- The SF Chat UI facade combines human conversations with existing AI
+  conversations; AI Orchestrator storage/routing remains unchanged.
+- Server-attested publishing currently covers completed Demo/Backtest results.
+  Strategy, Chart and Live result adapters remain visibly disabled.
+- The approved-reference presentation uses a compact social dock, dominant
+  rich-object feed, compact composer and full profile/wall panel. The latest
+  owner-review pass removes unused view icons, adds explicit Like/Comments/
+  Share/Bookmark actions, independent center/wall scrolling, a compact
+  profile-visibility dialog and a restrained cosmic SF Chat launcher. The latest
+  Orbital Glass pass turns the launcher into a full glass/cosmic shell with a
+  persistent desktop conversation rail, distinct human/AI bubbles, compact
+  header/composer and a mobile drawer. The final messenger pass moves incoming
+  avatars outside compact glass bubbles, keeps outgoing messages as right-side
+  bubbles, demotes rating/fulfillment fields into a real disclosure and
+  strengthens the restrained vector SF mark and launcher trajectory. The final
+  sidebar pass adds real-data
+  conversation search/count, All/Pinned/Recent views and the existing AI topic
+  create-flow without a parallel store or mock rows, while preserving the
+  existing Orchestrator history, unread/read, attachments and routing contracts.
+  The final orbital-launch pass connects the real desktop shell to its launcher
+  with a restrained light trajectory, keeps the launcher outside the panel and
+  docks one grouped real notice in the free lower rail. Mobile remains a
+  full-screen shell without the desktop decoration. Isolated browser QA
+  passed at desktop, tablet and mobile sizes without document-level horizontal
+  overflow or new console warnings/errors.
+- Production path uses fail-closed PostgreSQL documents plus migrations
+  `0020`/`0021` (allowlist, FK/index/FORCE-RLS mirrors). A checksum-confirmed,
+  backup-first idempotent legacy importer exists but was not run against any
+  environment.
+- PR #270 required CI reached `5/5 PASS` after the final sidebar pass at
+  `f464d069502a93c3d44c7de35c0cba3a2ba492e4`; merge still requires owner
+  approval.
+- No Backtest/Connector, market-data, trading, future `МИР АГЕНТОВ`, Canary or
+  Production action belongs to this branch.
 
 ## Release closeout - beta.87 live
 
@@ -26,7 +70,9 @@
 
 | Field | Value |
 | --- | --- |
-| Current Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b`; deployed artifact is the same SHA |
+| Current Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (deployed beta.87 baseline) |
+| Development Git implementation | `c0bcf7af1a460d52212a596d0cdcfc100aadfacb` on `codex/community-social-network`; PR #270; not deployed |
+| Deployed Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (beta.87) |
 | Code change | PR #254 legacy isolation; PR #255 Telegram `/start` URL flow; PR #256 release-record visibility and gate |
 | Release | Production `0.10.0-beta.87`, state `production_live` |
 | Build | live `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; artifact `art_9ce9dbcb9a7a4fee9df6a54d40f29806` |
@@ -65,13 +111,16 @@
 | Cross-user shared owner feed | `EXTERNAL BLOCKED` | written provider/exchange distribution authority and per-user entitlement policy |
 | Public Connector installer | `EXTERNAL BLOCKED` | authorized Authenticode signing tool/material |
 | Legal package deployment | `IN DEVELOPMENT` | Official agreement `2026-08-30-v2`, public endpoint isolation, AI provenance policy and release governance are implemented in Development; immutable Canary/Production promotion remains separate. Live Trading is unavailable |
+| Community trusted object adapters | `IN DEVELOPMENT` | Demo/Backtest result snapshot is implemented; Strategy, Chart and Live result require their own server-side ownership adapters |
+| Community acceptance | `IN DEVELOPMENT` | Automated regression and isolated desktop/tablet/mobile browser QA are PASS; credentialed PostgreSQL tests, owner visual acceptance, owner-approved merge, clean-main integration and Canary/Production are not yet complete |
 
 ## Next development boundary
 
-The active task is the beta.87 release. Complete its closeout record and
-final-main CI, build one signed immutable artifact, accept it on Canary and
-promote that exact artifact to Production. Preserve the accepted Connector and
-market-data baselines.
+Run credentialed PostgreSQL and owner visual acceptance when those gates are
+available, then merge PR #270 only after owner approval and clean-main
+integration. Any release must build one signed immutable artifact after merge,
+accept it on Canary and promote that exact artifact to Production. Preserve the
+accepted Connector, Backtest, market-data and AI Orchestrator baselines.
 
 ## Canonical evidence
 
@@ -80,3 +129,4 @@ market-data baselines.
 - [environments and release](04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md)
 - [AI agents and worker queues](07_AI_AGENTS_AND_AUTOMATION.md)
 - [market data and Connector](06_MARKET_DATA_TRADING_CONNECTOR.md)
+- [Community/SF Chat Development record](../changelog/2026-09-01-community-sf-chat-development.md)

@@ -62,6 +62,10 @@ def clean_database(tmp_path: Path, monkeypatch):
                             sf_telegram_outbox, sf_telegram_bot_state, sf_ai_workspace_budgets,
                             sf_ai_reservations, sf_ai_usage_events, sf_market_data_subscriptions,
                             sf_market_data_snapshots, sf_market_data_ingest_batches, sf_operational_events,
+              sf_chat_messages, sf_chat_reads, sf_chat_participants, sf_chat_conversations,
+              sf_community_comments, sf_community_reactions, sf_community_bookmarks,
+              sf_community_moderation_reports, sf_community_follows, sf_community_blocks,
+              sf_community_posts, sf_community_profiles,
               sf_storage_quotas, sf_artifacts, sf_migration_runs, sf_workspaces,
               sf_users RESTART IDENTITY CASCADE
             """
@@ -122,8 +126,8 @@ def _seed(client: PostgresClient) -> dict[str, str]:
 
 def test_migration_is_applied_and_checksum_stable() -> None:
     plan = MigrationRunner(ADMIN_URL).plan()
-    assert plan["latest_version"] == 11
-    assert plan["applied_versions"] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    assert plan["latest_version"] == 21
+    assert plan["applied_versions"] == list(range(1, 22))
     assert plan["pending"] == []
     assert len(plan["migration_set_sha256"]) == 64
 
@@ -181,6 +185,50 @@ def test_document_optimistic_concurrency_rejects_lost_update() -> None:
     doc_b["active_workspaces"]["303"] = ids["b"]
     with pytest.raises(StorageConflictError, match="Concurrent workspaces"):
         repo_b.write("workspaces", doc_b)
+
+
+def test_community_and_sf_chat_documents_sync_fk_mirrors_and_deny_scoped_sql() -> None:
+    client = _client()
+    ids = _seed(client)
+    docs = DocumentRepository(client)
+    community_doc = docs.read("community", {"version": 4})
+    community_doc.update({
+        "profiles": [
+            {"profile_id": "sfp_alpha_0001", "user_id": 202, "username": "alpha_user",
+             "profile_visibility": "network", "allow_messages": "everyone"},
+            {"profile_id": "sfp_beta_00001", "user_id": 303, "username": "beta_user",
+             "profile_visibility": "followers", "allow_messages": "following"},
+        ],
+        "posts": [{
+            "post_id": "cpost_alpha_001", "author_profile_id": "sfp_alpha_0001",
+            "workspace_id": ids["a"], "visibility": "network", "kind": "text",
+        }],
+        "comments": [], "follows": [], "social_blocks": [], "post_reactions": [],
+        "bookmarks": [], "reports": [],
+    })
+    docs.write("community", community_doc)
+    chat_doc = docs.read("sf_chat", {"version": 1})
+    chat_doc.update({
+        "conversations": [{
+            "conversation_id": "sfh_alpha_beta_01", "conversation_type": "human",
+            "participant_profile_ids": ["sfp_alpha_0001", "sfp_beta_00001"], "last_seq": 1,
+        }],
+        "messages": [{
+            "message_id": "sfm_alpha_000001", "conversation_id": "sfh_alpha_beta_01",
+            "seq": 1, "sender_profile_id": "sfp_alpha_0001", "text": "private",
+        }],
+        "reads": [{
+            "conversation_id": "sfh_alpha_beta_01", "profile_id": "sfp_alpha_0001",
+            "last_read_seq": 1,
+        }],
+    })
+    docs.write("sf_chat", chat_doc)
+
+    with client.transaction(Scope.global_service_scope(), read_only=True) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM sf_community_profiles").fetchone()["n"] == 2
+        assert conn.execute("SELECT count(*) AS n FROM sf_chat_messages").fetchone()["n"] == 1
+    with client.transaction(Scope(user_id=202, workspace_id=ids["a"]), read_only=True) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM sf_chat_messages").fetchone()["n"] == 0
 
 
 def test_legacy_audit_repository_populates_stage8_required_columns() -> None:

@@ -137,6 +137,7 @@ ROUTE_CAPABILITY = (
     ("/api/workspaces/personal", "personal_nt"),
     ("/api/ops/live/", "live_commands"),
     ("/api/community/", "community"),
+    ("/api/sf-chat/", "community"),
     ("/api/practice/", "practice_trading"),
 )
 

@@ -1,8 +1,9 @@
 # 03. Architecture and Data Model
 
 - Context Pack document: 03_ARCHITECTURE_AND_DATA_MODEL.md
-- Last verified UTC: 2026-08-31T00:00:00Z
+- Last verified UTC: 2026-09-01T00:00:00Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
+- Development branch implementation SHA: `a2cc5e72a610d22605a1af0aaacfcb03341456d5` (PR #270; not deployed)
 - Scope: Current components, trust boundaries, entities and key flows
 - Status: DONE
 
@@ -24,6 +25,8 @@ flowchart LR
     MD[Market data router]
     Gateway[Owner market-data gateway<br/>Production hub]
     RC[Release Center]
+    Community[Community social graph]
+    SFChat[SF Chat human facade]
   end
 
   subgraph Authorities
@@ -41,6 +44,9 @@ flowchart LR
   API --> Docs
   API --> MD
   API --> RC
+  API --> Community
+  API --> SFChat
+  SFChat --> Agents
   API --> NT
   MD --> Gateway
   Gateway --> TS
@@ -62,6 +68,8 @@ flowchart LR
 | Local runtime stores | local-first queues, DPAPI secrets, runtime snapshots | current dev/desktop data path |
 | PostgreSQL + RLS schema | additive authoritative server-side model for users, workspaces, releases and documents | target server authority; schema already exists in migrations |
 | Governance store | `data/governance/*` editable source, `docs/governance/*` rendered layer | authoritative for governance texts and laws |
+| Community | network-wide safe profiles, privacy/social graph, feed/search/interactions, Channels and moderation | `app/community.py`; no human DM authority |
+| SF Chat | one human conversation/read/unread/attachment state plus a facade over unchanged AI conversations | `app/sf_chat.py` for human state; existing AI Orchestrator remains authoritative for AI state |
 
 ## Trust boundaries
 
@@ -92,14 +100,16 @@ flowchart LR
 | `sf_release_*` tables | immutable artifact, deployment, approval and rollback ledger | `0009_release_center.sql`, `0010_blue_green_deploy_steps.sql` |
 | `sf_documents` / revisions | global/workspace/strategy/changelog document revisions | `0011_document_specifications.sql` |
 | Worker / service / NT resource leases | bounded background execution and shared resource ownership | `app/production_workers.py`, `0008_ninjatrader_resource_leases.sql` |
+| Community / SF Chat mirrors | profiles/posts/edges/moderation and conversations/participants/messages/reads | `0020_community_sf_chat_repositories.sql`, `0021_community_sf_chat_relational_mirrors.sql` |
 
 ## Authoritative storage model
 
 - Development remains local-first: DPAPI, local files and runtime directories are
   still active for desktop/operator workflows.
 - The server-side authoritative model is additive, not destructive: migrations
-  `0001` through `0011` add UUID identities, trusted devices, release records
-  and document revisions without dropping the compatibility path immediately.
+  `0001` through `0021` retain compatibility documents while adding UUID
+  identities, devices, release/doc records and constrained Community/SF Chat
+  mirrors. Explicit Canary/Production never fall back to local Community JSON.
 - Governance laws are not stored in workspace docs; they live in the dedicated
   governance store and rendered docs pipeline.
 
@@ -117,6 +127,10 @@ flowchart LR
    Center candidate -> Canary checks -> same artifact promoted to Production.
 5. **Document revision**: owner/global service edits governance docs through
    controlled workflow; workspace/strategy docs stay in separate scope.
+6. **Community message**: Community profile action -> deterministic human
+   conversation in SF Chat -> participant ACL/block check -> shared unread/read
+   state and deep link. AI conversations traverse the existing Orchestrator
+   authority through the same shell, not through the human store.
 
 ## Current caveats
 
