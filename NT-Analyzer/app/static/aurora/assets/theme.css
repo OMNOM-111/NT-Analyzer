@@ -4426,3 +4426,122 @@ body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
   border: 1px solid var(--line-2); border-radius: 8px;
   background: var(--bg-1); color: var(--tx); font: inherit; font-size: 10px;
 }
+
+/* =========================================================================
+   Notifications and SF Chat are two destinations, not one. A banner and an
+   inbox row open the notification; the conversation behind it is reached only
+   through its own labelled button. The launcher is the SF Chat mark itself —
+   the plate around it belongs to the hover state, not to the resting page.
+   ========================================================================= */
+.sf-notice-main {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column; gap: 5px;
+  width: 100%; margin: 0; padding: 0;
+  border: 0; background: transparent; color: inherit;
+  font: inherit; text-align: left; cursor: pointer;
+}
+.sf-notice-main:hover .sf-notice-title { color: #d6ecff; }
+.sf-notice-actions { flex-wrap: wrap; }
+.sf-notice-act {
+  padding: 6px 10px;
+  border: 1px solid transparent; border-radius: 8px;
+  background: linear-gradient(140deg, #55d8ff, #5a82f5);
+  color: #03101a; font: inherit; font-size: 10.5px; font-weight: 750;
+  cursor: pointer;
+  transition: filter .16s ease, border-color .16s ease, color .16s ease, background .16s ease;
+}
+.sf-notice-act:hover { filter: brightness(1.07); }
+.sf-notice-act.ghost {
+  background: rgba(255, 255, 255, .035);
+  border-color: rgba(255, 255, 255, .09);
+  color: #c5d2e0;
+}
+.sf-notice-act.ghost:hover { border-color: rgba(104, 200, 255, .5); color: #e6f4ff; }
+.sf-notice-more {
+  border: 0; border-top: 1px solid rgba(255, 255, 255, .08);
+  background: transparent; font: inherit; font-size: 10px; cursor: pointer;
+  transition: color .16s ease, background .16s ease;
+}
+.sf-notice-more:hover { background: rgba(83, 196, 255, .06); color: #cfe9ff; }
+
+/* The open row in the centre carries the notification in full, plus the one
+   route from it into SF Chat. */
+.sf-inbox-item.open {
+  border-color: color-mix(in srgb, var(--brand) 62%, var(--line-2));
+  background: color-mix(in srgb, var(--brand) 14%, var(--bg-2));
+}
+.sf-inbox-item.open .sf-inbox-body {
+  display: block; -webkit-line-clamp: none; overflow: visible;
+}
+.sf-inbox-detail {
+  grid-column: 1 / -1;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin-top: 2px; padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--brand) 22%, transparent);
+}
+
+/* The launcher: the SF Chat mark on the page, framed only under the pointer. */
+.orch-fab,
+html[data-orch-skin] .orch-fab {
+  width: auto; min-width: 54px; height: auto;
+  padding: 8px 11px 7px;
+  flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  overflow: visible;
+  border: 1px solid transparent; border-radius: 15px;
+  background: transparent;
+  box-shadow: none;
+  transition:
+    transform .18s cubic-bezier(.22, 1, .36, 1),
+    background .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+.orch-fab::before { display: none; }
+.orch-fab::after {
+  content: 'CHAT';
+  position: static;
+  color: #93b8cc;
+  font-family: Inter, "Segoe UI", sans-serif;
+  font-size: 6.5px; font-weight: 700; line-height: 1;
+  letter-spacing: .34em; text-indent: .34em;
+  transition: color .18s ease;
+}
+.orch-fab .sf-chat-mark {
+  width: 34px; min-width: 34px; height: 23px;
+  transform: none; transform-origin: center;
+  filter: drop-shadow(0 0 5px rgba(45, 205, 255, .3));
+  transition: filter .18s ease;
+}
+.orch-fab:hover,
+.orch-fab:focus-visible,
+html[data-orch-skin] .orch-fab:hover,
+html[data-orch-skin] .orch-fab:focus-visible {
+  transform: translateY(-1px) scale(1.07);
+  border-color: rgba(99, 211, 255, .58);
+  background: linear-gradient(150deg, rgba(12, 32, 52, .94), rgba(4, 12, 22, .96));
+  box-shadow:
+    0 0 0 1px rgba(20, 91, 133, .2),
+    0 0 22px rgba(38, 178, 255, .26),
+    0 14px 34px rgba(0, 0, 0, .5);
+}
+.orch-fab:hover::after, .orch-fab:focus-visible::after { color: #d4ecfa; }
+.orch-fab:hover .sf-chat-mark, .orch-fab:focus-visible .sf-chat-mark {
+  filter: drop-shadow(0 0 9px rgba(72, 216, 255, .5));
+}
+.orch-fab.active, html[data-orch-skin] .orch-fab.active { transform: scale(.97); }
+/* Unread still has to be findable on a launcher with no plate behind it. */
+.orch-fab-notice { top: -2px; right: -2px; border-color: #050f19; }
+
+@media (prefers-reduced-motion: reduce) {
+  .orch-fab, html[data-orch-skin] .orch-fab { transition-duration: .01ms; }
+  .orch-fab:hover, html[data-orch-skin] .orch-fab:hover { transform: none; }
+}
+
+@media (max-width: 760px) {
+  .orch-fab, html[data-orch-skin] .orch-fab {
+    right: 14px; bottom: 70px;
+    width: auto; height: auto;
+    padding: 7px 10px 6px; border-radius: 14px;
+  }
+  .orch-fab::after { display: block; }
+  .orch-fab .sf-chat-mark { width: 32px; min-width: 32px; height: 22px; }
+  .sf-inbox-detail .btn { flex: 1 1 auto; }
+}

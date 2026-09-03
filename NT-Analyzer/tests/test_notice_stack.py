@@ -95,7 +95,9 @@ def test_hovering_holds_the_banner_open():
 
 def test_the_grouped_card_offers_chat_action_and_remaining_count():
     body = _render_notice()
-    assert "Открыть в чате" in body
+    assert "data-notice-chat" in body
+    assert "noticeChatLabel(item)" in body
+    assert "Открыть в чате" in UI
     assert "sf-notice-more" in body
     assert "_more" in body
     assert "noticeTitle(item)" in body
@@ -177,6 +179,6 @@ def test_chat_shell_has_a_presentation_only_orbital_link_to_the_launcher():
 
 def test_closing_a_human_notice_does_not_mark_the_conversation_read():
     body = _render_notice()
-    close_branch = body[body.index("data-notice-close"):body.index("openNotice(item)")]
+    close_branch = body[body.index("data-notice-close"):body.index("openNoticeInCenter(item)")]
     assert "dismissNoticeDom(id)" in close_branch
     assert "sfChatRead" not in close_branch
