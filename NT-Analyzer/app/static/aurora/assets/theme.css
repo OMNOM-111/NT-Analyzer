@@ -4537,7 +4537,8 @@ html[data-orch-skin] .orch-fab:focus-visible {
 
 @media (max-width: 760px) {
   .orch-fab, html[data-orch-skin] .orch-fab {
-    right: 14px; bottom: 70px;
+    /* Clear of the market ticker: at 70px the wordmark sat under the strip. */
+    right: 14px; bottom: 84px;
     width: auto; height: auto;
     padding: 7px 10px 6px; border-radius: 14px;
   }
