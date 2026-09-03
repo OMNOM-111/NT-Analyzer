@@ -3,7 +3,7 @@
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-01T00:00:00Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Device-confirmation Development implementation SHA: `PENDING_GIT_CLOSEOUT` (isolated branch; not deployed)
+- Device-confirmation Development implementation SHA: `19e0f43a35bee5a2e396538962e8f24e92bed6ef` (PR #278; isolated branch; not deployed)
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`
 - Scope: beta.87 live baseline plus isolated Device Confirmation Development branch
@@ -11,8 +11,8 @@
 
 ## Active isolated development — Device Confirmation / Trusted Access
 
-- Branch: `codex/device-confirmation-trusted-access`; implementation SHA is
-  recorded after Git closeout; not deployed.
+- Branch: `codex/device-confirmation-trusted-access`; implementation
+  `19e0f43a35bee5a2e396538962e8f24e92bed6ef`; PR #278; not deployed.
 - The first unknown human browser/app Client receives a server-side pending
   Session with a roughly five-minute deadline. A global guard blocks product
   routes until a session-bound six-digit OTP is confirmed through Telegram or
@@ -51,7 +51,7 @@
 | Field | Value |
 | --- | --- |
 | Current Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b`; deployed artifact is the same SHA |
-| Device-confirmation Development implementation | `PENDING_GIT_CLOSEOUT` on `codex/device-confirmation-trusted-access`; not deployed |
+| Device-confirmation Development implementation | `19e0f43a35bee5a2e396538962e8f24e92bed6ef` on `codex/device-confirmation-trusted-access`; PR #278; not deployed |
 | Code change | PR #254 legacy isolation; PR #255 Telegram `/start` URL flow; PR #256 release-record visibility and gate |
 | Release | Production `0.10.0-beta.87`, state `production_live` |
 | Build | live `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; artifact `art_9ce9dbcb9a7a4fee9df6a54d40f29806` |

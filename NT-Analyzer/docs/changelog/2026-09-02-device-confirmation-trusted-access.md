@@ -9,12 +9,13 @@ Change summary: Каждый новый неизвестный browser/app acces
 
 Source branch: `codex/device-confirmation-trusted-access`
 
-Core implementation commit: `PENDING_GIT_CLOSEOUT`
+Core implementation commit: `19e0f43a35bee5a2e396538962e8f24e92bed6ef`
 
-Pull request: `PENDING_GIT_CLOSEOUT`
+Pull request: [#278](https://github.com/OMNOM-111/NT-Analyzer/pull/278)
 
-Verification result: `IN PROGRESS` — focused automated suites are green;
-repository-wide and release-bundle gates are recorded at Git closeout.
+Verification result: `PASS (Development)` — full clean-base regression,
+focused auth/device tests, all eight local acceptance scenarios, static gates
+and the production-bundle pre-release check are green.
 
 Release impact: Development only. Canary and Production were not changed;
 merge, build, release and deployment require separate owner decisions.
@@ -109,8 +110,15 @@ merge, build, release and deployment require separate owner decisions.
   permanent/session semantics, next-login behavior, session/mode binding,
   timeout, resend cooldown/limit, unbound grouping, IP change, rename/revoke
   scope, cookie persistence and UI wording.
-- Existing trusted-device, physical-machine, auth, request-context,
-  responsive/UI, Community and SF Chat regression suites remain part of the
-  closeout gate.
+- Clean-base repository regression: `2507 passed, 34 skipped`.
+- Focused post-rebase auth/device/security regression: `280 passed`.
+- Acceptance 1→8: all PASS in eight separate invocations (`28` selected tests).
+- Repository-root static scan: CSP, secrets and Markdown PASS; modified Python
+  compiles, shipped JavaScript parses, `git diff --check` and External GPT
+  Context validation PASS.
+- Production bundle pre-release check: `476` shipped files; static scan,
+  runtime reads, Python compile and JavaScript syntax all PASS.
+- The PR diff is one commit over `origin/main` and contains no Community or
+  SF Chat paths.
 - Manual visual/design acceptance and live delivery on Canary/Production are
   separate from automated Development verification.

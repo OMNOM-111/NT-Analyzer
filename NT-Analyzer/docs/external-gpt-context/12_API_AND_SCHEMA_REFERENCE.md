@@ -3,7 +3,7 @@
 - Context Pack document: 12_API_AND_SCHEMA_REFERENCE.md
 - Last verified UTC: 2026-09-03T02:47:29Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Device-confirmation Development implementation SHA: `PENDING_GIT_CLOSEOUT` (isolated branch; not deployed)
+- Device-confirmation Development implementation SHA: `19e0f43a35bee5a2e396538962e8f24e92bed6ef` (PR #278; isolated branch; not deployed)
 - Scope: Compact index of important endpoint families, entities and capability names
 - Status: DONE
 
