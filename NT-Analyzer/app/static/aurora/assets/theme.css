@@ -4395,9 +4395,9 @@ body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
   .community-wall-composer .community-visibility-toggle button { padding: 0 6px; }
 }
 
-/* The SF monogram beside the SF Link page title. Same mark the SF-branded
-   layers share; the wordmark is what distinguishes them, so this stays a
-   quiet glyph rather than a second logo lockup. */
+/* The SF monogram beside the SF Chat page title. SF Chat is one brand across
+   the social surface and the messenger, so this stays a quiet glyph rather
+   than a second logo lockup. */
 .tb-h1 { display: inline-flex; align-items: center; gap: 9px; }
 .tb-brand-mark {
   display: inline-flex; align-items: center;
