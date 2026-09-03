@@ -467,7 +467,7 @@
     { id: 'ai', label: 'AI Lab', href: 'ai-lab.html', icon: 'ai' },
     { id: 'agents', label: 'AI Agents', href: 'ai-agents.html', icon: 'plug' },
     { id: 'news', label: 'Новости', href: 'news.html', icon: 'news' },
-    { id: 'community', label: 'Сообщество', href: 'community.html', icon: 'docs' },
+    { id: 'community', label: 'SF Link', href: 'community.html', icon: 'docs' },
     { id: 'topstep', label: 'TopStep', href: 'topstep.html', icon: 'trophy' },
     { id: 'docs', label: 'Документы', href: 'documents.html', icon: 'docs' },
   ];
@@ -866,8 +866,12 @@
       <div class="rail-foot"><span class="rail-dot" title="Сервер онлайн"></span><span class="rail-foot-tx">Сервер онлайн</span></div>
     </nav>`);
 
+    // The SF monogram is the platform mark the SF-branded layers share; the
+    // wordmark beside it is what tells SF Link from SF Chat, so the page title
+    // carries the name and the mark simply sits with it.
+    const titleMark = page === 'community' ? `<span class="tb-brand-mark">${sfChatMark()}</span>` : '';
     const topbar = el(`<header class="topbar">
-      <div class="tb-title"><span class="tb-kicker-row"><span class="tb-kicker">${kicker}</span><span class="rail-release-badge pending tb-release-badge" data-release-badge>…</span><span class="tb-build-meta" data-build-meta>версия определяется…</span></span><span class="tb-h1">${title}</span></div>
+      <div class="tb-title"><span class="tb-kicker-row"><span class="tb-kicker">${kicker}</span><span class="rail-release-badge pending tb-release-badge" data-release-badge>…</span><span class="tb-build-meta" data-build-meta>версия определяется…</span></span><span class="tb-h1">${titleMark}${title}</span></div>
       <div class="tb-search-wrap">
         <label class="tb-search">${icon('search')}<input type="search" id="global-search" autocomplete="off" placeholder="Поиск стратегий, отчётов, инструментов…"></label>
         <div class="search-results" id="search-results" hidden></div>
@@ -7669,7 +7673,7 @@
     // gone; in that case the prefetch above rendered nothing and the corrected
     // conversation still has to be read.
     if (ORCH.currentId && ORCH.currentId !== wanted) await orchLoadMessages(ORCH.currentId);
-    else if (!ORCH.currentId) qs('#orch-msgs', panel).innerHTML = '<div class="empty-state">Начните переписку из профиля участника в Сообществе.</div>';
+    else if (!ORCH.currentId) qs('#orch-msgs', panel).innerHTML = '<div class="empty-state">Начните переписку из профиля участника в SF Link.</div>';
     const ta = qs('#orch-text', panel); if (ta && !ta.disabled) ta.focus();
     if (ORCH.currentId) dismissNoticesForConversation(ORCH.currentId);
     // Fast local refresh while open: Telegram uses a separate long-poll receiver,

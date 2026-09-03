@@ -515,7 +515,7 @@
       await loadWall();
       if (composerVisibility() === 'network') { STATE.view = 'for-you'; syncViewButtons(); await loadFeed(true); }
       UI.toast(composerVisibility() === 'network'
-        ? 'Опубликовано на вашей стене и в Сообществе'
+        ? 'Опубликовано на вашей стене и в SF Link'
         : 'Опубликовано только на вашей стене');
     } catch (error) { UI.reportError(error); }
     finally { if (submit) submit.disabled = false; }

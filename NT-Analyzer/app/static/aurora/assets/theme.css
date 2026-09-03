@@ -4394,3 +4394,15 @@ body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
 @media (max-width: 1240px) {
   .community-wall-composer .community-visibility-toggle button { padding: 0 6px; }
 }
+
+/* The SF monogram beside the SF Link page title. Same mark the SF-branded
+   layers share; the wordmark is what distinguishes them, so this stays a
+   quiet glyph rather than a second logo lockup. */
+.tb-h1 { display: inline-flex; align-items: center; gap: 9px; }
+.tb-brand-mark {
+  display: inline-flex; align-items: center;
+  width: 34px; min-width: 34px; height: 22px;
+  opacity: .95;
+}
+.tb-brand-mark .sf-chat-mark { min-width: 34px; width: 34px; height: 22px; }
+@media (max-width: 760px) { .tb-brand-mark { display: none; } }
