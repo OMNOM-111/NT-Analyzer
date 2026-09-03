@@ -6791,24 +6791,39 @@
     await refreshInAppNotices({ silent: true });
     return res;
   }
-  async function openNotice(item) {
-    const cid = String(item.conversation_id || '');
-    if (item.kind === 'human_message' && cid) {
+  // A notification is not the conversation it refers to. Reading one and going
+  // to the chat behind it are two different intents, so they are two different
+  // actions: the banner and the inbox row open the notification, and only the
+  // explicit button inside it opens SF Chat. Conflating them meant a banner
+  // arriving mid-task pulled the reader into a conversation they had not asked
+  // for, with no way to look at the notification itself.
+  function noticeChatLabel(item) {
+    return item && item.kind === 'human_message' ? 'Ответить' : 'Открыть в чате';
+  }
+  function noticeHasConversation(item) {
+    return !!String((item && item.conversation_id) || '');
+  }
+  async function openNoticeInChat(item) {
+    const cid = String((item && item.conversation_id) || '');
+    if (!cid) return;
+    if (item.kind === 'human_message') {
       await openSFChat({ conversationId: cid, conversationType: 'human' });
-      await markNoticeRead(item, { ackConversation: true });
-      await refreshInAppNotices({ silent: true });
-      return;
-    }
-    await markNoticeRead(item, { ackConversation: !!cid });
-    if (cid) {
+    } else {
       await openOrchestrator();
       if (cid !== ORCH.currentId) {
         try { await orchSelectConversation(cid); } catch (e) { /* ignore */ }
       }
-    } else if (!ORCH.open) {
-      await openOrchestrator();
     }
+    await markNoticeRead(item, { ackConversation: true });
     await refreshInAppNotices({ silent: true });
+  }
+  // Opening a notification does not consume it: it stays unread until it is
+  // acted on or acknowledged, so the centre keeps telling the truth about what
+  // has actually been dealt with.
+  async function openNoticeInCenter(item) {
+    const id = String((item && item.id) || '');
+    if (id) dismissNoticeDom(id, { immediate: true });
+    await showNotificationsCenter({ focusId: id });
   }
   // How many banners may be on screen at once, and how long an ordinary one
   // stays. Nothing bounded the stack before, and only user interaction cleared
@@ -6858,25 +6873,52 @@
       : `<span class="sf-notice-avatar ${item.kind === 'human_message' ? '' : 'ai'}">${item.kind === 'human_message'
         ? esc(String(item.title || '?').slice(0, 1).toUpperCase()) : sfChatMark()}</span>`;
     const more = Math.max(0, Number(item._more || 0));
-    const card = el(`<button type="button" class="sf-notice ${urgent ? 'urgent' : ''}" data-nid="${esc(id)}" data-cid="${esc(cid)}">
+    // The banner is a pointer into the notification centre. The card, its text
+    // and «Подробнее» all lead there; the chat lives behind its own button.
+    const card = el(`<div class="sf-notice ${urgent ? 'urgent' : ''}" data-nid="${esc(id)}" data-cid="${esc(cid)}">
       <span class="sf-notice-glow" aria-hidden="true"></span>
       <span class="sf-notice-top">
         <span class="sf-notice-source">${avatar}<span class="sf-notice-kicker">${esc(kicker)}</span></span>
-        <span class="sf-notice-close" data-notice-close="${esc(id)}" title="Скрыть" aria-label="Скрыть">${icon('close')}</span>
+        <button type="button" class="sf-notice-close" data-notice-close="${esc(id)}" title="Скрыть уведомление" aria-label="Скрыть уведомление">${icon('close')}</button>
       </span>
-      <span class="sf-notice-title">${esc(noticeTitle(item))}</span>
-      ${preview ? `<span class="sf-notice-body">${esc(preview)}</span>` : ''}
-      <span class="sf-notice-actions"><span>Открыть в чате</span><span class="ghost">Подробнее</span></span>
-      ${more ? `<span class="sf-notice-more"><span>ещё ${more} уведомлен.</span><strong>+${more}</strong></span>` : ''}
-    </button>`);
-    card.addEventListener('click', (e) => {
-      if (e.target.closest('[data-notice-close]')) {
+      <button type="button" class="sf-notice-main" data-notice-open="${esc(id)}" title="Открыть в центре уведомлений">
+        <span class="sf-notice-title">${esc(noticeTitle(item))}</span>
+        ${preview ? `<span class="sf-notice-body">${esc(preview)}</span>` : ''}
+      </button>
+      <span class="sf-notice-actions">
+        ${noticeHasConversation(item) ? `<button type="button" class="sf-notice-act" data-notice-chat="${esc(id)}">${esc(noticeChatLabel(item))}</button>` : ''}
+        <button type="button" class="sf-notice-act ghost" data-notice-open="${esc(id)}">Подробнее</button>
+      </span>
+      ${more ? `<button type="button" class="sf-notice-more" data-notice-all="${esc(id)}"><span>ещё ${more} уведомлен.</span><strong>+${more}</strong></button>` : ''}
+    </div>`);
+    card.addEventListener('click', async (e) => {
+      const hit = e.target.closest
+        ? e.target.closest('[data-notice-close], [data-notice-chat], [data-notice-all], [data-notice-open]')
+        : null;
+      // The cross retires the banner and nothing else: the notification stays
+      // unread in the bell, and a conversation is never marked read by it.
+      if (hit && hit.hasAttribute('data-notice-close')) {
         e.preventDefault(); e.stopPropagation();
         dismissNoticeDom(id);
         NOTICE.shown.add(id);
         return;
       }
-      openNotice(item);
+      if (hit && hit.hasAttribute('data-notice-chat')) {
+        e.preventDefault(); e.stopPropagation();
+        dismissNoticeDom(id, { immediate: true });
+        NOTICE.shown.add(id);
+        await openNoticeInChat(item);
+        return;
+      }
+      // «+N» is about the pile, not about this one card, so it opens the list.
+      if (hit && hit.hasAttribute('data-notice-all')) {
+        e.preventDefault(); e.stopPropagation();
+        dismissNoticeDom(id, { immediate: true });
+        NOTICE.shown.add(id);
+        await showNotificationsCenter();
+        return;
+      }
+      await openNoticeInCenter(item);
     });
     wrap.prepend(card);
     requestAnimationFrame(() => card.classList.add('in'));
@@ -6964,7 +7006,10 @@
       }).format(new Date(iso));
     } catch (e) { return String(iso).slice(0, 16); }
   }
-  async function showNotificationsCenter() {
+  // Opening a notification opens the notification. It expands in place, with
+  // the conversation behind it offered as its own labelled button, so reading
+  // the inbox never navigates the reader somewhere else on its own.
+  async function showNotificationsCenter(opts) {
     if (!canUseNotices()) { toast('Уведомления доступны после входа'); return; }
     fadeAwayVisibleNotices();
     const d = drawer(
@@ -6972,11 +7017,11 @@
       '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>',
     );
     NOTICE.panelOpen = true;
-    const render = async () => {
+    // A banner asks for one particular notification; the bell asks for the list.
+    let expandedId = String((opts && opts.focusId) || '');
+    let lastData = null;
+    const paint = (data) => {
       const body = qs('.drawer-b', d); if (!body) return;
-      let data;
-      try { data = await unifiedNoticeData(); }
-      catch (e) { renderError(body, e, render); return; }
       const items = (data && data.items) || [];
       const unread = Number((data && data.unread_count) || 0);
       applyUnreadConversationMap((data && data.unread_by_conversation) || {});
@@ -6984,7 +7029,7 @@
       updateNoticeFabBadge(unread);
       const tools = `
         <div class="sf-inbox-toolbar">
-          <p class="sf-inbox-lead">Новые ответы и события, пока вы в приложении. Откройте — и пункт исчезнет.</p>
+          <p class="sf-inbox-lead">Новые ответы и события, пока вы в приложении. Откройте уведомление, чтобы прочитать его целиком.</p>
           <div class="sf-inbox-actions">
             <button type="button" class="btn sm ghost" data-inbox-ack-all ${unread ? '' : 'disabled'}>Прочитать все</button>
             ${canUseSystemNotices() ? `<button type="button" class="btn sm danger" data-inbox-clear-all ${(data.system_items || []).length ? '' : 'disabled'}>Удалить системные</button>` : ''}
@@ -6995,9 +7040,12 @@
       } else {
         body.innerHTML = tools + `<div class="sf-inbox-list">${items.map((item, idx) => {
           const urgentCls = item.urgent ? ' urgent' : '';
-          const preview = String(item.body || '').trim().slice(0, 180);
-          return `<article class="sf-inbox-item unread${urgentCls}" data-inbox-id="${esc(item.id)}" style="--i:${idx}">
-            <button type="button" class="sf-inbox-main" data-inbox-open="${esc(item.id)}">
+          const isOpen = String(item.id) === expandedId;
+          const text = String(item.body || '').trim();
+          // Collapsed rows are a list; the open one shows the whole notice.
+          const preview = isOpen ? text : text.slice(0, 180);
+          return `<article class="sf-inbox-item unread${urgentCls}${isOpen ? ' open' : ''}" data-inbox-id="${esc(item.id)}" style="--i:${idx}">
+            <button type="button" class="sf-inbox-main" data-inbox-open="${esc(item.id)}" aria-expanded="${isOpen ? 'true' : 'false'}">
               <div class="sf-inbox-meta">
                 <span class="sf-inbox-title">${esc(item.title || 'Уведомление')}</span>
                 <span class="sf-inbox-time">${esc(noticeTimeLabel(item.created_at_utc))}</span>
@@ -7008,6 +7056,10 @@
             <div class="sf-inbox-acts">
               ${item.kind === 'human_message' ? '' : `<button type="button" class="btn sm ghost" data-inbox-del="${esc(item.id)}" title="Удалить">${icon('trash')}</button>`}
             </div>
+            ${isOpen ? `<div class="sf-inbox-detail">
+              ${noticeHasConversation(item) ? `<button type="button" class="btn sm primary" data-inbox-chat="${esc(item.id)}">${esc(noticeChatLabel(item))}</button>` : ''}
+              <button type="button" class="btn sm ghost" data-inbox-collapse="${esc(item.id)}">Свернуть</button>
+            </div>` : ''}
           </article>`;
         }).join('')}</div>`;
       }
@@ -7036,16 +7088,21 @@
           refreshInAppNotices({ silent: true });
         } catch (e) { reportError(e); }
       };
-      qsa('[data-inbox-open]', body).forEach((btn) => btn.addEventListener('click', async () => {
-        const item = byId[btn.dataset.inboxOpen]; if (!item) return;
-        const row = btn.closest('.sf-inbox-item');
-        if (row) {
-          row.classList.add('removing');
-          await new Promise((r) => setTimeout(r, 280));
-        }
+      qsa('[data-inbox-open]', body).forEach((btn) => btn.addEventListener('click', () => {
+        const id = String(btn.dataset.inboxOpen || '');
+        expandedId = expandedId === id ? '' : id;
+        paint(lastData);
+      }));
+      qsa('[data-inbox-collapse]', body).forEach((btn) => btn.addEventListener('click', () => {
+        expandedId = '';
+        paint(lastData);
+      }));
+      // The one route from a notification into SF Chat.
+      qsa('[data-inbox-chat]', body).forEach((btn) => btn.addEventListener('click', async () => {
+        const item = byId[btn.dataset.inboxChat]; if (!item) return;
         closeDrawer();
         NOTICE.panelOpen = false;
-        await openNotice(item);
+        await openNoticeInChat(item);
       }));
       qsa('[data-inbox-del]', body).forEach((btn) => btn.addEventListener('click', async (e) => {
         e.stopPropagation();
@@ -7061,6 +7118,18 @@
           refreshInAppNotices({ silent: true });
         } catch (err) { reportError(err); }
       }));
+      if (expandedId) {
+        const open = qs('.sf-inbox-item.open', body);
+        if (open && open.scrollIntoView) open.scrollIntoView({ block: 'nearest' });
+      }
+    };
+    const render = async () => {
+      const body = qs('.drawer-b', d); if (!body) return;
+      let data;
+      try { data = await unifiedNoticeData(); }
+      catch (e) { renderError(body, e, render); return; }
+      lastData = data;
+      paint(data);
     };
     await render();
     const back = qs('.drawer-back');
