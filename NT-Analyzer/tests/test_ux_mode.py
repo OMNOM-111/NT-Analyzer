@@ -371,11 +371,12 @@ def test_community_v2_and_sf_chat_http_acl_end_to_end(http_server, ux_store, mon
     assert status == 403
     status, _ = _request(http_server, "/api/community/v2/moderation", token=alice_token)
     assert status == 403
-    status, deleted = _request(
+    # Permanent record: an author cannot retire their own publication.
+    status, refused = _request(
         http_server, f"/api/community/v2/posts/{post_id}/delete", token=alice_token,
         csrf=alice_csrf, method="POST", body={},
     )
-    assert status == 200 and deleted["soft_delete"] is True
+    assert status == 403, refused
 
 
 def test_owner_legal_configuration_is_unreachable_through_document_api(http_server, ux_store) -> None:

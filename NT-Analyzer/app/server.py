@@ -6761,6 +6761,42 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(getattr(exc, "status", HTTPStatus.BAD_REQUEST), str(exc))
             return
 
+        # The audit trail. Append-only and owner-visible: the disclosed
+        # exception to the permanent record is auditable by the person who
+        # holds it, not only asserted in a document. There is no route that
+        # removes an entry.
+        if path == "/api/community/v2/owner/audit":
+            context = getattr(self, "_remote_context", None) or {}
+            if not context.get("is_owner"):
+                self._err(HTTPStatus.FORBIDDEN, "Журнал удалений доступен только владельцу.")
+                return
+            try:
+                self._json(HTTPStatus.OK, community.owner_audit_log(
+                    context.get("user_id"),
+                    limit=(qs.get("limit") or ["100"])[0],
+                ))
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        # What an administrative removal would cover, changing nothing. An
+        # agent acting on an owner instruction is expected to read this first
+        # and show the object and the grounds before anything is removed.
+        if path == "/api/community/v2/owner/removal-preview":
+            context = getattr(self, "_remote_context", None) or {}
+            if not context.get("is_owner"):
+                self._err(HTTPStatus.FORBIDDEN, "Административное удаление доступно только владельцу.")
+                return
+            try:
+                self._json(HTTPStatus.OK, community.preview_owner_removal(
+                    context.get("user_id"),
+                    (qs.get("target_type") or [""])[0],
+                    (qs.get("target_id") or [""])[0],
+                ))
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
         if path == "/api/community/v2/moderation":
             context = getattr(self, "_remote_context", None) or {}
             if not context.get("is_owner"):
@@ -10174,6 +10210,7 @@ class Handler(BaseHTTPRequestHandler):
                     user_uuid=actor["user_uuid"],
                     idempotency_key=str(self.headers.get("Idempotency-Key") or ""),
                     publish_as=str(body.get("publish_as") or ""),
+                    corrects_post_id=str(body.get("corrects_post_id") or ""),
                 ))
             except community.CommunityError as exc:
                 self._err(exc.status, str(exc))
@@ -10297,6 +10334,39 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.OK, community.delete_social_comment(
                     actor["user_id"], parts[4], user_uuid=actor["user_uuid"],
                     moderator=bool(context.get("is_owner")),
+                ))
+            except community.CommunityError as exc:
+                self._err(exc.status, str(exc))
+            return
+
+        # The single disclosed exception to the permanent record. Owner-only, a
+        # reason code and a written reason are both required, and every use
+        # writes an append-only audit entry before anything is removed. An AI
+        # may be recorded as the actor, never as the authority: this route is
+        # authenticated as the owner either way. See
+        # docs/product/PERMANENT_RECORD.md — documented, not hidden.
+        if path == "/api/community/v2/owner/remove":
+            if not self._check_local_post():
+                return
+            context = getattr(self, "_remote_context", None) or {}
+            if not context.get("is_owner"):
+                self._err(HTTPStatus.FORBIDDEN, "Административное удаление доступно только владельцу.")
+                return
+            body = self._read_body() or {}
+            user = context.get("user") if isinstance(context.get("user"), dict) else {}
+            try:
+                self._json(HTTPStatus.OK, community.owner_remove_content(
+                    context.get("user_id"),
+                    str(body.get("target_type") or ""),
+                    str(body.get("target_id") or ""),
+                    reason_code=str(body.get("reason_code") or ""),
+                    reason=str(body.get("reason") or ""),
+                    operation=str(body.get("operation") or "moderation_removal"),
+                    actor=str(body.get("actor") or "owner"),
+                    ai_agent_id=str(body.get("ai_agent_id") or ""),
+                    source=str(body.get("source") or "owner_api"),
+                    correlation_id=str(body.get("correlation_id") or ""),
+                    owner_user_uuid=str(user.get("user_uuid") or context.get("user_uuid") or ""),
                 ))
             except community.CommunityError as exc:
                 self._err(exc.status, str(exc))

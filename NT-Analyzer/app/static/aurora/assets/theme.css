@@ -4546,3 +4546,87 @@ html[data-orch-skin] .orch-fab:focus-visible {
   .orch-fab .sf-chat-mark { width: 32px; min-width: 32px; height: 22px; }
   .sf-inbox-detail .btn { flex: 1 1 auto; }
 }
+
+/* =========================================================================
+   Permanent record. What is published stays published — there is no delete
+   and no edit, for the author or the owner. The interface states the rule
+   where the decision is made and marks the posts it applies to, instead of
+   offering a control the server refuses.
+   ========================================================================= */
+.community-permanence-note {
+  margin: 8px 0 0;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--brand) 16%, transparent);
+  color: var(--tx-3);
+  font-size: 9.5px; line-height: 1.5;
+}
+.community-post-permanent {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 17px; height: 17px;
+  border: 1px solid rgba(104, 196, 255, .26); border-radius: 6px;
+  background: rgba(10, 30, 50, .7);
+  color: #7fd0f5; font-size: 10px; font-weight: 700; line-height: 1;
+  cursor: help;
+}
+
+/* A removed record leaves a marker, not a hole. The tombstone carries the fact
+   and the date; it never carries the content it replaced. */
+.community-post-card.community-removed,
+.community-comment.community-removed {
+  border-style: dashed;
+  border-color: color-mix(in srgb, var(--tx-3) 34%, transparent);
+  background: color-mix(in srgb, var(--bg-2) 55%, transparent);
+  color: var(--tx-3);
+}
+.community-removed-body { display: flex; align-items: center; gap: 10px; }
+.community-removed-body strong { display: block; color: var(--tx-2); font-size: 12px; font-weight: 650; }
+.community-removed-body small, .community-comment.community-removed small {
+  display: block; margin-top: 2px; color: var(--tx-3); font-size: 9.5px;
+}
+.community-comment.community-removed p { margin: 0; color: var(--tx-2); font-size: 11.5px; font-style: italic; }
+.community-removed-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: 0 0 auto; width: 22px; height: 22px;
+  border: 1px dashed color-mix(in srgb, var(--tx-3) 44%, transparent);
+  border-radius: 7px; color: var(--tx-3); font-size: 12px; line-height: 1;
+}
+
+/* Transparent corrections: each record names the other, so the history reads
+   forward rather than being rewritten. */
+.community-correction-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin: 0 0 6px; padding: 4px 9px;
+  border: 1px solid rgba(104, 196, 255, .22); border-radius: 999px;
+  background: rgba(10, 30, 50, .55);
+  color: #8cc9ee; font: inherit; font-size: 9.5px; font-weight: 700;
+  cursor: pointer;
+  transition: border-color .16s ease, color .16s ease;
+}
+.community-correction-link::before { content: 'B3'; opacity: .8; }
+.community-correction-link.later::before { content: 'B1'; }
+.community-correction-link:hover { border-color: rgba(104, 196, 255, .5); color: #d5ecff; }
+.community-correct-post {
+  padding: 2px 7px;
+  border: 1px solid transparent; border-radius: 7px;
+  background: transparent; color: var(--tx-3);
+  font: inherit; font-size: 9.5px; font-weight: 700; cursor: pointer;
+  transition: border-color .16s ease, color .16s ease, background .16s ease;
+}
+.community-correct-post:hover {
+  border-color: rgba(104, 196, 255, .34);
+  background: rgba(10, 30, 50, .55);
+  color: #cfe9ff;
+}
+.community-correction-target {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  margin-bottom: 7px; padding: 6px 10px;
+  border: 1px solid rgba(104, 196, 255, .26); border-radius: 9px;
+  background: rgba(10, 30, 50, .6);
+  color: #a9cfe8; font-size: 9.5px; font-weight: 700;
+}
+.community-correction-target[hidden] { display: none; }
+.community-correction-target button {
+  border: 0; background: transparent; color: #7fd0f5;
+  font: inherit; font-size: 9.5px; font-weight: 700; cursor: pointer;
+}
+.community-correction-target button:hover { color: #d5ecff; }

@@ -9,7 +9,7 @@
     wallTab: 'posts', wallRequest: 0, wallSavedCount: 0,
     channel: 'general', channelFeed: null, threadRootId: '', pendingChannelFiles: [],
     centerMode: 'stream', openProfileId: '', openOrgId: '', loadMoreVisible: false,
-    identities: [],
+    identities: [], correctionTarget: null,
   };
   // The centre column's heading, reused by the back control so it names the
   // stream the reader actually came from.
@@ -17,6 +17,20 @@
     'for-you': 'Recommendation', following: 'Подписки',
     saved: 'Сохранённое', channels: 'Каналы',
   };
+  // Постоянная запись. Опубликованное нельзя удалить или изменить — ни автору,
+  // ни владельцу. Сервер отказывает в удалении; здесь нет и самого контрола,
+  // чтобы интерфейс не обещал того, чего не произойдёт. Текст приходит с
+  // сервера (`permanence_notice`), значение ниже — только запасной вариант,
+  // если ответ пришёл без него.
+  const PERMANENCE_FALLBACK = 'Опубликованное становится частью постоянной истории профиля: '
+    + 'удалить или переписать запись нельзя. Ошибку исправляет новая публикация — обе останутся.';
+  let PERMANENCE_TITLE = PERMANENCE_FALLBACK;
+  function applyPermanenceNotice(doc) {
+    const text = String((doc && doc.permanence_notice) || '').trim();
+    if (text) PERMANENCE_TITLE = text;
+    const node = q('#community-permanence-note');
+    if (node) node.textContent = PERMANENCE_TITLE;
+  }
 
   function q(value, root) { return UI.qs(value, root); }
   function qa(value, root) { return UI.qsa(value, root); }
@@ -217,19 +231,35 @@
     }).join('')}</div>`;
   }
   function commentHtml(comment) {
+    if (comment.removed) {
+      return `<div class="community-comment community-removed" data-comment-id="${esc(comment.comment_id || '')}">`
+        + `<span class="community-removed-mark" aria-hidden="true">⊘</span>`
+        + `<div><p>${esc(comment.text || 'Комментарий удалён администрацией')}</p>`
+        + `<small>${esc(fmtDate(comment.removed_at_utc || comment.created_at_utc))}</small></div></div>`;
+    }
     const author = comment.author || {};
-    return `<div class="community-comment" data-comment-id="${esc(comment.comment_id || '')}">${avatar(author, 'xs')}<div><button type="button" data-profile="${esc(author.profile_id || '')}">${esc(author.display_name || 'Участник')}</button><p>${esc(comment.text || '')}</p><small>${esc(fmtDate(comment.created_at_utc))}</small>${comment.can_delete ? `<button type="button" class="linklike" data-delete-comment="${esc(comment.comment_id || '')}">Удалить</button>` : ''}</div></div>`;
+    return `<div class="community-comment" data-comment-id="${esc(comment.comment_id || '')}">${avatar(author, 'xs')}<div><button type="button" data-profile="${esc(author.profile_id || '')}">${esc(author.display_name || 'Участник')}</button><p>${esc(comment.text || '')}</p><small>${esc(fmtDate(comment.created_at_utc))}</small></div></div>`;
   }
   function postHtml(post, surface) {
+    if (post.removed) {
+      // Your own wall says so rather than quietly losing the entry: a record
+      // that vanishes without a word teaches the author nothing.
+      return `<article id="community-post-${esc(domId(post.post_id))}" class="community-post-card community-removed" data-post-id="${esc(post.post_id)}">`
+        + `<div class="community-removed-body"><span class="community-removed-mark" aria-hidden="true">⊘</span>`
+        + `<div><strong>${esc(post.text || 'Публикация удалена администрацией')}</strong>`
+        + `<small>${esc(fmtDate(post.removed_at_utc || post.created_at_utc))}</small></div></div></article>`;
+    }
     const author = post.author || {};
     const reactions = post.reactions || {};
     const active = String(post.viewer_reaction || '');
     const comments = (post.recent_comments || []).map(commentHtml).join('');
-    return `<article id="community-post-${esc(domId(post.post_id))}" class="community-post-card ${surface === 'wall' ? 'community-post-compact' : ''}" data-post-id="${esc(post.post_id)}" data-viewer-reaction="${esc(active)}">
+    return `<article id="community-post-${esc(domId(post.post_id))}" class="community-post-card ${surface === 'wall' ? 'community-post-compact' : ''}" data-post-id="${esc(post.post_id)}" data-created="${esc(post.created_at_utc || '')}" data-viewer-reaction="${esc(active)}">
       <header class="community-post-head">
         <button type="button" class="community-post-author" ${author.identity_kind === 'organization' ? `data-org="${esc(author.org_id || '')}"` : `data-profile="${esc(author.profile_id || '')}"`}>${avatar(author, '')}<span><strong>${esc(author.display_name || 'Участник')}</strong><small>@${esc(author.username || '')} · ${esc(author.role_label || '')}</small></span></button>
-        <div class="community-post-meta"><time>${esc(fmtDate(post.created_at_utc))}</time><span title="Видимость">${post.visibility === 'followers' ? '◎' : '◉'}</span>${post.can_delete ? `<button type="button" data-delete-post="${esc(post.post_id)}" title="Удалить публикацию">×</button>` : `<button type="button" data-report-post="${esc(post.post_id)}" title="Пожаловаться">•••</button>`}</div>
+        <div class="community-post-meta"><time>${esc(fmtDate(post.created_at_utc))}</time><span title="Видимость">${post.visibility === 'followers' ? '◎' : '◉'}</span>${post.is_author ? `<span class="community-post-permanent" title="${esc(PERMANENCE_TITLE)}" aria-label="${esc(PERMANENCE_TITLE)}">∞</span><button type="button" class="community-correct-post" data-correct-post="${esc(post.post_id)}" title="Опубликовать исправление к этой записи">Исправить</button>` : `<button type="button" data-report-post="${esc(post.post_id)}" title="Пожаловаться">•••</button>`}</div>
       </header>
+      ${post.corrects_post_id ? `<button type="button" class="community-correction-link" data-goto-post="${esc(post.corrects_post_id)}">Исправление к более ранней публикации</button>` : ''}
+      ${(post.corrected_by_post_ids || []).length ? `<button type="button" class="community-correction-link later" data-goto-post="${esc(post.corrected_by_post_ids[0])}">Есть более позднее исправление</button>` : ''}
       ${post.text ? `<div class="community-post-text">${esc(post.text)}</div>` : ''}
       ${(post.hashtags || []).length ? `<div class="community-tags">${post.hashtags.map(tag => `<button type="button" data-hashtag="${esc(tag)}">#${esc(tag)}</button>`).join('')}</div>` : ''}
       ${postMedia(post.attachments)}${objectCard(post.object)}
@@ -281,16 +311,6 @@
         }
         catch (error) { UI.reportError(error); }
       };
-      const remove = q('[data-delete-post]', card);
-      if (remove) remove.onclick = async () => {
-        if (!confirm('Удалить публикацию? Она будет скрыта, а запись останется в журнале модерации.')) return;
-        try {
-          await API.http.communityV2DeletePost(postId);
-          qa(`.community-post-card[data-post-id="${cssEscape(postId)}"]`).forEach(node => node.remove());
-          await loadWall();
-          UI.toast('Публикация удалена');
-        } catch (error) { UI.reportError(error); }
-      };
       const focus = q('[data-focus-comment]', card);
       if (focus) focus.onclick = () => { const input = q('.community-comment-form input', card); if (input) input.focus(); };
       const share = q('[data-share-post]', card);
@@ -320,10 +340,15 @@
         try { await API.http.communityV2Report({ target_id: postId, target_type: 'post', reason: reason.trim() }); UI.toast('Жалоба передана на проверку'); }
         catch (error) { UI.reportError(error); }
       };
-      qa('[data-delete-comment]', card).forEach(button => button.onclick = async () => {
-        if (!confirm('Удалить комментарий?')) return;
-        try { const out = await API.http.communityV2DeleteComment(button.dataset.deleteComment); replacePost(out.post); }
-        catch (error) { UI.reportError(error); }
+      qa('[data-goto-post]', card).forEach(button => button.onclick = () => {
+        const target = q(`#community-post-${cssEscape(domId(button.dataset.gotoPost))}`);
+        if (target && target.scrollIntoView) target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        else UI.toast('Связанная публикация не в этом списке');
+      });
+      const correct = q('[data-correct-post]', card);
+      if (correct) correct.onclick = () => startCorrection({
+        post_id: correct.dataset.correctPost,
+        created_at_utc: card.dataset.created || '',
       });
       qa('[data-hashtag]', card).forEach(button => button.onclick = () => {
         const search = q('#community-search'); if (search) search.value = '#' + button.dataset.hashtag;
@@ -429,6 +454,7 @@
       const request = STATE.view === 'saved' ? API.http.communityV2Saved(query) : API.http.communityV2Feed(query);
       const [doc, people] = await Promise.all([request, API.http.communityV2Profiles({ q: STATE.query, limit: 40 })]);
       STATE.feed = doc; STATE.cursor = doc.next_cursor || '';
+      applyPermanenceNotice(doc);
       renderViewer(doc.viewer);
       renderPeople((people && people.profiles) || doc.recommended_profiles || []);
       const posts = sortPosts(doc.posts || []);
@@ -523,6 +549,26 @@
       };
     });
   }
+  // A correction never edits the original: it is a new publication that names
+  // the one it corrects, so the timeline reads forward.
+  function renderCorrectionTarget() {
+    const bar = q('#community-correction-target');
+    if (!bar) return;
+    const target = STATE.correctionTarget;
+    bar.hidden = !target;
+    if (!target) return;
+    const when = target.created_at_utc ? fmtDate(target.created_at_utc) : '';
+    bar.innerHTML = `<span>Исправление к публикации${when ? ' от ' + esc(when) : ''}</span>`
+      + '<button type="button" data-cancel-correction aria-label="Отменить исправление">Отменить</button>';
+    const cancel = q('[data-cancel-correction]', bar);
+    if (cancel) cancel.onclick = () => { STATE.correctionTarget = null; renderCorrectionTarget(); };
+  }
+  function startCorrection(target) {
+    STATE.correctionTarget = target;
+    renderCorrectionTarget();
+    const input = q('#community-post-text');
+    if (input) { input.focus(); input.scrollIntoView({ block: 'center' }); }
+  }
   async function submitPost() {
     const input = q('#community-post-text'); const submit = q('#community-post-submit');
     const text = input ? input.value.trim() : '';
@@ -536,7 +582,10 @@
       await API.http.communityV2Post({
         text, attachments: STATE.pendingPostFiles, visibility: composerVisibility(),
         publish_as: composerPublishAs(),
+        corrects_post_id: (STATE.correctionTarget || {}).post_id || '',
       });
+      const wasCorrection = !!STATE.correctionTarget;
+      STATE.correctionTarget = null; renderCorrectionTarget();
       if (input) input.value = '';
       STATE.pendingPostFiles = []; renderPending('post');
       // The post belongs to my wall either way; Recommendation only refreshes
@@ -545,9 +594,11 @@
       if (publishedAs) { if (STATE.openOrgId === publishedAs) await openOrganization(publishedAs); }
       else await loadWall();
       if (composerVisibility() === 'network') { STATE.view = 'for-you'; syncViewButtons(); await loadFeed(true); }
-      UI.toast(composerVisibility() === 'network'
-        ? 'Опубликовано на вашей стене и в SF Chat'
-        : 'Опубликовано только на вашей стене');
+      UI.toast(wasCorrection
+        ? 'Исправление опубликовано; прежняя запись осталась на месте'
+        : (composerVisibility() === 'network'
+          ? 'Опубликовано на вашей стене и в SF Chat'
+          : 'Опубликовано только на вашей стене'));
     } catch (error) { UI.reportError(error); }
     finally { if (submit) submit.disabled = false; }
   }
