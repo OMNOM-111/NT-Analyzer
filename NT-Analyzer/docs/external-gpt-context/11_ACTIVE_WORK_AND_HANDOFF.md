@@ -90,12 +90,12 @@
 | Cross-user shared owner feed | `EXTERNAL BLOCKED` | written provider/exchange distribution authority and per-user entitlement policy |
 | Public Connector installer | `EXTERNAL BLOCKED` | authorized Authenticode signing tool/material |
 | Legal package deployment | `IN DEVELOPMENT` | Official agreement `2026-08-30-v2`, public endpoint isolation, AI provenance policy and release governance are implemented in Development; immutable Canary/Production promotion remains separate. Live Trading is unavailable |
-| Device Confirmation acceptance | `IN DEVELOPMENT` | Automated Development verification is recorded in its changelog; real Telegram/email delivery, owner visual acceptance, PR/CI, merge and immutable Canary/Production promotion remain separate gates |
+| Device Confirmation acceptance | `IN DEVELOPMENT` | Automated Development verification is recorded in its changelog and PR #278 provides per-head CI evidence; real Telegram/email delivery, owner visual acceptance, merge and immutable Canary/Production promotion remain separate gates |
 
 ## Next development boundary
 
-For Device Confirmation, complete Git closeout, PR/CI and owner visual/provider
-acceptance before an owner-approved merge. Any later release must build one
+For Device Confirmation, require mandatory PR #278 checks plus owner
+visual/provider acceptance before an owner-approved merge. Any later release must build one
 signed immutable artifact after merge, accept it on Canary and promote that
 exact artifact to Production. The deployed beta.87 identity remains unchanged.
 Preserve the accepted Connector, Backtest, market-data and AI Orchestrator

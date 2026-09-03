@@ -118,7 +118,7 @@ merge, build, release and deployment require separate owner decisions.
   Context validation PASS.
 - Production bundle pre-release check: `476` shipped files; static scan,
   runtime reads, Python compile and JavaScript syntax all PASS.
-- The PR diff is one commit over `origin/main` and contains no Community or
-  SF Chat paths.
+- The PR is based directly on `origin/main` and contains only scoped Device
+  Confirmation paths; it contains no Community or SF Chat paths.
 - Manual visual/design acceptance and live delivery on Canary/Production are
   separate from automated Development verification.
