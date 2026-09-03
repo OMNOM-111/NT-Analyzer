@@ -731,6 +731,19 @@ def test_community_v2_and_unified_sf_chat_are_real_api_backed_surfaces():
     assert "communityV2Profile(profileId" in page
     # The registration entry is rendered from the server's derived object; the
     # page must not mint a date or a status of its own.
+    # Exactly one composer, and it belongs to the member's own wall in the
+    # right column. Recommendation is a reading surface: creating a post there,
+    # or offering a second create button beside the profile, put the same act
+    # in two places.
+    assert html.count('id="community-composer-card"') == 1
+    composer_at = html.index('id="community-composer-card"')
+    wall_at = html.index('id="community-profile-wall-feed"')
+    feed_at = html.index('id="community-feed"')
+    assert feed_at < composer_at < wall_at, "composer must sit in the wall column, above the wall"
+    assert "data-focus-composer" not in page and "Создать пост" not in page
+    assert 'data-post-visibility="network"' in html and 'data-post-visibility="private"' in html
+    assert "community-post-visibility" not in page
+    assert "composerVisibility()" in page
     assert "registrationCardHtml(doc.registration" in page
     assert "registration.registered_at_utc" in page
     assert "Поздравляем с регистрацией в StratForge!" in page

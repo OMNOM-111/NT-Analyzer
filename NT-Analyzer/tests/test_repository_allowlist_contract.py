@@ -118,5 +118,18 @@ def test_community_and_sf_chat_have_constrained_relational_mirrors():
     assert 'repository == "sf_chat"' in core and "self._sync_sf_chat(conn, doc)" in core
 
     migrations = MigrationRunner.migrations()
-    assert [row["version"] for row in migrations] == list(range(1, 22))
-    assert migrations[-1]["name"] == "0021_community_sf_chat_relational_mirrors.sql"
+    # Contiguous from 1 with no gaps and no duplicates. Pinning the last
+    # version instead made every added migration look like a regression.
+    versions = [row["version"] for row in migrations]
+    assert versions == list(range(1, len(versions) + 1))
+    # The mirrors migration is present; it is no longer required to be last,
+    # because later migrations legitimately extend what it created.
+    names = [row["name"] for row in migrations]
+    assert "0021_community_sf_chat_relational_mirrors.sql" in names
+    # Post visibility is a server-side ACL value, so its allowed set lives in
+    # the schema rather than only in the application.
+    private = (MIGRATIONS / "0022_community_post_private_visibility.sql").read_text(
+        encoding="utf-8",
+    )
+    assert "sf_community_posts_visibility_check" in private
+    assert "'network','followers','private'" in private

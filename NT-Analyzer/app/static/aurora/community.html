@@ -39,24 +39,6 @@
           </div>
         </header>
 
-        <section class="community-composer-v2" id="community-composer-card">
-          <div class="community-avatar" id="community-composer-avatar" aria-hidden="true">SF</div>
-          <div class="community-compose-main">
-            <textarea id="community-post-text" rows="1" maxlength="4000" placeholder="Поделитесь сетапом, мыслями или прикрепите объект..."></textarea>
-            <div class="community-pending-media" id="community-pending-media"></div>
-            <div class="community-compose-actions">
-              <button type="button" class="community-action" data-community-object="chart" disabled title="Будет подключено только через server-attested snapshot"><span>⌗</span>График</button>
-              <button type="button" class="community-action" data-community-object="strategy" disabled title="Будет подключено только через server-attested snapshot"><span>▱</span>Стратегия</button>
-              <button type="button" class="community-action" data-community-object="result" title="Выбрать завершённый server-attested результат"><span>↗</span>Результат</button>
-              <label class="community-action" for="community-post-files" title="PNG, JPEG или WebP до 2 МБ"><span>⌕</span>Файл</label>
-              <input id="community-post-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
-              <div class="community-compose-spacer"></div>
-              <select id="community-post-visibility" aria-label="Видимость публикации"><option value="network">Вся сеть</option><option value="followers">Подписчики</option></select>
-              <button type="button" class="btn primary community-publish" id="community-post-submit"><span aria-hidden="true">➤</span>Опубликовать</button>
-            </div>
-          </div>
-        </section>
-
         <section class="community-feed" id="community-feed" aria-live="polite"><div class="community-feed-loading"><div class="community-skeleton post"></div><div class="community-skeleton post"></div></div></section>
         <button type="button" class="btn ghost community-load-more" id="community-load-more" hidden>Показать ещё</button>
 
@@ -94,6 +76,27 @@
           <button type="button" class="active" role="tab" aria-selected="true" data-community-wall-tab="posts"><span aria-hidden="true">◉</span>Публикации <b id="community-wall-post-count">0</b></button>
           <button type="button" role="tab" aria-selected="false" data-community-wall-tab="saved"><span aria-hidden="true">◇</span>Закладки <b id="community-wall-saved-count">0</b></button>
         </div>
+        <section class="community-composer-v2 community-wall-composer" id="community-composer-card">
+          <div class="community-avatar" id="community-composer-avatar" aria-hidden="true">SF</div>
+          <div class="community-compose-main">
+            <textarea id="community-post-text" rows="1" maxlength="4000" placeholder="Опубликовать на своей стене..."></textarea>
+            <div class="community-pending-media" id="community-pending-media"></div>
+            <div class="community-compose-actions">
+              <button type="button" class="community-action" data-community-object="chart" disabled title="Будет подключено только через server-attested snapshot"><span>⌗</span>График</button>
+              <button type="button" class="community-action" data-community-object="strategy" disabled title="Будет подключено только через server-attested snapshot"><span>▱</span>Стратегия</button>
+              <button type="button" class="community-action" data-community-object="result" title="Выбрать завершённый server-attested результат"><span>↗</span>Результат</button>
+              <label class="community-action" for="community-post-files" title="PNG, JPEG или WebP до 2 МБ"><span>⌕</span>Файл</label>
+              <input id="community-post-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+              <div class="community-compose-spacer"></div>
+              <div class="community-visibility-toggle" role="radiogroup" aria-label="Видимость публикации">
+                <button type="button" class="active" role="radio" aria-checked="true" data-post-visibility="network" title="Виден в Сообществе и может попасть в Recommendation"><span aria-hidden="true">◉</span>Публично</button>
+                <button type="button" role="radio" aria-checked="false" data-post-visibility="private" title="Остаётся только на вашей стене"><span aria-hidden="true">◇</span>Только на моей странице</button>
+              </div>
+              <button type="button" class="btn primary community-publish" id="community-post-submit"><span aria-hidden="true">➤</span>Опубликовать</button>
+            </div>
+          </div>
+        </section>
+
         <section class="community-wall-feed" id="community-profile-wall-feed" aria-live="polite"><div class="community-skeleton post"></div></section>
       </aside>
     </div>

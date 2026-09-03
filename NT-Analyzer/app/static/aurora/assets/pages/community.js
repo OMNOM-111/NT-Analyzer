@@ -115,10 +115,9 @@
         </div>
         <button type="button" class="community-wall-settings" data-edit-profile title="Настроить профиль" aria-label="Настроить профиль">⚙</button>
       </div>
-      <div class="community-wall-actions"><button type="button" class="btn ghost" data-focus-composer><span aria-hidden="true">＋</span>Создать пост</button></div>
+
       ${wallStats(profile)}`;
     qa('[data-edit-profile]').forEach(button => { button.onclick = () => openProfileVisibility(profile); });
-    qa('[data-focus-composer]').forEach(button => { button.onclick = () => { const input = q('#community-post-text'); if (input) { input.focus(); input.scrollIntoView({ behavior: 'smooth', block: 'center' }); } }; });
     qa(`[data-profile="${cssEscape(profile.profile_id || '')}"]`).forEach(button => { button.onclick = () => openProfile(profile.profile_id); });
   }
 
@@ -477,16 +476,47 @@
     host.innerHTML = state.map((item, index) => `<span><strong>${esc(item.name)}</strong><button type="button" data-remove-media="${index}" aria-label="Убрать">×</button></span>`).join('');
     qa('[data-remove-media]', host).forEach(button => button.onclick = () => { state.splice(Number(button.dataset.removeMedia), 1); renderPending(target); });
   }
+  // Exactly one composer exists, and it lives on the member's own wall. The
+  // control is a two-state radio group rather than a settings row: the reader
+  // is choosing where this post goes, not configuring the product.
+  function composerVisibility() {
+    const active = q('[data-post-visibility].active');
+    const value = active ? String(active.dataset.postVisibility || '') : '';
+    return value === 'private' ? 'private' : 'network';
+  }
+  function wireComposerVisibility() {
+    qa('[data-post-visibility]').forEach(button => {
+      button.onclick = () => {
+        qa('[data-post-visibility]').forEach(other => {
+          const on = other === button;
+          other.classList.toggle('active', on);
+          other.setAttribute('aria-checked', on ? 'true' : 'false');
+        });
+      };
+    });
+  }
   async function submitPost() {
     const input = q('#community-post-text'); const submit = q('#community-post-submit');
     const text = input ? input.value.trim() : '';
     if (!text && !STATE.pendingPostFiles.length) { UI.toast('Добавьте текст или изображение'); return; }
     if (submit) submit.disabled = true;
     try {
-      await API.http.communityV2Post({ text, attachments: STATE.pendingPostFiles, visibility: q('#community-post-visibility').value });
+      // The author is whoever the composer is publishing as. Today that is
+      // always the signed-in member, and the server derives it from the
+      // session; keeping it a value rather than an assumption is what lets a
+      // company identity be added later without moving the publish path.
+      await API.http.communityV2Post({
+        text, attachments: STATE.pendingPostFiles, visibility: composerVisibility(),
+      });
       if (input) input.value = '';
       STATE.pendingPostFiles = []; renderPending('post');
-      STATE.view = 'for-you'; syncViewButtons(); await loadFeed(true); UI.toast('Публикация добавлена');
+      // The post belongs to my wall either way; Recommendation only refreshes
+      // because a public post may now be eligible for it.
+      await loadWall();
+      if (composerVisibility() === 'network') { STATE.view = 'for-you'; syncViewButtons(); await loadFeed(true); }
+      UI.toast(composerVisibility() === 'network'
+        ? 'Опубликовано на вашей стене и в Сообществе'
+        : 'Опубликовано только на вашей стене');
     } catch (error) { UI.reportError(error); }
     finally { if (submit) submit.disabled = false; }
   }
@@ -509,7 +539,7 @@
           await API.http.communityV2PublishObject({
             source_type: 'job_result', source_id: button.dataset.publishResult,
             text: input ? input.value.trim() : '',
-            visibility: q('#community-post-visibility').value,
+            visibility: composerVisibility(),
           });
           if (input) input.value = '';
           UI.closeDrawer(); STATE.view = 'for-you'; syncViewButtons();
@@ -533,7 +563,9 @@
     if (sort) sort.hidden = channels;
     if (channelsView) channelsView.hidden = !channels;
     if (feed) feed.hidden = channels;
-    if (composer) composer.hidden = channels || STATE.view === 'saved';
+    // The composer is not part of the centre stream any more; it is the one
+    // place a post is created and it is always available on my own wall.
+    if (composer) composer.hidden = false;
     if (more && channels) { more.hidden = true; STATE.loadMoreVisible = false; }
   }
   async function setView(view) {
@@ -571,10 +603,11 @@
     if (profileView) profileView.hidden = !showingProfile;
     const toolbar = document.querySelector('.community-stream-toolbar');
     if (toolbar) toolbar.hidden = showingProfile;
-    ['#community-composer-card', '#community-feed'].forEach(selector => {
-      const node = q(selector);
-      if (node) node.hidden = showingProfile;
-    });
+    // Only the stream itself yields to a member's wall. The composer lives in
+    // the right column and belongs to the signed-in member, so it stays put
+    // whoever is open in the centre.
+    const feed = q('#community-feed');
+    if (feed) feed.hidden = showingProfile;
     const more = q('#community-load-more');
     if (more) more.hidden = showingProfile ? true : !STATE.loadMoreVisible;
     if (showingProfile) {
@@ -783,6 +816,7 @@
       else if (STATE.centerMode === 'profile') closeProfile();
     });
     q('#community-post-submit').onclick = submitPost;
+    wireComposerVisibility();
     const resultButton = q('[data-community-object="result"]'); if (resultButton) resultButton.onclick = openResultPublisher;
     q('#community-load-more').onclick = () => loadFeed(false);
     q('#community-post-files').onchange = async event => { try { await readImages(event.target.files, 'post'); } catch (error) { UI.reportError(error); } finally { event.target.value = ''; } };

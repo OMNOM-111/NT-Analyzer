@@ -880,7 +880,12 @@ def moderate_delete_message(owner_id: Any, message_id: str, *, workspace_id: str
 _PROFILE_USERNAME_RE = re.compile(r"[A-Za-z0-9_]{3,30}")
 _HASHTAG_RE = re.compile(r"(?<![\w#])#([\w-]{2,40})", re.UNICODE)
 _REACTIONS = frozenset({"support", "insightful", "fire"})
-_POST_VISIBILITY = frozenset({"network", "followers"})
+# "private" keeps a post on its author's own wall: everyone else is refused
+# by _post_visible, and social_feed excludes it from Recommendation even for
+# the author, because Recommendation is the public surface rather than a
+# second copy of the wall.
+_POST_VISIBILITY = frozenset({"network", "followers", "private"})
+_RECOMMENDABLE_VISIBILITY = frozenset({"network", "followers"})
 _PROFILE_VISIBILITY = frozenset({"network", "followers"})
 _MESSAGE_POLICIES = frozenset({"everyone", "following", "nobody"})
 
@@ -1511,6 +1516,12 @@ def social_feed(
         }
         rows = []
         for row in reversed(doc.get("posts") or []):
+            # Recommendation carries only what may be shown publicly. A post
+            # kept to its own wall never enters it — not even for its author,
+            # who would otherwise be the one person seeing a private post in a
+            # feed that is supposed to be the public surface.
+            if str(row.get("visibility") or "network") not in _RECOMMENDABLE_VISIBILITY:
+                continue
             if not _post_visible(doc, row, viewer_id):
                 continue
             author_id = str(row.get("author_profile_id") or "")
