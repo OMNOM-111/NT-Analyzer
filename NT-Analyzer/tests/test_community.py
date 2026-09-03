@@ -571,3 +571,60 @@ def test_community_and_sf_chat_share_one_profile_for_one_account():
     rows = [row for row in community._load().get("profiles") or []
             if community._safe_int(row.get("user_id")) == 5152]
     assert len(rows) == 1
+
+
+def test_private_post_stays_on_its_own_wall_and_never_reaches_recommendation():
+    """A post kept to its own wall is a server-side ACL, not a hidden card.
+
+    Recommendation is the public surface, so a private post must be absent from
+    it even for its author — otherwise the one person who sees a private post
+    in a public feed is the person most likely to assume it is public.
+    """
+    author = community.ensure_social_profile(
+        6001, display_name="Wall Author", username="wall_author",
+    )["profile"]
+    reader = community.ensure_social_profile(
+        6002, display_name="Other Reader", username="other_reader",
+    )["profile"]
+
+    public = community.create_social_post(6001, text="Публичная запись", visibility="network")["post"]
+    private = community.create_social_post(6001, text="Только на моей стене", visibility="private")["post"]
+
+    # Own wall carries both, newest first.
+    own_wall = [row["post_id"] for row in community.social_profile(6001, author["profile_id"])["posts"]]
+    assert public["post_id"] in own_wall
+    assert private["post_id"] in own_wall
+
+    # Recommendation carries only the public one — for the author too.
+    own_feed = [row["post_id"] for row in community.social_feed(6001)["posts"]]
+    assert public["post_id"] in own_feed
+    assert private["post_id"] not in own_feed
+
+    # Another member sees neither the private post on the wall nor in the feed.
+    seen_wall = [row["post_id"] for row in community.social_profile(6002, author["profile_id"])["posts"]]
+    seen_feed = [row["post_id"] for row in community.social_feed(6002)["posts"]]
+    assert public["post_id"] in seen_wall and private["post_id"] not in seen_wall
+    assert public["post_id"] in seen_feed and private["post_id"] not in seen_feed
+    assert reader["profile_id"] != author["profile_id"]
+
+
+def test_private_visibility_is_not_exposed_through_search():
+    """Search is another public read: it must obey the same ACL."""
+    community.ensure_social_profile(6003, display_name="Searchable", username="searchable_one")
+    community.ensure_social_profile(6004, display_name="Searcher", username="searcher_one")
+    private = community.create_social_post(
+        6003, text="Секретный ориентир zzqq", visibility="private",
+    )["post"]
+
+    mine = [row["post_id"] for row in community.social_feed(6003, query="zzqq")["posts"]]
+    theirs = [row["post_id"] for row in community.social_feed(6004, query="zzqq")["posts"]]
+    assert private["post_id"] not in mine
+    assert private["post_id"] not in theirs
+
+
+def test_visibility_values_are_validated_server_side():
+    community.ensure_social_profile(6005, display_name="Strict", username="strict_one")
+    for value in ("network", "followers", "private"):
+        assert community.create_social_post(6005, text=f"v-{value}", visibility=value)["post"]
+    with pytest.raises(community.CommunityError):
+        community.create_social_post(6005, text="bad", visibility="everyone")

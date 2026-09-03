@@ -4339,3 +4339,58 @@ body:has(.orch-panel.open) .sf-notice-wrap { opacity: 0; pointer-events: none; }
   .community-profile-view-kind { display: none; }
   .community-milestone-facts > span { flex: 1 1 100%; }
 }
+
+/* =========================================================================
+   One composer, on the member's own wall. Creating a post is an act on your
+   own page, so it sits in the right column between the profile and its
+   history — never in Recommendation, which is a public reading surface.
+   ========================================================================= */
+.community-wall-composer {
+  margin-bottom: 10px;
+  padding: 11px;
+  border: 1px solid rgba(96, 190, 255, .17);
+  border-radius: 13px;
+  background: linear-gradient(150deg, rgba(10, 26, 43, .93), rgba(5, 14, 26, .95));
+}
+.community-wall-composer .community-avatar { display: none; }
+.community-wall-composer textarea {
+  min-height: 54px;
+  font-size: 11.5px;
+}
+.community-wall-composer .community-compose-actions {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.community-wall-composer .community-action { font-size: 10px; padding: 5px 8px; }
+.community-wall-composer .community-compose-spacer { flex: 1 1 100%; height: 0; }
+.community-wall-composer .community-publish { padding: 6px 12px; font-size: 11px; }
+
+/* A two-state choice of where the post goes, not a settings row. */
+.community-visibility-toggle {
+  display: inline-flex;
+  padding: 2px;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  background: var(--bg-1);
+}
+.community-visibility-toggle button {
+  display: inline-flex; align-items: center; gap: 5px;
+  min-height: 25px; padding: 0 8px;
+  border: 0; border-radius: 7px;
+  background: transparent;
+  color: var(--tx-3);
+  font: inherit; font-size: 9.5px; font-weight: 700;
+  white-space: nowrap; cursor: pointer;
+  transition: background .16s ease, color .16s ease;
+}
+.community-visibility-toggle button:hover { color: var(--tx); }
+.community-visibility-toggle button.active {
+  background: var(--brand-soft);
+  color: var(--brand);
+  box-shadow: inset 0 0 0 1px var(--brand-line);
+}
+.community-visibility-toggle button > span { font-size: 10px; line-height: 1; }
+
+@media (max-width: 1240px) {
+  .community-wall-composer .community-visibility-toggle button { padding: 0 6px; }
+}
