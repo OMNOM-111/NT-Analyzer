@@ -25,6 +25,13 @@ for review before stage-2 persistence. No new API, storage migration, Court,
 execution engine, Router selection or UI is activated. All ten flags default
 OFF; no enabled configuration is installed.
 
+Local slice implementation is complete: 221 new contract/characterization
+tests, focused regression 654 passed, full pytest 2901 passed / 44 skipped,
+legacy runner 13/13 and Python/JS/static/context/496-file bundle gates PASS.
+The 44 skips are 41 PostgreSQL acceptance scenarios without test DSNs and
+three shell/POSIX scenarios; no skipped scenario is certified. The canonical
+status separates local implementation, Git/CI closeout and stage review.
+
 ## Accepted Unified Local — beta.96
 
 - Auth/registration, Device Confirmation, SF Social, SF Chat and Owner Preview
@@ -101,7 +108,7 @@ They no longer define the current Local baseline.
 
 ## Next safe step
 
-Complete the foundation code/test checkpoint and review ADR-0009. After review,
+Review the verified foundation checkpoint and ADR-0009. After review,
 stage 2 implements scoped repositories and transactional events using the
 existing PostgreSQL/SQLite, idempotency, audit and worker foundations. Assign
 one writer to shared files and migration numbering in the canonical status.

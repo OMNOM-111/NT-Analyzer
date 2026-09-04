@@ -7,21 +7,21 @@ for stages 0–1; the broader Agent World product is not available yet.
 
 | Field | Current value |
 | --- | --- |
-| Verified UTC | 2026-09-04T21:50:16Z |
+| Local verification UTC | 2026-09-04T22:35:00Z |
 | Accepted base / rollback source | `4ae766ea0c3258a8bb049644ac2afbba6cb89330` |
 | Base branch / dependency | `integration/stratforge-unified-local`, open [PR #280](https://github.com/OMNOM-111/NT-Analyzer/pull/280) |
 | Base comparison | exact match; clean tracked/untracked state; no rollback or reset |
 | Task branch | `codex/agent-world-foundation` |
 | Worktree | `StratForge-worktrees/agent-world-foundation` (separate checkout) |
 | Version / environment | `0.10.0-beta.96`, `pre_release`, Development; no version bump |
-| Implementation checkpoint | Base SHA above; first slice in progress; use `git rev-parse HEAD` for the current checkout |
+| Implementation checkpoint | Tested foundation candidate; implementation SHA and stacked PR recorded in the Git closeout update |
 | PR strategy | stacked PR targeting `integration/stratforge-unified-local`; no merge of #280 |
 | Active workstream | Foundation: contracts, pure adapters, feature-flag definitions, tests, documentation |
 | Storage migrations | none; current last migration is `0022`, next number deliberately unassigned |
 | Runtime connections | none; no new route, worker, scheduler, router selection or UI |
 | Feature flags | all ten flags OFF by default; no configuration installed |
-| Stage 0 | baseline verified; documentation reconciliation in progress |
-| Stage 1 | implementation in progress; contract review required before stage 2 |
+| Stage 0 | baseline, isolation and documentation reconciliation complete |
+| Stage 1 | local implementation verified; contract review required before stage 2 |
 | Release status | not a Canary or Production release; deployment identity below is historical evidence |
 
 Source documents supplied by the owner remain unchanged on the Desktop. Their
@@ -88,8 +88,48 @@ No actor/model identity is inferred from a previous document or persona name.
 
 ## Verification and closeout
 
-New-slice checks: pending implementation. `IMPLEMENTATION COMPLETE`,
-`GIT CLOSEOUT COMPLETE` and `STAGE CLOSED` are not yet claimed.
+`IMPLEMENTATION COMPLETE`: YES for the bounded stages 0–1 code slice only.
+Git/CI closeout is recorded separately from this local verification checkpoint.
+`STAGE CLOSED`: NO for stage 1; ADR-0009 review and the dependency/merge gates
+remain open. Stage 0's baseline/documentation checkpoint is complete.
+
+| Check | Current-slice evidence |
+| --- | --- |
+| New contract/characterization tests | 221 passed, included in both runs below; no new skips |
+| Focused regression | 654 passed, 0 skipped, 69.22 s; new contracts plus auth/onboarding, Preview, first-device/device confirmation, Community permanence, SF Chat, AI agents/personas/chief/routing/lab, permissions, NT queue, workers and docs governance |
+| Full `python -m pytest -q -ra` | 2901 passed, 44 skipped, 335.66 s; no failures |
+| Legacy `python -m tests` | 13/13 suites passed |
+| Python `compileall -q app tools tests` | PASS |
+| Root repository secrets/platform-secret values/Markdown | PASS; scan root explicitly includes files above `NT-Analyzer/` |
+| Root tracked Markdown hidden amendment scan | PASS, 299 Markdown files |
+| Application CSP/secrets/Markdown | PASS |
+| External GPT Context validator | PASS; shared historical deployment-SHA warning is explained in Context Pack 11, not suppressed |
+| `tools/pre_release_check.py` | PASS, 496 bundle files: static scan, runtime reads, Python compilation and shipped JavaScript syntax; no signing/archive/upload |
+| `git diff --check` / cached check | PASS |
+| Behavior/wiring isolation | no existing application/UI/migration file changed; no runtime importer of `ai_control_center`; all five critical hashes above match |
+
+The first bundle run found three dangling relative changelog links to
+repository-only documents. They now use repository URLs and the changelog
+lists accepted exclusions. The normal bundle selection was not broadened.
+
+Skipped full-suite scenarios (unverified, not PASS):
+
+- 12 production storage + 12 production worker + 9 SF Chat relational + 8
+  Stage 8 PostgreSQL tests: separate test PostgreSQL DSNs were not provided.
+  No Production DB or credentials were used to satisfy this gate.
+- 2 bash/shell tests and 1 POSIX permission-bit test: unavailable in this
+  Windows toolchain. The dispatched Linux CI is a separate platform result.
+- Browser walkthrough, real providers and market-data/Connector hardware
+  acceptance were not repeated: no relevant runtime/UI changes in this slice.
+  Inherited Preview manual acceptance is identified above, not counted again.
+- No new PostgreSQL RLS/atomicity, migrations or outbox delivery can be
+  certified by these pure DTO/protocol tests. Those are stage-2 implementation
+  and real test-database gates, after contract review.
+
+Ignored local outputs are Python/pytest caches and generated empty AI registry
+scaffolding in this isolated worktree. They are not staged or shipped as data.
+No owner Local data, runtime logs, keys, rollback bundle or signed artifact is
+part of this diff.
 
 Rollback is to keep every Agent World flag disabled and continue the unchanged
 legacy runtime at the accepted base. There are no schema/data changes to undo.
@@ -98,9 +138,9 @@ work or deletion of the Unified Local checkout.
 
 ## Next safe step
 
-Finish the pure contracts, explicit legacy projections, repository protocols and
-server-side scoped flag registry described in [ADR-0009](../adr/0009-agent-world-foundation.md).
-Run characterization/isolation and regression gates, then submit this isolated
-slice for contract review. Stage 2 introduces SQLite/PostgreSQL implementations
+Review the concrete contracts, explicit legacy projections, repository protocols
+and server-side scoped flag registry in [ADR-0009](../adr/0009-agent-world-foundation.md).
+Complete the isolated PR/CI checkpoint without merging #280. After review,
+stage 2 introduces SQLite/PostgreSQL implementations
 and migrations only after that review. Court, new execution, Router switching
 and UI remain outside this checkpoint.

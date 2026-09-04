@@ -88,6 +88,14 @@ revision and idempotency checks are separate preconditions. Terminal records
 are immutable; retry creates a new attempt, revised decision or successor task.
 There is no automatic legacy state rewrite or implicit resume.
 
+Creation is revision 1 in the initial state (draft for profiles/Intent/
+Contribution/Memory, planned Task, proposed Decision, requested Execution,
+pending Outcome). Same-state versioned edits are allowed only in declared
+editable states, including running Task checkpoints; every write still needs
+CAS and an event. A sealed payload/policy cannot be changed while marking an
+approved Decision superseded, an Outcome disputed or active Memory revoked.
+Corrections use a reviewed successor or the explicit disputed revision flow.
+
 | Domain | Allowed lifecycle (branches shown explicitly) |
 | --- | --- |
 | Profile (Persona/Role/Account/Model) | draft → active/retired; active → suspended/retired; suspended → active/retired |
@@ -107,6 +115,8 @@ Legacy projections carry both `legacy_status` and a display/work phase:
 | PostgreSQL job `queued/running/completed/failed/cancelled/dead_letter/review` | ready/running/succeeded/failed/cancelled/review/review | completed becomes display success, not verified Outcome |
 | command `queued/leased/completed/failed/rejected/expired/cancelled/review` | ready/running/succeeded/failed/failed/failed/cancelled/review | command type and receipt remain authoritative |
 | research mission `active/paused/finishing/completed/stopped/idle` | running/blocked/running/succeeded/cancelled/planned | paused never becomes active by projection |
+| research mission `deadline_reached/archived` | blocked/archived | deadline is not successful completion |
+| conversation work `open/in_progress/awaiting_owner/completed/blocked` | planned/running/review/succeeded/blocked | owner decision is explicit; closing a chat topic is separate metadata |
 | experiment `draft/draft_ready` | planned/ready | no execution implied |
 | experiment `designing/generating/backtesting` | running | phase only |
 | experiment `generated/catalog_visible/backtest_done/analysis_ready` | review | intermediate success is not task completion |
@@ -119,6 +129,8 @@ Legacy projections carry both `legacy_status` and a display/work phase:
 
 Full source mapping lives in the pure legacy adapter and is characterized
 against `registry.VALID_STATUSES`, queue contracts and the current roster.
+Management persona projections retain their legacy level as provenance only;
+it is not a new autonomy or capability grant.
 
 ## Authority, capabilities and risk
 
@@ -151,7 +163,7 @@ policy independent of a browser session.
 Envelope v1 contains `specversion=1.0`, UUID `id`, `source`, `type`, UTC `time`,
 typed `subject`, tenant, actor, `correlationid`, optional `causationid`, payload
 schema version, immutable policy ref and a bounded reference-only data object.
-It follows CloudEvents field naming; it is an internal contract, not a claim of
+It follows [CloudEvents field naming](https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/spec.md); it is an internal contract, not a claim of
 transport/conformance certification. New event types use `stratforge.ai.*`.
 
 Correlation groups one workflow; causation names the immediate prior event.
@@ -162,9 +174,17 @@ tenant + consumer + event ID. Payload, scope or revision changes require a new
 event. UI consumers use snapshot plus cursor and detect gaps; no transport is
 implemented here.
 
+Semantic event names must agree with record state: e.g. `task.completed` cannot
+accompany a running Task. Reference data is limited to 64 typed references and
+an optional bounded reason code. Inbox acknowledgement follows committed
+idempotent effects, never precedes them. External effects still require replay
+protection at their existing command boundary.
+
 Mutation identity is `(environment, workspace_id, operation, key_hash)` with
 canonical request SHA256 including actor/user, entity revision and reference
-payload. Same key + same hash replays the original result; same key + different
+payload, expected revision and the original event envelope. Replays retain the
+same original event ID/timestamps; creating a different envelope is not a retry.
+Same key + same hash replays the original result; same key + different
 hash conflicts. Use the existing idempotency/command facilities at integration,
 not an in-memory cache. Raw keys are excluded from repr/events; commands and
 leases retain existing fencing tokens. Hashing is not a secret scrubber: input

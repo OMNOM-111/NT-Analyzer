@@ -1,0 +1,125 @@
+"""One immutable, server-side flag registry; no loader or mutation endpoint.
+
+A deployment gate AND an exact workspace opt-in are required. Configuration
+must come from trusted server composition, with an existing audit reference.
+The future loader verifies that audit record. Flags never authorize actions.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+from types import MappingProxyType
+from uuid import UUID
+
+from .contracts import Environment, TenantScope, require_enum, require_token, require_tuple, require_uuid
+from .states import ContractError
+
+
+class Flag(str, Enum):
+    AI_COMMAND_CENTER_UI = "AI_COMMAND_CENTER_UI"
+    AI_CONTROL_CENTER_READ_MODEL = "AI_CONTROL_CENTER_READ_MODEL"
+    AI_TASK_GRAPH_V2 = "AI_TASK_GRAPH_V2"
+    AI_ROUTER_SHADOW_V2 = "AI_ROUTER_SHADOW_V2"
+    AI_EVALUATION_SHADOW = "AI_EVALUATION_SHADOW"
+    AI_CONSENSUS_V2 = "AI_CONSENSUS_V2"
+    AI_COURT_V1 = "AI_COURT_V1"
+    AI_EXECUTION_V2 = "AI_EXECUTION_V2"
+    AI_MEMORY_V2 = "AI_MEMORY_V2"
+    AI_SOCIAL_PUBLISH_V1 = "AI_SOCIAL_PUBLISH_V1"
+
+
+@dataclass(frozen=True)
+class FlagDefinition:
+    flag: Flag
+    dependencies: tuple[Flag, ...] = ()
+    default: bool = False
+
+
+REGISTRY = MappingProxyType({
+    flag: FlagDefinition(flag, dependencies) for flag, dependencies in (
+        (Flag.AI_CONTROL_CENTER_READ_MODEL, ()),
+        (Flag.AI_COMMAND_CENTER_UI, (Flag.AI_CONTROL_CENTER_READ_MODEL,)),
+        (Flag.AI_TASK_GRAPH_V2, (Flag.AI_CONTROL_CENTER_READ_MODEL,)),
+        (Flag.AI_ROUTER_SHADOW_V2, (Flag.AI_TASK_GRAPH_V2,)),
+        (Flag.AI_EVALUATION_SHADOW, (Flag.AI_TASK_GRAPH_V2,)),
+        (Flag.AI_CONSENSUS_V2, (Flag.AI_TASK_GRAPH_V2,)),
+        (Flag.AI_COURT_V1, (Flag.AI_CONSENSUS_V2,)),
+        (Flag.AI_EXECUTION_V2, (Flag.AI_TASK_GRAPH_V2,)),
+        (Flag.AI_MEMORY_V2, (Flag.AI_TASK_GRAPH_V2,)),
+        (Flag.AI_SOCIAL_PUBLISH_V1, (Flag.AI_EVALUATION_SHADOW,)),
+    )
+})
+
+
+@dataclass(frozen=True, kw_only=True)
+class FlagRule:
+    environment: Environment
+    flag: Flag
+    enabled: bool
+    workspace_id: str | None = None
+
+    def __post_init__(self) -> None:
+        require_enum(self.environment, Environment)
+        require_enum(self.flag, Flag)
+        if type(self.enabled) is not bool:
+            raise ContractError("flag_boolean_required")
+        if self.workspace_id is not None:
+            TenantScope(environment=self.environment, workspace_id=self.workspace_id)
+
+
+@dataclass(frozen=True, kw_only=True)
+class FlagSnapshot:
+    revision: str = "disabled-v1"
+    rules: tuple[FlagRule, ...] = ()
+    audit_ref: UUID | None = None
+
+    def __post_init__(self) -> None:
+        require_token(self.revision)
+        require_tuple(self.rules, FlagRule)
+        if self.rules and self.audit_ref is None:
+            raise ContractError("flag_audit_reference_required")
+        if self.audit_ref is not None:
+            require_uuid(self.audit_ref)
+        keys = [(rule.environment, rule.workspace_id, rule.flag) for rule in self.rules]
+        if len(keys) != len(set(keys)):
+            raise ContractError("duplicate_flag_rule")
+
+
+DISABLED = FlagSnapshot()
+
+
+@dataclass(frozen=True, kw_only=True)
+class FlagDecision:
+    flag: Flag
+    enabled: bool
+    reason: str
+    revision: str
+    blocked_by: Flag | None = None
+
+
+def resolve(flag: Flag, *, scope: TenantScope,
+            snapshot: FlagSnapshot = DISABLED) -> FlagDecision:
+    require_enum(flag, Flag)
+    if not isinstance(scope, TenantScope) or not isinstance(snapshot, FlagSnapshot):
+        raise ContractError("flag_scope_and_snapshot_required")
+    rules = {(row.environment, row.workspace_id, row.flag): row.enabled
+             for row in snapshot.rules}
+
+    def decision(current: Flag, visiting: frozenset[Flag]) -> FlagDecision:
+        reason, blocked_by = "enabled", None
+        if current in visiting:
+            raise ContractError("flag_dependency_cycle")
+        if not rules.get((scope.environment, None, current), False):
+            reason = "environment_disabled"
+        elif not rules.get((scope.environment, scope.workspace_id, current), False):
+            reason = "workspace_disabled"
+        else:
+            for dependency in REGISTRY[current].dependencies:
+                result = decision(dependency, visiting | {current})
+                if not result.enabled:
+                    reason, blocked_by = "dependency_disabled", dependency
+                    break
+        return FlagDecision(flag=current, enabled=reason == "enabled", reason=reason,
+                            revision=snapshot.revision, blocked_by=blocked_by)
+
+    return decision(flag, frozenset())

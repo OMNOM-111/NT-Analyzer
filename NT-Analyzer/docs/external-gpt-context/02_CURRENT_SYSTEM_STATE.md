@@ -30,8 +30,11 @@
   tests are unverified scenarios; this evidence belongs to the baseline.
 - Agent World stages 0–1 are tracked in
   [the canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
-  Definitions/adapters/flags are being added without connecting runtime paths;
-  all flags default OFF. Current-slice results are recorded separately.
+  Definitions/adapters/flags are implemented without connecting runtime paths;
+  all flags default OFF. Current-slice local verification: focused 654 passed,
+  full 2901 passed / 44 skipped, legacy runner 13/13; static/context/bundle PASS.
+  Skips and Git/CI status are separate in the canonical checkpoint. Contract
+  review still gates stage-2 persistence; this is not a release.
 - Operational evidence: Release Center closeout, server symlinks and read-only
   Production audit/acceptance evidence in the current handoff.
 - Canonical live release snapshot:

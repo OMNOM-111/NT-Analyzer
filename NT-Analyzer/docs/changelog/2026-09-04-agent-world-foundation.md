@@ -1,13 +1,13 @@
 # Agent World — scoped foundation, stages 0–1
 
-Release summary: Зафиксирована принятая Local beta.96 и начат отдельный фундамент Agent World: контракты, статусы, tenant scope, совместимые проекции и флаги. Текущие пользовательские сценарии не переключаются.
+Release summary: Подготовлен и локально проверен отдельный фундамент Agent World на принятой Local beta.96: контракты, статусы, tenant scope, совместимые проекции и флаги. Текущие пользовательские сценарии не переключаются.
 
 Release PRs: separate stacked PR pending creation; depends on #280.
 Accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`.
 Branch: `codex/agent-world-foundation`.
 Affected subsystems: Agent World contracts, documentation and contract tests.
 Release impact: Development only, no version change, migration, runtime activation, merge or deployment.
-Verification result: PENDING implementation; inherited Preview evidence is not a new-slice PASS.
+Verification result: PASS for the local bounded foundation; Git/CI and stage review are separate gates.
 
 ## Baseline and history
 
@@ -16,13 +16,13 @@ separate worktree was created. Preview closed with `173 passed` focused,
 `2680 passed, 44 skipped` full and the manual provider/device/exit walkthrough.
 PR #280 remains open. Its code and real owner runtime are separate from this
 branch. The earlier `c9b2883` dirty snapshot and isolated-branch descriptions
-are preserved in [historical context](../archive/AGENT_WORLD_PRE_FOUNDATION_CONTEXT_2026-09-04.md).
+are preserved in [historical context](https://github.com/OMNOM-111/NT-Analyzer/blob/codex/agent-world-foundation/NT-Analyzer/docs/archive/AGENT_WORLD_PRE_FOUNDATION_CONTEXT_2026-09-04.md).
 
 ## Scope
 
-- [ADR-0009](../adr/0009-agent-world-foundation.md) specifies entities, states,
+- [ADR-0009](https://github.com/OMNOM-111/NT-Analyzer/blob/codex/agent-world-foundation/NT-Analyzer/docs/adr/0009-agent-world-foundation.md) specifies entities, states,
   authority/capability/risk boundaries, event and repository contracts.
-- [Current status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) tracks exact
+- [Current status](https://github.com/OMNOM-111/NT-Analyzer/blob/codex/agent-world-foundation/NT-Analyzer/docs/current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) tracks exact
   base, ownership, flags, evidence, rollback and next safe action.
 - Current external context distinguishes Local beta.96 from the separately
   recorded beta.87 deployment and corrects the five-hour active-use/two-minute
@@ -31,9 +31,31 @@ are preserved in [historical context](../archive/AGENT_WORLD_PRE_FOUNDATION_CONT
   jobs and trusted-device mechanisms remain authoritative. All new flags are
   off and no new runtime path is connected.
 
+Accepted bundle exclusions: ADR/current program status, archived context and
+External GPT Context Pack remain repository-only developer handoff documents,
+not public runtime documents. This shipped changelog uses repository links for
+them, so the bundle has no dangling relative references. The bundle contains
+the additive Python definitions; no runtime consumer or migration is added.
+
 ## Verification and remaining gates
 
-Implementation and test evidence will be recorded at the slice checkpoint.
+New-slice local evidence: 221 new tests; focused regression 654 passed with no
+skips; full pytest 2901 passed, 44 skipped in 335.66 s; legacy runner 13/13
+suites passed. Python compilation, shipped JavaScript syntax, root-level
+secrets/Markdown/amendment checks, application CSP/static, Context Pack and
+496-file bundle checks passed. All existing application/UI/migration files and
+critical market-data/Charts/Connector/queue hashes are unchanged.
+
+The 44 skips are 41 real PostgreSQL acceptance tests without separate test DSNs,
+two shell tests and one POSIX permissions test. They are not PASS. Browser,
+real-provider and hardware acceptance were not repeated for this non-UI,
+non-runtime slice. This does not certify new storage, RLS or event delivery.
+The Context validator retains its documented shared deployment-anchor warning.
+
+The first bundle check caught three links to non-shipped developer documents;
+repository URLs and explicit exclusions fixed them without changing the
+production file selector. Full bundle recheck passed.
+
 Contract review precedes stage-2 storage migrations. Full Agent World, new UI,
 Court, execution, Router changes and release remain later stages. The next beta
 number is intentionally unassigned.
