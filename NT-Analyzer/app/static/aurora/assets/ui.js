@@ -4608,10 +4608,6 @@
       });
   }
 
-  function loginCard(inner) {
-    return `<div class="auth-screen"><section class="auth-card"><div class="auth-brand"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Защищённый вход</span></div></div>${inner}<div class="auth-security">Единый профиль · подтверждённые Telegram, Google или e-mail<br>Внутренний идентификатор аккаунта — UUID; способы входа не объединяются автоматически</div></section></div>`;
-  }
-
   async function showLegalNoticeModal(id, fallbackLabel) {
     let data;
     try { data = await (window.API ? API.http.legalDocument(id) : Promise.reject()); }
@@ -4641,181 +4637,242 @@
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   }
 
+  // ---- login / registration -------------------------------------------------
+  // Two separate jobs, two separate paths. Login answers "who is this?" and
+  // Device Confirmation, which lives elsewhere, answers "can this access be
+  // trusted?". Nothing here decides trust, and nothing here shows a form the
+  // person has not asked for yet.
+  const AUTH_TRIAL_DEFAULT_DAYS = 7;
+  const AUTH_METHOD_LABEL = { telegram: 'Telegram', google: 'Google', email: 'E-mail' };
+
+  function authShell(inner, modifier) {
+    return `<div class="auth-screen auth-cosmos"><div class="auth-sky" aria-hidden="true"></div>`
+      + `<div class="auth-stage${modifier ? ' ' + modifier : ''}">`
+      + `<div class="auth-mark"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Торговые решения будущего</span></div></div>`
+      + inner + `</div></div>`;
+  }
+
+  function authCard(inner, modifier) {
+    return `<section class="auth-card auth-card-lux${modifier ? ' ' + modifier : ''}">${inner}</section>`;
+  }
+
+  function authSteps(current) {
+    const dots = [1, 2, 3].map(index => `<span class="auth-step-dot${index === current ? ' on' : ''}${index < current ? ' done' : ''}"></span>`).join('');
+    return `<div class="auth-steps" role="status" aria-live="polite"><span class="auth-step-label">Шаг ${current} из 3</span><span class="auth-step-dots" aria-hidden="true">${dots}</span></div>`;
+  }
+
+  function authError(message) {
+    return message ? `<div class="auth-error" role="alert">${esc(message)}</div>` : '';
+  }
+
+  // The server speaks in codes; a person needs a sentence they can act on.
+  const AUTH_MESSAGES = {
+    handle_required: 'Придумайте имя пользователя StratForge.',
+    handle_length: 'Имя пользователя — от 3 до 32 символов.',
+    handle_format: 'Разрешены латинские буквы, цифры, точка и подчёркивание.',
+    handle_reserved: 'Это имя пользователя зарезервировано.',
+    handle_taken: 'Это имя пользователя уже занято.',
+    terms_required: 'Подтвердите согласие с условиями, чтобы создать профиль.',
+    email_code_invalid: 'Код неверный или истёк. Запросите новый.',
+    registration_expired: 'Подтверждение личности истекло. Начните регистрацию заново.',
+    google_already_registered: 'Этот Google-аккаунт уже зарегистрирован — войдите вместо регистрации.',
+  };
+
+  function authMessage(error, fallback) {
+    if (!error) return fallback || '';
+    const code = String(error.code || '');
+    if (AUTH_MESSAGES[code]) return AUTH_MESSAGES[code];
+    const text = String(error.message || error || '').trim();
+    // Never surface a raw transport or provider error to the person.
+    if (!text || /^(HTTP\s*\d|OAuth|Error:|TypeError|\d{3}$)/i.test(text)) return fallback || 'Что-то пошло не так. Попробуйте ещё раз.';
+    return text;
+  }
+
   function renderTelegramLogin(initialError) {
     document.documentElement.classList.add('auth-locked');
     const content = qs('.content');
     const news = qs('[data-global-news-strip]'); if (news) news.hidden = true;
     if (!content) return;
     let polling = null;
+    let qrTick = null;
     let providers = (initialError && initialError.providers) || {};
+    let registrationContract = {};
     const initialMessage = typeof initialError === 'string'
       ? initialError
       : (initialError && initialError.status && ![401, 403].includes(Number(initialError.status)) ? initialError.message : '');
-    let qrTick = null;
+    // What registration has collected so far. It never leaves the browser
+    // until the person accepts the terms on the last step.
+    const draft = { handle: '', first_name: '', last_name: '', method: '', challenge_id: '', code: '', email: '', identity: '' };
+
     const stopQrRefresh = () => { if (qrTick) clearInterval(qrTick); qrTick = null; };
     const stopPolling = () => {
       if (polling) clearInterval(polling);
       polling = null;
       stopQrRefresh();
     };
-    const renderStart = (message) => {
-      stopPolling();
+    const focusFirst = () => requestAnimationFrame(() => {
+      const target = qs('[data-autofocus]', content) || qs('input:not([disabled]), button:not([disabled])', content);
+      if (target) target.focus();
+    });
+    const providerFlags = () => {
       const telegram = providers.telegram || {};
       const google = providers.google || {};
       const email = providers.email || {};
-      const telegramDisabled = telegram.available === false;
-      const googleEnabled = !!(google.available || google.test_auth_fallback);
-      const emailEnabled = !!email.available;
-      content.innerHTML = loginCard(`<div id="auth-provider-start"><div class="auth-copy"><h1>Вход и регистрация</h1><p>Войдите в существующий аккаунт или зарегистрируйте новый. После подтверждения личности новый пользователь автоматически получает полный пробный доступ к продукту на 7 дней. Живые графики используют только разрешённый для аккаунта источник market data.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<button class="btn primary auth-main-action" id="auth-start" ${telegramDisabled ? 'disabled' : ''}>Продолжить через Telegram</button><button class="btn ghost auth-main-action" id="auth-google-start" ${googleEnabled ? '' : 'disabled'}>${google.test_auth_fallback && !google.available ? 'Google · Development test' : (googleEnabled ? 'Продолжить через Google' : 'Google пока не настроен')}</button><div class="auth-copy"><p>Или используйте подтверждённый e-mail.</p></div><form id="auth-email-start-form" class="auth-form"><div class="field"><label for="auth-login-email">E-mail</label><input id="auth-login-email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com"></div><div class="field"><label for="auth-login-first">Имя <span class="cab-sub">(для нового профиля)</span></label><input id="auth-login-first" autocomplete="given-name" maxlength="80"></div><div class="field"><label for="auth-login-last">Фамилия <span class="cab-sub">(для нового профиля)</span></label><input id="auth-login-last" autocomplete="family-name" maxlength="80"></div><label class="auth-terms"><input type="checkbox" id="auth-provider-accept"> <span>Для нового профиля я соглашаюсь с <button type="button" class="linklike" id="auth-provider-terms">договором StratForge AI</button>.</span></label><button class="btn ghost auth-main-action" type="submit" ${emailEnabled ? '' : 'disabled'}>${emailEnabled ? 'Получить код по e-mail' : 'E-mail вход пока недоступен'}</button></form><button class="btn ghost auth-main-action" id="auth-open-promo" type="button">Промокод или донат</button></div>`);
-      const button = qs('#auth-start', content);
-      if (button) button.onclick = async () => {
-        button.disabled = true;
-        try { renderWaiting(await API.http.authLoginStart()); }
-        catch (error) { renderStart(error.message || String(error)); }
+      return {
+        telegram: telegram.available !== false,
+        google: !!(google.available || google.test_auth_fallback),
+        googleTest: !!(google.test_auth_fallback && !google.available),
+        email: !!email.available,
       };
-      const terms = qs('#auth-provider-terms', content);
-      if (terms) terms.onclick = () => showTermsModal();
-      const profile = () => ({
-        email: (qs('#auth-login-email', content) || {}).value || '',
-        first_name: (qs('#auth-login-first', content) || {}).value || '',
-        last_name: (qs('#auth-login-last', content) || {}).value || '',
-        accept_terms: !!((qs('#auth-provider-accept', content) || {}).checked),
-      });
-      const googleButton = qs('#auth-google-start', content);
-      if (googleButton && googleEnabled) googleButton.onclick = async () => {
-        const details = profile();
-        googleButton.disabled = true;
-        try {
-          if (google.available) {
-            const out = await API.http.authGoogleLoginStart({ return_path: location.pathname || '/ui/', accept_terms: details.accept_terms });
-            if (out.auth_url) location.href = out.auth_url;
-            else throw new Error('Google не вернул ссылку входа');
-          } else {
-            const out = await API.http.testAuthGoogleLogin({ email: details.email, google_name: [details.first_name, details.last_name].filter(Boolean).join(' '), accept_terms: details.accept_terms });
-            if (out.status === 'authenticated') { location.reload(); return; }
-            if (out.challenge_id) renderWaiting({ challenge_id: out.challenge_id }, out);
-          }
-        } catch (error) { renderStart(error.message || String(error)); }
-      };
-      const emailForm = qs('#auth-email-start-form', content);
-      if (emailForm && emailEnabled) emailForm.onsubmit = async (event) => {
-        event.preventDefault();
-        const details = profile();
-        const submit = emailForm.querySelector('button[type="submit"]'); submit.disabled = true;
-        try { renderEmailCode(await API.http.authEmailStart({ email: details.email }), details); }
-        catch (error) { renderStart(error.message || String(error)); }
-      };
-      const promo = qs('#auth-open-promo', content);
-      if (promo) promo.onclick = () => renderWelcomeAccess({ asOverlay: true });
     };
-    const renderProfile = (challengeId, state) => {
+    const trialDays = () => Number(registrationContract.trial_days || AUTH_TRIAL_DEFAULT_DAYS);
+
+    // ---- welcome ------------------------------------------------------------
+    const renderWelcome = (message) => {
       stopPolling();
-      const profile = state.profile || {};
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Завершите профиль</h1><p>Telegram подтвердил личность. Укажите имя, фамилию и e-mail — после регистрации полный 7-дневный доступ включится автоматически.</p></div><form id="auth-profile-form" class="auth-form"><div class="field"><label for="auth-first-name">Имя</label><input id="auth-first-name" autocomplete="given-name" required maxlength="80" value="${esc(profile.first_name || '')}"></div><div class="field"><label for="auth-last-name">Фамилия</label><input id="auth-last-name" autocomplete="family-name" required maxlength="80" value="${esc(profile.last_name || '')}"></div><div class="field"><label for="auth-email">E-mail</label><input id="auth-email" type="email" autocomplete="email" required maxlength="254" value="${esc(profile.email || '')}"></div><label class="auth-terms"><input type="checkbox" id="auth-accept-terms"> <span>Я соглашаюсь с <button type="button" class="linklike" id="auth-terms-link">договором StratForge AI</button> и беру все риски на себя.</span></label><button class="btn primary auth-main-action" type="submit">Зарегистрироваться</button></form>`);
-      const form = qs('#auth-profile-form', content);
-      const termsLink = qs('#auth-terms-link', form);
-      if (termsLink) termsLink.onclick = () => showTermsModal();
-      form.onsubmit = async (event) => {
-        event.preventDefault();
-        if (!(qs('#auth-accept-terms', form) || {}).checked) { toast('Подтвердите согласие'); return; }
-        const submit = form.querySelector('button[type="submit"]'); submit.disabled = true;
-        try {
-          const next = await API.http.authProfile(challengeId, {
-            first_name: qs('#auth-first-name', form).value,
-            last_name: qs('#auth-last-name', form).value,
-            email: qs('#auth-email', form).value,
-            accept_terms: true,
-          });
-          renderWaiting({ challenge_id: challengeId }, next);
-        } catch (error) { submit.disabled = false; toast('Ошибка: ' + (error.message || error)); }
-      };
+      content.innerHTML = authShell(
+        `<div class="auth-hero">
+          <h1>Добро пожаловать в StratForge AI</h1>
+          <p class="auth-hero-sub">Безопасный доступ к вашему торговому рабочему пространству</p>
+          ${authError(message)}
+          <div class="auth-choice">
+            <button type="button" class="auth-choice-card" data-auth-go="login" data-autofocus>
+              <span class="auth-choice-icon" aria-hidden="true">&#8594;]</span>
+              <strong>Войти</strong>
+              <span>Войдите в существующий аккаунт</span>
+              <span class="auth-choice-go" aria-hidden="true">&#8594;</span>
+            </button>
+            <button type="button" class="auth-choice-card accent" data-auth-go="register">
+              <span class="auth-choice-icon" aria-hidden="true">&#43;</span>
+              <strong>Зарегистрироваться</strong>
+              <span>Создайте новый профиль в StratForge AI</span>
+              <span class="auth-choice-go" aria-hidden="true">&#8594;</span>
+            </button>
+          </div>
+          <p class="auth-hero-foot">Продолжая, вы сможете выбрать удобный способ входа<br>или создать новый профиль</p>
+        </div>`, 'auth-stage-wide');
+      const go = qsa('[data-auth-go]', content);
+      go.forEach(btn => btn.onclick = () => (btn.dataset.authGo === 'login' ? renderLogin('') : renderStep1('')));
+      focusFirst();
     };
-    const renderEmailCode = (started, profile) => {
+
+    // ---- login --------------------------------------------------------------
+    const renderLogin = (message, qrLogin) => {
       stopPolling();
-      const testCode = String((started || {}).test_code || '');
-      const previewCode = !!(
-        PREVIEW_CONTEXT && PREVIEW_CONTEXT.enabled
-        && (started || {}).delivery === 'preview_synthetic'
-        && /^\d{6}$/.test(testCode)
-      );
-      const devCode = !!testCode && !previewCode;
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Подтвердите e-mail</h1><p>${previewCode ? 'Synthetic-код создан внутри Preview sandbox; реальное письмо не отправлялось.' : (devCode ? 'Development test-backend: используйте показанный одноразовый код.' : 'Код отправлен через настроенного почтового провайдера.')}</p></div>${previewCode ? `<div class="preview-otp-panel auth-preview-otp"><div><strong>Preview synthetic OTP</strong><span>Только для этого изолированного test user.</span></div><code class="mono">${esc(testCode)}</code><button class="btn sm" id="auth-preview-otp-fill" type="button">Подставить тестовый код</button></div>` : (devCode ? `<div class="finance-note"><strong>Тестовый код:</strong> <span class="mono">${esc(testCode)}</span></div>` : '')}<form id="auth-email-verify-form" class="auth-form"><div class="field"><label for="auth-email-code">Одноразовый код</label><input id="auth-email-code" inputmode="numeric" autocomplete="one-time-code" required pattern="[0-9]{6}" maxlength="6" value="${previewCode ? '' : esc(testCode)}"></div><label class="auth-terms"><input type="checkbox" id="auth-email-verify-accept" ${profile.accept_terms ? 'checked' : ''}> <span>Для нового профиля я соглашаюсь с <button type="button" class="linklike" id="auth-email-verify-terms">договором StratForge AI</button>.</span></label><button class="btn primary auth-main-action" type="submit">Подтвердить e-mail</button></form><button class="btn ghost auth-main-action" id="auth-email-back" type="button">Другой способ входа</button>`);
-      const form = qs('#auth-email-verify-form', content);
-      const fillPreview = qs('#auth-preview-otp-fill', content);
-      if (fillPreview) fillPreview.onclick = () => {
-        const input = qs('#auth-email-code', form);
-        if (input) { input.value = testCode; input.focus(); }
-      };
-      const terms = qs('#auth-email-verify-terms', form); if (terms) terms.onclick = () => showTermsModal();
-      form.onsubmit = async (event) => {
-        event.preventDefault();
-        const submit = form.querySelector('button[type="submit"]'); submit.disabled = true;
-        try {
-          const out = await API.http.authEmailVerify({
-            challenge_id: started.challenge_id,
-            code: (qs('#auth-email-code', form) || {}).value || '',
-            profile: Object.assign({}, profile, {
-              accept_terms: !!((qs('#auth-email-verify-accept', form) || {}).checked),
-            }),
-          });
-          if (out.status === 'authenticated') { location.reload(); return; }
-          if (out.challenge_id) { renderWaiting({ challenge_id: out.challenge_id }, out); return; }
-          renderStart('Не удалось завершить вход по e-mail.');
-        } catch (error) {
-          submit.disabled = false;
-          toast('Ошибка: ' + (error.message || error));
-        }
-      };
-      const back = qs('#auth-email-back', content); if (back) back.onclick = () => renderStart('');
+      const flags = providerFlags();
+      const qrSvg = String((qrLogin || {}).qr_svg || '');
+      const webFallback = String((qrLogin || {}).web_fallback_url || (qrLogin || {}).bot_url || '');
+      const qrBlock = flags.telegram
+        ? `<div class="auth-qr-panel">
+            <div class="auth-qr-copy">
+              <span class="auth-qr-badge" aria-hidden="true">&#9635;</span>
+              <strong>Быстрый вход с телефона</strong>
+              <span>Отсканируйте код телефоном и подтвердите вход</span>
+              <span class="auth-qr-life" data-auth-qr-life></span>
+            </div>
+            <div class="auth-qr-frame" data-auth-qr>${qrSvg || '<div class="auth-qr-loading"><span class="spinner"></span></div>'}</div>
+          </div>
+          ${webFallback ? `<a class="auth-qr-fallback" href="${esc(webFallback)}" rel="noopener">Telegram не установлен? Открыть в браузере</a>` : ''}
+          <div class="auth-or"><span>или</span></div>`
+        : '';
+      content.innerHTML = authShell(authCard(
+        `<div class="auth-copy"><h1>Выберите способ входа</h1><p>Продолжите через удобный для вас способ</p></div>
+        ${authError(message)}
+        ${qrBlock}
+        <div class="auth-methods">
+          <button type="button" class="auth-method telegram" data-auth-login="telegram" ${flags.telegram ? 'data-autofocus' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">&#9993;</span><span class="auth-method-label">Продолжить через Telegram</span><span class="auth-method-go" aria-hidden="true">&#8594;</span></button>
+          <button type="button" class="auth-method google" data-auth-login="google" ${flags.google ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">G</span><span class="auth-method-label">${flags.googleTest ? 'Google · Development test' : 'Продолжить через Google'}</span><span class="auth-method-go" aria-hidden="true">&#8594;</span></button>
+          <button type="button" class="auth-method email" data-auth-login="email" ${flags.email ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">&#9993;</span><span class="auth-method-label">Войти по e-mail</span><span class="auth-method-go" aria-hidden="true">&#8594;</span></button>
+        </div>
+        <div class="auth-foot-row">
+          <button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button>
+          <button type="button" class="linklike" data-auth-promo>Промокод или донат</button>
+          <button type="button" class="linklike auth-help" data-auth-help>Нужна помощь? <span aria-hidden="true">?</span></button>
+        </div>`));
+      qs('[data-auth-back]', content).onclick = () => renderWelcome('');
+      qs('[data-auth-promo]', content).onclick = () => renderWelcomeAccess({ asOverlay: true });
+      qs('[data-auth-help]', content).onclick = () => toast('Вход подтверждается в Telegram, Google или по коду на e-mail. Коды действуют несколько минут.');
+      qsa('[data-auth-login]', content).forEach(btn => btn.onclick = () => startLogin(btn.dataset.authLogin));
+      focusFirst();
+      if (flags.telegram && !qrLogin) refreshLoginQr(message);
+      else if (qrLogin) watchQr(qrLogin, () => renderLogin('', null));
     };
-    const check = async (challengeId) => {
+
+    // The QR is a real, short-lived, single-use login challenge: the phone
+    // approves it inside Telegram and this page is signed in by the server.
+    const refreshLoginQr = async (message) => {
       try {
-        const state = await API.http.authLoginStatus(challengeId);
-        if (state.status === 'authenticated') { stopPolling(); location.reload(); return; }
-        if (state.status === 'awaiting_profile') { renderProfile(challengeId, state); return; }
-        if (state.status === 'pending_owner') { renderWaiting({ challenge_id: challengeId }, state); return; }
-        if (['denied', 'account_blocked', 'identity_mismatch', 'phone_mismatch'].includes(state.status)) renderStart('Вход отклонён. Обратитесь к владельцу.');
+        const login = await API.http.authLoginStart();
+        if (!qs('[data-auth-qr]', content)) return;
+        renderLogin(message, login);
       } catch (error) {
-        if (error.status === 410) renderStart('Ссылка входа истекла. Создайте новую.');
+        const frame = qs('[data-auth-qr]', content);
+        if (frame) frame.innerHTML = '<div class="auth-qr-loading">Код входа недоступен</div>';
       }
     };
-    const renderWaiting = (login, knownState) => {
+
+    const watchQr = (login, onExpired) => {
+      stopPolling();
       const challengeId = login.challenge_id;
-      const status = (knownState || {}).status || 'created';
-      if (status === 'awaiting_profile') { renderProfile(challengeId, knownState); return; }
-      const pendingOwner = status === 'pending_owner';
+      if (!challengeId) return;
+      polling = setInterval(() => check(challengeId), 2000);
+      check(challengeId);
+      const ttl = Number(login.expires_in_sec || 0);
+      if (ttl <= 0) return;
+      const deadline = Date.now() + ttl * 1000;
+      qrTick = setInterval(() => {
+        const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+        const life = qs('[data-auth-qr-life]', content);
+        if (life) life.textContent = left ? `Код действует ещё ${left} с` : 'Обновляем код…';
+        if (left > 0) return;
+        stopPolling();
+        if (typeof onExpired === 'function') onExpired();
+      }, 1000);
+    };
+
+    const startLogin = async (method) => {
+      if (method === 'telegram') { renderTelegramWait('login'); return; }
+      if (method === 'google') { startGoogle('login'); return; }
+      renderEmailEntry('login', '');
+    };
+
+    // ---- shared: telegram identity -----------------------------------------
+    const renderTelegramWait = async (mode, message) => {
+      stopPolling();
+      let login = {};
+      try { login = await API.http.authLoginStart(); }
+      catch (error) {
+        const back = mode === 'login' ? renderLogin : renderStep2;
+        back(authMessage(error, 'Не удалось начать вход через Telegram.'));
+        return;
+      }
       const manual = login.manual_command || (login.code ? `/login ${login.code}` : '');
-      const botUrl = pendingOwner ? '' : String(login.bot_url || '');
-      const qrSvg = pendingOwner ? '' : String(login.qr_svg || '');
-      // The phone is the second device: scanning a QR with the normal camera
-      // is the primary path, so nothing here opens a popup window. On the
-      // phone itself the same deep link is one tap away.
-      const webFallback = pendingOwner ? '' : String(login.web_fallback_url || login.bot_url || '');
+      const qrSvg = String(login.qr_svg || '');
+      const botUrl = String(login.bot_url || '');
+      const appUrl = String(login.app_url || '');
       // The QR carries the tg: scheme so a phone camera opens Telegram itself.
-      // That scheme is a dead end without Telegram installed, so the https
-      // link stays visible right underneath as the escape hatch.
-      const scanBlock = qrSvg
-        ? `<div class="auth-qr"><div class="auth-qr-frame">${qrSvg}</div><p class="auth-qr-copy">Наведите камеру телефона — откроется Telegram и наш бот. Нажмите <strong>«Подтвердить вход»</strong>, и эта страница войдёт сама.</p><div class="auth-qr-life" id="auth-qr-life"></div>${webFallback ? `<a class="auth-qr-fallback" id="auth-qr-web" href="${esc(webFallback)}" rel="noopener">Telegram не установлен? Открыть в браузере</a>` : ''}</div>`
-        : '';
-      const appUrl = pendingOwner ? '' : String(login.app_url || '');
-      // The href stays the https link so the control degrades to something
-      // real without JS, and so a long-press still offers a working target.
-      const sameDevice = botUrl
-        ? `<a class="btn ghost auth-main-action" id="auth-open-telegram" href="${esc(botUrl)}" rel="noopener">Открыть в Telegram</a><div class="row-sub" id="auth-telegram-hint"></div>`
-        : '';
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>${pendingOwner ? 'Ожидается решение владельца' : 'Вход через Telegram'}</h1><p>${pendingOwner ? 'Аккаунт будет активирован только после личного подтверждения владельцем. Это правило одинаково для Telegram, Google и e-mail.' : 'Одно подтверждение в Telegram — и вход завершится здесь автоматически. Отправлять контакт не нужно.'}</p></div>${scanBlock}${sameDevice}${manual ? `<details class="auth-manual-fallback"><summary>Другой способ · ввести код вручную</summary><div class="finance-note">Отправьте боту команду:<br><span class="mono">${esc(manual)}</span> <button class="btn sm ghost" id="auth-copy-code" type="button">Копировать</button></div></details>` : ''}<div class="auth-wait"><span class="spinner"></span><span>Ждём подтверждения…</span></div><button class="btn ghost" id="auth-restart">Другой способ входа</button>`);
+      // That scheme is a dead end without Telegram installed, so the https link
+      // stays visible right underneath as the escape hatch.
+      const webFallback = String(login.web_fallback_url || login.bot_url || '');
+      content.innerHTML = authShell(authCard(
+        `${mode === 'register' ? authSteps(2) : ''}
+        <div class="auth-copy"><h1>Подтвердите вход в Telegram</h1><p>Наведите камеру телефона — откроется наш бот. Нажмите «Подтвердить вход», и эта страница продолжит сама. Отправлять контакт не нужно.</p></div>
+        ${authError(message)}
+        ${qrSvg ? `<div class="auth-qr"><div class="auth-qr-frame solo" data-auth-qr>${qrSvg}</div><div class="auth-qr-life" data-auth-qr-life></div>${webFallback ? `<a class="auth-qr-fallback" id="auth-qr-web" href="${esc(webFallback)}" rel="noopener">Telegram не установлен? Открыть в браузере</a>` : ''}</div>` : ''}
+        ${botUrl ? `<a class="btn ghost auth-main-action" id="auth-open-telegram" href="${esc(botUrl)}" rel="noopener" data-autofocus>Открыть в Telegram</a><div class="auth-field-hint" id="auth-telegram-hint"></div>` : ''}
+        ${manual ? `<details class="auth-manual-fallback"><summary>Другой способ · ввести код вручную</summary><div class="auth-note">Отправьте боту команду:<br><span class="mono">${esc(manual)}</span> <button class="btn sm ghost" id="auth-copy-code" type="button">Копировать</button></div></details>` : ''}
+        <div class="auth-wait"><span class="spinner"></span><span>Ждём подтверждения…</span></div>
+        <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+      qs('[data-auth-back]', content).onclick = () => (mode === 'login' ? renderLogin('') : renderStep2(''));
       const copy = qs('#auth-copy-code', content);
       if (copy) copy.onclick = async () => {
         try { await navigator.clipboard.writeText(manual); toast('Код скопирован'); }
         catch (e) { toast(manual); }
       };
-      const restart = qs('#auth-restart', content); if (restart) restart.onclick = () => renderStart('');
       // Reach an installed Telegram directly instead of routing through a web
       // page. `tg:` has no fallback of its own, so watch for the app taking
       // over: if the tab is still here and visible shortly after, the scheme
-      // went nowhere and the https link is used instead. A permission prompt
-      // the OS or browser shows is left alone -- it just delays the handover,
-      // which is why the check is on visibility rather than on a timer alone.
+      // went nowhere and the https link is used instead.
       const openTelegram = qs('#auth-open-telegram', content);
       if (openTelegram && appUrl) openTelegram.onclick = (event) => {
         event.preventDefault();
@@ -4834,40 +4891,370 @@
           location.href = botUrl;
         }, 1400);
       };
-      // A QR is a bearer token with a short life. When it lapses, replace it
-      // in place rather than leaving a code on screen that no longer works.
-      stopPolling();
-      polling = setInterval(() => check(challengeId), 2000);
-      const ttl = Number(login.expires_in_sec || 0);
-      if (ttl > 0 && qrSvg) {
-        const deadline = Date.now() + ttl * 1000;
-        qrTick = setInterval(async () => {
-          const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
-          const life = qs('#auth-qr-life', content);
-          if (life) life.textContent = left ? `Код действует ещё ${left} с` : 'Обновляем код…';
-          if (left > 0) return;
-          stopPolling();
-          try { renderWaiting(await API.http.authLoginStart()); }
-          catch (e) { renderStart('Не удалось обновить код входа. Попробуйте снова.'); }
-        }, 1000);
-      }
-      check(challengeId);
+      focusFirst();
+      watchQr(login, () => renderTelegramWait(mode, 'Код входа истёк — создан новый.'));
     };
+
+    // ---- shared: google -----------------------------------------------------
+    const startGoogle = async (mode) => {
+      const flags = providerFlags();
+      try {
+        if (flags.googleTest) {
+          if (mode === 'register') {
+            const staged = await API.http.testAuthGoogleLogin({ intent: 'register' });
+            draft.method = 'google';
+            draft.challenge_id = staged.registration_id;
+            draft.email = staged.email || '';
+            draft.identity = staged.email || 'Google';
+            renderStep3('');
+            return;
+          }
+          const out = await API.http.testAuthGoogleLogin({});
+          if (out.status === 'authenticated') { location.reload(); return; }
+          renderLogin('Не удалось войти через Google. Попробуйте ещё раз.');
+          return;
+        }
+        const started = await API.http.authGoogleLoginStart({
+          return_path: location.pathname + location.search,
+          accept_terms: false,
+        });
+        if (started.auth_url) { location.assign(started.auth_url); return; }
+        throw new Error('');
+      } catch (error) {
+        const back = mode === 'login' ? renderLogin : renderStep2;
+        back(authMessage(error, 'Не удалось войти через Google. Попробуйте ещё раз.'));
+      }
+    };
+
+    // ---- shared: e-mail -----------------------------------------------------
+    const renderEmailEntry = (mode, message) => {
+      stopPolling();
+      content.innerHTML = authShell(authCard(
+        `${mode === 'register' ? authSteps(2) : ''}
+        <div class="auth-copy"><h1>${mode === 'register' ? 'Подтвердите e-mail' : 'Вход по e-mail'}</h1><p>Мы отправим одноразовый код на этот адрес.</p></div>
+        ${authError(message)}
+        <form class="auth-form" data-auth-email-form>
+          <div class="field"><label for="auth-email-input">E-mail</label><input id="auth-email-input" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com" value="${esc(draft.email || '')}" data-autofocus></div>
+          <button class="btn primary auth-main-action" type="submit">Получить код</button>
+        </form>
+        <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+      qs('[data-auth-back]', content).onclick = () => (mode === 'login' ? renderLogin('') : renderStep2(''));
+      const form = qs('[data-auth-email-form]', content);
+      form.onsubmit = async (event) => {
+        event.preventDefault();
+        const submit = form.querySelector('button[type="submit"]');
+        submit.disabled = true;
+        const email = (qs('#auth-email-input', form) || {}).value || '';
+        try {
+          const started = await API.http.authEmailStart({ email });
+          draft.email = email;
+          renderEmailCode(mode, started, '');
+        } catch (error) {
+          submit.disabled = false;
+          renderEmailEntry(mode, authMessage(error, 'Не удалось отправить код. Проверьте адрес.'));
+        }
+      };
+      focusFirst();
+    };
+
+    const renderEmailCode = (mode, started, message) => {
+      stopPolling();
+      const testCode = String((started || {}).test_code || '');
+      const previewCode = !!(PREVIEW_CONTEXT && PREVIEW_CONTEXT.enabled
+        && (started || {}).delivery === 'preview_synthetic' && /^\d{6}$/.test(testCode));
+      const devCode = !!testCode && !previewCode;
+      content.innerHTML = authShell(authCard(
+        `${mode === 'register' ? authSteps(2) : ''}
+        <div class="auth-copy"><h1>Введите код</h1><p>Код отправлен на <strong>${esc(draft.email)}</strong>${previewCode ? ' · synthetic-код Preview, письмо не отправлялось' : ''}.</p></div>
+        ${authError(message)}
+        ${previewCode ? `<div class="preview-otp-panel auth-preview-otp"><div><strong>Preview synthetic OTP</strong><span>Только для этого изолированного test user.</span></div><code class="mono">${esc(testCode)}</code><button class="btn sm" type="button" data-auth-fill-code>Подставить тестовый код</button></div>`
+          : (devCode ? `<div class="auth-note"><strong>Тестовый код:</strong> <span class="mono">${esc(testCode)}</span></div>` : '')}
+        <form class="auth-form" data-auth-code-form>
+          <div class="field"><label for="auth-code-input">Одноразовый код</label><input id="auth-code-input" inputmode="numeric" autocomplete="one-time-code" required pattern="[0-9]{6}" maxlength="6" value="" data-autofocus></div>
+          <button class="btn primary auth-main-action" type="submit">${mode === 'register' ? 'Подтвердить e-mail' : 'Войти'}</button>
+        </form>
+        <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Другой адрес</button></div>`));
+      qs('[data-auth-back]', content).onclick = () => renderEmailEntry(mode, '');
+      const fill = qs('[data-auth-fill-code]', content);
+      if (fill) fill.onclick = () => {
+        const input = qs('#auth-code-input', content);
+        if (input) { input.value = testCode; input.focus(); }
+      };
+      const form = qs('[data-auth-code-form]', content);
+      form.onsubmit = async (event) => {
+        event.preventDefault();
+        const code = (qs('#auth-code-input', form) || {}).value || '';
+        const submit = form.querySelector('button[type="submit"]');
+        submit.disabled = true;
+        if (mode === 'register') {
+          // Registration verifies the address only after the terms step, so
+          // the code is held here and spent by "Создать профиль".
+          draft.method = 'email';
+          draft.challenge_id = started.challenge_id;
+          draft.code = code;
+          draft.identity = draft.email;
+          renderStep3('');
+          return;
+        }
+        try {
+          const out = await API.http.authEmailVerify({
+            challenge_id: started.challenge_id, code,
+            profile: { accept_terms: false },
+          });
+          if (out.status === 'authenticated') { location.reload(); return; }
+          // An address with no account yet cannot be logged in; continue as a
+          // registration with the identity already verified.
+          draft.method = 'email';
+          draft.challenge_id = started.challenge_id;
+          draft.code = code;
+          draft.identity = draft.email;
+          renderStep1('Этого адреса ещё нет в StratForge — создадим профиль.');
+        } catch (error) {
+          submit.disabled = false;
+          if (String(error.code || '') === 'email_code_invalid') {
+            renderEmailCode(mode, started, 'Код неверный или истёк. Запросите новый.');
+            return;
+          }
+          if (String(error.message || '').indexOf('условия') >= 0) {
+            draft.method = 'email';
+            draft.challenge_id = started.challenge_id;
+            draft.code = code;
+            draft.identity = draft.email;
+            renderStep1('Этого адреса ещё нет в StratForge — создадим профиль.');
+            return;
+          }
+          renderEmailCode(mode, started, authMessage(error, 'Не удалось подтвердить код.'));
+        }
+      };
+      focusFirst();
+    };
+
+    // ---- registration -------------------------------------------------------
+    const renderStep1 = (message) => {
+      stopPolling();
+      content.innerHTML = authShell(authCard(
+        `${authSteps(1)}
+        <div class="auth-copy"><h1>Создание профиля</h1><p>Сначала выберите, как вас будет видеть StratForge</p></div>
+        ${authError(message)}
+        <form class="auth-form" data-auth-profile-form>
+          <div class="field">
+            <label for="auth-handle">Имя пользователя StratForge</label>
+            <div class="auth-handle-input"><span aria-hidden="true">@</span><input id="auth-handle" autocomplete="username" required maxlength="32" placeholder="dmytro" value="${esc(draft.handle)}" aria-describedby="auth-handle-hint" data-autofocus></div>
+            <div class="auth-field-hint" id="auth-handle-hint" data-auth-handle-state>Латинские буквы, цифры, точка и подчёркивание. Это имя не зависит от Google или Telegram.</div>
+          </div>
+          <div class="field"><label for="auth-first">Имя</label><input id="auth-first" autocomplete="given-name" required maxlength="80" placeholder="Введите ваше имя" value="${esc(draft.first_name)}"></div>
+          <div class="field"><label for="auth-last">Фамилия <span class="auth-optional">(необязательно)</span></label><input id="auth-last" autocomplete="family-name" maxlength="80" placeholder="Введите вашу фамилию" value="${esc(draft.last_name)}"></div>
+          <button class="btn primary auth-main-action" type="submit">Продолжить <span aria-hidden="true">&#8594;</span></button>
+        </form>
+        <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+      qs('[data-auth-back]', content).onclick = () => renderWelcome('');
+      const handleInput = qs('#auth-handle', content);
+      const state = qs('[data-auth-handle-state]', content);
+      let probe = null;
+      const showHandleState = async () => {
+        const value = (handleInput.value || '').trim();
+        if (!value) { state.className = 'auth-field-hint'; state.textContent = 'Латинские буквы, цифры, точка и подчёркивание.'; return; }
+        try {
+          const out = await API.http.authHandleCheck(value, { retries: 0 });
+          if ((handleInput.value || '').trim() !== value) return;
+          state.className = 'auth-field-hint ' + (out.available ? 'ok' : 'bad');
+          state.textContent = out.available ? `@${out.handle} свободно` : (out.reason || 'Это имя пользователя недоступно.');
+        } catch (e) { /* the final check is server-side on submit */ }
+      };
+      handleInput.oninput = () => { if (probe) clearTimeout(probe); probe = setTimeout(showHandleState, 350); };
+      if (draft.handle) showHandleState();
+      const form = qs('[data-auth-profile-form]', content);
+      form.onsubmit = async (event) => {
+        event.preventDefault();
+        draft.handle = (qs('#auth-handle', form).value || '').trim().replace(/^@+/, '');
+        draft.first_name = (qs('#auth-first', form).value || '').trim();
+        draft.last_name = (qs('#auth-last', form).value || '').trim();
+        try {
+          const out = await API.http.authHandleCheck(draft.handle, { retries: 0 });
+          if (!out.available) { renderStep1(out.reason || 'Это имя пользователя недоступно.'); return; }
+        } catch (e) { /* server re-checks on create */ }
+        // An identity verified before the profile (e-mail that had no account)
+        // keeps its place; otherwise continue to the method step.
+        if (draft.method && draft.challenge_id) renderStep3('');
+        else renderStep2('');
+      };
+      focusFirst();
+    };
+
+    const renderStep2 = (message) => {
+      stopPolling();
+      const flags = providerFlags();
+      content.innerHTML = authShell(authCard(
+        `${authSteps(2)}
+        <div class="auth-copy"><h1>Выберите способ регистрации</h1><p>Так вы будете подтверждать вход в StratForge</p></div>
+        ${authError(message)}
+        <div class="auth-method-grid">
+          <button type="button" class="auth-method-card telegram" data-auth-register="telegram" ${flags.telegram ? 'data-autofocus' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">&#9992;</span><strong>Через Telegram</strong></button>
+          <button type="button" class="auth-method-card google" data-auth-register="google" ${flags.google ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">G</span><strong>${flags.googleTest ? 'Google · test' : 'Через Google'}</strong></button>
+          <button type="button" class="auth-method-card email" data-auth-register="email" ${flags.email ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">&#9993;</span><strong>Через e-mail</strong></button>
+        </div>
+        <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+      qs('[data-auth-back]', content).onclick = () => renderStep1('');
+      qsa('[data-auth-register]', content).forEach(btn => btn.onclick = () => {
+        const method = btn.dataset.authRegister;
+        if (method === 'telegram') { renderTelegramWait('register'); return; }
+        if (method === 'google') { startGoogle('register'); return; }
+        renderEmailEntry('register', '');
+      });
+      focusFirst();
+    };
+
+    const renderStep3 = (message) => {
+      stopPolling();
+      const rows = [
+        ['Имя пользователя', '@' + (draft.handle || '')],
+        ['Имя', [draft.first_name, draft.last_name].filter(Boolean).join(' ')],
+        ['Способ входа', AUTH_METHOD_LABEL[draft.method] || ''],
+        ['Подтверждено', draft.identity || ''],
+        ['Пробный доступ', `${trialDays()} дней`],
+      ].filter(row => row[1]);
+      content.innerHTML = authShell(authCard(
+        `${authSteps(3)}
+        <div class="auth-copy"><h1>Завершение регистрации</h1><p>Подтвердите условия и создайте профиль</p></div>
+        ${authError(message)}
+        <dl class="auth-summary">${rows.map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>
+        <div class="auth-terms-box">
+          <strong>Условия использования</strong>
+          <p>StratForge AI предоставляет аналитические инструменты и данные финансовых рынков в информационных целях. Мы не даём финансовых рекомендаций, а торговые решения и риски остаются за вами.</p>
+          <p>После подтверждения личности новый пользователь автоматически получает полный пробный доступ к продукту на ${trialDays()} дней. Живые графики используют только разрешённый для аккаунта источник market data.</p>
+        </div>
+        <label class="auth-terms-accept"><input type="checkbox" data-auth-accept> <span>Я ознакомился(лась) с <button type="button" class="linklike" data-auth-terms>условиями использования</button> и <button type="button" class="linklike" data-auth-privacy>политикой конфиденциальности</button></span></label>
+        <button type="button" class="btn ghost auth-main-action" data-auth-full-terms>Открыть полный текст</button>
+        <button type="button" class="btn primary auth-main-action" data-auth-create data-autofocus>Создать профиль</button>
+        <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+      qs('[data-auth-back]', content).onclick = () => renderStep2('');
+      const terms = qs('[data-auth-terms]', content); if (terms) terms.onclick = () => showTermsModal();
+      const privacy = qs('[data-auth-privacy]', content); if (privacy) privacy.onclick = () => showTermsModal();
+      const full = qs('[data-auth-full-terms]', content); if (full) full.onclick = () => showTermsModal();
+      const create = qs('[data-auth-create]', content);
+      create.onclick = async () => {
+        if (!(qs('[data-auth-accept]', content) || {}).checked) {
+          renderStep3('Подтвердите согласие с условиями, чтобы создать профиль.');
+          return;
+        }
+        create.disabled = true;
+        try {
+          const out = await API.http.authRegisterComplete({
+            method: draft.method,
+            challenge_id: draft.challenge_id,
+            code: draft.code,
+            email: draft.email,
+            handle: draft.handle,
+            first_name: draft.first_name,
+            last_name: draft.last_name,
+            accept_terms: true,
+          });
+          if (out.status === 'authenticated' || out.ok) { location.reload(); return; }
+          renderStep3('Профиль не создан. Попробуйте ещё раз.');
+        } catch (error) {
+          create.disabled = false;
+          const code = String(error.code || '');
+          if (code.indexOf('handle') === 0) { renderStep1(authMessage(error)); return; }
+          if (code === 'registration_expired') { renderStep2(authMessage(error)); return; }
+          renderStep3(authMessage(error, 'Профиль не создан. Попробуйте ещё раз.'));
+        }
+      };
+      focusFirst();
+    };
+
+    // ---- shared polling -----------------------------------------------------
+    const check = async (challengeId) => {
+      try {
+        const state = await API.http.authLoginStatus(challengeId);
+        if (state.status === 'authenticated') { stopPolling(); location.reload(); return; }
+        if (state.status === 'awaiting_profile') {
+          stopPolling();
+          draft.method = 'telegram';
+          draft.challenge_id = challengeId;
+          draft.identity = (state.profile && state.profile.username ? '@' + state.profile.username : 'Telegram');
+          if (!draft.email) draft.email = String((state.profile || {}).email || '');
+          if (!draft.first_name) draft.first_name = String((state.profile || {}).first_name || '');
+          if (!draft.last_name) draft.last_name = String((state.profile || {}).last_name || '');
+          if (draft.handle) renderTelegramEmail('');
+          else renderStep1('Telegram подтвердил личность — осталось выбрать имя пользователя.');
+          return;
+        }
+        if (state.status === 'pending_owner') {
+          stopPolling();
+          renderLogin('Аккаунт ожидает подтверждения владельца.');
+          return;
+        }
+        if (['denied', 'account_blocked', 'identity_mismatch', 'phone_mismatch'].includes(state.status)) {
+          stopPolling();
+          renderLogin('Вход отклонён. Обратитесь к владельцу.');
+        }
+      } catch (error) {
+        if (error.status === 410) { stopPolling(); renderLogin('Код входа истёк. Создайте новый.'); }
+      }
+    };
+
+    // Telegram proves who the person is but carries no address, and the
+    // account model needs one for recovery, so it is asked for once, here.
+    const renderTelegramEmail = (message) => {
+      stopPolling();
+      content.innerHTML = authShell(authCard(
+        `${authSteps(2)}
+        <div class="auth-copy"><h1>Ваш e-mail</h1><p>Telegram подтвердил личность. E-mail нужен для восстановления доступа и уведомлений.</p></div>
+        ${authError(message)}
+        <form class="auth-form" data-auth-tg-email>
+          <div class="field"><label for="auth-tg-email">E-mail</label><input id="auth-tg-email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com" value="${esc(draft.email)}" data-autofocus></div>
+          <button class="btn primary auth-main-action" type="submit">Продолжить <span aria-hidden="true">&#8594;</span></button>
+        </form>
+        <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+      qs('[data-auth-back]', content).onclick = () => renderStep2('');
+      const form = qs('[data-auth-tg-email]', content);
+      form.onsubmit = (event) => {
+        event.preventDefault();
+        draft.email = (qs('#auth-tg-email', form).value || '').trim();
+        renderStep3('');
+      };
+      focusFirst();
+    };
+
+    // ---- entry --------------------------------------------------------------
     let callbackChallenge = '';
+    let googleRegistration = '';
+    let googleError = '';
     try {
       const params = new URLSearchParams(location.search || '');
       callbackChallenge = String(params.get('auth_challenge') || '');
-      if (callbackChallenge) {
+      googleRegistration = String(params.get('google_registration') || '');
+      googleError = String(params.get('google_error') || '');
+      if (callbackChallenge || googleRegistration || googleError) {
         params.delete('auth_challenge');
+        params.delete('google_registration');
+        params.delete('google_error');
         history.replaceState({}, '', location.pathname + (params.toString() ? '?' + params.toString() : '') + location.hash);
       }
     } catch (e) { callbackChallenge = ''; }
-    if (callbackChallenge) renderWaiting({ challenge_id: callbackChallenge }, { status: 'pending_owner' });
-    else renderStart(initialMessage);
+
+    const boot = () => {
+      if (googleRegistration) {
+        API.http.authRegistrationState(googleRegistration, { retries: 0 }).then((state) => {
+          draft.method = 'google';
+          draft.challenge_id = googleRegistration;
+          draft.email = state.email || '';
+          draft.identity = state.email || 'Google';
+          if (!draft.handle) draft.handle = state.suggested_handle || '';
+          renderStep1('Google подтвердил личность — выберите имя пользователя StratForge.');
+        }).catch(() => renderWelcome('Подтверждение Google истекло. Начните регистрацию заново.'));
+        return;
+      }
+      if (callbackChallenge) { renderLogin(''); check(callbackChallenge); return; }
+      if (googleError) { renderLogin('Не удалось войти через Google. Попробуйте ещё раз.'); return; }
+      renderWelcome(initialMessage);
+    };
+
     API.http.authProviders({ retries: 0 }).then((out) => {
       providers = (out && out.providers) || providers;
-      if (!callbackChallenge && qs('#auth-provider-start', content)) renderStart(initialMessage);
-    }).catch(() => { /* configured current providers remain available */ });
+      registrationContract = (out && out.registration) || {};
+      boot();
+    }).catch(() => boot());
   }
 
   async function runReady() {

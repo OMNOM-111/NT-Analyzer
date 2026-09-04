@@ -179,14 +179,21 @@ def test_unified_identity_ui_uses_public_uuid_and_provider_login_contract():
 
     assert "user.id || user.user_id" in ui
     assert "const telegramIdentity" in ui
-    assert "auth-provider-start" in ui
+    # The unauthenticated entry is the real provider login, now split into a
+    # Welcome screen and a dedicated login screen.
+    assert 'data-auth-login="telegram"' in ui
+    assert 'data-auth-login="google"' in ui
+    assert 'data-auth-login="email"' in ui
     assert "authGoogleLoginStart" in api
     assert "authEmailStart" in api
     assert "authEmailVerify" in api
     assert "authEmailLinkStart" in api
     assert "authEmailLinkVerify" in api
-    assert "accept_terms: details.accept_terms" in ui
-    assert 'id="auth-email-verify-accept"' in ui
+    # Consent is collected on the last registration step and sent with the
+    # account-creating call.
+    assert "data-auth-accept" in ui
+    assert "accept_terms: true" in ui
+    assert "authRegisterComplete" in api
 
 
 def test_legal_terms_payload_is_short_form_master_document():
@@ -247,9 +254,10 @@ def test_unauthenticated_entry_uses_provider_login_not_promo_gate():
     boot = ui.split("async function authenticateAndStart", 1)[1].split(
         "CURRENT_AUTH = result.auth", 1
     )[0]
-    assert "Вход и регистрация" in ui
+    assert "Добро пожаловать в StratForge AI" in ui
+    assert "Выберите способ входа" in ui
     assert "Живые графики используют только разрешённый для аккаунта источник market data" in ui
-    assert 'id="auth-open-promo"' in ui
+    assert 'data-auth-promo' in ui
     assert "Смотреть без входа" not in ui
     assert "Смотреть бесплатно" not in ui
     assert "guestAuthStub" not in ui
