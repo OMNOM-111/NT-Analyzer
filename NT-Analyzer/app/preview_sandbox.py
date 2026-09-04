@@ -80,6 +80,7 @@ _STATE: Dict[str, Any] = {
     "current_session_id": "",
     "dataset_ready": False,
     "dataset_errors": [],
+    "promo_code": "",
 }
 
 
@@ -960,14 +961,12 @@ def ensure_synthetic_dataset(user_id: int) -> Dict[str, Any]:
     errors: List[str] = []
     workspace: Dict[str, Any] = {}
     try:
-        entitlement = subscriptions.activate_paid(
-            user_id, "pro", provider="preview_synthetic",
-            provider_subscription_id=f"preview-{_safe_id()}-{user_id}",
-        ).get("entitlement") or {}
+        # No paid grant here: a scenario member must live under the same
+        # starting access grant a real registered user gets, or the owner would
+        # be looking at an account that can never see the access screen.
         workspace = workspaces.ensure_personal_workspace(
             user_id,
             display_name="Preview Personal Workspace",
-            entitlement_id=str(entitlement.get("entitlement_id") or ""),
             require_entitlement=False,
         )
     except Exception as exc:
@@ -1049,6 +1048,25 @@ def ensure_synthetic_dataset(user_id: int) -> Dict[str, Any]:
         except Exception as exc:
             errors.append(f"chat:{type(exc).__name__}")
 
+    try:
+        # A synthetic promo so the owner can actually walk the access screen:
+        # spend the grant, enter the code, watch full access come back.
+        voucher = subscriptions.create_voucher(user_id, {
+            "label": "Preview: полный доступ",
+            "code_prefix": "PREVIEW",
+            "grant_plan_id": "pro",
+            "grant_duration_days": 30,
+            "usage_limit": 100,
+            "per_user_limit": 5,
+        }).get("voucher") or {}
+        # The code is generated, so publish the real one to the sandbox state
+        # instead of printing a code that does not exist.
+        with _LOCK:
+            _STATE["promo_code"] = str(voucher.get("code") or "")
+            os.environ["STRATFORGE_PREVIEW_PROMO_CODE"] = _STATE["promo_code"]
+            _write_manifest()
+    except Exception as exc:
+        errors.append(f"promo:{type(exc).__name__}")
     try:
         _seed_strategy_catalog()
     except Exception as exc:

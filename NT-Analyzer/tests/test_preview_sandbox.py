@@ -107,6 +107,8 @@ def test_preview_runtime_identity_and_cookie_names_are_isolated(preview_env):
         "label": "PREVIEW / TEST USER",
         "synthetic": True,
         "external_side_effects": "blocked",
+        # Named only once the sandbox has actually minted its synthetic promo.
+        "promo_code": "",
     }
 
 

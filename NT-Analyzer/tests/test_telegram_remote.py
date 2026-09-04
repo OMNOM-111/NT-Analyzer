@@ -299,7 +299,7 @@ def test_aurora_bundle_excludes_miniapp_and_keeps_current_login_contract() -> No
     assert "telegram-mini-app" not in css
     assert "authLoginStart" in api
     assert "telegramStatus" in api
-    assert "новый пользователь автоматически получает полный пробный доступ к продукту на ${trialDays()} дней" in ui
+    assert "новый пользователь получает полный доступ ко всем функциям StratForge на ${trialGrantLabel()} активного использования" in ui
     assert "Живые графики используют только разрешённый для аккаунта источник market data" in ui
     assert "Новый аккаунт активируется только вашим подтверждением" not in ui
     assert "https://web.telegram.org" not in server_mod.STATIC_CSP

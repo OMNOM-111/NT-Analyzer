@@ -56,7 +56,12 @@ def test_initial_trial_is_full_seven_days_and_never_restarts(trial_store) -> Non
     assert all(first["entitlement"]["plan"]["features"].values())
     starts = datetime.fromisoformat(first["access"]["starts_at_utc"].replace("Z", "+00:00"))
     expires = datetime.fromisoformat(first["access"]["expires_at_utc"].replace("Z", "+00:00"))
-    assert expires - starts == timedelta(days=7)
+    # The grant is spent in active use; the calendar expiry is only an outer
+    # bound so an untouched account keeps the hours it never used.
+    assert expires - starts == timedelta(days=subscriptions.TRIAL_CALENDAR_BOUND_DAYS)
+    usage = subscriptions.trial_usage_for_user(42)
+    assert usage["limit_sec"] == subscriptions.trial_active_seconds_limit()
+    assert usage["expired"] is False
 
     second = subscriptions.ensure_initial_trial(
         42, user_uuid=user_uuid, source="google_verified_registration",

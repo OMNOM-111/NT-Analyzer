@@ -332,6 +332,27 @@ _SELF_SERVICE_POSTS = {
 # A pending browser session is authenticated only far enough to complete its
 # own confirmation ceremony. Keep this exact-path allowlist small: prefix
 # matching here would silently expose every future account route.
+# An account whose starting grant is spent keeps its account: profile,
+# security, access state, promo redemption and sign-out stay reachable, and
+# only the product itself waits behind the access screen.
+_TRIAL_ALLOWED_PREFIXES = (
+    "/api/auth/",
+    "/api/account/",
+    "/api/legal/",
+    "/api/billing/",
+    "/api/subscriptions/",
+    "/api/support/",
+    "/api/health",
+    "/api/runtime/env",
+    "/api/notifications",
+)
+
+
+def _trial_gate_allows(path: str) -> bool:
+    clean = str(path or "")
+    return any(clean.startswith(prefix) for prefix in _TRIAL_ALLOWED_PREFIXES)
+
+
 _DEVICE_CONFIRMATION_ALLOWLIST = frozenset({
     ("POST", "/api/account/security/challenge"),
     ("POST", "/api/account/security/challenge/resend"),
@@ -3267,6 +3288,33 @@ class Handler(BaseHTTPRequestHandler):
         )
         return False
 
+    def _enforce_trial_access(self, path: str, context: Dict[str, Any]) -> bool:
+        """Charge active use and hold the product when the grant is spent.
+
+        Owner, service and admin contexts are a different access model and are
+        not measured here. A promo or paid entitlement replaces the grant, so
+        those accounts never see this gate.
+        """
+        if context.get("is_owner") or context.get("source") in {"local", "service"}:
+            return True
+        user_id = context.get("user_id")
+        if not user_id or not context.get("session_id"):
+            return True
+        try:
+            usage = subscriptions.record_active_usage(user_id)
+        except Exception:
+            # Access accounting must never be the reason a request fails.
+            return True
+        context["trial_usage"] = usage
+        if not usage.get("expired") or _trial_gate_allows(path):
+            return True
+        self._err(
+            HTTPStatus.PAYMENT_REQUIRED,
+            "Пробный доступ завершён. Введите промокод или откройте полный доступ.",
+            code="TRIAL_ACCESS_REQUIRED",
+        )
+        return False
+
     def _authorize_api(self, path: str) -> bool:
         # Internal owner market-data consumers authenticate with a shared
         # token on chart endpoints only.  This never grants Admin, Documents
@@ -3362,6 +3410,8 @@ class Handler(BaseHTTPRequestHandler):
                         account, include_contact=True)
                 if not Handler._enforce_device_confirmation(self, path, self._remote_context):
                     return False
+                if not Handler._enforce_trial_access(self, path, self._remote_context):
+                    return False
                 if (str(self._remote_context.get("device_confirmation_state") or "") == "pending"
                         or bool(self._remote_context.get("device_confirmation_required"))):
                     # Pending sessions are authorized only for the exact
@@ -3438,6 +3488,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.UNAUTHORIZED, "Требуется вход через Telegram.")
             return False
         if not Handler._enforce_device_confirmation(self, path, context):
+            return False
+        if not Handler._enforce_trial_access(self, path, context):
             return False
         if (str(context.get("device_confirmation_state") or "") == "pending"
                 or bool(context.get("device_confirmation_required"))):
@@ -3628,6 +3680,10 @@ class Handler(BaseHTTPRequestHandler):
                     "kind": "initial_trial", "state": "unavailable",
                     "plan_id": subscriptions.TRIAL_PLAN_ID,
                 }
+            payload["trial_usage"] = (
+                context.get("trial_usage")
+                or subscriptions.trial_usage_for_user(context.get("user_id"))
+            )
         return payload
 
     def _ai_conversation_scope(self) -> Dict[str, Any]:
@@ -3740,8 +3796,9 @@ class Handler(BaseHTTPRequestHandler):
                 "email": email,
             },
             "registration": {
-                # The trial length is an existing product contract, not a
-                # number invented by the sign-up screen.
+                # The starting grant is measured in active use, and the value
+                # is configuration rather than a number written into a screen.
+                "trial_active_seconds": subscriptions.trial_active_seconds_limit(),
                 "trial_days": subscriptions.INITIAL_TRIAL_DAYS,
                 "handle_min_len": account_auth.HANDLE_MIN_LEN,
                 "handle_max_len": account_auth.HANDLE_MAX_LEN,
@@ -4036,8 +4093,15 @@ class Handler(BaseHTTPRequestHandler):
                 "kind": "initial_trial", "state": "unavailable",
                 "plan_id": subscriptions.TRIAL_PLAN_ID,
             }
+        trial_usage = (
+            {"kind": "owner", "granted_elsewhere": True, "expired": False}
+            if is_owner else (
+                context.get("trial_usage") or subscriptions.trial_usage_for_user(uid)
+            )
+        )
         return {
             "authenticated": True,
+            "trial_usage": trial_usage,
             "source": context.get("source"),
             "user": user,
             "role": context.get("role"),

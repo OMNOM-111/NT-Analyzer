@@ -890,6 +890,7 @@
       <div class="tb-right">
         <button class="chip ok user-chip" id="chip-user" type="button" hidden title="Мой кабинет"><span class="avatar avatar-sm" id="chip-avatar">·</span><span id="chip-user-name">Пользователь</span></button>
         <button class="chip ok" id="chip-workspace" type="button" hidden><span class="dot"></span><span id="chip-workspace-name">Workspace</span></button>
+        <button class="chip trial-chip" id="chip-trial" type="button" hidden title="Пробный доступ"><span id="chip-trial-text">Пробный доступ</span><span class="trial-bar" aria-hidden="true"><span class="trial-bar-fill" id="chip-trial-fill"></span></span></button>
         <span class="tb-page-actions" id="page-actions"></span>
         <span class="chip off" id="chip-nt" title="NinjaTrader"><span class="dot"></span>NinjaTrader</span>
         <span class="chip off" id="chip-bridge" title="Bridge (мост данных)"><span class="dot"></span>Bridge</span>
@@ -1374,12 +1375,19 @@
       renderDeviceConfirmationGate(CURRENT_AUTH, newsStrip);
       return;
     }
+    // Security first, then access: a confirmed client whose starting grant is
+    // spent still keeps its account and sees one simple screen.
+    if (CURRENT_AUTH.trial_usage && CURRENT_AUTH.trial_usage.expired) {
+      renderTrialExpiredGate(CURRENT_AUTH);
+      return;
+    }
     document.documentElement.classList.remove('auth-locked');
     const user = CURRENT_AUTH.user || {};
     applyChipUser(user);
     captureReferral();
     handlePaypalReturn();
     applyNavAccess(CURRENT_AUTH);
+    applyTrialChip(CURRENT_AUTH.trial_usage);
     const chipUser = qs('#chip-user');
     if (chipUser) chipUser.onclick = () => openCabinet();
     const activeWorkspace = CURRENT_AUTH.active_workspace || {};
@@ -1565,7 +1573,7 @@
       const bar = el(`<div id="dev-view-as-banner" class="dev-view-as-banner preview-sandbox-banner" role="status" aria-live="polite">
         <span class="dev-view-as-tag">PREVIEW / TEST USER</span>
         <span class="dev-view-as-role">${esc(scenarioLabels[scenario] || scenario)}</span>
-        <span class="dev-view-as-note">Только synthetic data · внешние действия заблокированы</span>
+        <span class="dev-view-as-note">Только synthetic data · внешние действия заблокированы${PREVIEW_CONTEXT.promo_code ? ` · промокод ${esc(PREVIEW_CONTEXT.promo_code)}` : ''}</span>
         <span class="preview-sandbox-actions">
           <button class="btn sm" type="button" data-preview-control="reset">Reset Preview</button>
           <button class="btn sm" type="button" data-preview-control="new-user">New Preview User</button>
@@ -2778,6 +2786,55 @@
   // Deciding what a plan grants is an administrative act, so it belongs in
   // Admin -- an owner opening their own cabinet should see their account, not
   // the switchboard for everyone's.
+  async function renderAccessInto(node, me) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
+    let auth = me;
+    try { auth = await API.http.authMe(); } catch (e) { /* fall back to what we have */ }
+    const usage = (auth && auth.trial_usage) || {};
+    const granted = !!usage.granted_elsewhere;
+    const percent = Math.max(0, Math.min(100, Number(usage.percent_remaining) || 0));
+    node.innerHTML = `
+      <div class="section-title">Ваш доступ</div>
+      <div class="access-card">
+        <div class="access-head"><strong>${granted ? 'Полный доступ' : (usage.expired ? 'Пробный доступ завершён' : 'Пробный доступ')}</strong>
+          <span class="badge ${granted ? 'live' : (usage.expired ? 'failed' : 'trial')}">${granted ? 'активен' : (usage.expired ? 'исчерпан' : 'активен')}</span></div>
+        <p class="cab-sub">Все зарегистрированные пользователи получают один и тот же полный продукт. Отличается только оставшееся время активного использования.</p>
+        ${granted ? '' : `<div class="access-metrics">
+          <div><dt>Осталось</dt><dd>${esc(trialHumanTime(usage.remaining_sec))}</dd></div>
+          <div><dt>Из них выдано</dt><dd>${esc(trialHumanTime(usage.limit_sec))}</dd></div>
+          <div><dt>Остаток</dt><dd>${percent}%</dd></div>
+        </div>
+        <div class="trial-gate-bar" aria-hidden="true"><span style="width:${percent}%"></span></div>
+        <p class="cab-sub">Время расходуется только во время активной работы: если вы не пользуетесь StratForge, оно не списывается.</p>`}
+      </div>
+      <div class="section-title">Промокод</div>
+      <form class="auth-form" data-access-promo>
+        <div class="field"><label for="access-promo-code">Промокод</label><input id="access-promo-code" autocomplete="off" maxlength="64" placeholder="Введите промокод"></div>
+        <button class="btn primary" type="submit">Активировать</button>
+      </form>
+      <div class="cab-sub" data-access-message></div>
+      <div class="section-title">Полный доступ</div>
+      <div class="flex gap-sm"><button class="btn ghost" type="button" data-access-buy>Получить полный доступ</button></div>`;
+    const message = qs('[data-access-message]', node);
+    const form = qs('[data-access-promo]', node);
+    if (form) form.onsubmit = async (event) => {
+      event.preventDefault();
+      const submit = form.querySelector('button[type="submit"]');
+      submit.disabled = true;
+      if (message) message.textContent = '';
+      try {
+        await API.http.billingPromoRedeem({ code: (qs('#access-promo-code', form) || {}).value || '' });
+        toast('Промокод активирован');
+        setTimeout(() => location.reload(), 400);
+      } catch (error) {
+        submit.disabled = false;
+        if (message) message.textContent = authMessage(error, 'Промокод не подошёл.');
+      }
+    };
+    const buy = qs('[data-access-buy]', node);
+    if (buy) buy.onclick = () => renderWelcomeAccess({ asOverlay: true });
+  }
+
   async function renderPlansInto(node, me, scope) {
     node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка тарифов…</div>';
     try {
@@ -4142,13 +4199,19 @@
     // Cabinet is personal self-service only. System operations, user
     // management, monitoring and owner controls live in the capability-gated
     // Admin Panel.
-    const tabs = [['profile', 'Профиль'], ['card', 'Моя карточка'], ['security', 'Безопасность'], ['plans', 'Тарифы']];
+    // Tiers are not part of the product a regular member sees right now: every
+    // registered account gets the same full access, so the tab states how much
+    // of it is left instead of offering plans to compare.
+    const tabs = me && me.is_owner
+      ? [['profile', 'Профиль'], ['card', 'Моя карточка'], ['security', 'Безопасность'], ['plans', 'Тарифы']]
+      : [['profile', 'Профиль'], ['card', 'Моя карточка'], ['security', 'Безопасность'], ['access', 'Доступ']];
     const start = tabs.some(t => t[0] === tab) ? tab : 'profile';
     body.innerHTML = header + `<div class="cab-tabs">${tabs.map(([id, label]) => `<button class="cab-tab ${id === start ? 'on' : ''}" data-cab-tab="${id}">${label}</button>`).join('')}</div><div id="cab-body"></div>`;
     const cb = qs('#cab-body', body);
     const renderTab = (t) => {
       qsa('[data-cab-tab]', body).forEach(b => b.classList.toggle('on', b.dataset.cabTab === t));
-      if (t === 'plans') renderPlansInto(cb, me, 'self');
+      if (t === 'access') renderAccessInto(cb, me);
+      else if (t === 'plans') renderPlansInto(cb, me, 'self');
       else if (t === 'card') renderUserCardInto(cb, () => API.http.accountCard());
       else if (t === 'security') renderSecurityInto(cb, me);
       else renderProfileInto(cb, me);
@@ -4648,6 +4711,7 @@
   // trusted?". Nothing here decides trust, and nothing here shows a form the
   // person has not asked for yet.
   const AUTH_TRIAL_DEFAULT_DAYS = 7;
+  const AUTH_TRIAL_DEFAULT_SECONDS = 5 * 3600;
   const AUTH_METHOD_LABEL = { telegram: 'Telegram', google: 'Google', email: 'E-mail' };
 
   function authShell(inner, modifier) {
@@ -4693,6 +4757,91 @@
     return text;
   }
 
+  // ---- starting access grant ------------------------------------------------
+  // Everyone who registers gets the same full product. What differs is how much
+  // active use is left, so the shell shows that quietly and nothing else.
+  function trialHumanTime(seconds) {
+    const total = Math.max(0, Math.round(Number(seconds) || 0));
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.round((total % 3600) / 60);
+    if (hours && minutes) return `${hours} ч ${minutes} мин`;
+    if (hours) return `${hours} ч`;
+    if (minutes) return `${minutes} мин`;
+    return 'меньше минуты';
+  }
+
+  function applyTrialChip(usage) {
+    const chip = qs('#chip-trial');
+    if (!chip) return;
+    const state = usage && typeof usage === 'object' ? usage : {};
+    const measured = state.kind === 'active_usage' && !state.granted_elsewhere;
+    if (!measured) { chip.hidden = true; return; }
+    const percent = Math.max(0, Math.min(100, Number(state.percent_remaining) || 0));
+    const text = qs('#chip-trial-text', chip);
+    const fill = qs('#chip-trial-fill', chip);
+    if (text) {
+      text.textContent = state.expired
+        ? 'Пробный доступ завершён'
+        : `Пробный доступ — осталось ${trialHumanTime(state.remaining_sec)} · ${percent}%`;
+    }
+    if (fill) fill.style.width = percent + '%';
+    chip.classList.toggle('low', !state.expired && percent <= 20);
+    chip.classList.toggle('spent', !!state.expired);
+    chip.title = state.expired
+      ? 'Пробный доступ завершён — откройте полный доступ'
+      : `Осталось ${trialHumanTime(state.remaining_sec)} активного использования из ${trialHumanTime(state.limit_sec)}`;
+    chip.onclick = () => openCabinet('access');
+    chip.hidden = false;
+  }
+
+  function renderTrialExpiredGate(auth) {
+    document.documentElement.classList.add('auth-locked');
+    const content = qs('.content');
+    if (!content) return;
+    const news = qs('[data-global-news-strip]'); if (news) news.hidden = true;
+    const usage = (auth && auth.trial_usage) || {};
+    content.innerHTML = `<div class="auth-screen auth-cosmos trial-gate"><div class="auth-sky" aria-hidden="true"></div>
+      <div class="auth-stage"><div class="auth-mark"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Доступ к продукту</span></div></div>
+      <section class="auth-card auth-card-lux">
+        <div class="auth-copy"><h1>Пробный доступ завершён</h1><p>Вы использовали ${trialHumanTime(usage.limit_sec)} активной работы. Аккаунт, профиль и безопасность остаются с вами.</p></div>
+        <div class="trial-gate-bar" aria-hidden="true"><span style="width:100%"></span></div>
+        <div class="auth-error" data-trial-message hidden role="alert"></div>
+        <form class="auth-form" data-trial-promo-form>
+          <div class="field"><label for="trial-promo">Промокод</label><input id="trial-promo" autocomplete="off" maxlength="64" placeholder="Введите промокод" data-autofocus></div>
+          <button class="btn primary auth-main-action" type="submit">Активировать промокод</button>
+        </form>
+        <button class="btn ghost auth-main-action" type="button" data-trial-buy>Получить полный доступ</button>
+        <div class="auth-foot-row">
+          <button type="button" class="linklike" data-trial-cabinet>Профиль и безопасность</button>
+          <button type="button" class="linklike" data-trial-logout>Выйти из аккаунта</button>
+        </div>
+      </section></div></div>`;
+    const message = qs('[data-trial-message]', content);
+    const show = (text) => { if (message) { message.textContent = text; message.hidden = !text; } };
+    const form = qs('[data-trial-promo-form]', content);
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const code = (qs('#trial-promo', form) || {}).value || '';
+      const submit = form.querySelector('button[type="submit"]');
+      submit.disabled = true;
+      show('');
+      try {
+        await API.http.billingPromoRedeem({ code });
+        location.reload();
+      } catch (error) {
+        submit.disabled = false;
+        show(authMessage(error, 'Промокод не подошёл. Проверьте код и попробуйте ещё раз.'));
+      }
+    };
+    qs('[data-trial-buy]', content).onclick = () => renderWelcomeAccess({ asOverlay: true });
+    qs('[data-trial-cabinet]', content).onclick = () => openCabinet('access');
+    qs('[data-trial-logout]', content).onclick = async () => {
+      try { await API.http.authLogout(); } catch (e) { /* leaving anyway */ }
+      location.reload();
+    };
+    requestAnimationFrame(() => (qs('[data-autofocus]', content) || content).focus());
+  }
+
   function renderTelegramLogin(initialError) {
     document.documentElement.classList.add('auth-locked');
     const content = qs('.content');
@@ -4731,6 +4880,10 @@
       };
     };
     const trialDays = () => Number(registrationContract.trial_days || AUTH_TRIAL_DEFAULT_DAYS);
+    // The grant is stated in active use and comes from the server contract.
+    const trialGrantLabel = () => trialHumanTime(
+      Number(registrationContract.trial_active_seconds || 0) || AUTH_TRIAL_DEFAULT_SECONDS,
+    );
 
     // ---- welcome ------------------------------------------------------------
     const renderWelcome = (message) => {
@@ -5116,7 +5269,7 @@
         ['Имя', [draft.first_name, draft.last_name].filter(Boolean).join(' ')],
         ['Способ входа', AUTH_METHOD_LABEL[draft.method] || ''],
         ['Подтверждено', draft.identity || ''],
-        ['Пробный доступ', `${trialDays()} дней`],
+        ['Стартовый доступ', trialGrantLabel()],
       ].filter(row => row[1]);
       content.innerHTML = authShell(authCard(
         `${authSteps(3)}
@@ -5126,7 +5279,7 @@
         <div class="auth-terms-box">
           <strong>Условия использования</strong>
           <p>StratForge AI предоставляет аналитические инструменты и данные финансовых рынков в информационных целях. Мы не даём финансовых рекомендаций, а торговые решения и риски остаются за вами.</p>
-          <p>После подтверждения личности новый пользователь автоматически получает полный пробный доступ к продукту на ${trialDays()} дней. Живые графики используют только разрешённый для аккаунта источник market data.</p>
+          <p>После подтверждения личности новый пользователь получает полный доступ ко всем функциям StratForge на ${trialGrantLabel()} активного использования: время расходуется только во время работы. Живые графики используют только разрешённый для аккаунта источник market data.</p>
         </div>
         <label class="auth-terms-accept"><input type="checkbox" data-auth-accept> <span>Я ознакомился(лась) с <button type="button" class="linklike" data-auth-terms>условиями использования</button> и <button type="button" class="linklike" data-auth-privacy>политикой конфиденциальности</button></span></label>
         <button type="button" class="btn ghost auth-main-action" data-auth-full-terms>Открыть полный текст</button>

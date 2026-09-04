@@ -536,8 +536,10 @@ def test_admin_panel_replaces_system_actions_in_personal_menu_and_cabinet() -> N
     # builder the Admin page uses at a wider scope. The point of this
     # assertion is that no *system* tab appears in the Cabinet, which the
     # negative checks below still enforce.
-    assert ("const tabs = [['profile', 'Профиль'], ['card', 'Моя карточка'], "
-            "['security', 'Безопасность'], ['plans', 'Тарифы']]") in cabinet
+    # A regular member sees one access tab instead of tiers; the owner keeps the
+    # plan matrix. Either way the Cabinet stays self-service only.
+    assert "['security', 'Безопасность'], ['plans', 'Тарифы']]" in cabinet
+    assert "['security', 'Безопасность'], ['access', 'Доступ']]" in cabinet
     assert "['users'," not in cabinet
     assert "['operations'," not in cabinet
 

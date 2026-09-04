@@ -502,6 +502,7 @@ def preview_public_metadata() -> Dict[str, Any]:
         "label": "PREVIEW / TEST USER",
         "synthetic": True,
         "external_side_effects": "blocked",
+        "promo_code": str(os.environ.get("STRATFORGE_PREVIEW_PROMO_CODE") or ""),
     }
 
 
