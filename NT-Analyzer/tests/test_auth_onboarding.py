@@ -248,3 +248,36 @@ def test_expired_registration_state_is_reported_as_expired(auth_store):
     with pytest.raises(account_auth.AccountAuthError) as exc:
         account_auth.registration_state(staged["registration_id"])
     assert getattr(exc.value, "code", "") == "registration_expired"
+
+
+# --------------------------------------------------------------------------- #
+# Cross-module identity: registration -> profile -> SF Social / SF Chat
+# --------------------------------------------------------------------------- #
+def test_social_identity_uses_the_stratforge_handle_not_the_telegram_mirror(auth_store):
+    """The name chosen at registration is the name other members see."""
+    from app import server as server_mod
+
+    handler = object.__new__(server_mod.Handler)
+    handler._remote_context = {
+        "user_id": 42,
+        "is_owner": False,
+        "ux_mode": "professional",
+        "user": {
+            "user_uuid": EXISTING_UUID,
+            "handle": "alice",
+            # Telegram rewrites this on every login; an e-mail/Google account
+            # has no value here at all.
+            "username": "",
+            "first_name": "Alice",
+            "last_name": "—",
+            "created_at_utc": "2026-01-01T00:00:00Z",
+        },
+    }
+    actor = handler._community_actor()
+    assert actor["username"] == "alice"
+    # The optional-family-name placeholder is account bookkeeping, not a name.
+    assert actor["display_name"] == "Alice"
+
+    handler._remote_context["user"].update({"handle": "", "username": "tg_only"})
+    legacy = handler._community_actor()
+    assert legacy["username"] == "tg_only", "legacy Telegram accounts keep working"

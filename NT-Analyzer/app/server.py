@@ -3689,9 +3689,14 @@ class Handler(BaseHTTPRequestHandler):
         user_uuid = str(user.get("user_uuid") or user.get("id") or context.get("user_uuid") or "").strip()
         if not user_uuid:
             user_uuid = account_auth.user_uuid_for_legacy_id(user_id)
+        # A family name is optional at registration and is stored as an explicit
+        # dash when it was left out; that placeholder is account bookkeeping, not
+        # part of the name other members should read.
         display_name = " ".join(
-            str(user.get(key) or "").strip() for key in ("first_name", "last_name")
-        ).strip() or str(user.get("username") or "")
+            part for part in (
+                str(user.get(key) or "").strip() for key in ("first_name", "last_name")
+            ) if part and part not in {"—", "-"}
+        ).strip() or str(user.get("handle") or user.get("username") or "")
         ux_mode = str(context.get("ux_mode") or user.get("ux_mode") or "").strip().lower()
         role_label = "Владелец" if context.get("is_owner") else (
             "Студент" if ux_mode == "beginner" else "Профессионал"
@@ -3700,7 +3705,9 @@ class Handler(BaseHTTPRequestHandler):
             "user_id": user_id,
             "user_uuid": user_uuid,
             "display_name": display_name,
-            "username": str(user.get("username") or ""),
+            # The StratForge handle is the name the member chose; `username`
+            # only mirrors Telegram and is empty for e-mail/Google accounts.
+            "username": str(user.get("handle") or user.get("username") or ""),
             "role_label": role_label,
             "joined_at_utc": str(user.get("created_at_utc") or ""),
             "has_avatar": bool(user.get("has_avatar")),
