@@ -281,3 +281,16 @@ def test_social_identity_uses_the_stratforge_handle_not_the_telegram_mirror(auth
     handler._remote_context["user"].update({"handle": "", "username": "tg_only"})
     legacy = handler._community_actor()
     assert legacy["username"] == "tg_only", "legacy Telegram accounts keep working"
+
+
+def test_social_accepts_every_handle_the_account_contract_allows(auth_store):
+    """One person, one name: Social must not rewrite a legitimate handle."""
+    from app import community
+
+    for handle in ("dmytro", "sf.trader", "a_b_c", "x" * 32):
+        normalized = account_auth.normalize_handle(handle)
+        assert community._normalise_username(normalized, "sfp_abcdefghij") == normalized, handle
+
+    # A value the account contract would never mint still falls back safely.
+    assert community._normalise_username("", "sfp_abcdefghij").startswith("sf_")
+    assert community._normalise_username(".bad", "sfp_abcdefghij").startswith("sf_")

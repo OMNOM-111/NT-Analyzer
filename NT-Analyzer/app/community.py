@@ -877,7 +877,11 @@ def moderate_delete_message(owner_id: Any, message_id: str, *, workspace_id: str
 # internal network. A private workspace never crosses this boundary by merely
 # existing: only a user-created v2 post is visible in the social feed.
 
-_PROFILE_USERNAME_RE = re.compile(r"[A-Za-z0-9_]{3,30}")
+# The same shape as the StratForge account handle
+# (``account_auth.normalize_handle``): a member has one name across the
+# product, so a legitimate handle like ``sf.trader`` must not silently
+# become a generated ``sf_xxxxxxxxxx`` inside Social.
+_PROFILE_USERNAME_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9_.]{1,30})[A-Za-z0-9]")
 _HASHTAG_RE = re.compile(r"(?<![\w#])#([\w-]{2,40})", re.UNICODE)
 _REACTIONS = frozenset({"support", "insightful", "fire"})
 # "private" keeps a post on its author's own wall: everyone else is refused
@@ -1193,7 +1197,7 @@ def update_social_profile(
         if username is not None:
             clean_username = str(username or "").strip().lstrip("@").lower()
             if not _PROFILE_USERNAME_RE.fullmatch(clean_username):
-                raise CommunityError("Username: 3–30 латинских букв, цифр или _. ")
+                raise CommunityError("Username: 3–32 латинских буквы, цифры, точка или _.")
             if any(other is not row and str(other.get("username") or "") == clean_username
                    for other in doc.get("profiles") or []):
                 raise CommunityError("Этот username уже занят.", 409)
