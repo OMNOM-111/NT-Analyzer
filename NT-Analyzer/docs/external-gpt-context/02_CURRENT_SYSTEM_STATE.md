@@ -1,12 +1,12 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
-- Last verified UTC: 2026-09-04T21:50:16Z
+- Last verified UTC: 2026-09-04T22:37:13Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 4ae766ea0c3258a8bb049644ac2afbba6cb89330
+- Local source verified SHA: 3afb75c5c2d02aa07703eadf274a1c1006ae8ada
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`, not deployed
-- Agent World branch: `codex/agent-world-foundation`, separate stages 0–1 slice on the accepted base
+- Agent World branch: `codex/agent-world-foundation`, separate stages 0–1 slice, PR #281 stacked on #280
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production

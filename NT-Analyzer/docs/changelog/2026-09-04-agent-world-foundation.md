@@ -2,8 +2,9 @@
 
 Release summary: Подготовлен и локально проверен отдельный фундамент Agent World на принятой Local beta.96: контракты, статусы, tenant scope, совместимые проекции и флаги. Текущие пользовательские сценарии не переключаются.
 
-Release PRs: separate stacked PR pending creation; depends on #280.
+Release PRs: [#281](https://github.com/OMNOM-111/NT-Analyzer/pull/281), stacked on and dependent on open #280.
 Accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`.
+Implementation source SHA: `3afb75c5c2d02aa07703eadf274a1c1006ae8ada`.
 Branch: `codex/agent-world-foundation`.
 Affected subsystems: Agent World contracts, documentation and contract tests.
 Release impact: Development only, no version change, migration, runtime activation, merge or deployment.
@@ -51,6 +52,14 @@ two shell tests and one POSIX permissions test. They are not PASS. Browser,
 real-provider and hardware acceptance were not repeated for this non-UI,
 non-runtime slice. This does not certify new storage, RLS or event delivery.
 The Context validator retains its documented shared deployment-anchor warning.
+
+Git checkpoint: implementation committed and pushed, separate PR #281 created;
+the closeout documentation does not change the tested application tree. Exact-
+head Linux/Windows/static CI is tracked by the existing Next Architecture CI
+branch runs and the PR. Main-only Python/bridge merge checks are deferred until
+the dependency is integrated and the stack retargeted; absent checks are not PASS.
+Stage 0 is complete. Stage 1 implementation is locally complete, but stage
+closure remains pending contract review; no merge/release is claimed.
 
 The first bundle check caught three links to non-shipped developer documents;
 repository URLs and explicit exclusions fixed them without changing the

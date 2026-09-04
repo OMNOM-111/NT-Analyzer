@@ -7,15 +7,15 @@ for stages 0–1; the broader Agent World product is not available yet.
 
 | Field | Current value |
 | --- | --- |
-| Local verification UTC | 2026-09-04T22:35:00Z |
+| Local/Git checkpoint UTC | 2026-09-04T22:37:13Z |
 | Accepted base / rollback source | `4ae766ea0c3258a8bb049644ac2afbba6cb89330` |
 | Base branch / dependency | `integration/stratforge-unified-local`, open [PR #280](https://github.com/OMNOM-111/NT-Analyzer/pull/280) |
 | Base comparison | exact match; clean tracked/untracked state; no rollback or reset |
 | Task branch | `codex/agent-world-foundation` |
 | Worktree | `StratForge-worktrees/agent-world-foundation` (separate checkout) |
 | Version / environment | `0.10.0-beta.96`, `pre_release`, Development; no version bump |
-| Implementation checkpoint | Tested foundation candidate; implementation SHA and stacked PR recorded in the Git closeout update |
-| PR strategy | stacked PR targeting `integration/stratforge-unified-local`; no merge of #280 |
+| Implementation checkpoint | `3afb75c5c2d02aa07703eadf274a1c1006ae8ada`; later checkpoint commits update documentation only |
+| Task PR | [PR #281](https://github.com/OMNOM-111/NT-Analyzer/pull/281), stacked on `integration/stratforge-unified-local`; #280 remains open |
 | Active workstream | Foundation: contracts, pure adapters, feature-flag definitions, tests, documentation |
 | Storage migrations | none; current last migration is `0022`, next number deliberately unassigned |
 | Runtime connections | none; no new route, worker, scheduler, router selection or UI |
@@ -89,7 +89,10 @@ No actor/model identity is inferred from a previous document or persona name.
 ## Verification and closeout
 
 `IMPLEMENTATION COMPLETE`: YES for the bounded stages 0–1 code slice only.
-Git/CI closeout is recorded separately from this local verification checkpoint.
+`GIT CLOSEOUT COMPLETE`: branch committed, pushed and separate PR #281 created;
+source `3afb75c5c2d02aa07703eadf274a1c1006ae8ada` was clean and synchronized.
+This document's later checkpoint commit does not change code or test contents.
+CI is a separate per-commit result, not inferred from these local counts.
 `STAGE CLOSED`: NO for stage 1; ADR-0009 review and the dependency/merge gates
 remain open. Stage 0's baseline/documentation checkpoint is complete.
 
@@ -126,7 +129,14 @@ Skipped full-suite scenarios (unverified, not PASS):
   certified by these pure DTO/protocol tests. Those are stage-2 implementation
   and real test-database gates, after contract review.
 
-Ignored local outputs are Python/pytest caches and generated empty AI registry
+The existing [Next Architecture CI branch runs](https://github.com/OMNOM-111/NT-Analyzer/actions/workflows/next-architecture-ci.yml?query=branch%3Acodex%2Fagent-world-foundation)
+are the authority for dispatched Linux/Windows/static results on the PR head.
+The separate main-only `ci` Python and bridge gates cannot run on this stacked
+base and have no manual dispatch. They are deferred, not green; after #280 is
+owner-approved and integrated, retarget the stack and rerun applicable checks.
+No workflow/branch protection changes, merge or deployment are authorized here.
+
+Ignored local outputs are Python/pytest caches and generated local AI registry
 scaffolding in this isolated worktree. They are not staged or shipped as data.
 No owner Local data, runtime logs, keys, rollback bundle or signed artifact is
 part of this diff.
@@ -140,7 +150,7 @@ work or deletion of the Unified Local checkout.
 
 Review the concrete contracts, explicit legacy projections, repository protocols
 and server-side scoped flag registry in [ADR-0009](../adr/0009-agent-world-foundation.md).
-Complete the isolated PR/CI checkpoint without merging #280. After review,
+Read the exact-head CI result on PR #281 without merging #280. After review,
 stage 2 introduces SQLite/PostgreSQL implementations
 and migrations only after that review. Court, new execution, Router switching
 and UI remain outside this checkpoint.

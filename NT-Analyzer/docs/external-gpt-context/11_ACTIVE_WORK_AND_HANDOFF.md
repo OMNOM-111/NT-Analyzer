@@ -1,11 +1,11 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-04T21:50:16Z
+- Last verified UTC: 2026-09-04T22:37:13Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 4ae766ea0c3258a8bb049644ac2afbba6cb89330
+- Local source verified SHA: 3afb75c5c2d02aa07703eadf274a1c1006ae8ada
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
-- Active branch: `codex/agent-world-foundation`, stacked on `integration/stratforge-unified-local` (open PR #280)
+- Active branch: `codex/agent-world-foundation`, PR #281 stacked on `integration/stratforge-unified-local` (open PR #280)
 - Version: `0.10.0-beta.96`, `pre_release`, not deployed
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World stages 0–1 and the accepted Unified Local baseline; deployment facts are inherited evidence
@@ -71,7 +71,7 @@ green. No workflow or branch-protection changes are part of this slice.
 
 The pack-wide `Verified against Git SHA` remains its shared deployment anchor;
 `Local source verified SHA` and the canonical status identify the separate
-Local base. The validator's legacy `Current Git SHA` field below refers only
+Local implementation and accepted base. The validator's legacy `Current Git SHA` field below refers only
 to that deployment anchor, not to the Agent World branch.
 
 | Deployment metadata | Recorded value |

@@ -1,9 +1,9 @@
 # 12. API and Schema Reference
 
 - Context Pack document: 12_API_AND_SCHEMA_REFERENCE.md
-- Last verified UTC: 2026-09-04T21:50:16Z
+- Last verified UTC: 2026-09-04T22:37:13Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 4ae766ea0c3258a8bb049644ac2afbba6cb89330
+- Local source verified SHA: 3afb75c5c2d02aa07703eadf274a1c1006ae8ada
 - Unified Local accepted base: beta.96, PR #280; separate Agent World stages 0–1 slice; not deployed
 - Scope: Compact index of important endpoint families, entities and capability names
 - Status: DONE
