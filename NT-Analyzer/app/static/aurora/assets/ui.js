@@ -4796,6 +4796,42 @@
     external: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-8.5 8.5"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></svg>',
   };
 
+  // Owner Preview only. Typing a plausible name, a free handle and an address
+  // for every walkthrough is the slowest part of reviewing the onboarding, so
+  // the sandbox offers to invent them. This never renders outside Preview:
+  // the guard is the same PREVIEW_CONTEXT the isolated child process sets.
+  const PREVIEW_NAMES = [
+    ['Тестовый', 'Пользователь'], ['Пробный', 'Трейдер'], ['Синтетик', 'Демидов'],
+    ['Демо', 'Ивнев'], ['Проверка', 'Сергеев'],
+  ];
+  let PREVIEW_IDENTITY = null;
+  function previewSandboxActive() {
+    return !!(PREVIEW_CONTEXT && PREVIEW_CONTEXT.enabled);
+  }
+  function previewIdentity(fresh) {
+    if (PREVIEW_IDENTITY && !fresh) return PREVIEW_IDENTITY;
+    const tag = Math.random().toString(36).slice(2, 8);
+    const name = PREVIEW_NAMES[Math.floor(Math.random() * PREVIEW_NAMES.length)];
+    PREVIEW_IDENTITY = {
+      handle: `test.${tag}`,
+      first_name: name[0],
+      last_name: name[1],
+      email: `test.${tag}@preview.local`,
+    };
+    return PREVIEW_IDENTITY;
+  }
+  function previewAutofillBar(actions) {
+    if (!previewSandboxActive()) return '';
+    const buttons = actions.map(([action, label]) =>
+      `<button type="button" class="btn sm" data-preview-fill="${esc(action)}">${esc(label)}</button>`,
+    ).join('');
+    return `<div class="preview-autofill" role="group" aria-label="Тестовые данные Preview">
+      <span class="preview-autofill-tag">PREVIEW</span>
+      <span class="preview-autofill-note">Данные ненастоящие и живут только в этом sandbox.</span>
+      ${buttons}
+    </div>`;
+  }
+
   function authShell(inner, modifier) {
     return `<div class="auth-screen auth-cosmos"><div class="auth-sky" aria-hidden="true"></div>`
       + `<div class="auth-stage${modifier ? ' ' + modifier : ''}">`
@@ -4999,8 +5035,10 @@
             </button>
           </div>
           <div class="auth-hero-seal" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.75 4.75 5.5v6.1c0 4.4 3 8.1 7.25 9.65 4.25-1.55 7.25-5.25 7.25-9.65V5.5z"></path><path d="m8.9 11.9 2.2 2.2 4-4.3"></path></svg></div>
+          ${previewAutofillBar([['auto', 'Пройти регистрацию тестовыми данными']])}
           <p class="auth-hero-foot">Продолжая, вы сможете выбрать удобный способ входа<br>или создать новый профиль</p>
         </div>`, 'auth-stage-wide');
+      wirePreviewFill();
       const go = qsa('[data-auth-go]', content);
       go.forEach(btn => btn.onclick = () => (btn.dataset.authGo === 'login' ? renderLogin('') : renderStep1('')));
       focusFirst();
@@ -5189,7 +5227,9 @@
           <div class="field"><label for="auth-email-input">E-mail</label><input id="auth-email-input" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com" value="${esc(draft.email || '')}" data-autofocus></div>
           <button class="btn primary auth-main-action" type="submit">Получить код</button>
         </form>
+        ${previewAutofillBar([['email', 'Подставить тестовый e-mail']])}
         <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+      wirePreviewFill();
       qs('[data-auth-back]', content).onclick = () => (mode === 'login' ? renderLogin('') : renderStep1(''));
       const form = qs('[data-auth-email-form]', content);
       form.onsubmit = async (event) => {
@@ -5281,6 +5321,61 @@
       focusFirst();
     };
 
+    // Preview only. Invents an identity, spends the sandbox's synthetic code
+    // for it and stops at the consent step with the box already ticked -- the
+    // person still presses "Создать профиль" and still chooses the trust mode,
+    // because those are the two decisions the walkthrough exists to look at.
+    const previewFillDraft = () => {
+      const identity = previewIdentity(true);
+      draft.handle = identity.handle;
+      draft.first_name = identity.first_name;
+      draft.last_name = identity.last_name;
+      draft.email = identity.email;
+      draft.method = "email";
+      return identity;
+    };
+    const previewAutoRegister = async (button) => {
+      if (button) button.disabled = true;
+      const identity = previewFillDraft();
+      try {
+        const started = await API.http.authEmailStart({ email: identity.email });
+        draft.challenge_id = String(started.challenge_id || "");
+        draft.code = String(started.test_code || "");
+        draft.identity = identity.email;
+        if (!draft.code) { renderEmailCode("register", started, ""); return; }
+        renderStep3("");
+        const accept = qs("[data-auth-accept]", content);
+        if (accept) accept.checked = true;
+      } catch (error) {
+        if (button) button.disabled = false;
+        renderStep1(authMessage(error, "Не удалось создать тестовые данные."));
+      }
+    };
+    const wirePreviewFill = () => {
+      qsa("[data-preview-fill]", content).forEach(button => button.onclick = () => {
+        const action = String(button.dataset.previewFill || "");
+        if (action === "auto") { previewAutoRegister(button); return; }
+        if (action === "email") {
+          const identity = previewIdentity(false);
+          const field = qs("#auth-email-input", content);
+          if (field) { field.value = identity.email; field.focus(); }
+          return;
+        }
+        const identity = previewFillDraft();
+        const set = (selector, value) => {
+          const field = qs(selector, content);
+          if (field) field.value = value;
+        };
+        set("#auth-handle", identity.handle);
+        set("#auth-first", identity.first_name);
+        set("#auth-last", identity.last_name);
+        const method = qs('[data-auth-method="email"]', content);
+        if (method) method.click();
+        const handle = qs("#auth-handle", content);
+        if (handle) handle.dispatchEvent(new Event("input"));
+      });
+    };
+
     // ---- registration -------------------------------------------------------
     const renderStep1 = (message) => {
       stopPolling();
@@ -5312,7 +5407,9 @@
           ${methodBlock}
           <button class="btn primary auth-main-action" type="submit">Продолжить <span aria-hidden="true">&#8594;</span></button>
         </form>
+        ${previewAutofillBar([['fill', 'Заполнить тестовыми данными'], ['auto', 'Пройти дальше автоматически']])}
         <div class="auth-foot-row center"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`), 'auth-stage-reg');
+      wirePreviewFill();
       qs('[data-auth-back]', content).onclick = () => renderWelcome('');
       qsa('[data-auth-method]', content).forEach(button => button.onclick = () => {
         draft.method = String(button.dataset.authMethod || '');

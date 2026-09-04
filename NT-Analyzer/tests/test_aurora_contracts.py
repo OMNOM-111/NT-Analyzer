@@ -1253,3 +1253,18 @@ def test_backtesting_strategy_dropdown_uses_authoritative_device_catalog():
     assert "device-стратегии не подтверждены" in js
     assert "API.http.strategies()" not in js
     assert "strategies = (strat && strat.strategies) || []" not in js
+
+
+def test_preview_test_data_shortcuts_exist_only_inside_the_sandbox():
+    """The autofill strip is a Preview affordance and must never ship to a user."""
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    bar = ui.split("function previewAutofillBar(", 1)[1][:900]
+    assert "if (!previewSandboxActive()) return '';" in bar
+    guard = ui.split("function previewSandboxActive()", 1)[1][:200]
+    assert "PREVIEW_CONTEXT" in guard and "enabled" in guard
+    # The markup has exactly one source, so the guard cannot be bypassed.
+    assert ui.count('class="preview-autofill"') == 1
+    assert ui.count('data-preview-fill="') == 1
+    # Test identities are obviously fake and never reach a real address.
+    assert "@preview.local" in ui
+    assert "Данные ненастоящие" in ui
