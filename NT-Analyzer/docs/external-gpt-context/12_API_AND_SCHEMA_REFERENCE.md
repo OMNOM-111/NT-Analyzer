@@ -1,9 +1,9 @@
 # 12. API and Schema Reference
 
 - Context Pack document: 12_API_AND_SCHEMA_REFERENCE.md
-- Last verified UTC: 2026-09-01T00:00:00Z
+- Last verified UTC: 2026-09-03T02:47:29Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Development branch implementation SHA: `a2cc5e72a610d22605a1af0aaacfcb03341456d5` (PR #270; not deployed)
+- Development branch implementation SHAs: `a2cc5e72a610d22605a1af0aaacfcb03341456d5` (PR #270, Community/SF Chat) and `19e0f43a35bee5a2e396538962e8f24e92bed6ef` (PR #278, device confirmation); both are now integrated in `integration/stratforge-unified-local`; not deployed
 - Scope: Compact index of important endpoint families, entities and capability names
 - Status: DONE
 
@@ -12,6 +12,7 @@
 | Area | Endpoint family | Purpose |
 | --- | --- | --- |
 | Auth | `/api/auth/*` | status, login, profile, users, sessions, consent |
+| Device confirmation | `/api/account/security`, `/api/account/security/challenge*`, `/api/account/devices/{approve,reject,rename,revoke}`, `/api/account/machines/{rename,revoke}`, `/api/account/sessions/revoke` | pending bootstrap, Telegram/verified-email OTP, permanent/current-session access, normalized security catalog and scope-correct access management |
 | Workspaces | `/api/workspaces*` | list/select/create workspace context |
 | Bridge pairing | `/api/bridge/pair/*`, `/api/bridge/connections*` | pair/revoke/manage local NinjaTrader connections |
 | Connector protocol | `/api/connector/v1/*` | enroll, challenge, hello, heartbeat, market-data, commands poll/result |
@@ -35,6 +36,7 @@
 | Core auth/workspace | users, sessions, workspaces, memberships, entitlements, jobs, commands | `0001_authoritative_storage.sql` |
 | UUID identity | `user_uuid`, `sf_auth_identities` | `0005_identity_uuid.sql` |
 | Trusted devices / challenges | `sf_trusted_devices`, `sf_security_challenges` | `0006_trusted_devices.sql`, `0007_step_up_actions.sql` |
+| Physical machines / sessions | `sf_physical_devices`, `sf_auth_sessions` | existing document mirrors; Device Confirmation adds fields to existing JSONB documents and requires no new migration |
 | Shared NT resource access | resource lease schema | `0008_ninjatrader_resource_leases.sql` |
 | Release Center | `sf_release_artifacts`, `sf_release_candidates`, `sf_release_deployments`, `sf_release_checks`, `sf_release_approvals`, `sf_release_rollbacks`, `sf_release_events` | `0009_release_center.sql` |
 | Blue-green detail | `sf_release_deploy_steps`, `sf_maintenance_windows` | `0010_blue_green_deploy_steps.sql` |
@@ -66,6 +68,7 @@
 - `app/account_auth.py`
 - `app/auth_identity.py`
 - `app/security_devices.py`
+- `app/physical_devices.py`
 - `app/personal_nt_security.py`
 - `app/connector_protocol.py`
 - `app/market_data_failover.py`

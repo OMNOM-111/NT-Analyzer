@@ -1062,6 +1062,7 @@ def test_phase3_google_link_keeps_account_uuid_and_rejects_owned_subject(auth_st
     user_uuid = user["user_uuid"]
     session = account_auth.create_session_for_user(
         42, ip="127.0.0.1", user_agent="pytest", require_google=False,
+        device_confirmation_required=False,
     )
 
     linked = account_auth.link_google_identity(

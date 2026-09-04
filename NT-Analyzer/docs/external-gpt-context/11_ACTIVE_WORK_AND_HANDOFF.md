@@ -51,6 +51,34 @@
   approval.
 - No Backtest/Connector, market-data, trading, future `МИР АГЕНТОВ`, Canary or
   Production action belongs to this branch.
+- Device-confirmation Development implementation SHA: `19e0f43a35bee5a2e396538962e8f24e92bed6ef` (PR #278; isolated branch; not deployed)
+- Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
+- Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`
+- Scope: beta.87 live baseline plus isolated Device Confirmation Development branch
+- Status: PARTIAL
+
+## Active isolated development — Device Confirmation / Trusted Access
+
+- Branch: `codex/device-confirmation-trusted-access`; implementation
+  `19e0f43a35bee5a2e396538962e8f24e92bed6ef`; PR #278; not deployed.
+- The first unknown human browser/app Client receives a server-side pending
+  Session with a roughly five-minute deadline. A global guard blocks product
+  routes until a session-bound six-digit OTP is confirmed through Telegram or
+  verified email.
+- The user chooses permanent Client trust or access only for the current auth
+  Session. Session-only access is not a 24-hour grant and is not inherited by
+  the next login.
+- Security now exposes Devices, My sessions and Login history. Rename and
+  revoke actions distinguish Machine, Client and Session scope.
+- Machine grouping is proof-based: Connector hardware identity or attested
+  pairing only. IP, hostname, User-Agent, VPN/location and unsigned remote/AI
+  browser labels cannot create a Machine.
+- The branch intentionally leaves Community and SF Chat UI, routes, storage and
+  business logic unchanged. Shared auth/session changes are limited to the
+  confirmation gate and explicit exemptions for non-human development/service
+  sessions.
+- Canonical checklist and verification evidence:
+  [Device Confirmation Development record](../changelog/2026-09-02-device-confirmation-trusted-access.md).
 
 ## Release closeout - beta.87 live
 
@@ -73,6 +101,8 @@
 | Current Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (deployed beta.87 baseline) |
 | Development Git implementation | `c0bcf7af1a460d52212a596d0cdcfc100aadfacb` on `codex/community-social-network`; PR #270; not deployed |
 | Deployed Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (beta.87) |
+| Current Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b`; deployed artifact is the same SHA |
+| Device-confirmation Development implementation | `19e0f43a35bee5a2e396538962e8f24e92bed6ef` on `codex/device-confirmation-trusted-access`; PR #278; not deployed |
 | Code change | PR #254 legacy isolation; PR #255 Telegram `/start` URL flow; PR #256 release-record visibility and gate |
 | Release | Production `0.10.0-beta.87`, state `production_live` |
 | Build | live `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; artifact `art_9ce9dbcb9a7a4fee9df6a54d40f29806` |
@@ -121,6 +151,16 @@ available, then merge PR #270 only after owner approval and clean-main
 integration. Any release must build one signed immutable artifact after merge,
 accept it on Canary and promote that exact artifact to Production. Preserve the
 accepted Connector, Backtest, market-data and AI Orchestrator baselines.
+| Device Confirmation acceptance | `IN DEVELOPMENT` | Automated Development verification is recorded in its changelog and PR #278 provides per-head CI evidence; real Telegram/email delivery, owner visual acceptance, merge and immutable Canary/Production promotion remain separate gates |
+
+## Next development boundary
+
+For Device Confirmation, require mandatory PR #278 checks plus owner
+visual/provider acceptance before an owner-approved merge. Any later release must build one
+signed immutable artifact after merge, accept it on Canary and promote that
+exact artifact to Production. The deployed beta.87 identity remains unchanged.
+Preserve the accepted Connector, Backtest, market-data and AI Orchestrator
+baselines.
 
 ## Canonical evidence
 
@@ -130,3 +170,4 @@ accepted Connector, Backtest, market-data and AI Orchestrator baselines.
 - [AI agents and worker queues](07_AI_AGENTS_AND_AUTOMATION.md)
 - [market data and Connector](06_MARKET_DATA_TRADING_CONNECTOR.md)
 - [Community/SF Chat Development record](../changelog/2026-09-01-community-sf-chat-development.md)
+- [Device Confirmation Development record](../changelog/2026-09-02-device-confirmation-trusted-access.md)

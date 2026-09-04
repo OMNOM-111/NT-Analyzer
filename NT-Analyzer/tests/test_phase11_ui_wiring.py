@@ -103,8 +103,9 @@ def test_legacy_viewer_read_only_marker_exists():
 
 
 def _telegram_waiting_block():
-    return UI_JS.split("const renderWaiting = (login, knownState)", 1)[1].split(
-        "let callbackChallenge", 1,
+    """The Telegram confirmation screen of the rebuilt login/registration flow."""
+    return UI_JS.split("const renderTelegramWait = async (mode, message)", 1)[1].split(
+        "// ---- shared: google", 1,
     )[0]
 
 
@@ -167,8 +168,12 @@ def test_login_screen_promises_no_contact_upload():
 
 def test_expired_qr_is_replaced_in_place():
     waiting = _telegram_waiting_block()
-    assert "login.expires_in_sec" in waiting
+    watcher = UI_JS.split("const watchQr = (login, onExpired)", 1)[1].split(
+        "const startLogin", 1,
+    )[0]
+    assert "login.expires_in_sec" in watcher
     assert "API.http.authLoginStart()" in waiting, "a lapsed QR refreshes itself"
+    assert "watchQr(login, () => renderTelegramWait(" in waiting, "a lapsed QR is replaced"
     # The refresh timer must die with the screen, or it would re-render the
     # waiting card on top of whatever replaced it.
     assert "stopQrRefresh();" in UI_JS

@@ -75,6 +75,7 @@ def _login(uid: int, *, user_agent: str = "Mozilla/5.0 (Windows NT 10.0) Chrome/
     out = account_auth.create_session_for_user(
         uid, ip="203.0.113.5", user_agent=user_agent, require_google=False,
         skip_dual_auth_gate=True, device_credential=device_credential,
+        device_confirmation_required=False,
     )
     return out["session_token"]
 

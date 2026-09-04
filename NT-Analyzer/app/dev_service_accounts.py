@@ -129,6 +129,7 @@ def login(actor: str, *, is_loopback: bool, ip: str = "127.0.0.1",
     session = account_auth.create_session_for_user(
         spec["uid"], ip=ip, user_agent=user_agent, source="dev_service",
         require_google=False, skip_dual_auth_gate=True,
+        device_confirmation_required=False,
     )
     _audit("dev_service_login", actor=key, user_id=spec["uid"])
     return {

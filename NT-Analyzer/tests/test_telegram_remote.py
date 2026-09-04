@@ -244,8 +244,8 @@ def test_browser_session_merge_requires_matching_canonical_uuid(
         def _check_api_rate_limit(self, _context, _path):
             return True
 
-        def _err(self, *_args, **_kwargs):
-            raise AssertionError("authorization unexpectedly failed")
+        def _err(self, status, message, **kwargs):
+            self.error = (int(status), message, str(kwargs.get("code") or ""))
 
     monkeypatch.setattr(server_mod.account_auth, "auth_required", lambda: True)
     monkeypatch.setattr(
@@ -258,6 +258,9 @@ def test_browser_session_merge_requires_matching_canonical_uuid(
             "user_uuid": browser_uuid,
             "session_id": "sess_browser",
             "nt_elevated_until": elevated_until,
+            "device_confirmation_state": "active",
+            "device_confirmation_required": False,
+            "device_trust_mode": "permanent",
         },
     )
     monkeypatch.setattr(
@@ -274,7 +277,7 @@ def test_browser_session_merge_requires_matching_canonical_uuid(
 
     request = Request()
 
-    assert server_mod.Handler._authorize_api(request, "/api/health") is True
+    assert server_mod.Handler._authorize_api(request, "/api/health") is state_merged
     assert request._remote_context["user_uuid"] == remote_uuid
     if state_merged:
         assert request._remote_context["session_id"] == "sess_browser"
@@ -282,6 +285,8 @@ def test_browser_session_merge_requires_matching_canonical_uuid(
     else:
         assert "session_id" not in request._remote_context
         assert "nt_elevated_until" not in request._remote_context
+        assert request.error[0] == 403
+        assert request.error[2] == "DEVICE_CONFIRMATION_REQUIRED"
 
 
 def test_aurora_bundle_excludes_miniapp_and_keeps_current_login_contract() -> None:
@@ -294,7 +299,7 @@ def test_aurora_bundle_excludes_miniapp_and_keeps_current_login_contract() -> No
     assert "telegram-mini-app" not in css
     assert "authLoginStart" in api
     assert "telegramStatus" in api
-    assert "новый пользователь автоматически получает полный пробный доступ к продукту на 7 дней" in ui
+    assert "новый пользователь автоматически получает полный пробный доступ к продукту на ${trialDays()} дней" in ui
     assert "Живые графики используют только разрешённый для аккаунта источник market data" in ui
     assert "Новый аккаунт активируется только вашим подтверждением" not in ui
     assert "https://web.telegram.org" not in server_mod.STATIC_CSP

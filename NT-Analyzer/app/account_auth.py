@@ -1042,6 +1042,126 @@ def _clean_name(value: Any, label: str) -> str:
     return name
 
 
+# --------------------------------------------------------------------------- #
+# StratForge handle (the account's own public name).
+# --------------------------------------------------------------------------- #
+# ``username`` mirrors whatever Telegram reports and is rewritten on every
+# Telegram login, so it cannot be the name the person chose here. The handle is
+# owned by StratForge: the user picks it during registration, external identity
+# providers may only *suggest* it, and nothing but an explicit user action ever
+# changes it.
+HANDLE_MIN_LEN = 3
+HANDLE_MAX_LEN = 32
+_HANDLE_RE = re.compile(r"^[a-z0-9](?:[a-z0-9_.]*[a-z0-9])?$", re.ASCII)
+_HANDLE_RESERVED = frozenset({
+    "admin", "administrator", "root", "owner", "support", "help", "security",
+    "stratforge", "stratforgeai", "system", "moderator", "staff", "official",
+    "billing", "payments", "api", "bot", "null", "undefined", "me", "you",
+})
+
+
+def normalize_handle(value: Any, *, required: bool = True) -> str:
+    """Validate and canonicalise a StratForge handle.
+
+    The canonical form is lowercase; the user may type `@name` or `Name`.
+    """
+    raw = str(value or "").strip().lstrip("@").strip()
+    if not raw:
+        if required:
+            raise AccountAuthError(
+                "Придумайте имя пользователя StratForge.", 400, code="handle_required",
+            )
+        return ""
+    handle = raw.lower()
+    if not HANDLE_MIN_LEN <= len(handle) <= HANDLE_MAX_LEN:
+        raise AccountAuthError(
+            f"Имя пользователя — от {HANDLE_MIN_LEN} до {HANDLE_MAX_LEN} символов.",
+            400, code="handle_length",
+        )
+    if not _HANDLE_RE.match(handle):
+        raise AccountAuthError(
+            "Разрешены латинские буквы, цифры, точка и подчёркивание; "
+            "начинаться и заканчиваться — буквой или цифрой.",
+            400, code="handle_format",
+        )
+    if ".." in handle or "__" in handle:
+        raise AccountAuthError(
+            "Уберите повторяющиеся точки или подчёркивания.", 400, code="handle_format",
+        )
+    if handle in _HANDLE_RESERVED:
+        raise AccountAuthError(
+            "Это имя пользователя зарезервировано.", 409, code="handle_reserved",
+        )
+    return handle
+
+
+def _handle_owner_uuid(doc: Dict[str, Any], handle: str) -> str:
+    for row in doc.get("users") or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("handle") or "").strip().lower() == handle:
+            return _user_uuid(row)
+    return ""
+
+
+def handle_available(value: Any, *, user_uuid: str = "") -> Dict[str, Any]:
+    """Public availability probe used by the registration form."""
+    try:
+        handle = normalize_handle(value)
+    except AccountAuthError as exc:
+        return {
+            "handle": str(value or "").strip().lstrip("@").lower()[:HANDLE_MAX_LEN],
+            "available": False,
+            "reason": str(exc),
+            "code": getattr(exc, "code", "") or "handle_invalid",
+        }
+    with _LOCK:
+        doc = _read_doc()
+        owner = _handle_owner_uuid(doc, handle)
+    taken = bool(owner) and owner != str(user_uuid or "")
+    return {
+        "handle": handle,
+        "available": not taken,
+        "reason": "Это имя пользователя уже занято." if taken else "",
+        "code": "handle_taken" if taken else "",
+    }
+
+
+def _assign_handle_in_doc(doc: Dict[str, Any], user: Dict[str, Any], value: Any) -> str:
+    """Claim a handle for exactly one account, or fail closed."""
+    handle = normalize_handle(value)
+    owner = _handle_owner_uuid(doc, handle)
+    if owner and owner != _user_uuid(user):
+        raise AccountAuthError(
+            "Это имя пользователя уже занято.", 409, code="handle_taken",
+        )
+    user["handle"] = handle
+    user["handle_set_at_utc"] = user.get("handle_set_at_utc") or _now_iso()
+    user["updated_at_utc"] = _now_iso()
+    return handle
+
+
+def suggest_handle(*, email: Any = "", username: Any = "", name: Any = "") -> str:
+    """A safe starting point for the field; never applied without the user."""
+    for candidate in (
+        str(username or "").strip().lstrip("@"),
+        str(email or "").split("@", 1)[0],
+        str(name or "").strip().replace(" ", "_"),
+    ):
+        cleaned = re.sub(r"[^a-z0-9_.]+", "", str(candidate or "").lower())
+        cleaned = re.sub(r"[._]{2,}", "_", cleaned).strip("._")
+        if len(cleaned) < HANDLE_MIN_LEN:
+            continue
+        cleaned = cleaned[:HANDLE_MAX_LEN]
+        try:
+            normalized = normalize_handle(cleaned)
+        except AccountAuthError:
+            continue
+        if handle_available(normalized)["available"]:
+            return normalized
+    return ""
+
+
 def _device_label(user_agent: Any) -> str:
     """A short, non-identifying device label parsed from a User-Agent."""
     ua = str(user_agent or "")
@@ -1173,17 +1293,35 @@ def _observe_session_device(
     the document is persisted. Impersonation sessions never register a device.
     """
     if session.get("impersonator_owner_id"):
+        session["device_confirmation_exempt"] = True
+        session["device_confirmation_required"] = False
+        session["device_confirmation_state"] = "active"
+        session["device_trust_mode"] = "exempt"
         return []
+    from . import security_devices
     try:
-        from . import security_devices
-        return security_devices.observe_session(
+        events = security_devices.observe_session(
             doc, session, user, ip=ip, user_agent=user_agent, source=source,
             connector_installation_id=connector_installation_id,
             device_credential=device_credential,
         )
+    except security_devices.SecurityDeviceError as exc:
+        raise AccountAuthError(
+            "Не удалось безопасно зарегистрировать новый доступ.",
+            503, code=exc.code or "device_security_unavailable",
+        ) from None
     except Exception:
-        # Device correlation must never block a legitimate login.
-        return []
+        raise AccountAuthError(
+            "Не удалось безопасно зарегистрировать новый доступ.",
+            503, code="device_security_unavailable",
+        ) from None
+    if (not session.get("device_confirmation_exempt")
+            and not session.get("trusted_device_id")):
+        raise AccountAuthError(
+            "Не удалось безопасно зарегистрировать новый доступ.",
+            503, code="device_security_unavailable",
+        )
+    return events
 
 
 def _user(doc: Dict[str, Any], user_id: int) -> Optional[Dict[str, Any]]:
@@ -1324,13 +1462,14 @@ def avatar_file(user_id: Any) -> Optional[Path]:
 def _public_user(user: Dict[str, Any], *, include_contact: bool = False,
                  include_legacy: bool = False) -> Dict[str, Any]:
     out = {key: user.get(key) for key in (
-        "username", "first_name", "last_name", "role", "status",
+        "username", "handle", "first_name", "last_name", "role", "status",
         "is_owner", "created_at_utc", "approved_at_utc", "revoked_at_utc",
         "last_login_at_utc", "phone_verified_at_utc",
         "last_login_source", "last_login_device", "last_login_machine",
         "last_login_device_id", "blocked_at_utc",
         "google_linked_at_utc", "google_email", "email_verified_at_utc",
-        "primary_login_provider", "is_virtual", "virtual_preset", "ux_mode",
+        "primary_login_provider", "is_virtual", "virtual_preset",
+        "is_preview_user", "preview_sandbox_id", "ux_mode",
     )}
     out["id"] = str(user.get("user_uuid") or "")
     if include_legacy:
@@ -3342,24 +3481,27 @@ def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str,
         token = secrets.token_urlsafe(48)
         csrf = secrets.token_urlsafe(32)
         now = time.time()
-        doc["sessions"].append({
+        session = {
             "session_id": "sess_" + secrets.token_hex(8),
             "token_hash": hashlib.sha256(token.encode()).hexdigest(), "csrf_hash": hashlib.sha256(csrf.encode()).hexdigest(),
             "csrf_token": csrf,
             "user_id": uid, "user_uuid": _user_uuid(user),
             "created_at_utc": _now_iso(), "expires_at": now + SESSION_TTL_SEC,
+            "normal_expires_at": now + SESSION_TTL_SEC,
             "ip_hash": hashlib.sha256(str(ip or "").encode()).hexdigest(),
             "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(), "revoked": False,
             "device_id": _device_id(user_agent, device_credential=device_credential),
             "client": _device_label(user_agent),
             "machine": _machine_label(), "ip": _mask_ip(ip),
             "source": source,
-        })
+            "device_confirmation_exempt": False,
+        }
+        doc["sessions"].append(session)
         challenge["status"] = "consumed"
         _append_login(user, source=source, ip=ip, user_agent=user_agent,
                       device_credential=device_credential)
         device_events = _observe_session_device(
-            doc, doc["sessions"][-1], user, ip=ip, user_agent=user_agent, source=source,
+            doc, session, user, ip=ip, user_agent=user_agent, source=source,
             device_credential=device_credential,
         )
         _cleanup(doc)
@@ -3367,7 +3509,72 @@ def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str,
     _audit("login_succeeded", user_id=uid, ip=ip)
     for _event, _extra in device_events:
         _audit(_event, user_id=uid, ip=ip, extra=_extra)
-    return {"status": "authenticated", "session_token": token, "csrf_token": csrf, "user": _public_user(user, include_contact=True)}
+    access = _device_access_snapshot(session)
+    return {
+        "status": "authenticated",
+        "session_token": token,
+        "csrf_token": csrf,
+        "user": _public_user(user, include_contact=True),
+        "device_access": access,
+        "session_cookie_persistent": access["trust_mode"] == "permanent",
+    }
+
+
+def _session_pending_deadline(session: Dict[str, Any]) -> float:
+    deadline = float(session.get("pending_expires_at") or 0)
+    if deadline:
+        return deadline
+    created = str(session.get("created_at_utc") or "").strip()
+    try:
+        created_at = datetime.fromisoformat(created.replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        created_at = 0.0
+    if not created_at:
+        return 0.0
+    from . import security_devices
+    return created_at + security_devices.PENDING_SESSION_TTL_SEC
+
+
+def _session_confirmation_state(session: Dict[str, Any]) -> str:
+    if session.get("device_confirmation_exempt"):
+        return "active"
+    # Sessions issued before the trusted-client registry existed have no
+    # client UUID to confirm. Preserve them until their already-recorded expiry
+    # instead of turning a rollout into an account-wide forced logout. Every
+    # newly issued session goes through device observation and cannot take this
+    # compatibility branch.
+    if (not session.get("trusted_device_id")
+            and "device_confirmation_state" not in session
+            and "device_confirmation_required" not in session):
+        return "active"
+    explicit = str(session.get("device_confirmation_state") or "")
+    if explicit == "active":
+        return explicit
+    if str(session.get("device_trust_status") or "") == "trusted":
+        return "active"
+    deadline = _session_pending_deadline(session)
+    return "expired" if deadline and deadline <= time.time() else "pending"
+
+
+def _device_access_snapshot(session: Dict[str, Any]) -> Dict[str, Any]:
+    state = _session_confirmation_state(session)
+    deadline = _session_pending_deadline(session) if state == "pending" else 0.0
+    return {
+        "required": state == "pending",
+        "state": state,
+        "trust_mode": str(session.get("device_trust_mode") or (
+            "permanent" if str(session.get("device_trust_status") or "") == "trusted" else ""
+        )),
+        "session_id": _session_id(session),
+        "client_id": str(session.get("trusted_device_id") or ""),
+        "physical_device_id": str(session.get("physical_device_id") or ""),
+        "pending_expires_at": deadline,
+        "pending_expires_at_utc": (
+            datetime.fromtimestamp(deadline, tz=timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+            if deadline else ""
+        ),
+        "session_expires_at": float(session.get("expires_at") or 0),
+    }
 
 
 def _session_context(user: Dict[str, Any], session: Dict[str, Any]) -> Dict[str, Any]:
@@ -3383,6 +3590,16 @@ def _session_context(user: Dict[str, Any], session: Dict[str, Any]) -> Dict[str,
         "device_id": str(session.get("device_id") or ""),
         "csrf_hash": str(session.get("csrf_hash") or ""),
         "csrf_token": str(session.get("csrf_token") or ""),
+        "trusted_device_id": str(session.get("trusted_device_id") or ""),
+        "physical_device_id": str(session.get("physical_device_id") or ""),
+        "device_confirmation_state": _session_confirmation_state(session),
+        "device_confirmation_required": bool(
+            not session.get("device_confirmation_exempt")
+            and _session_confirmation_state(session) == "pending"
+        ),
+        "device_trust_mode": str(session.get("device_trust_mode") or ""),
+        "pending_expires_at": _session_pending_deadline(session),
+        "device_access": _device_access_snapshot(session),
         "user": _public_user(user, include_contact=True),
         "needs_google": user_needs_google(user),
         "dual_auth_complete": True,
@@ -3461,6 +3678,8 @@ def _authenticate_authoritative_session(digest: str) -> Optional[Dict[str, Any]]
         "status": str(row.get("user_status") or ""),
         "is_owner": bool(row.get("is_owner")),
     })
+    if _session_confirmation_state(session) == "expired":
+        return None
     return _session_context(user, session)
 
 
@@ -3476,6 +3695,8 @@ def authenticate_session(token: str) -> Optional[Dict[str, Any]]:
         now = time.time()
         session = next((row for row in doc["sessions"] if not row.get("revoked") and float(row.get("expires_at") or 0) > now and hmac.compare_digest(str(row.get("token_hash") or ""), digest)), None)
         if session is None:
+            return None
+        if _session_confirmation_state(session) == "expired":
             return None
         user = _user(doc, int(session.get("user_id") or 0))
         if not user or user.get("status") != "active":
@@ -3669,6 +3890,12 @@ def session_auth_failure(token: str) -> Optional[Dict[str, Any]]:
         for row in doc.get("sessions") or []:
             if not hmac.compare_digest(str(row.get("token_hash") or ""), digest):
                 continue
+            if _session_confirmation_state(row) == "expired":
+                return {
+                    "code": "device_confirmation_expired",
+                    "error": "Время подтверждения доступа истекло. Войдите снова.",
+                    "user_id": int(row.get("user_id") or 0),
+                }
             if row.get("revoked") and row.get("revoked_reason") in _REVOKE_NOTICE_REASONS:
                 notice_until = float(row.get("revoke_notice_until") or 0)
                 if notice_until and notice_until < now:
@@ -3926,6 +4153,7 @@ def create_session_for_user(
     impersonation_preset: str = "",
     ttl_sec: int = 0,
     device_credential: str = "",
+    device_confirmation_required: bool = True,
 ) -> Dict[str, Any]:
     uid = int(user_id)
     if not impersonator_owner_id:
@@ -3955,6 +4183,7 @@ def create_session_for_user(
             "user_uuid": _user_uuid(user),
             "created_at_utc": _now_iso(),
             "expires_at": now + ttl,
+            "normal_expires_at": now + ttl,
             "ip_hash": hashlib.sha256(str(ip or "").encode()).hexdigest(),
             "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(),
             "revoked": False,
@@ -3963,6 +4192,7 @@ def create_session_for_user(
             "machine": _machine_label(),
             "ip": _mask_ip(ip),
             "source": str(source or "desktop_session")[:40],
+            "device_confirmation_exempt": not bool(device_confirmation_required),
         }
         if impersonator_owner_id:
             row["impersonator_owner_id"] = int(impersonator_owner_id)
@@ -3988,11 +4218,14 @@ def create_session_for_user(
     )
     for _event, _extra in device_events:
         _audit(_event, user_id=uid, ip=ip, extra=_extra)
+    access = _device_access_snapshot(row)
     return {
         "status": "authenticated",
         "session_token": token,
         "csrf_token": csrf,
         "user": public,
+        "device_access": access,
+        "session_cookie_persistent": access["trust_mode"] == "permanent",
         "needs_google": user_needs_google(user),
         "impersonating": bool(impersonator_owner_id),
     }
@@ -4044,7 +4277,10 @@ def email_auth_status() -> Dict[str, Any]:
     return {
         "available": test_backend,
         "operational": test_backend,
-        "provider": "development_test" if test_backend else (configured_provider or "unconfigured"),
+        "provider": (
+            "preview_synthetic" if runtime_env.preview_sandbox_enabled()
+            else "development_test"
+        ) if test_backend else (configured_provider or "unconfigured"),
         "test_backend": test_backend,
         "production_ready": False,
         "code": "ok" if test_backend else "transactional_provider_not_configured",
@@ -4205,7 +4441,10 @@ def start_email_auth(
             "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(),
         })
         _write_doc(doc)
-    delivery = "development_test"
+    delivery = (
+        "preview_synthetic" if runtime_env.preview_sandbox_enabled()
+        else "development_test"
+    )
     message_id = ""
     if _email_provider_live():
         receipt = _deliver_email_code(normalized, code, purpose=purpose_id)
@@ -4229,7 +4468,7 @@ def start_email_auth(
         "expires_in_sec": EMAIL_CHALLENGE_TTL_SEC,
         "delivery": delivery,
     }
-    if delivery == "development_test":
+    if delivery in {"development_test", "preview_synthetic"}:
         # Test credentials are disclosed only behind the explicit Development
         # test auth gate. A real provider delivers them out-of-band instead.
         out["test_code"] = code
@@ -4286,6 +4525,18 @@ def _new_external_user(
         "terms_version": legal.TERMS_VERSION,
         "terms_digest": legal.TERMS_DIGEST,
     }
+    if runtime_env.preview_sandbox_enabled():
+        # The Preview process owns a separate data root and can never become an
+        # owner.  Persist an explicit marker as defence in depth and for visual
+        # audit evidence; this field is never inferred from client input.
+        user.update({
+            "is_virtual": True,
+            "is_preview_user": True,
+            "virtual_preset": "preview_sandbox",
+            "preview_sandbox_id": str(
+                os.environ.get("STRATFORGE_PREVIEW_ID") or ""
+            )[:48],
+        })
     _activate_verified_human_in_doc(user, source=f"{provider}_verified_registration")
     doc["users"].append(user)
     return user
@@ -4407,6 +4658,220 @@ def verify_email_auth(
     return state
 
 
+# --------------------------------------------------------------------------- #
+# Staged registration: identity first, consent and account creation last.
+# --------------------------------------------------------------------------- #
+REGISTRATION_TTL_SEC = 15 * 60
+
+
+def stage_google_registration(
+    *, google_sub: Any, google_email: Any, google_name: Any = "",
+    email_verified: bool, ip: str = "", user_agent: str = "",
+) -> Dict[str, Any]:
+    """Hold a verified Google identity until the person accepts the terms.
+
+    Sign-up must not create an account the moment Google answers: consent is
+    the last step of registration, so the verified identity waits in the same
+    short-lived, single-use challenge store the other providers use.
+    """
+    sub = str(google_sub or "").strip()
+    if not sub:
+        raise AccountAuthError("Google identity не содержит subject.", 400)
+    if not email_verified:
+        raise AccountAuthError("Email Google не подтверждён.", 403)
+    email = _valid_email(google_email)
+    registration_id = secrets.token_urlsafe(24)
+    with _LOCK:
+        doc = _read_doc()
+        _cleanup(doc)
+        if _identity(doc, "google", sub):
+            raise AccountAuthError(
+                "Этот Google-аккаунт уже зарегистрирован.", 409, code="google_already_registered",
+            )
+        doc["challenges"].append({
+            "challenge_id": registration_id,
+            "status": "awaiting_registration",
+            "purpose": "google_registration",
+            "provider": "google",
+            "provider_subject": sub,
+            "google_email": email,
+            "google_name": str(google_name or "")[:120],
+            "environment": runtime_env.deployment_environment(),
+            "created_at_utc": _now_iso(),
+            "expires_at": time.time() + REGISTRATION_TTL_SEC,
+            "ip_hash": hashlib.sha256(str(ip or "").encode()).hexdigest(),
+            "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(),
+        })
+        _write_doc(doc)
+    _audit("google_registration_staged", ip=ip)
+    return {
+        "registration_id": registration_id,
+        "provider": "google",
+        "email": email,
+        "name": str(google_name or "")[:120],
+        "expires_in_sec": REGISTRATION_TTL_SEC,
+    }
+
+
+def registration_state(registration_id: Any) -> Dict[str, Any]:
+    """What the final registration step may show about a staged identity."""
+    cid = str(registration_id or "")
+    with _LOCK:
+        doc = _read_doc()
+        challenge = _challenge(
+            doc, challenge_id=cid, statuses=("awaiting_registration",),
+        )
+    if challenge is None:
+        raise AccountAuthError(
+            "Подтверждение личности истекло. Начните регистрацию заново.",
+            410, code="registration_expired",
+        )
+    email = str(challenge.get("google_email") or "")
+    return {
+        "registration_id": cid,
+        "provider": str(challenge.get("provider") or ""),
+        "email": email,
+        "name": str(challenge.get("google_name") or ""),
+        "suggested_handle": suggest_handle(email=email, name=challenge.get("google_name")),
+    }
+
+
+def _finish_google_registration(
+    registration_id: str, *, handle: str, first_name: str, last_name: str,
+    ip: str, user_agent: str, api_call: Optional[Callable[..., Any]],
+    owner_chat_id: str, device_credential: str,
+) -> Dict[str, Any]:
+    with _LOCK:
+        doc = _read_doc()
+        challenge = _challenge(
+            doc, challenge_id=registration_id, statuses=("awaiting_registration",),
+        )
+        if challenge is None or str(challenge.get("provider") or "") != "google":
+            raise AccountAuthError(
+                "Подтверждение личности истекло. Начните регистрацию заново.",
+                410, code="registration_expired",
+            )
+        # Single use: the staged identity is spent before the account exists,
+        # so a replayed request cannot create a second account.
+        challenge["status"] = "consumed"
+        google_sub = str(challenge.get("provider_subject") or "")
+        google_email = str(challenge.get("google_email") or "")
+        google_name = str(challenge.get("google_name") or "")
+        _write_doc(doc)
+    out = login_via_google_identity(
+        google_sub=google_sub,
+        google_email=google_email,
+        google_name=google_name or f"{first_name} {last_name}".strip(),
+        email_verified=True,
+        accept_terms=True,
+        ip=ip,
+        user_agent=user_agent,
+        api_call=api_call,
+        owner_chat_id=owner_chat_id,
+        device_credential=device_credential,
+    )
+    with _LOCK:
+        doc = _read_doc()
+        user = _user_by_uuid(doc, str((out.get("user") or {}).get("id") or ""))
+        if user is not None:
+            user["first_name"] = first_name
+            user["last_name"] = last_name
+            _assign_handle_in_doc(doc, user, handle)
+            _write_doc(doc)
+            out["user"] = _public_user(user, include_contact=True)
+    return out
+
+
+def complete_registration(
+    *,
+    method: Any,
+    challenge_id: Any,
+    handle: Any,
+    first_name: Any,
+    last_name: Any = "",
+    code: Any = "",
+    email: Any = "",
+    accept_terms: bool = False,
+    ip: str = "",
+    user_agent: str = "",
+    api_call: Optional[Callable[..., Any]] = None,
+    owner_chat_id: str = "",
+    device_credential: str = "",
+) -> Dict[str, Any]:
+    """Create the account only after the person has seen and accepted terms.
+
+    Identity verification (Telegram, Google, e-mail code) has already happened
+    in the previous step; this is the single call every registration method
+    ends with, so consent and the StratForge handle are always applied to the
+    account that is being created.
+    """
+    provider = str(method or "").strip().lower()
+    if provider not in {"email", "telegram", "google"}:
+        raise AccountAuthError("Неизвестный способ регистрации.", 400, code="method_invalid")
+    if not accept_terms:
+        raise AccountAuthError(
+            "Необходимо принять условия использования.", 400, code="terms_required",
+        )
+    wanted_handle = normalize_handle(handle)
+    probe = handle_available(wanted_handle)
+    if not probe["available"]:
+        raise AccountAuthError(
+            probe["reason"] or "Это имя пользователя уже занято.",
+            409, code=probe["code"] or "handle_taken",
+        )
+    clean_first = _clean_name(first_name, "Имя")
+    # A family name is optional for the person; the account model still wants a
+    # value, so an omitted one is stored as an explicit dash rather than a
+    # guess derived from the login provider.
+    clean_last = _clean_name(last_name, "Фамилия") if str(last_name or "").strip() else "—"
+    cid = str(challenge_id or "")
+
+    if provider == "google":
+        return _finish_google_registration(
+            cid, handle=wanted_handle, first_name=clean_first, last_name=clean_last,
+            ip=ip, user_agent=user_agent, api_call=api_call,
+            owner_chat_id=owner_chat_id, device_credential=device_credential,
+        )
+
+    if provider == "email":
+        out = verify_email_auth(
+            cid,
+            code=str(code or ""),
+            profile={
+                "first_name": clean_first,
+                "last_name": clean_last,
+                "accept_terms": True,
+            },
+            ip=ip, user_agent=user_agent, api_call=api_call,
+            owner_chat_id=owner_chat_id, device_credential=device_credential,
+        )
+    else:
+        out = complete_profile(
+            cid,
+            {
+                "first_name": clean_first,
+                "last_name": clean_last,
+                "email": email,
+                "accept_terms": True,
+            },
+            api_call=api_call, owner_chat_id=owner_chat_id,
+            ip=ip, user_agent=user_agent,
+        )
+
+    canonical = str((out.get("user") or {}).get("id") or "")
+    with _LOCK:
+        doc = _read_doc()
+        user = _user_by_uuid(doc, canonical) if canonical else None
+        if user is None:
+            challenge = _challenge(doc, challenge_id=cid)
+            user = _user(doc, int((challenge or {}).get("user_id") or 0))
+        if user is not None:
+            _assign_handle_in_doc(doc, user, wanted_handle)
+            _write_doc(doc)
+            out["user"] = _public_user(user, include_contact=True)
+    return out
+
+
 def login_via_google_identity(
     *,
     google_sub: Any,
@@ -4505,6 +4970,7 @@ def login_via_google_identity(
             active_uid, ip=ip, user_agent=user_agent,
             source="google_login", require_google=False,
             device_credential=device_credential,
+            device_confirmation_required=True,
         )
     _audit("google_login_pending", user_id=int(user.get("user_id") or 0), ip=ip)
     return {
@@ -4670,6 +5136,7 @@ def start_impersonation(
         skip_dual_auth_gate=True,
         impersonator_owner_id=oid,
         impersonation_preset=target_preset,
+        device_confirmation_required=False,
     )
     _audit(
         "impersonation_started",
@@ -4720,6 +5187,7 @@ def end_impersonation(token: str, *, owner_id: Any, ip: str = "", user_agent: st
         user_agent=user_agent or "owner-return",
         source="impersonation_return",
         skip_dual_auth_gate=True,
+        device_confirmation_required=False,
     )
     _audit("impersonation_ended", user_id=target_uid, owner_id=oid, ip=ip)
     return {"ok": True, "impersonating": False, "restored_owner": True, **restored}

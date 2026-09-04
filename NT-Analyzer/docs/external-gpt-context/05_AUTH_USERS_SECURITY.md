@@ -1,8 +1,9 @@
 # 05. Auth, Users and Security
 
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
-- Last verified UTC: 2026-08-31T00:00:00Z
+- Last verified UTC: 2026-09-03T02:47:29Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
+- Device-confirmation Development implementation SHA: `19e0f43a35bee5a2e396538962e8f24e92bed6ef` (PR #278; isolated branch; not deployed)
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: PARTIAL
 
@@ -74,10 +75,25 @@ Key admin capability names already in the contract: `admin.view`,
 
 ## Sessions, trusted devices and step-up
 
-- Device identity is not IP-based.
-- Trusted devices use lifecycle `pending -> trusted -> revoked|expired`.
-- Security challenges are single-use, environment-bound and hashed at rest.
-- Step-up is the intended gate for linking identities, trusting a device,
+- The Development device-confirmation model is explicitly
+  `Machine -> Client -> Session`. A Machine exists only after hardware-bound
+  Connector identity or attested pairing. IP, hostname, User-Agent, browser
+  version, VPN and approximate location are audit metadata, never proof of a
+  machine or a grouping key.
+- A new unknown human Client creates a server-side pending Session with a
+  roughly five-minute deadline. Before confirmation, the global protected-route
+  guard exposes only auth status, challenge/confirm/approve/resend/reject and
+  logout; all other protected requests fail with
+  `403 DEVICE_CONFIRMATION_REQUIRED`. Timeout invalidates the Session.
+- Device confirmation uses a single-use six-digit challenge, hashed at rest
+  and bound to user, environment, Client, current Session, purpose and selected
+  mode. Delivery choices are confirmed Telegram and verified email only.
+- `permanent` trusts the Client until explicit revoke. `session` activates only
+  the current auth Session, keeps the Client pending and uses a non-persistent
+  browser cookie. There is no fixed 24-hour trust mode.
+- Ending a Session, revoking a Client and revoking a Machine are distinct
+  scopes. Machine revoke cascades only through Clients with a proven binding.
+- Fresh step-up remains the intended separate gate for linking identities,
   personal NinjaTrader pairing, Connector revoke and release approvals.
 
 ## Operational auth snapshot
@@ -104,8 +120,10 @@ Key admin capability names already in the contract: `admin.view`,
   clearly configured and accepted for the target environment.
 - Treat Production Google login as blocked until the real external OAuth client,
   secret and callback configuration are accepted for Production.
-- Treat trusted-device hard enforcement for every release-critical action as
-  incomplete until the step-up workflow is fully rolled out across those paths.
+- General new-login device confirmation and its protected-route guard are
+  Development-complete on the isolated branch. Treat fresh action-specific
+  step-up for every release-critical mutation as incomplete until that separate
+  workflow is fully rolled out.
 - Treat wide public personal-NT onboarding as incomplete even though the model,
   endpoints and schema are already present.
 - Treat the new automatic-trial UX as Development-only until its PR/CI and
@@ -118,12 +136,18 @@ Key admin capability names already in the contract: `admin.view`,
 - Global governance mutation is separated from workspace/strategy documents.
 - Per-environment cookies, CSRF keys, storage namespaces, bots and connector
   sessions are part of the isolation model.
+- The owner Preview sandbox (Development only) is a separate loopback process
+  with its own data root, cookie name and synthetic non-owner identity. It has
+  no localhost-owner bypass, cannot open outbound connections, and is rejected
+  fail-closed in Canary and Production.
 
 ## Canonical evidence
 
 - [../adr/0002-unified-identity.md](../adr/0002-unified-identity.md)
 - [../adr/0003-trusted-devices-and-step-up.md](../adr/0003-trusted-devices-and-step-up.md)
 - [../adr/0004-admin-panel-and-capabilities.md](../adr/0004-admin-panel-and-capabilities.md)
+- [Device Confirmation Development record](../changelog/2026-09-02-device-confirmation-trusted-access.md)
+- [Owner Preview sandbox Development record](../changelog/2026-09-03-owner-preview-synthetic-sandbox.md)
 - `app/account_auth.py`
 - `app/auth_identity.py`
 - `app/security_devices.py`

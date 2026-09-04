@@ -4,6 +4,7 @@
 - Last verified UTC: 2026-09-02T16:16:41Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Development branch implementation SHA: `27b4de3d65eb4e1d753302b90fec45c90a51765a` (PR #270; final SF Chat messenger presentation pass; not deployed)
+- Device-confirmation Development implementation SHA: `19e0f43a35bee5a2e396538962e8f24e92bed6ef` (PR #278; isolated branch; not deployed)
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production
@@ -19,6 +20,9 @@
   full regression is `2503 passed, 35 skipped`; isolated browser QA covers
   desktop, tablet and mobile geometry without document-level overflow, with
   independent center/wall scrolling and no console warnings/errors.
+- Device-confirmation Development evidence: isolated branch
+  `codex/device-confirmation-trusted-access`; automated verification is tracked
+  in its canonical changelog. It does not modify Community or SF Chat.
 - Operational evidence: Release Center closeout, server symlinks and read-only
   Production audit/acceptance evidence in the current handoff.
 - Canonical live release snapshot:
@@ -29,6 +33,7 @@
 | Subsystem | Status | Current fact | Remaining limit |
 | --- | --- | --- | --- |
 | Auth / owner identity | `BETA` | One canonical owner UUID is preserved across isolated environments; Telegram QR/one-tap confirmation uses the shared environment-routed bot flow. Post-revoke Google OAuth and Resend smoke passed on Canary and Production | Platform secrets have a canonical external storage contract; three older platform secrets still legally remain in `production-app.env` until separately migrated |
+| Device confirmation / trusted access | `IN DEVELOPMENT` | Every new unknown human browser/app access starts as a five-minute pending session. OTP is limited to confirmed Telegram or verified email; the user selects permanent client trust or access only for the current auth session. Machine → Client → Session grouping requires Connector hardware identity or attested pairing; unbound clients remain separate | Not present in the deployed beta.87 artifact. PR #278 carries per-head CI evidence; real-provider acceptance, manual visual acceptance, merge and Canary/Production remain separate gates |
 | Legacy UI / Telegram Mini App | `DEPRECATED` | Merged main serves Aurora only; legacy UI, Mini App, remote-access and tunnel routes fail with HTTP 410. Classic assets are available only in a separate localhost read-only Legacy Viewer. Telegram `/start` uses a normal URL button | beta.87 is live in Canary and Production; historical snapshots remain until owner review |
 | User entry and trial access | `BETA` | Anonymous preview access is removed. A verified new account receives one full seven-day product trial; owner extension records actor, reason and before/after history | Product access does not grant third-party market-data redistribution rights |
 | Admin / Release Center | `BETA` | A versioned release/change record is visible with title, summary, PRs, SHA, build/artifact, stage, checks, duration and environment identity. Production approval/promotion fails closed without title, summary, source SHA and verification PASS | beta.87 acceptance is recorded; any application change starts a new artifact cycle |

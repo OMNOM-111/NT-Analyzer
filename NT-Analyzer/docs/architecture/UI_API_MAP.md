@@ -30,7 +30,7 @@ Orchestrator — единым внутренним AI-шлюзом внутри 
 | AI Agents / API Keys | `/api/ai-agents`, usage, account/provider/role catalogs, DPAPI status, shared grant/budget totals | Add/Edit/Delete model, Test Connection, Enable/Disable, supported balance sync; transport/auth определяются автоматически, ключ возвращается только маской |
 | Новости | `/api/news`, `/api/news/live`, `/api/ai-lab/news-analysis` | read-only; официальный календарь, анализ Никиты, рекомендации, здоровье источников и приоритетные ленты |
 | TopStep | `/api/topstep/status` | read-only scaffold; live-действия принудительно отключены до отдельной валидации |
-| Telegram и вход | `/api/auth/status`, `/api/auth/login/*`, `/api/auth/profile`, `/api/auth/me`, `/api/telegram/status` | одноразовый Telegram-вход, ручная команда `/login КОД`, профиль, pairing, уведомления и отзыв сессий; секреты не возвращаются |
+| Telegram, вход и безопасность | `/api/auth/status`, `/api/auth/login/*`, `/api/auth/profile`, `/api/auth/me`, `/api/account/security`, `/api/account/{devices,machines,sessions}/*`, `/api/telegram/status` | новый human access: pending → OTP через Telegram/verified email → permanent или current-session-only; machine/client rename, раздельные session/client/machine revoke; секреты не возвращаются |
 | SF Chat (`BETA` в DEV-ветке) | `/api/community/v2/*`, совместимые `/api/community/*` Channels | профили/privacy, server-side feed/search/pagination, follow/block, реакции, комментарии, bookmarks, soft delete, жалобы/moderation; публикация завершённого Demo/Backtest result только через server-attested snapshot |
 | SF Chat (`BETA` в DEV-ветке) | `/api/sf-chat/*` + существующие `/api/ai-lab/orchestrator*` | единые human conversations/messages/attachments/unread/read/block enforcement и прежние AI conversations в общей оболочке; Community не хранит отдельные DM |
 | Виктор | `/api/ai-lab/orchestrator*`, `/api/vitek/*` | единый естественный диалог; status/time-windows, event scan, rest/resume, plans, tasks and incident decisions; в сообщении видны фактический агент, модель/provider и проверяемые action-status без скрытых рассуждений |
@@ -54,7 +54,16 @@ Orchestrator — единым внутренним AI-шлюзом внутри 
   запрещают новые сообщения немедленно, `Idempotency-Key` устраняет повторы.
   AI conversation endpoints не мигрированы и продолжают работать через
   прежний Orchestrator authority.
-
+- Pending session получает от `GET /api/auth/status` только минимальный
+  `device_access` bootstrap. До OTP точный allowlist включает
+  `/api/account/security/challenge`, `/challenge/resend`, `/challenge/confirm`,
+  `/api/account/devices/approve|reject` и `/api/auth/logout`; другие protected
+  endpoints отвечают `403 DEVICE_CONFIRMATION_REQUIRED`.
+- `GET /api/account/security` возвращает Machine → Client → Session только для
+  доказанных Connector/pairing связей, а unbound clients — отдельно. IP/VPN/UA
+  не являются machine identity. `POST /api/account/devices|machines/rename`
+  переименовывают user-owned сущность; session/client/machine revoke сохраняют
+  разные scopes.
 - `GET /api/vitek/status` и `GET /api/vitek/time-windows` возвращают
   безопасную owner-only проекцию состояния, активности агентов и рабочих окон.
   `POST /api/vitek/scan|events|rest|resume|plans|tasks` и
