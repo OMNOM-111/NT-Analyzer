@@ -1,9 +1,10 @@
 # 05. Auth, Users and Security
 
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
-- Last verified UTC: 2026-09-03T02:47:29Z
+- Last verified UTC: 2026-09-04T21:50:16Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Device-confirmation Development implementation SHA: `19e0f43a35bee5a2e396538962e8f24e92bed6ef` (PR #278; isolated branch; not deployed)
+- Local source verified SHA: 4ae766ea0c3258a8bb049644ac2afbba6cb89330
+- Unified Local accepted base: `0.10.0-beta.96`, PR #280, not deployed
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: PARTIAL
 
@@ -20,9 +21,14 @@
 
 | Provider | Status | Current state |
 | --- | --- | --- |
-| Telegram | `DONE` | Existing owner login/session works in isolated Canary and Production on beta.29. Canary reuses the existing bot through `[CANARY]` shared-webhook forwarding and its own queue/session state; no separate Canary bot is required. |
-| Google | `EXTERNAL BLOCKED` | code path exists, but Production OAuth client/provider configuration is not accepted live yet |
-| Email | `EXTERNAL BLOCKED` | code path exists, but Production transactional email provider is not accepted live yet; DEV test auth is not Production email acceptance |
+| Telegram | `BETA` in Unified Local | staged registration and existing shared-bot routing; contextual synthetic Preview passed. Earlier deployed owner-login evidence is historical, not repeated here |
+| Google | `BETA` in Unified Local | staged registration and contextual synthetic Preview passed; real-provider acceptance of the beta.96 build is separate |
+| Email | `BETA` in Unified Local | normal OTP state flow with Preview-only delivery passed; synthetic acceptance does not certify external delivery |
+
+Historical beta.79 records include Google/Resend post-rotation smoke. Earlier
+claims that Production has no provider configuration are stale. This slice
+does not inspect live credentials or repeat provider acceptance; use the
+environment's current release evidence before asserting live readiness.
 
 ## Account linking rules
 
@@ -52,7 +58,7 @@ Key admin capability names already in the contract: `admin.view`,
 `releases.rollback_production`, `environment.switch`, `docs.manage_global`,
 `docs.manage_workspace`.
 
-## Development candidate: registration and one trial clock
+## Unified Local beta.96: registration and active-use access
 
 - Anonymous visitors receive only the protected sign-in/registration surface;
   the former blurred application shell and "watch without sign-in" path are
@@ -60,14 +66,17 @@ Key admin capability names already in the contract: `admin.view`,
 - A new human account activates only after an identity provider has verified
   the subject, the required profile is complete and terms are accepted.
 - The verified account receives `full_control`, professional UX and exactly one
-  `trial_full` entitlement for seven days. Linking another identity or signing
-  in on another browser/device returns the existing clock and never restarts it.
+  `trial_full` starting grant of five hours of active use by default. Idle time
+  is not charged. Linking another identity or signing in on another client
+  preserves the same grant and consumption. Legacy calendar fields do not
+  define the active-use allowance.
 - Revoked, denied, blocked, deleted, owner and service accounts never receive
   an automatic trial through this path.
 - Trial expiry does not revoke the identity or sessions. Authorization falls
   back to the authenticated account baseline; provider setup remains reachable.
-- Owner-only `POST /api/owner/trial/extend` extends by whole days or an exact
-  future UTC date. Every grant/extension records actor, source, reason and
+- Owner-only `POST /api/owner/trial/extend` retains its calendar-extension
+  compatibility contract; it must not be confused with replenishing active-use
+  seconds. Every grant/extension records actor, source, reason and
   compact `before -> after` access history shown in the Admin user card.
 - Account activation and subscription persistence use an idempotent outbox
   marker. If the entitlement store is unavailable, session creation fails
@@ -81,13 +90,17 @@ Key admin capability names already in the contract: `admin.view`,
   version, VPN and approximate location are audit metadata, never proof of a
   machine or a grouping key.
 - A new unknown human Client creates a server-side pending Session with a
-  roughly five-minute deadline. Before confirmation, the global protected-route
+  two-minute deadline. Before confirmation, the global protected-route
   guard exposes only auth status, challenge/confirm/approve/resend/reject and
   logout; all other protected requests fail with
   `403 DEVICE_CONFIRMATION_REQUIRED`. Timeout invalidates the Session.
 - Device confirmation uses a single-use six-digit challenge, hashed at rest
   and bound to user, environment, Client, current Session, purpose and selected
   mode. Delivery choices are confirmed Telegram and verified email only.
+- A first device immediately after registration may consume the single-use
+  login proof, at most fifteen minutes old, for that same client/session.
+  The owner/user still chooses trust and confirms manually. Later unknown
+  clients and expired/replayed proof require normal OTP.
 - `permanent` trusts the Client until explicit revoke. `session` activates only
   the current auth Session, keeps the Client pending and uses a non-persistent
   browser cookie. There is no fixed 24-hour trust mode.
@@ -103,8 +116,8 @@ Key admin capability names already in the contract: `admin.view`,
 - Canary owner login is operational through the existing shared bot routing,
   while Canary DB, queue, sessions, cookies and browser storage stay isolated.
 - No separate Canary bot or second auth architecture is required.
-- Google and email must remain `EXTERNAL BLOCKED` in Production until their
-  external provider configurations exist.
+- Current live delivery was not re-verified in this task. Baseline synthetic
+  Preview evidence does not replace acceptance of the real target providers.
 
 ## Personal NinjaTrader security requirements
 
@@ -116,17 +129,15 @@ Key admin capability names already in the contract: `admin.view`,
 
 ## Current EXTERNAL BLOCKED / incomplete areas
 
-- Treat Production email login as incomplete until a real transactional backend is
-  clearly configured and accepted for the target environment.
-- Treat Production Google login as blocked until the real external OAuth client,
-  secret and callback configuration are accepted for Production.
+- Treat acceptance of real Google/email delivery for the new beta.96 build as
+  a separate environment gate; no current credentials were read by this task.
 - General new-login device confirmation and its protected-route guard are
-  Development-complete on the isolated branch. Treat fresh action-specific
+  integrated and browser-verified in Unified Local beta.96. Treat fresh action-specific
   step-up for every release-critical mutation as incomplete until that separate
   workflow is fully rolled out.
 - Treat wide public personal-NT onboarding as incomplete even though the model,
   endpoints and schema are already present.
-- Treat the new automatic-trial UX as Development-only until its PR/CI and
+- Treat the new active-use access UX as Development-only until its PR/CI and
   immutable Canary acceptance complete.
 
 ## Threat-model summary
@@ -140,9 +151,14 @@ Key admin capability names already in the contract: `admin.view`,
   with its own data root, cookie name and synthetic non-owner identity. It has
   no localhost-owner bypass, cannot open outbound connections, and is rejected
   fail-closed in Canary and Production.
+- Agent World reuses this identity, permission and device context. Its new
+  scoped flags do not grant capabilities, bypass pending-device access or
+  authorize provider/command use. No auth/security code changes in stages 0–1.
 
 ## Canonical evidence
 
+- [Current Agent World baseline](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md)
+- [Historical pre-foundation context](../archive/AGENT_WORLD_PRE_FOUNDATION_CONTEXT_2026-09-04.md)
 - [../adr/0002-unified-identity.md](../adr/0002-unified-identity.md)
 - [../adr/0003-trusted-devices-and-step-up.md](../adr/0003-trusted-devices-and-step-up.md)
 - [../adr/0004-admin-panel-and-capabilities.md](../adr/0004-admin-panel-and-capabilities.md)

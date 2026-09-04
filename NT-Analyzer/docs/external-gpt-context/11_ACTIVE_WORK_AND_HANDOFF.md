@@ -1,201 +1,123 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-04T19:05:50Z
+- Last verified UTC: 2026-09-04T22:37:13Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Unified Local implementation SHA: `42a99a85f164f69c6ddd0edf46859ef005e787e2`
-- Development branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`, not deployed
-- Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
-- Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`
-- Scope: beta.87 live baseline plus unified Local auth, Device Confirmation, SF Social, SF Chat and Owner Preview
-- Status: PARTIAL
+- Local source verified SHA: 3afb75c5c2d02aa07703eadf274a1c1006ae8ada
+- Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
+- Active branch: `codex/agent-world-foundation`, PR #281 stacked on `integration/stratforge-unified-local` (open PR #280)
+- Version: `0.10.0-beta.96`, `pre_release`, not deployed
+- Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
+- Scope: Agent World stages 0–1 and the accepted Unified Local baseline; deployment facts are inherited evidence
+- Status: IN DEVELOPMENT
 
-## Active Unified Local — beta.96
+## Current implementation checkpoint
 
-- The current Local build combines the rebuilt login/registration, proof-based
-  Device Confirmation, SF Social, SF Chat and isolated Owner Preview. The
-  StratForge handle selected at registration is the shared profile/social/chat
-  identity; there is no Community-side second registration or DM store.
-- Owner Preview remains an isolated loopback process with its own data root,
-  cookies and synthetic non-owner identity. It never turns the parent Local
-  runtime into a reduced sandbox. `Exit Preview` returned to the original owner
-  account and unchanged balance, workspace/runtime data and owner navigation in
-  the browser acceptance run; private Local values are intentionally omitted.
-- Preview registration is contextual rather than automatic. Profile,
-  Telegram, Google, e-mail, OTP and QR each expose their own local synthetic
-  action on the real screen. Terms, final profile creation, Device Confirmation
-  and permanent/session-only choice remain manual.
-- Synthetic actions reuse normal auth state: Telegram login challenge, Google
-  staged registration, e-mail OTP and `/api/auth/register/complete`. Provider
-  network effects are blocked; the Preview endpoint is `404` in ordinary
-  Local and unavailable in Canary/Production.
-- Evidence at implementation `42a99a85f164f69c6ddd0edf46859ef005e787e2`:
-  focused `173 passed`, full `2680 passed, 44 skipped`, Python/JavaScript/static
-  checks PASS, manual browser walkthrough of all providers, QR, both device
-  trust modes and Owner Local restore PASS, browser console errors 0.
-- No Agent World code or documents were changed by this Preview delta. Agent
-  World work starts only as a separate task after this gate and Git closeout.
+[AGENT_WORLD_IMPLEMENTATION_STATUS.md](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md)
+is the canonical current program handoff. It records base/current checkpoint,
+file ownership, flag state, tests and skips, rollback and the next safe step.
+The new slice uses a separate clean worktree and does not modify PR #280.
 
-## Active isolated development — Community / SF Chat
+Stage 0 verified an exact match to the accepted base. Stage 1 adds contracts,
+state machines, pure legacy projections, repository interfaces and scoped
+server-side flags. [ADR-0009](../adr/0009-agent-world-foundation.md) is proposed
+for review before stage-2 persistence. No new API, storage migration, Court,
+execution engine, Router selection or UI is activated. All ten flags default
+OFF; no enabled configuration is installed.
 
-- Worktree: isolated Community/SF Chat checkout; local absolute paths are intentionally omitted.
-- Branch: `codex/community-social-network`; implementation:
-  `27b4de3d65eb4e1d753302b90fec45c90a51765a`; PR #270.
-- Community owns profiles, privacy/social graph, feed/search/interactions,
-  moderation and existing Channels. SF Chat owns the only new human conversation
-  state. Community does not contain a second DM subsystem.
-- The SF Chat UI facade combines human conversations with existing AI
-  conversations; AI Orchestrator storage/routing remains unchanged.
-- Server-attested publishing currently covers completed Demo/Backtest results.
-  Strategy, Chart and Live result adapters remain visibly disabled.
-- The approved-reference presentation uses a compact social dock, dominant
-  rich-object feed, compact composer and full profile/wall panel. The latest
-  owner-review pass removes unused view icons, adds explicit Like/Comments/
-  Share/Bookmark actions, independent center/wall scrolling, a compact
-  profile-visibility dialog and a restrained cosmic SF Chat launcher. The latest
-  Orbital Glass pass turns the launcher into a full glass/cosmic shell with a
-  persistent desktop conversation rail, distinct human/AI bubbles, compact
-  header/composer and a mobile drawer. The final messenger pass moves incoming
-  avatars outside compact glass bubbles, keeps outgoing messages as right-side
-  bubbles, demotes rating/fulfillment fields into a real disclosure and
-  strengthens the restrained vector SF mark and launcher trajectory. The final
-  sidebar pass adds real-data
-  conversation search/count, All/Pinned/Recent views and the existing AI topic
-  create-flow without a parallel store or mock rows, while preserving the
-  existing Orchestrator history, unread/read, attachments and routing contracts.
-  The final orbital-launch pass connects the real desktop shell to its launcher
-  with a restrained light trajectory, keeps the launcher outside the panel and
-  docks one grouped real notice in the free lower rail. Mobile remains a
-  full-screen shell without the desktop decoration. Isolated browser QA
-  passed at desktop, tablet and mobile sizes without document-level horizontal
-  overflow or new console warnings/errors.
-- Production path uses fail-closed PostgreSQL documents plus migrations
-  `0020`/`0021` (allowlist, FK/index/FORCE-RLS mirrors). A checksum-confirmed,
-  backup-first idempotent legacy importer exists but was not run against any
-  environment.
-- PR #270 required CI reached `5/5 PASS` after the final sidebar pass at
-  `f464d069502a93c3d44c7de35c0cba3a2ba492e4`; merge still requires owner
-  approval.
-- No Backtest/Connector, market-data, trading, future `МИР АГЕНТОВ`, Canary or
-  Production action belongs to this branch.
-- Device-confirmation Development implementation SHA: `19e0f43a35bee5a2e396538962e8f24e92bed6ef` (PR #278; isolated branch; not deployed)
-- Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
-- Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`
-- Scope: beta.87 live baseline plus isolated Device Confirmation Development branch
-- Status: PARTIAL
+Local slice implementation is complete: 221 new contract/characterization
+tests, focused regression 654 passed, full pytest 2901 passed / 44 skipped,
+legacy runner 13/13 and Python/JS/static/context/496-file bundle gates PASS.
+The 44 skips are 41 PostgreSQL acceptance scenarios without test DSNs and
+three shell/POSIX scenarios; no skipped scenario is certified. The canonical
+status separates local implementation, Git/CI closeout and stage review.
 
-## Active isolated development — Device Confirmation / Trusted Access
+## Accepted Unified Local — beta.96
 
-- Branch: `codex/device-confirmation-trusted-access`; implementation
-  `19e0f43a35bee5a2e396538962e8f24e92bed6ef`; PR #278; not deployed.
-- The first unknown human browser/app Client receives a server-side pending
-  Session with a roughly five-minute deadline. A global guard blocks product
-  routes until a session-bound six-digit OTP is confirmed through Telegram or
-  verified email.
-- The user chooses permanent Client trust or access only for the current auth
-  Session. Session-only access is not a 24-hour grant and is not inherited by
-  the next login.
-- Security now exposes Devices, My sessions and Login history. Rename and
-  revoke actions distinguish Machine, Client and Session scope.
-- Machine grouping is proof-based: Connector hardware identity or attested
-  pairing only. IP, hostname, User-Agent, VPN/location and unsigned remote/AI
-  browser labels cannot create a Machine.
-- The branch intentionally leaves Community and SF Chat UI, routes, storage and
-  business logic unchanged. Shared auth/session changes are limited to the
-  confirmation gate and explicit exemptions for non-human development/service
-  sessions.
-- Canonical checklist and verification evidence:
-  [Device Confirmation Development record](../changelog/2026-09-02-device-confirmation-trusted-access.md).
+- Auth/registration, Device Confirmation, SF Social, SF Chat and Owner Preview
+  coexist in one build. Human identity and StratForge handle are shared.
+- Starting access is five hours of active use. Pending device confirmation is
+  two minutes, with permanent or current-session-only trust. The first device
+  can consume fresh single-use login proof; subsequent unknown clients use OTP.
+- Contextual Preview buttons replace credentials on the actual provider screen.
+  Terms, final registration and trust choices remain manual. Preview has
+  separate data/cookies and blocked external effects. Exit restores full owner
+  Local; no private owner values belong in this context pack.
+- Inherited evidence: Preview implementation `42a99a85f164f69c6ddd0edf46859ef005e787e2`,
+  closeout `4ae766ea0c3258a8bb049644ac2afbba6cb89330`; focused `173 passed`,
+  full `2680 passed, 44 skipped`, static/context/bundle PASS, manual provider,
+  QR/device/exit walkthrough PASS, PR #280 CI `5/5` success.
+- Skipped scenarios are unverified. New Agent World checks are reported
+  separately in the canonical status/change record.
+- SF Social owns profiles, feed, privacy, moderation and approved result posts.
+  SF Chat owns human conversations; the AI conversation authority is projected
+  through the same shell. Strategy/Chart/Live publishing adapters remain
+  `IN DEVELOPMENT`. The user-visible SF Social rename belongs to the later
+  navigation stage; compatible `community*` APIs remain.
 
-## Release closeout - beta.87 live
+## Dependency, review and CI
 
-- Current Aurora has no classic UI or Telegram Mini App navigation/transport.
-- Retired legacy, Mini App, remote-access and tunnel routes return HTTP 410.
-- Classic assets run only in a localhost-only read-only Legacy Viewer using an
-  isolated snapshot; current Telegram login, identity, bot and notifications
-  remain supported.
-- No historical report, audit record or user identity was deleted. Canary and
-  Production were not changed; their release identity below remains historical
-  operational truth until a separately approved promotion.
-- Release Center now requires and displays the canonical release/change record;
-  Production is fail closed without title, summary, source SHA and verification
-  PASS.
+The Agent World PR targets the open integration branch so its review contains
+only this slice. PR #280 must follow its own owner-approved merge process.
+After that, retarget/rebase the stack as appropriate and rerun applicable
+checks; do not infer that baseline CI certifies later commits.
 
-## Current checkpoint
+The existing Next Architecture CI supports manual dispatch on the task branch.
+The separate `ci` workflow runs only for main-targeting PRs. Record dispatched
+checks and merge-required checks separately; never describe absent checks as
+green. No workflow or branch-protection changes are part of this slice.
 
-| Field | Value |
+## Historical deployment identity
+
+The pack-wide `Verified against Git SHA` remains its shared deployment anchor;
+`Local source verified SHA` and the canonical status identify the separate
+Local implementation and accepted base. The validator's legacy `Current Git SHA` field below refers only
+to that deployment anchor, not to the Agent World branch.
+
+| Deployment metadata | Recorded value |
 | --- | --- |
-| Unified Local implementation | `42a99a85f164f69c6ddd0edf46859ef005e787e2` on `integration/stratforge-unified-local`; PR #280; `0.10.0-beta.96`; not deployed |
-| Current Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (deployed beta.87 baseline) |
-| Development Git implementation | `c0bcf7af1a460d52212a596d0cdcfc100aadfacb` on `codex/community-social-network`; PR #270; not deployed |
-| Deployed Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (beta.87) |
-| Current Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b`; deployed artifact is the same SHA |
-| Device-confirmation Development implementation | `19e0f43a35bee5a2e396538962e8f24e92bed6ef` on `codex/device-confirmation-trusted-access`; PR #278; not deployed |
-| Code change | PR #254 legacy isolation; PR #255 Telegram `/start` URL flow; PR #256 release-record visibility and gate |
-| Release | Production `0.10.0-beta.87`, state `production_live` |
-| Build | live `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; artifact `art_9ce9dbcb9a7a4fee9df6a54d40f29806` |
-| Archive / runtime hashes | archive `8052B7A5...BABE7D`, manifest `0E95CF8B...BCA4`; full values in the beta.87 changelog |
-| Canary | beta.87 accepted/ready |
-| Production | beta.87 same immutable artifact without rebuild, live/ready |
-| Release parity | Canary and Production report the same beta.87 artifact SHA256 |
-| Worker concurrency | `interactive_ai=4`, `chart=4`, `telemetry=2`, `maintenance=1` |
-| Canary idle result | CPU `83.711% → 4.839%`; total DB TX/s `155.378 → 28.700`; pickup p50/max `1.372/1.455 s` |
-| Production idle result | worker CPU `83.778% → 5.522%`; worker-attributable TX/s about `69.002 → 5.822`; pickup p50/max `1.392/1.468 s` |
-| Tests | legacy-isolation full regression `2430 passed, 34 skipped`; PR #255 focused `94 passed`; both merged PRs mandatory CI GREEN; beta.87 full suite `2449 passed, 32 skipped` |
-| Market-data and Connector baseline | preserved; accepted TopstepX and Connector functional paths remain current |
-| Secret rotation | completed for the two Google Client Secrets and two Resend keys; three older platform secrets remain in env until their separate migration |
+| Current Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (pack-wide deployment anchor) |
+| Local accepted base SHA | `4ae766ea0c3258a8bb049644ac2afbba6cb89330` |
 
-## Completed actions
+This task did not access Canary/Production. The last recorded operational
+snapshot remains beta.87:
+`8f42158661e8247832c90bea8fc4d9f0071e647b`,
+build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`,
+artifact `art_9ce9dbcb9a7a4fee9df6a54d40f29806`.
+Canary acceptance and same-artifact Production promotion are recorded in
+[the canonical beta.87 closeout](../changelog/2026-08-31-beta85-forward-only-promotion.md).
+These inherited facts are not a live re-verification or a release of beta.96.
 
-1. SERVER BACKTEST executes on VMNINJA, returns device aggregates and report UI
-   data, and no longer recalculates authoritative metrics from truncated trades.
-2. Cancel is cooperative and honest: `cancel_requested` persists until the
-   device reaches a safe boundary; late success remains `done` with race audit.
-3. Connector state presentation separates transport lease from confirmed
-   NinjaTrader live state; stale accounts are last-known and non-controllable.
-4. Worker idle scheduling and the later auth status hotspot are closed with
-   regression coverage and live evidence.
-5. Four platform secrets were rotated and post-revoke Google/Resend smoke
-   passed on both Canary and Production.
-6. Final repository housekeeping is in progress only for local dirty files,
-   stale Context Pack beta.61 text, old conflicting PRs, old worktrees and
-   historical stashes.
+The former isolated PR #270/#278 descriptions, earlier test counts, operational
+metrics, and `c9b2883` Preview snapshot are preserved in
+[pre-foundation historical context](../archive/AGENT_WORLD_PRE_FOUNDATION_CONTEXT_2026-09-04.md).
+They no longer define the current Local baseline.
 
-## Remaining boundaries, not blockers for this closeout
+## Remaining boundaries
 
-| Area | State | Boundary |
-| --- | --- | --- |
-| DB tx/s diagnostics path | missing | safe `pg_stat_database` diagnostics are not exposed in the app; do not search DSNs/secrets for this |
-| Cross-user shared owner feed | `EXTERNAL BLOCKED` | written provider/exchange distribution authority and per-user entitlement policy |
-| Public Connector installer | `EXTERNAL BLOCKED` | authorized Authenticode signing tool/material |
-| Legal package deployment | `IN DEVELOPMENT` | Official agreement `2026-08-30-v2`, public endpoint isolation, AI provenance policy and release governance are implemented in Development; immutable Canary/Production promotion remains separate. Live Trading is unavailable |
-| Community trusted object adapters | `IN DEVELOPMENT` | Demo/Backtest result snapshot is implemented; Strategy, Chart and Live result require their own server-side ownership adapters |
-| Community acceptance | `IN DEVELOPMENT` | Automated regression and isolated desktop/tablet/mobile browser QA are PASS; credentialed PostgreSQL tests, owner visual acceptance, owner-approved merge, clean-main integration and Canary/Production are not yet complete |
+- Stage-2 SQL/SQLite implementation and migrations wait for contract review.
+- Credentialed PostgreSQL, external-provider delivery, runtime restart/lease
+  acceptance and visual acceptance must be proved when those paths change;
+  pure contract tests do not certify them.
+- New AI features are `IN DEVELOPMENT`, not a usable Agent World product.
+- Shared owner-feed distribution remains `EXTERNAL BLOCKED` without authority.
+- Public Connector installer remains `EXTERNAL BLOCKED` on authorized signing.
+- Preserve market data, Charts, Connector, trading, Auth, devices and SF stores.
+- Version assignment, merge, signed artifact, Canary and Production are separate
+  owner-controlled stages. Local/CI completion never implies release approval.
 
-## Next development boundary
+## Next safe step
 
-Run credentialed PostgreSQL and owner visual acceptance when those gates are
-available, then merge PR #270 only after owner approval and clean-main
-integration. Any release must build one signed immutable artifact after merge,
-accept it on Canary and promote that exact artifact to Production. Preserve the
-accepted Connector, Backtest, market-data and AI Orchestrator baselines.
-| Device Confirmation acceptance | `IN DEVELOPMENT` | Automated Development verification is recorded in its changelog and PR #278 provides per-head CI evidence; real Telegram/email delivery, owner visual acceptance, merge and immutable Canary/Production promotion remain separate gates |
-
-## Next development boundary
-
-For Device Confirmation, require mandatory PR #278 checks plus owner
-visual/provider acceptance before an owner-approved merge. Any later release must build one
-signed immutable artifact after merge, accept it on Canary and promote that
-exact artifact to Production. The deployed beta.87 identity remains unchanged.
-Preserve the accepted Connector, Backtest, market-data and AI Orchestrator
-baselines.
+Review the verified foundation checkpoint and ADR-0009. After review,
+stage 2 implements scoped repositories and transactional events using the
+existing PostgreSQL/SQLite, idempotency, audit and worker foundations. Assign
+one writer to shared files and migration numbering in the canonical status.
 
 ## Canonical evidence
 
-- [beta.79 secret management and cancel closeout](../changelog/2026-08-29-beta79-secret-management-and-cancel-closeout.md)
-- [current clean closeout](../current/CLEAN_CLOSEOUT_HANDOFF.md)
-- [environments and release](04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md)
-- [AI agents and worker queues](07_AI_AGENTS_AND_AUTOMATION.md)
-- [market data and Connector](06_MARKET_DATA_TRADING_CONNECTOR.md)
-- [Community/SF Chat Development record](../changelog/2026-09-01-community-sf-chat-development.md)
-- [Device Confirmation Development record](../changelog/2026-09-02-device-confirmation-trusted-access.md)
+- [Foundation change record](../changelog/2026-09-04-agent-world-foundation.md)
+- [Preview closeout](../changelog/2026-09-04-beta96-visual-audit-and-first-device.md)
+- [Current status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md)
+- [Environments and release](04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md)
+- [AI agents and automation](07_AI_AGENTS_AND_AUTOMATION.md)
+- [Market data and Connector](06_MARKET_DATA_TRADING_CONNECTOR.md)
