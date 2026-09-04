@@ -2494,6 +2494,7 @@ def start_login(*, bot_username: str, ip: str, user_agent: str = "") -> Dict[str
         _cleanup(doc)
         doc["challenges"].append({
             "challenge_id": challenge_id, "code": code, "status": "created",
+            "kind": "provider_auth", "provider": "telegram", "purpose": "login",
             # The environment is part of the challenge, not just of the deep
             # link text, so a code scanned into the wrong bot/environment is
             # rejected by the store rather than by a string comparison.
@@ -4882,6 +4883,17 @@ def complete_registration(
             api_call=api_call, owner_chat_id=owner_chat_id,
             ip=ip, user_agent=user_agent,
         )
+        # The legacy profile endpoint intentionally leaves the approved
+        # challenge for its polling browser.  The rebuilt consolidated
+        # registration endpoint, however, must finish the same challenge and
+        # return the authenticated session just like e-mail and Google do.
+        if str(out.get("status") or "") == "login_approved":
+            out = create_session_for_challenge(
+                cid,
+                ip=ip,
+                user_agent=user_agent,
+                device_credential=device_credential,
+            )
 
     canonical = str((out.get("user") or {}).get("id") or "")
     with _LOCK:

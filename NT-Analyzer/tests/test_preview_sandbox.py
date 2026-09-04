@@ -148,21 +148,124 @@ def test_entry_token_is_single_use_and_control_token_is_constant_time_checked(pr
     assert preview_sandbox.control_authorized("x" * 64) is False
 
 
+def test_contextual_synthetic_identity_is_stable_and_preview_only(preview_env, monkeypatch):
+    first = preview_sandbox.synthetic_identity()
+    assert preview_sandbox.synthetic_identity() == first
+    assert first["handle"].startswith("test.")
+    assert first["email"].endswith("@preview.local")
+    assert first["telegram_username"].startswith("test_")
+
+    monkeypatch.setenv("STRATFORGE_PREVIEW_SANDBOX", "0")
+    with pytest.raises(preview_sandbox.PreviewSandboxError) as blocked:
+        preview_sandbox.synthetic_identity()
+    assert blocked.value.code == "preview_sandbox_disabled"
+
+
+def test_contextual_telegram_registration_uses_real_state_flow(preview_env):
+    preview_sandbox.activate_scenario(
+        "new_user", device_credential="preview-telegram-browser",
+    )
+    identity = preview_sandbox.synthetic_identity()
+    started = account_auth.start_login(
+        bot_username="stratforge_preview_bot",
+        ip="127.0.0.1",
+        user_agent="Preview Browser",
+    )
+    approved = preview_sandbox.approve_login_challenge(started["challenge_id"])
+    assert approved["status"] == "awaiting_profile"
+    assert account_auth.login_state(started["challenge_id"])["status"] == "awaiting_profile"
+
+    completed = account_auth.complete_registration(
+        method="telegram",
+        challenge_id=started["challenge_id"],
+        email=identity["email"],
+        handle=identity["handle"],
+        first_name=identity["first_name"],
+        last_name=identity["last_name"],
+        accept_terms=True,
+        ip="127.0.0.1",
+        user_agent="Preview Browser",
+        device_credential="preview-telegram-browser",
+        api_call=preview_sandbox.synthetic_telegram_api_call,
+        owner_chat_id="",
+    )
+    assert completed["status"] == "authenticated"
+    preview_sandbox.after_public_auth(completed)
+    context = account_auth.authenticate_session(completed["session_token"])
+    assert context["user"]["is_preview_user"] is True
+    assert context["user"]["is_owner"] is False
+    assert context["device_access"]["required"] is True
+    access = security_devices.current_session_access(
+        context["user_id"], context["session_id"],
+    )
+    assert access["fresh_signin_provider"] == "telegram"
+    assert access["code_required"] is False
+    calls = preview_sandbox.status()["state"]["synthetic_transport_calls"]
+    assert calls and {row["method"] for row in calls} == {"sendMessage"}
+
+
+def test_contextual_google_registration_stages_then_completes_normally(preview_env):
+    preview_sandbox.activate_scenario(
+        "new_user", device_credential="preview-google-browser",
+    )
+    identity = preview_sandbox.synthetic_identity()
+    staged = preview_sandbox.approve_google_identity(
+        "register",
+        ip="127.0.0.1",
+        user_agent="Preview Browser",
+        device_credential="preview-google-browser",
+    )
+    assert staged["status"] == "awaiting_registration"
+    assert staged["delivery"] == "preview_synthetic"
+    assert account_auth.registration_state(staged["registration_id"])["email"] == identity["email"]
+
+    completed = account_auth.complete_registration(
+        method="google",
+        challenge_id=staged["registration_id"],
+        handle=identity["handle"],
+        first_name=identity["first_name"],
+        last_name=identity["last_name"],
+        accept_terms=True,
+        ip="127.0.0.1",
+        user_agent="Preview Browser",
+        device_credential="preview-google-browser",
+        api_call=preview_sandbox.synthetic_telegram_api_call,
+        owner_chat_id="",
+    )
+    assert completed["status"] == "authenticated"
+    preview_sandbox.after_public_auth(completed)
+    context = account_auth.authenticate_session(completed["session_token"])
+    assert context["user"]["is_preview_user"] is True
+    assert context["user"]["is_owner"] is False
+    assert context["device_access"]["required"] is True
+    access = security_devices.current_session_access(
+        context["user_id"], context["session_id"],
+    )
+    assert access["fresh_signin_provider"] == "google"
+    assert access["code_required"] is False
+
+
 def test_new_user_uses_real_registration_then_real_pending_device_gate(preview_env):
     opened = preview_sandbox.activate_scenario(
         "new_user", device_credential="preview-browser-credential",
     )
     assert opened["authenticated"] is False
 
+    identity = preview_sandbox.synthetic_identity()
     started = account_auth.start_email_auth(
-        "preview.person@sandbox.stratforge.local",
+        identity["email"],
         ip="127.0.0.1", user_agent="Preview Browser",
     )
     assert started["delivery"] == "preview_synthetic"
-    verified = account_auth.verify_email_auth(
-        started["challenge_id"],
+    verified = account_auth.complete_registration(
+        method="email",
+        challenge_id=started["challenge_id"],
         code=started["test_code"],
-        profile={"first_name": "Preview", "last_name": "Person", "accept_terms": True},
+        email=identity["email"],
+        handle=identity["handle"],
+        first_name=identity["first_name"],
+        last_name=identity["last_name"],
+        accept_terms=True,
         ip="127.0.0.1", user_agent="Preview Browser",
         device_credential="preview-browser-credential",
     )

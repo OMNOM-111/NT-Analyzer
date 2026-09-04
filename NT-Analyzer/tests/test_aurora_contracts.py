@@ -1256,8 +1256,11 @@ def test_backtesting_strategy_dropdown_uses_authoritative_device_catalog():
 
 
 def test_preview_test_data_shortcuts_exist_only_inside_the_sandbox():
-    """The autofill strip is a Preview affordance and must never ship to a user."""
+    """Every shortcut is contextual, guarded, and asks the Preview backend."""
     ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+    preview = (ROOT / "app" / "preview_sandbox.py").read_text(encoding="utf-8")
+    server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
     bar = ui.split("function previewAutofillBar(", 1)[1][:900]
     assert "if (!previewSandboxActive()) return '';" in bar
     guard = ui.split("function previewSandboxActive()", 1)[1][:200]
@@ -1265,6 +1268,25 @@ def test_preview_test_data_shortcuts_exist_only_inside_the_sandbox():
     # The markup has exactly one source, so the guard cannot be bypassed.
     assert ui.count('class="preview-autofill"') == 1
     assert ui.count('data-preview-fill="') == 1
-    # Test identities are obviously fake and never reach a real address.
-    assert "@preview.local" in ui
+    # Identity and provider approvals come from control-cookie-protected Preview
+    # routes rather than a client-side master value or ordinary Local endpoint.
+    assert "previewSandboxIdentity" in ui and "previewSandboxIdentity" in api
+    assert "previewSandboxApproveLogin" in ui and "previewSandboxApproveLogin" in api
+    assert "previewSandboxApproveGoogle" in ui and "previewSandboxApproveGoogle" in api
+    assert "/api/dev/preview/google/approve" in server
+    assert "@preview.local" in preview
     assert "Данные ненастоящие" in ui
+    for label in (
+        "Заполнить тестовыми данными",
+        "Продолжить через тестовый Telegram",
+        "Продолжить через тестовый Google",
+        "Подставить тестовый e-mail",
+        "Подставить тестовый код",
+        "Подтвердить тестовым пользователем",
+    ):
+        assert label in ui
+    assert "Пройти регистрацию тестовыми данными" not in ui
+    assert "Пройти дальше автоматически" not in ui
+    assert "accept.checked = true" not in ui
+    assert "data-auth-external-telegram" in ui
+    assert "В Preview внешний Telegram отключён" in ui

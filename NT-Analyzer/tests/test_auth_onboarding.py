@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from app import account_auth, google_auth
+from app import account_auth, google_auth, security_devices
 
 
 OWNER_UUID = "00000000-0000-4000-8000-000000000999"
@@ -150,6 +150,58 @@ def test_email_registration_creates_the_account_only_at_the_consent_step(auth_st
     assert out["user"]["first_name"] == "Дмитрий"
     # An omitted family name is stored explicitly, never guessed.
     assert out["user"]["last_name"] == "—"
+
+
+def test_telegram_registration_completion_returns_the_authenticated_session(auth_store):
+    """The consolidated final step must not strand Telegram on polling state."""
+    started = account_auth.start_login(
+        bot_username="stratforge_test_bot", ip="127.0.0.1", user_agent="pytest",
+    )
+    with account_auth._LOCK:
+        doc = account_auth._read_doc()
+        opened = account_auth._claim_login_challenge(
+            doc,
+            code=started["code"],
+            uid=77,
+            sender={"username": "tg_new", "first_name": "New", "last_name": "Person"},
+            status=account_auth.LOGIN_OPENED,
+        )
+        assert opened is not None
+        status, _ = account_auth._apply_login_confirm(
+            doc,
+            challenge_id=started["challenge_id"],
+            actor_id=77,
+            allowed=True,
+            owner_chat_id="999",
+        )
+        account_auth._write_doc(doc)
+    assert status == "awaiting_profile"
+
+    telegram_calls = []
+    out = account_auth.complete_registration(
+        method="telegram",
+        challenge_id=started["challenge_id"],
+        email="tg.new@example.com",
+        handle="tg.new",
+        first_name="New",
+        last_name="Person",
+        accept_terms=True,
+        ip="127.0.0.1",
+        user_agent="pytest",
+        device_credential="telegram-registration-browser",
+        api_call=lambda method, payload: telegram_calls.append((method, payload)) or {},
+        owner_chat_id="999",
+    )
+    assert out["status"] == "authenticated"
+    assert out["user"]["handle"] == "tg.new"
+    context = account_auth.authenticate_session(out["session_token"])
+    assert context["device_access"]["required"] is True
+    access = security_devices.current_session_access(
+        context["user_id"], context["session_id"],
+    )
+    assert access["fresh_signin_provider"] == "telegram"
+    assert access["code_required"] is False
+    assert telegram_calls
 
 
 def test_registration_refuses_a_handle_that_is_already_taken(auth_store):

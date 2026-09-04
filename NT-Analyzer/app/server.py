@@ -46,7 +46,7 @@ from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Mapping, Optional, Tuple
 
 # Allow `python app/server.py` to import sibling module.
 if __package__ is None or __package__ == "":
@@ -4174,6 +4174,13 @@ class Handler(BaseHTTPRequestHandler):
         default_redirect = f"{proto}://{host}/api/auth/google/callback" if host else ""
         return str(body.get("redirect_uri") or google_auth.credentials().get("redirect_uri") or default_redirect)
 
+    @staticmethod
+    def _auth_transport_api_call() -> Callable[..., Any]:
+        """Use the real Telegram edge except inside the isolated Preview child."""
+        if runtime_env.preview_sandbox_enabled():
+            return preview_sandbox.synthetic_telegram_api_call
+        return telegram_service._api_call
+
     def _google_oauth_callback(self, qs: Dict[str, Any]) -> None:
         code = str((qs.get("code") or [""])[0] or "")
         state = str((qs.get("state") or [""])[0] or "")
@@ -4216,7 +4223,7 @@ class Handler(BaseHTTPRequestHandler):
                     accept_terms=bool(identity.get("accept_terms")),
                     ip=forwarded_ip or tunnel_ip,
                     user_agent=str(self.headers.get("User-Agent") or ""),
-                    api_call=telegram_service._api_call,
+                    api_call=self._auth_transport_api_call(),
                     owner_chat_id=str(os.environ.get(telegram_service.CHAT_ENV) or ""),
                 )
                 token = str(out.pop("session_token", ""))
@@ -4553,6 +4560,7 @@ class Handler(BaseHTTPRequestHandler):
         if body is None:
             return
         owner_id = str(os.environ.get(telegram_service.CHAT_ENV) or "").strip()
+        auth_api_call = self._auth_transport_api_call()
         tunnel_ip, forwarded_ip = self._request_ips()
         ip = forwarded_ip or tunnel_ip
         try:
@@ -4579,7 +4587,7 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/api/auth/profile":
                 out = account_auth.complete_profile(
                     str(body.get("challenge_id") or ""), body.get("profile") or body,
-                    api_call=telegram_service._api_call, owner_chat_id=owner_id,
+                    api_call=auth_api_call, owner_chat_id=owner_id,
                     ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
                 )
             elif path == "/api/auth/google/login/start":
@@ -4599,7 +4607,7 @@ class Handler(BaseHTTPRequestHandler):
                     email=body.get("email"),
                     accept_terms=bool(body.get("accept_terms")),
                     ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
-                    api_call=telegram_service._api_call, owner_chat_id=owner_id,
+                    api_call=auth_api_call, owner_chat_id=owner_id,
                     device_credential=self._device_credential(),
                 )
                 if out.get("status") == "authenticated":
@@ -4622,7 +4630,7 @@ class Handler(BaseHTTPRequestHandler):
                     magic_token=body.get("magic_token"),
                     profile=body.get("profile") or body,
                     ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
-                    api_call=telegram_service._api_call, owner_chat_id=owner_id,
+                    api_call=auth_api_call, owner_chat_id=owner_id,
                 )
                 if out.get("status") == "authenticated":
                     preview_sandbox.after_public_auth(out)
@@ -4657,7 +4665,7 @@ class Handler(BaseHTTPRequestHandler):
                     email_verified=True,
                     accept_terms=bool(body.get("accept_terms")),
                     ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
-                    api_call=telegram_service._api_call, owner_chat_id=owner_id,
+                    api_call=auth_api_call, owner_chat_id=owner_id,
                 )
                 if out.get("status") == "authenticated":
                     preview_sandbox.after_public_auth(out)
@@ -5204,6 +5212,32 @@ class Handler(BaseHTTPRequestHandler):
                     "ok": True,
                     "redirect_url": preview_sandbox.exit_url(),
                 })
+                return
+            if path == "/api/dev/preview/identity":
+                self._json(HTTPStatus.OK, {
+                    "ok": True, "identity": preview_sandbox.synthetic_identity(),
+                })
+                return
+            if path == "/api/dev/preview/telegram/approve":
+                self._json(HTTPStatus.OK, preview_sandbox.approve_login_challenge(
+                    body.get("challenge_id"),
+                ))
+                return
+            if path == "/api/dev/preview/google/approve":
+                tunnel_ip, forwarded_ip = self._request_ips()
+                out = preview_sandbox.approve_google_identity(
+                    body.get("intent"),
+                    ip=forwarded_ip or tunnel_ip,
+                    user_agent=str(self.headers.get("User-Agent") or ""),
+                    device_credential=self._device_credential(),
+                )
+                if out.get("status") == "authenticated":
+                    preview_sandbox.after_public_auth(out)
+                    self._set_session_cookie(
+                        str(out.pop("session_token")),
+                        persistent=bool(out.get("session_cookie_persistent")),
+                    )
+                self._json(HTTPStatus.OK, out)
                 return
             credential = account_auth.new_device_credential()
             if path == "/api/dev/preview/reset":
@@ -10473,6 +10507,12 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/dev/preview/new-user",
                 "/api/dev/preview/simulate-client",
                 "/api/dev/preview/exit",
+                # Synthetic answers for the steps that would need a real
+                # Telegram account or a real mailbox. Same control cookie,
+                # same sandbox-only gate as the rest.
+                "/api/dev/preview/identity",
+                "/api/dev/preview/telegram/approve",
+                "/api/dev/preview/google/approve",
             }
         ):
             self._preview_sandbox_control_post(path)

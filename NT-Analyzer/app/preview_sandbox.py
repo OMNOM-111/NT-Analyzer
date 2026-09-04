@@ -81,6 +81,9 @@ _STATE: Dict[str, Any] = {
     "dataset_ready": False,
     "dataset_errors": [],
     "promo_code": "",
+    "synthetic_identity": {},
+    "synthetic_telegram_id": 0,
+    "synthetic_transport_calls": [],
 }
 
 
@@ -497,6 +500,210 @@ def _session_row(doc: Dict[str, Any], session_id: str) -> Optional[Dict[str, Any
         ),
         None,
     )
+
+
+# This number lives only in the isolated Preview store.  Keep it well outside
+# the ordinary Telegram-id range used by fixtures and still below JavaScript's
+# exact-integer ceiling; the sandbox also refuses an owner collision.
+PREVIEW_TELEGRAM_ID_BASE = 9_700_000_000_000
+
+
+def _synthetic_identity_record() -> Dict[str, Any]:
+    """Return one stable provider identity for the current Preview generation."""
+    require_enabled()
+    with _LOCK:
+        existing = _STATE.get("synthetic_identity")
+        if isinstance(existing, dict) and existing.get("email"):
+            return dict(existing)
+        tag = secrets.token_hex(3)
+        names = [
+            ("Тестовый", "Пользователь"), ("Пробный", "Трейдер"),
+            ("Синтетик", "Демидов"), ("Демо", "Ивнев"), ("Проверка", "Сергеев"),
+        ]
+        first, last = names[secrets.randbelow(len(names))]
+        generation = max(1, int(_STATE.get("generation") or 1))
+        record = {
+            "handle": f"test.{tag}",
+            "first_name": first,
+            "last_name": last,
+            "email": f"test.{tag}@preview.local",
+            "telegram_username": f"test_{tag}",
+            "google_sub": f"preview-google-{_safe_id()[:12]}-{generation}-{tag}",
+        }
+        _STATE["synthetic_identity"] = record
+        _write_manifest()
+        return dict(record)
+
+
+def synthetic_identity() -> Dict[str, Any]:
+    """Plausible fake screen input, available only in the isolated sandbox."""
+    record = _synthetic_identity_record()
+    return {
+        key: record[key]
+        for key in ("handle", "first_name", "last_name", "email", "telegram_username")
+    }
+
+
+def _synthetic_telegram_id() -> int:
+    """A stable-per-sandbox Telegram id for the synthetic person."""
+    with _LOCK:
+        existing = int(_STATE.get("synthetic_telegram_id") or 0)
+        if existing:
+            return existing
+        value = PREVIEW_TELEGRAM_ID_BASE + secrets.randbelow(9_000_000_000)
+        _STATE["synthetic_telegram_id"] = value
+        _write_manifest()
+        return value
+
+
+def synthetic_telegram_api_call(
+    method: str, payload: Optional[Dict[str, Any]] = None, **_kwargs: Any,
+) -> Dict[str, Any]:
+    """Consume a Telegram notification locally without opening any transport.
+
+    Registration still executes the normal notification branch, but its final
+    external boundary is replaced inside Preview.  The process-wide socket
+    guard remains the independent fail-closed layer.
+    """
+    require_enabled()
+    clean_method = str(method or "").strip()
+    if not clean_method:
+        raise PreviewSandboxError(
+            "Synthetic Telegram method отсутствует.", 400,
+            code="preview_telegram_method_required",
+        )
+    with _LOCK:
+        calls = _STATE.setdefault("synthetic_transport_calls", [])
+        if not isinstance(calls, list):
+            calls = []
+            _STATE["synthetic_transport_calls"] = calls
+        calls.append({
+            "method": clean_method[:80],
+            "chat_id": str((payload or {}).get("chat_id") or "")[:40],
+            "at_utc": _now(),
+        })
+        del calls[:-20]
+        _write_manifest()
+    return {"message_id": 0, "preview_synthetic": True}
+
+
+def approve_google_identity(
+    intent: Any, *, ip: str, user_agent: str, device_credential: str,
+) -> Dict[str, Any]:
+    """Stand in for Google's verified callback, then reuse normal auth state."""
+    require_enabled()
+    mode = str(intent or "register").strip().lower()
+    if mode not in {"register", "login"}:
+        raise PreviewSandboxError(
+            "Некорректная цель synthetic Google.", 400,
+            code="preview_google_intent_invalid",
+        )
+    identity = _synthetic_identity_record()
+    if mode == "register":
+        staged = account_auth.stage_google_registration(
+            google_sub=identity["google_sub"],
+            google_email=identity["email"],
+            google_name=f"{identity['first_name']} {identity['last_name']}",
+            email_verified=True,
+            ip=ip,
+            user_agent=user_agent,
+        )
+        return {
+            **staged,
+            "ok": True,
+            "status": "awaiting_registration",
+            "delivery": "preview_synthetic",
+        }
+
+    # This mirrors the real OAuth callback: an unknown Google identity is
+    # staged for registration; a known identity completes a normal login.
+    try:
+        staged = account_auth.stage_google_registration(
+            google_sub=identity["google_sub"],
+            google_email=identity["email"],
+            google_name=f"{identity['first_name']} {identity['last_name']}",
+            email_verified=True,
+            ip=ip,
+            user_agent=user_agent,
+        )
+    except account_auth.AccountAuthError as exc:
+        if getattr(exc, "code", "") != "google_already_registered":
+            raise
+    else:
+        return {
+            **staged,
+            "ok": True,
+            "status": "awaiting_registration",
+            "delivery": "preview_synthetic",
+        }
+    return account_auth.login_via_google_identity(
+        google_sub=identity["google_sub"],
+        google_email=identity["email"],
+        google_name=f"{identity['first_name']} {identity['last_name']}",
+        email_verified=True,
+        accept_terms=False,
+        ip=ip,
+        user_agent=user_agent,
+        api_call=synthetic_telegram_api_call,
+        owner_chat_id="",
+        device_credential=device_credential,
+    )
+
+
+def approve_login_challenge(challenge_id: Any) -> Dict[str, Any]:
+    """Approve a waiting Telegram/QR login as the synthetic person.
+
+    This is the transition the bot performs when a real person taps
+    "Подтвердить вход": the challenge is opened by that account and then
+    confirmed by it. Nothing about the browser side is shortcut -- the page
+    still polls, still sees awaiting_profile or login_approved, and still
+    walks the same screens.
+    """
+    require_enabled()
+    cid = str(challenge_id or "").strip()
+    if not cid:
+        raise PreviewSandboxError("Не указан challenge.", 400, code="preview_challenge_required")
+    telegram_id = _synthetic_telegram_id()
+    owner_chat = str(os.environ.get("NTA_TELEGRAM_CHAT_ID") or "").strip()
+    if owner_chat and owner_chat == str(telegram_id):
+        raise PreviewSandboxError(
+            "Synthetic Telegram id совпал с владельцем.", 409,
+            code="preview_owner_resolution_blocked",
+        )
+    identity = synthetic_identity()
+    with account_auth._LOCK:
+        doc = account_auth._read_doc()
+        challenge = account_auth._challenge(
+            doc, challenge_id=cid,
+            statuses=(account_auth.LOGIN_PENDING, account_auth.LOGIN_OPENED),
+        )
+        if challenge is None:
+            raise PreviewSandboxError(
+                "Код входа истёк — обновите экран.", 409, code="preview_challenge_expired")
+        code = str(challenge.get("code") or "")
+        opened = account_auth._claim_login_challenge(
+            doc, code=code, uid=telegram_id,
+            sender={
+                "username": identity["telegram_username"],
+                "first_name": identity["first_name"],
+                "last_name": identity["last_name"],
+            },
+            status=account_auth.LOGIN_OPENED,
+        )
+        if opened is None:
+            raise PreviewSandboxError(
+                "Код входа истёк — обновите экран.", 409, code="preview_challenge_expired")
+        status, snapshot = account_auth._apply_login_confirm(
+            doc, challenge_id=cid, actor_id=telegram_id,
+            allowed=True, owner_chat_id="",
+        )
+        if snapshot.get("is_owner"):
+            raise PreviewSandboxError(
+                "Preview не может выступать владельцем.", 409,
+                code="preview_owner_resolution_blocked",
+            )
+        account_auth._write_doc(doc)
+    return {"ok": True, "status": status, "telegram_username": identity["telegram_username"]}
 
 
 def _seed_security_inventory(user_id: int) -> None:
@@ -1219,6 +1426,9 @@ def activate_scenario(scenario: Any, *, device_credential: str) -> Dict[str, Any
             "current_session_id": "",
             "dataset_ready": False,
             "dataset_errors": [],
+            "synthetic_identity": {},
+            "synthetic_telegram_id": 0,
+            "synthetic_transport_calls": [],
         })
         _write_manifest()
     if selected == "new_user":

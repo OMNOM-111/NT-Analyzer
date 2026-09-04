@@ -330,6 +330,11 @@
     previewSandboxNewUser: () => send('/api/dev/preview/new-user', 'POST', {}),
     previewSandboxSimulateClient: () => send('/api/dev/preview/simulate-client', 'POST', {}),
     previewSandboxExit: () => send('/api/dev/preview/exit', 'POST', {}),
+    // Sandbox-only: fake input for a screen, and the synthetic Telegram
+    // approval that stands in for tapping the bot button.
+    previewSandboxIdentity: () => send('/api/dev/preview/identity', 'POST', {}),
+    previewSandboxApproveLogin: (challengeId) => send('/api/dev/preview/telegram/approve', 'POST', { challenge_id: challengeId }),
+    previewSandboxApproveGoogle: (intent) => send('/api/dev/preview/google/approve', 'POST', { intent }),
     devBootstrapMint: () => send('/api/dev/bootstrap/mint', 'POST', {}),
     devServiceLogin: (actor) => send('/api/dev/service-login', 'POST', { actor }),
     adminReleases: (o) => getJSON('/api/admin/releases', o),

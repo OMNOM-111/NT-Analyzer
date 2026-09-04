@@ -4800,24 +4800,19 @@
   // for every walkthrough is the slowest part of reviewing the onboarding, so
   // the sandbox offers to invent them. This never renders outside Preview:
   // the guard is the same PREVIEW_CONTEXT the isolated child process sets.
-  const PREVIEW_NAMES = [
-    ['Тестовый', 'Пользователь'], ['Пробный', 'Трейдер'], ['Синтетик', 'Демидов'],
-    ['Демо', 'Ивнев'], ['Проверка', 'Сергеев'],
-  ];
   let PREVIEW_IDENTITY = null;
   function previewSandboxActive() {
     return !!(PREVIEW_CONTEXT && PREVIEW_CONTEXT.enabled);
   }
-  function previewIdentity(fresh) {
-    if (PREVIEW_IDENTITY && !fresh) return PREVIEW_IDENTITY;
-    const tag = Math.random().toString(36).slice(2, 8);
-    const name = PREVIEW_NAMES[Math.floor(Math.random() * PREVIEW_NAMES.length)];
-    PREVIEW_IDENTITY = {
-      handle: `test.${tag}`,
-      first_name: name[0],
-      last_name: name[1],
-      email: `test.${tag}@preview.local`,
-    };
+  async function previewIdentity() {
+    if (!previewSandboxActive()) throw new Error('Synthetic identity доступна только в Preview.');
+    if (PREVIEW_IDENTITY) return PREVIEW_IDENTITY;
+    const out = await API.http.previewSandboxIdentity();
+    const identity = (out && out.identity) || {};
+    if (!identity.handle || !identity.first_name || !identity.email) {
+      throw new Error('Preview не вернул test identity.');
+    }
+    PREVIEW_IDENTITY = identity;
     return PREVIEW_IDENTITY;
   }
   function previewAutofillBar(actions) {
@@ -5035,10 +5030,8 @@
             </button>
           </div>
           <div class="auth-hero-seal" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.75 4.75 5.5v6.1c0 4.4 3 8.1 7.25 9.65 4.25-1.55 7.25-5.25 7.25-9.65V5.5z"></path><path d="m8.9 11.9 2.2 2.2 4-4.3"></path></svg></div>
-          ${previewAutofillBar([['auto', 'Пройти регистрацию тестовыми данными']])}
           <p class="auth-hero-foot">Продолжая, вы сможете выбрать удобный способ входа<br>или создать новый профиль</p>
         </div>`, 'auth-stage-wide');
-      wirePreviewFill();
       const go = qsa('[data-auth-go]', content);
       go.forEach(btn => btn.onclick = () => (btn.dataset.authGo === 'login' ? renderLogin('') : renderStep1('')));
       focusFirst();
@@ -5060,7 +5053,8 @@
             </div>
             <div class="auth-qr-frame" data-auth-qr>${qrSvg || '<div class="auth-qr-loading"><span class="spinner"></span></div>'}${qrSvg ? `<span class="auth-qr-logo" aria-hidden="true"><img src="${BRAND_MARK}" alt=""></span>` : ''}</div>
           </div>
-          ${webFallback ? `<a class="auth-qr-fallback" href="${esc(webFallback)}" rel="noopener">Telegram не установлен? Открыть в браузере</a>` : ''}
+          ${webFallback ? `<a class="auth-qr-fallback" href="${esc(webFallback)}" rel="noopener" data-auth-external-telegram>Telegram не установлен? Открыть в браузере</a>` : ''}
+          ${previewAutofillBar([['telegram', 'Подтвердить тестовым пользователем']])}
           <div class="auth-or"><span>или</span></div>`
         : '';
       content.innerHTML = authShell(authCard(
@@ -5079,6 +5073,14 @@
             <button type="button" class="linklike auth-help" data-auth-help>Нужна помощь? <span class="auth-help-mark" aria-hidden="true">?</span></button>
           </span>
         </div>`), 'auth-stage-login');
+      previewChallengeId = String((qrLogin || {}).challenge_id || '');
+      wirePreviewFill();
+      if (previewSandboxActive()) {
+        qsa('[data-auth-external-telegram]', content).forEach(link => link.onclick = (event) => {
+          event.preventDefault();
+          toast('В Preview внешний Telegram отключён — используйте synthetic-кнопку на этом экране.');
+        });
+      }
       qs('[data-auth-back]', content).onclick = () => renderWelcome('');
       qs('[data-auth-promo]', content).onclick = () => renderWelcomeAccess({ asOverlay: true });
       qs('[data-auth-help]', content).onclick = () => toast('Вход подтверждается в Telegram, Google или по коду на e-mail. Коды действуют несколько минут.');
@@ -5148,11 +5150,20 @@
         `${mode === 'register' ? authSteps(2) : ''}
         <div class="auth-copy"><h1>Подтвердите вход в Telegram</h1><p>Наведите камеру телефона — откроется наш бот. Нажмите «Подтвердить вход», и эта страница продолжит сама. Отправлять контакт не нужно.</p></div>
         ${authError(message)}
-        ${qrSvg ? `<div class="auth-qr"><div class="auth-qr-frame solo" data-auth-qr>${qrSvg}</div><div class="auth-qr-life" data-auth-qr-life></div>${webFallback ? `<a class="auth-qr-fallback" id="auth-qr-web" href="${esc(webFallback)}" rel="noopener">Telegram не установлен? Открыть в браузере</a>` : ''}</div>` : ''}
-        ${botUrl ? `<a class="btn ghost auth-main-action" id="auth-open-telegram" href="${esc(botUrl)}" rel="noopener" data-autofocus>Открыть в Telegram</a><div class="auth-field-hint" id="auth-telegram-hint"></div>` : ''}
+        ${qrSvg ? `<div class="auth-qr"><div class="auth-qr-frame solo" data-auth-qr>${qrSvg}</div><div class="auth-qr-life" data-auth-qr-life></div>${webFallback ? `<a class="auth-qr-fallback" id="auth-qr-web" href="${esc(webFallback)}" rel="noopener" data-auth-external-telegram>Telegram не установлен? Открыть в браузере</a>` : ''}</div>` : ''}
+        ${botUrl ? `<a class="btn ghost auth-main-action" id="auth-open-telegram" href="${esc(botUrl)}" rel="noopener" data-autofocus data-auth-external-telegram>Открыть в Telegram</a><div class="auth-field-hint" id="auth-telegram-hint"></div>` : ''}
         ${manual ? `<details class="auth-manual-fallback"><summary>Другой способ · ввести код вручную</summary><div class="auth-note">Отправьте боту команду:<br><span class="mono">${esc(manual)}</span> <button class="btn sm ghost" id="auth-copy-code" type="button">Копировать</button></div></details>` : ''}
         <div class="auth-wait"><span class="spinner"></span><span>Ждём подтверждения…</span></div>
+        ${previewAutofillBar([['telegram', 'Продолжить через тестовый Telegram']])}
         <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+      previewChallengeId = String(login.challenge_id || '');
+      wirePreviewFill();
+      if (previewSandboxActive()) {
+        qsa('[data-auth-external-telegram]', content).forEach(link => link.onclick = (event) => {
+          event.preventDefault();
+          toast('В Preview внешний Telegram отключён — используйте synthetic-кнопку на этом экране.');
+        });
+      }
       qs('[data-auth-back]', content).onclick = () => (mode === 'login' ? renderLogin('') : renderStep1(''));
       const copy = qs('#auth-copy-code', content);
       if (copy) copy.onclick = async () => {
@@ -5166,6 +5177,10 @@
       const openTelegram = qs('#auth-open-telegram', content);
       if (openTelegram && appUrl) openTelegram.onclick = (event) => {
         event.preventDefault();
+        if (previewSandboxActive()) {
+          toast('В Preview внешний Telegram отключён — используйте synthetic-кнопку на этом экране.');
+          return;
+        }
         const hint = qs('#auth-telegram-hint', content);
         let handedOver = false;
         const noteHandover = () => { handedOver = true; };
@@ -5186,8 +5201,36 @@
     };
 
     // ---- shared: google -----------------------------------------------------
-    const startGoogle = async (mode) => {
+    // The browser would leave for accounts.google.com here. In Preview it
+    // stays, and the same screen offers the synthetic hand-off instead --
+    // so the step is still a step the person walks through themselves.
+    const renderGoogleWait = (mode, message) => {
+      stopPolling();
+      content.innerHTML = authShell(authCard(
+        `${mode === 'register' ? authSteps(2) : ''}
+        <div class="auth-copy"><h1>Продолжите через Google</h1><p>Мы откроем страницу Google. Подтвердите вход в своём аккаунте, и эта страница продолжит сама.</p></div>
+        ${authError(message)}
+        <button type="button" class="btn primary auth-main-action" data-auth-google-go data-autofocus>Открыть Google</button>
+        ${previewAutofillBar([['google', 'Продолжить через тестовый Google']])}
+        <div class="auth-foot-row center"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+      wirePreviewFill();
+      qs('[data-auth-back]', content).onclick = () => (mode === 'login' ? renderLogin('') : renderStep1(''));
+      qs('[data-auth-google-go]', content).onclick = () => {
+        if (previewSandboxActive()) {
+          toast('В Preview внешний Google отключён — используйте synthetic-кнопку ниже.');
+          return;
+        }
+        startGoogle(mode, true);
+      };
+      focusFirst();
+    };
+
+    const startGoogle = async (mode, confirmed) => {
       const flags = providerFlags();
+      // In Preview the person first reaches the real provider screen, then
+      // explicitly presses its separate synthetic credential action.
+      previewGoogleMode = mode;
+      if (previewSandboxActive() && !confirmed) { renderGoogleWait(mode, ''); return; }
       try {
         if (flags.googleTest) {
           if (mode === 'register') {
@@ -5321,58 +5364,81 @@
       focusFirst();
     };
 
-    // Preview only. Invents an identity, spends the sandbox's synthetic code
-    // for it and stops at the consent step with the box already ticked -- the
-    // person still presses "Создать профиль" and still chooses the trust mode,
-    // because those are the two decisions the walkthrough exists to look at.
-    const previewFillDraft = () => {
-      const identity = previewIdentity(true);
+    // Preview only. Synthetic actions replace provider credentials, never the
+    // surrounding screens, consent, final registration or device-trust choice.
+    let previewChallengeId = '';
+    let previewGoogleMode = 'register';
+    const previewFillDraft = async () => {
+      const identity = await previewIdentity();
       draft.handle = identity.handle;
       draft.first_name = identity.first_name;
       draft.last_name = identity.last_name;
       draft.email = identity.email;
-      draft.method = "email";
+      // The method stays the person's choice: filling in a name must not
+      // decide how they are going to prove who they are.
       return identity;
     };
-    const previewAutoRegister = async (button) => {
+    // The synthetic tap on the Telegram button. The page keeps polling and
+    // keeps walking its own screens; only the provider side is stood in for.
+    const previewApproveTelegram = async (button) => {
+      if (!previewChallengeId) { toast("Код входа ещё не готов — подождите секунду."); return; }
       if (button) button.disabled = true;
-      const identity = previewFillDraft();
       try {
-        const started = await API.http.authEmailStart({ email: identity.email });
-        draft.challenge_id = String(started.challenge_id || "");
-        draft.code = String(started.test_code || "");
-        draft.identity = identity.email;
-        if (!draft.code) { renderEmailCode("register", started, ""); return; }
-        renderStep3("");
-        const accept = qs("[data-auth-accept]", content);
-        if (accept) accept.checked = true;
+        await API.http.previewSandboxApproveLogin(previewChallengeId);
+        await check(previewChallengeId);
       } catch (error) {
         if (button) button.disabled = false;
-        renderStep1(authMessage(error, "Не удалось создать тестовые данные."));
+        toast(authMessage(error, "Synthetic Telegram не ответил. Обновите код."));
+      }
+    };
+    const previewApproveGoogle = async (button) => {
+      if (button) button.disabled = true;
+      try {
+        const out = await API.http.previewSandboxApproveGoogle(previewGoogleMode);
+        if (out.status === 'authenticated') { location.reload(); return; }
+        if (!out.registration_id) throw new Error('Google identity не подтверждена.');
+        draft.method = 'google';
+        draft.challenge_id = String(out.registration_id || '');
+        draft.email = String(out.email || '');
+        draft.identity = draft.email || 'Google';
+        if (previewGoogleMode === 'login') {
+          renderStep1('Google подтвердил личность — выберите имя пользователя StratForge.');
+        } else {
+          renderStep3('');
+        }
+      } catch (error) {
+        if (button) button.disabled = false;
+        renderGoogleWait(previewGoogleMode, authMessage(error, 'Synthetic Google не подтвердил вход.'));
       }
     };
     const wirePreviewFill = () => {
-      qsa("[data-preview-fill]", content).forEach(button => button.onclick = () => {
+      qsa("[data-preview-fill]", content).forEach(button => button.onclick = async () => {
         const action = String(button.dataset.previewFill || "");
-        if (action === "auto") { previewAutoRegister(button); return; }
-        if (action === "email") {
-          const identity = previewIdentity(false);
-          const field = qs("#auth-email-input", content);
-          if (field) { field.value = identity.email; field.focus(); }
-          return;
+        if (action === "telegram") { previewApproveTelegram(button); return; }
+        if (action === "google") { previewApproveGoogle(button); return; }
+        button.disabled = true;
+        try {
+          if (action === "email" || action === "tg-email") {
+            const identity = await previewIdentity();
+            const field = qs(action === "email" ? "#auth-email-input" : "#auth-tg-email", content);
+            if (field) { field.value = identity.email; field.focus(); }
+            return;
+          }
+          const identity = await previewFillDraft();
+          const set = (selector, value) => {
+            const field = qs(selector, content);
+            if (field) field.value = value;
+          };
+          set("#auth-handle", identity.handle);
+          set("#auth-first", identity.first_name);
+          set("#auth-last", identity.last_name);
+          const handle = qs("#auth-handle", content);
+          if (handle) handle.dispatchEvent(new Event("input"));
+        } catch (error) {
+          toast(authMessage(error, 'Не удалось получить synthetic identity.'));
+        } finally {
+          if (button.isConnected) button.disabled = false;
         }
-        const identity = previewFillDraft();
-        const set = (selector, value) => {
-          const field = qs(selector, content);
-          if (field) field.value = value;
-        };
-        set("#auth-handle", identity.handle);
-        set("#auth-first", identity.first_name);
-        set("#auth-last", identity.last_name);
-        const method = qs('[data-auth-method="email"]', content);
-        if (method) method.click();
-        const handle = qs("#auth-handle", content);
-        if (handle) handle.dispatchEvent(new Event("input"));
       });
     };
 
@@ -5407,7 +5473,7 @@
           ${methodBlock}
           <button class="btn primary auth-main-action" type="submit">Продолжить <span aria-hidden="true">&#8594;</span></button>
         </form>
-        ${previewAutofillBar([['fill', 'Заполнить тестовыми данными'], ['auto', 'Пройти дальше автоматически']])}
+        ${previewAutofillBar([['fill', 'Заполнить тестовыми данными']])}
         <div class="auth-foot-row center"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`), 'auth-stage-reg');
       wirePreviewFill();
       qs('[data-auth-back]', content).onclick = () => renderWelcome('');
@@ -5582,7 +5648,9 @@
           <div class="field"><label for="auth-tg-email">E-mail</label><input id="auth-tg-email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com" value="${esc(draft.email)}" data-autofocus></div>
           <button class="btn primary auth-main-action" type="submit">Продолжить <span aria-hidden="true">&#8594;</span></button>
         </form>
+        ${previewAutofillBar([['tg-email', 'Подставить тестовый e-mail']])}
         <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+      wirePreviewFill();
       qs('[data-auth-back]', content).onclick = () => renderStep1('');
       const form = qs('[data-auth-tg-email]', content);
       form.onsubmit = (event) => {
