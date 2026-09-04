@@ -23,7 +23,7 @@ merge, build, release and deployment require separate owner decisions.
 ## User result
 
 1. ✅ Первый неизвестный access создаётся как `pending`; backend сокращает его
-   TTL примерно до пяти минут.
+   TTL до двух минут (изначально пять; сокращено по замеру реального прохода).
 2. ✅ Доступ можно подтвердить как `permanent` или `session`. Варианта «24 часа»
    в новом контракте и UI нет.
 3. ✅ Код отправляется только через подтверждённый Telegram или verified email;

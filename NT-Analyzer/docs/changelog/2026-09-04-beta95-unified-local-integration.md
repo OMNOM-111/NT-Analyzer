@@ -16,7 +16,7 @@ Release impact: Только Local/Development. Canary и Production не изм
 
 **SF Social и SF Chat** из `codex/community-social-network` (PR #270) — уже находились в `main`: постоянная запись, раскрытое аудируемое удаление, страница компании, разделение уведомлений и мессенджера.
 
-**Device Confirmation / Trusted Access** из `codex/device-confirmation-trusted-access` (PR #278): pending-сессия на пять минут, OTP через подтверждённый Telegram или e-mail, постоянное доверие либо доступ только до конца сессии, Machine → Client → Session только при доказанной привязке.
+**Device Confirmation / Trusted Access** из `codex/device-confirmation-trusted-access` (PR #278): pending-сессия на две минуты, OTP через подтверждённый Telegram или e-mail, постоянное доверие либо доступ только до конца сессии, Machine → Client → Session только при доказанной привязке.
 
 **Owner Preview / Synthetic User Sandbox** (тот же PR): отдельный loopback-процесс с собственным data root, cookie namespace и synthetic identity, где владелец проходит продукт глазами обычного пользователя.
 

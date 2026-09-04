@@ -294,3 +294,18 @@ def test_social_accepts_every_handle_the_account_contract_allows(auth_store):
     # A value the account contract would never mint still falls back safely.
     assert community._normalise_username("", "sfp_abcdefghij").startswith("sf_")
     assert community._normalise_username(".bad", "sfp_abcdefghij").startswith("sf_")
+
+
+def test_pending_window_is_short_but_still_allows_one_resend(auth_store):
+    """The unconfirmed window closes fast without stranding a late code."""
+    from app import security_devices
+
+    assert security_devices.PENDING_SESSION_TTL_SEC == 120
+    # A resend costs the cooldown plus delivery and typing; if that no longer
+    # fits, the resend button becomes decoration.
+    assert (
+        security_devices.CHALLENGE_RESEND_COOLDOWN_SEC + 45
+        <= security_devices.PENDING_SESSION_TTL_SEC
+    )
+    # The OTP itself may live longer, but the session gate is what expires.
+    assert security_devices.PENDING_SESSION_TTL_SEC < security_devices.CHALLENGE_TTL_SEC

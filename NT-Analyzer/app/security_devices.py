@@ -64,7 +64,13 @@ CHALLENGE_MAX_ATTEMPTS = 5
 # A new login can do nothing except complete confirmation (or log out) during
 # this short server-side window. The regular session lifetime is restored only
 # after the OTP has been consumed successfully.
-PENDING_SESSION_TTL_SEC = 5 * 60
+#
+# Two minutes, not five: an unhurried pass — read the two choices, wait for the
+# code, type six digits — was measured at ~22 seconds, and the window still has
+# to cover one late code. A resend costs the 30-second cooldown plus delivery
+# and typing (~75 seconds), so two minutes leaves that path usable while
+# closing an unconfirmed session far sooner than before.
+PENDING_SESSION_TTL_SEC = 2 * 60
 CHALLENGE_RESEND_COOLDOWN_SEC = 30
 CHALLENGE_MAX_RESENDS = 3
 # Compatibility only: old trusted-device rows may still carry a sliding expiry
