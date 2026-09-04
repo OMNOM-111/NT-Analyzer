@@ -3,12 +3,19 @@ from __future__ import annotations
 
 import pytest
 
-from app import subscriptions
+from app import secure_store, subscriptions
 
 
 @pytest.fixture()
 def store(tmp_path, monkeypatch):
     monkeypatch.setattr(subscriptions, "_root", lambda: tmp_path)
+    # The entitlement store refuses to write without a protected-secret
+    # backend, which only exists on Windows; stand in for it as the other
+    # subscription suites do so this runs on every platform.
+    monkeypatch.setattr(secure_store, "available", lambda: True)
+    monkeypatch.setattr(secure_store, "backend_name", lambda: "test DPAPI")
+    monkeypatch.setattr(secure_store, "_protect", lambda value: value[::-1])
+    monkeypatch.setattr(secure_store, "_unprotect", lambda value: value[::-1])
     monkeypatch.delenv("STRATFORGE_TRIAL_ACTIVE_SECONDS", raising=False)
     subscriptions._clear_doc_cache()
     (tmp_path / "data").mkdir(exist_ok=True)
