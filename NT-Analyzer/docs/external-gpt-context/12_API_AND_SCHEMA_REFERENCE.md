@@ -1,9 +1,10 @@
 # 12. API and Schema Reference
 
 - Context Pack document: 12_API_AND_SCHEMA_REFERENCE.md
-- Last verified UTC: 2026-09-03T02:47:29Z
+- Last verified UTC: 2026-09-04T21:50:16Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Development branch implementation SHAs: `a2cc5e72a610d22605a1af0aaacfcb03341456d5` (PR #270, Community/SF Chat) and `19e0f43a35bee5a2e396538962e8f24e92bed6ef` (PR #278, device confirmation); both are now integrated in `integration/stratforge-unified-local`; not deployed
+- Local source verified SHA: 4ae766ea0c3258a8bb049644ac2afbba6cb89330
+- Unified Local accepted base: beta.96, PR #280; separate Agent World stages 0–1 slice; not deployed
 - Scope: Compact index of important endpoint families, entities and capability names
 - Status: DONE
 
@@ -45,6 +46,13 @@
 | Community / SF Chat relational mirrors | `sf_community_*`, `sf_chat_*` with FK/index/FORCE RLS | `0021_community_sf_chat_relational_mirrors.sql` |
 
 ## Capability names worth recognizing
+
+Agent World stages 0–1 add only Python contracts/protocols and pure projections
+under `app/ai_control_center/`. No `/api/ai/*` route or SQL migration is added.
+The existing sequence ends at `0022_community_post_private_visibility.sql`.
+Future repository implementations require explicit tenant/user scope and atomic
+entity/event/idempotency commit; see [ADR-0009](../adr/0009-agent-world-foundation.md).
+New flag definitions are default OFF and do not create capabilities.
 
 | Capability | Meaning |
 | --- | --- |

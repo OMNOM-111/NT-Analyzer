@@ -1,9 +1,10 @@
 # 03. Architecture and Data Model
 
 - Context Pack document: 03_ARCHITECTURE_AND_DATA_MODEL.md
-- Last verified UTC: 2026-09-01T00:00:00Z
+- Last verified UTC: 2026-09-04T21:50:16Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Development branch implementation SHA: `a2cc5e72a610d22605a1af0aaacfcb03341456d5` (PR #270; not deployed)
+- Local source verified SHA: 4ae766ea0c3258a8bb049644ac2afbba6cb89330
+- Unified Local accepted base: beta.96, open PR #280; Agent World foundation is a separate branch
 - Scope: Current components, trust boundaries, entities and key flows
 - Status: DONE
 
@@ -66,7 +67,7 @@ flowchart LR
 | TopstepX | independent read-only chart/history/realtime source | authoritative for chart feed when selected; never for order execution |
 | Owner market-data gateway | one authorized Production hub plus authenticated Canary/Development consumers and same-origin browser fan-out | owns the only direct owner loginKey/SignalR lifecycle; never grants unrelated-user redistribution rights |
 | Local runtime stores | local-first queues, DPAPI secrets, runtime snapshots | current dev/desktop data path |
-| PostgreSQL + RLS schema | additive authoritative server-side model for users, workspaces, releases and documents | target server authority; schema already exists in migrations |
+| PostgreSQL + RLS schema | authoritative server-side model for users, workspaces, jobs, commands, budgets, releases and documents | existing server authority; new Agent World repository implementations are deferred |
 | Governance store | `data/governance/*` editable source, `docs/governance/*` rendered layer | authoritative for governance texts and laws |
 | Community | network-wide safe profiles, privacy/social graph, feed/search/interactions, Channels and moderation | `app/community.py`; no human DM authority |
 | SF Chat | one human conversation/read/unread/attachment state plus a facade over unchanged AI conversations | `app/sf_chat.py` for human state; existing AI Orchestrator remains authoritative for AI state |
@@ -107,11 +108,24 @@ flowchart LR
 - Development remains local-first: DPAPI, local files and runtime directories are
   still active for desktop/operator workflows.
 - The server-side authoritative model is additive, not destructive: migrations
-  `0001` through `0021` retain compatibility documents while adding UUID
+  `0001` through `0022` retain compatibility documents while adding UUID
   identities, devices, release/doc records and constrained Community/SF Chat
   mirrors. Explicit Canary/Production never fall back to local Community JSON.
 - Governance laws are not stored in workspace docs; they live in the dedicated
   governance store and rendered docs pipeline.
+
+## Agent World stages 0–1
+
+The separate `app/ai_control_center/` foundation defines Persona, Agent Role,
+Provider Account, Model, Intent, Task, Contribution, Decision, Execution,
+Outcome and Memory contracts. It contains no persistence or application route.
+Explicit scope, immutable references, lifecycle validation and pure legacy
+projections prepare the next slice without changing legacy writes or statuses.
+Repository protocols reuse existing PostgreSQL/SQLite, jobs, commands, budgets,
+idempotency and audit. Stage 2 selects concrete storage after contract review.
+All Agent World flags default OFF and require environment plus workspace opt-in.
+See [ADR-0009](../adr/0009-agent-world-foundation.md) and
+[the implementation status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 
 ## Key data flows
 

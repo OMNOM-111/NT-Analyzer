@@ -1,10 +1,11 @@
 # 07. AI Agents and Automation
 
 - Context Pack document: 07_AI_AGENTS_AND_AUTOMATION.md
-- Last verified UTC: 2026-08-27T22:33:11Z
+- Last verified UTC: 2026-09-04T21:50:16Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
+- Local source verified SHA: 4ae766ea0c3258a8bb049644ac2afbba6cb89330
 - Scope: Agent hierarchy, AI Lab, queues, workspace boundaries and model-usage rules
-- Status: DONE
+- Status: IN DEVELOPMENT
 
 ## Agent hierarchy
 
@@ -24,6 +25,7 @@ above Vitek.
 
 | Surface | Status | Current fact |
 | --- | --- | --- |
+| Agent World | `IN DEVELOPMENT` | stages 0–1 contracts/flags/projections only, no runtime consumer; all new paths disabled |
 | Vitek / default assistant | `DONE` | default owner-facing operator, incidents, tasks, plans and summaries |
 | Management tiers | `DONE` | manager / deputy / secretary tiers exist with different execution posture |
 | Specialist personas | `DONE` | Marina, Tolik, Nikita and Ivan are stable named personas with scoped domains |
@@ -61,6 +63,23 @@ above Vitek.
 2. Fallback to paid/cloud models is explicit, budgeted and auditable.
 3. AI output does not bypass product permissions or release gates.
 4. Plans and dialogue are not equivalent to execution approval.
+
+## Agent World foundation contract
+
+Persona, Agent Role, Provider Account and Model have separate identities.
+The current AI Agents registry is a provider/model/account registry; its keys
+do not become personas or permissions. Pure projections require explicit scope
+and retain source IDs/statuses; unknown legacy states require review.
+Intent/Task/Contribution/Decision/Execution/Outcome/Memory are typed contracts,
+not running services. Existing workers, commands, budgets and permissions stay
+authoritative. There is no new Court, execution engine, router switch or UI.
+
+The server-side flag registry uses a false-by-default environment gate plus an
+exact workspace opt-in; no owner bypass or cross-environment inheritance.
+No configuration is installed. Future paid/background steps must recheck access
+and budgets; five-hour active-use access is not always-on automation authority.
+Review [ADR-0009](../adr/0009-agent-world-foundation.md) before stage-2 storage.
+Current checkpoint: [Agent World status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 
 ## What external GPT should not over-assume
 

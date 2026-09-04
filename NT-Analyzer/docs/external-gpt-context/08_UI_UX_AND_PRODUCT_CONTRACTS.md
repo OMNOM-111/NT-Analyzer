@@ -1,9 +1,10 @@
 # 08. UI, UX and Product Contracts
 
 - Context Pack document: 08_UI_UX_AND_PRODUCT_CONTRACTS.md
-- Last verified UTC: 2026-09-03T02:47:29Z
+- Last verified UTC: 2026-09-04T21:50:16Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Device-confirmation Development implementation SHA: `19e0f43a35bee5a2e396538962e8f24e92bed6ef` (PR #278; isolated branch; not deployed)
+- Local source verified SHA: 4ae766ea0c3258a8bb049644ac2afbba6cb89330
+- Unified Local accepted base: beta.96, open PR #280; not deployed
 - Scope: Major UI areas, visibility rules and important UX contracts
 - Status: DONE
 
@@ -17,10 +18,12 @@
 | Finance / Performance | ordinary user + owner | `DONE` | P&L, trades, accounting overlays, filtered analysis |
 | Strategies | ordinary user + owner | `PARTIAL` | profiles, lifecycle, cleanup, archive, portfolio cells |
 | AI Lab | ordinary user + owner | `PARTIAL` | orchestration, runs, cloud-agent settings, compile/backtest loop |
-| AI Agents / API Keys | owner + allowed operators | `PARTIAL` | local provider configuration, role routes, budgets, masked secrets only |
+| AI Agents / API Keys | owner | `BETA` in Local | current owner-only provider registry; using premium models does not grant access to provider settings |
+| AI Center | future permitted workspace members | `IN DEVELOPMENT` | stages 0–1 foundation only; UI flag OFF and no new page/nav in this slice |
+| SF Social / SF Chat | permitted users + owner | `BETA` in Unified Local | social network and human/AI messenger are integrated; technical `community*` compatibility remains |
 | News | ordinary user + owner | `DONE` | calendar events, live headlines, provider status |
 | Telegram / auth entry | ordinary user + owner | `PARTIAL` | login, profile, pairing, notifications, session revoke |
-| Device confirmation / Security | ordinary user + owner | `IN DEVELOPMENT` | first-access choice, six-digit Telegram/email confirmation, explicit success state, and separate Devices / My sessions / Login history views |
+| Device confirmation / Security | ordinary user + owner | `BETA` in Unified Local | two-minute pending window, permanent/session choice, narrow fresh first-device proof, OTP for later clients, success and separate Devices / My sessions / Login history |
 | Legacy Viewer | owner local reference | `AVAILABLE` | separate localhost-only read-only classic viewer over an isolated data snapshot |
 | Documents | ordinary user + owner | `PARTIAL` | governance/public docs with actor/reason aware saves and revisions |
 | Environment Switcher | owner / developer / admin | `PARTIAL` | separate-origin navigation by capability, not an in-place backend swap |
@@ -33,6 +36,10 @@
 - Owner/developer/admin surfaces still require server-side capability checks.
 - Production does not rely on mock data.
 - Documents UI must preserve public/internal metadata separation.
+- The existing social page still carries SF Chat labels in some places. The
+  intended product name is SF Social; the messenger is SF Chat. Label/nav changes
+  belong to the later AI Center navigation stage, not the foundation slice.
+- No UI assets or accepted visual compositions change in Agent World stages 0–1.
 
 ## Important UX rules
 
@@ -73,7 +80,7 @@
   whole-document overflow; two-client MES/MNQ and MNQ 15m charts retained
   colored live markers. Broader visual taste/design acceptance remains a
   separate owner decision, not a functional blocker.
-- Documents UI uses a mission-led CHARTER, legal DRAFT badges and compact
+- Documents UI uses a mission-led CHARTER, official versioned legal documents and compact
   red/green semantic revisions with details collapsed.
 - Aurora is the only current UI. `/ui/legacy/*` returns HTTP 410; Legacy Viewer
   is not a rollback or current-product fallback.

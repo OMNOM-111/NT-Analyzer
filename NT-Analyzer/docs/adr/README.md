@@ -1,7 +1,7 @@
 # Архитектурные решения следующего этапа
 
 
-Статус всех перечисленных ADR: `Принято`. Основание — поручение owner «StratForge — реализация следующей архитектуры» от 2026-08-01. Изменение принятого решения требует нового ADR, а не молчаливой правки реализации.
+ADR 0001–0008: `Принято`. Основание — поручения owner по следующей архитектуре и изоляции окружений. ADR 0009 — `Proposed`, конкретный контракт Agent World для review перед storage-этапом. Изменение принятого решения требует нового ADR, а не молчаливой правки реализации.
 
 | ADR | Решение |
 |---|---|
@@ -12,5 +12,7 @@
 | [0005](0005-immutable-release-promotion.md) | Immutable artifact, Canary и blue-green promotion |
 | [0006](0006-ninjatrader-ownership-and-resource-lease.md) | Личный и общий NinjaTrader, агенты и lease |
 | [0007](0007-document-governance.md) | Документы, области изменения и история поправок |
+| [0008](0008-environment-cookie-and-storage-isolation.md) | Изоляция cookies и browser storage по окружениям |
+| [0009](0009-agent-world-foundation.md) | Agent World: сущности, статусы, scope, events, repositories и default-off flags (`Proposed`) |
 
 Главный аудит и поэтапный план: [STRATFORGE_NEXT_ARCHITECTURE_AUDIT_AND_IMPLEMENTATION_PLAN_2026-08-01.md](../current/STRATFORGE_NEXT_ARCHITECTURE_AUDIT_AND_IMPLEMENTATION_PLAN_2026-08-01.md).

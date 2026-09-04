@@ -1,12 +1,12 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
-- Last verified UTC: 2026-09-04T19:05:50Z
+- Last verified UTC: 2026-09-04T21:50:16Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Unified Local implementation SHA: `42a99a85f164f69c6ddd0edf46859ef005e787e2`
+- Local source verified SHA: 4ae766ea0c3258a8bb049644ac2afbba6cb89330
+- Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`, not deployed
-- Development branch implementation SHA: `27b4de3d65eb4e1d753302b90fec45c90a51765a` (PR #270; final SF Chat messenger presentation pass; not deployed)
-- Device-confirmation Development implementation SHA: `19e0f43a35bee5a2e396538962e8f24e92bed6ef` (PR #278; isolated branch; not deployed)
+- Agent World branch: `codex/agent-world-foundation`, separate stages 0–1 slice on the accepted base
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production
@@ -17,19 +17,21 @@
 
 - Repository evidence: legacy isolation PR #254 and Telegram URL-flow PR #255
   merged with mandatory CI GREEN on `main`.
-- Development evidence: isolated branch `codex/community-social-network`,
-  implementation `27b4de3d65eb4e1d753302b90fec45c90a51765a` in PR #270;
-  full regression is `2503 passed, 35 skipped`; isolated browser QA covers
-  desktop, tablet and mobile geometry without document-level overflow, with
-  independent center/wall scrolling and no console warnings/errors.
-- Device-confirmation Development evidence: isolated branch
-  `codex/device-confirmation-trusted-access`; automated verification is tracked
-  in its canonical changelog. It does not modify Community or SF Chat.
+- Earlier isolated PR #270/#278 implementation and test snapshots are
+  [historical context](../archive/AGENT_WORLD_PRE_FOUNDATION_CONTEXT_2026-09-04.md);
+  they are integrated into the accepted Unified Local base.
 - Unified Local evidence: auth/onboarding, Device Confirmation, SF Social,
   SF Chat and isolated Owner Preview coexist in `0.10.0-beta.96`. Contextual
   Preview registration verification is `173 passed` focused and `2680 passed,
   44 skipped` full, plus a manual browser walkthrough of Telegram, Google,
   e-mail/OTP, QR, permanent/session-only trust and Owner Local restore.
+- Accepted Preview closeout is `4ae766ea0c3258a8bb049644ac2afbba6cb89330`,
+  clean and synchronized, PR #280 CI five checks successful. The 44 skipped
+  tests are unverified scenarios; this evidence belongs to the baseline.
+- Agent World stages 0–1 are tracked in
+  [the canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
+  Definitions/adapters/flags are being added without connecting runtime paths;
+  all flags default OFF. Current-slice results are recorded separately.
 - Operational evidence: Release Center closeout, server symlinks and read-only
   Production audit/acceptance evidence in the current handoff.
 - Canonical live release snapshot:
@@ -39,6 +41,7 @@
 
 | Subsystem | Status | Current fact | Remaining limit |
 | --- | --- | --- | --- |
+| Agent World | `IN DEVELOPMENT` | Separate foundation branch: ADR, entities, state contracts, pure projections, repository interfaces and scoped default-off flags | Implementation gap: no persistence, new API, workers, UI, Court or execution; stage-2 storage waits for contract review |
 | Auth / owner identity | `BETA` in Unified Local | `0.10.0-beta.96` has one three-step registration contract for Telegram, Google and e-mail, a stable StratForge handle shared by profile/SF Social/SF Chat, final clickwrap consent and the existing shared environment-routed provider architecture. Owner Preview uses the same state transitions with sandbox-only synthetic credentials | Not present in the deployed beta.87 artifact; live real-provider acceptance and immutable Canary/Production promotion remain separate gates |
 | Device confirmation / trusted access | `BETA` in Unified Local | Every new unknown human browser/app access starts as a two-minute pending session. The first freshly authenticated device can choose permanent trust or current-session-only without a redundant second OTP; later unknown clients still use confirmed Telegram or verified e-mail. Machine → Client → Session grouping remains proof-based | Integrated and browser-verified in Local beta.96, but not present in deployed beta.87; real-provider acceptance and release promotion remain separate gates |
 | Legacy UI / Telegram Mini App | `DEPRECATED` | Merged main serves Aurora only; legacy UI, Mini App, remote-access and tunnel routes fail with HTTP 410. Classic assets are available only in a separate localhost read-only Legacy Viewer. Telegram `/start` uses a normal URL button | beta.87 is live in Canary and Production; historical snapshots remain until owner review |
@@ -53,14 +56,14 @@
 | Documents | `BETA` | Current handoff and Context Pack identify beta.87 as live; hidden Markdown amendment blocks are removed and AI provenance is infrastructure-only or absent | beta.87 exact operational identity is recorded in its changelog closeout |
 | Legal | `AVAILABLE` | One official onboarding agreement `2026-08-30-v2` is the sole versioned clickwrap; related official policies are readable informational documents; owner configuration is absent from both document API namespaces | Live Trading remains unavailable pending separate release and legal requirements |
 
-## Current operational identity
+## Last recorded operational identity (not re-verified in this task)
 
 | Environment | Version | Git SHA | Build ID | Runtime artifact SHA256 | Status |
 | --- | --- | --- | --- | --- | --- |
 | Canary | `0.10.0-beta.87` | `8f42158661e8247832c90bea8fc4d9f0071e647b` | `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z` | same accepted beta.87 artifact | accepted / ready |
 | Production | `0.10.0-beta.87` | same | same | same | live / ready |
 
-Both environments run the same accepted beta.87 immutable artifact
+The last deployment record identifies the same accepted beta.87 immutable artifact in both environments:
 `art_9ce9dbcb9a7a4fee9df6a54d40f29806`, promoted to Production without a
 rebuild. The exact archive and manifest SHA256 are recorded in the canonical
 beta.87 changelog closeout.
