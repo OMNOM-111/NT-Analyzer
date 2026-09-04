@@ -3496,6 +3496,7 @@ def create_session_for_challenge(challenge_id: str, *, ip: str, user_agent: str,
             "source": source,
             "device_confirmation_exempt": False,
         }
+        _stamp_identity_proof(session, source)
         doc["sessions"].append(session)
         challenge["status"] = "consumed"
         _append_login(user, source=source, ip=ip, user_agent=user_agent,
@@ -4141,6 +4142,29 @@ def unlink_identity_self(user_id: Any, *, identity_id: str) -> Dict[str, Any]:
     return {"ok": True, "user": public, "provider": provider}
 
 
+# Sources whose handshake proves the person's identity at the moment the
+# session is created: Telegram approval, Google sign-in, an e-mail one-time
+# code, or the code spent to finish registration. A session from one of these
+# carries the proof for a short while, and the first device confirmation may
+# lean on it instead of asking for a second code minutes later.
+IDENTITY_VERIFIED_SOURCES = frozenset({
+    "telegram_login", "telegram_qr_login", "google_login",
+    "email_otp_login", "email_otp_link", "email_verified_registration",
+    "registration",
+})
+
+
+def _stamp_identity_proof(row: Dict[str, Any], source: str) -> None:
+    """Record when and how this session proved the identity behind it."""
+    name = str(source or "").strip().lower()
+    # Every provider handshake ends in a "<provider>_login" source; the explicit
+    # set covers the registration paths that spell their source differently.
+    if not name.endswith("_login") and name not in IDENTITY_VERIFIED_SOURCES:
+        return
+    row["identity_verified_at_utc"] = _now_iso()
+    row["identity_provider"] = name.split("_", 1)[0]
+
+
 def create_session_for_user(
     user_id: Any,
     *,
@@ -4194,6 +4218,7 @@ def create_session_for_user(
             "source": str(source or "desktop_session")[:40],
             "device_confirmation_exempt": not bool(device_confirmation_required),
         }
+        _stamp_identity_proof(row, str(source or ""))
         if impersonator_owner_id:
             row["impersonator_owner_id"] = int(impersonator_owner_id)
             row["impersonation_started_at_utc"] = _now_iso()

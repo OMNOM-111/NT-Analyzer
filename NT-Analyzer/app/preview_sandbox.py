@@ -765,6 +765,10 @@ def _start_runtime_clock(dirs: List[Path]) -> None:
                 if not targets:
                     return
                 _touch_runtime_heartbeat(targets)
+                try:
+                    _seed_security_inventory_when_ready()
+                except Exception:
+                    pass
                 _RUNTIME_CLOCK_STOP.wait(20.0)
                 if _RUNTIME_CLOCK_STOP.is_set():
                     return
@@ -930,7 +934,7 @@ def _seed_chat(user: Dict[str, Any], workspace: Dict[str, Any]) -> None:
         raise
 
 
-def ensure_synthetic_dataset(user_id: int) -> Dict[str, Any]:
+def ensure_synthetic_dataset(user_id: int, *, include_security: bool = True) -> Dict[str, Any]:
     require_enabled()
     user = _mark_preview_user(int(user_id or 0))
     with account_auth._LOCK:
@@ -1083,10 +1087,17 @@ def ensure_synthetic_dataset(user_id: int) -> Dict[str, Any]:
         market_events.write_news_json()
     except Exception as exc:
         errors.append(f"calendar:{type(exc).__name__}")
-    try:
-        _seed_security_inventory(user_id)
-    except Exception as exc:
-        errors.append(f"security_inventory:{type(exc).__name__}")
+    if include_security:
+        try:
+            _seed_security_inventory(user_id)
+        except Exception as exc:
+            errors.append(f"security_inventory:{type(exc).__name__}")
+    else:
+        # A person who just registered has one client and it is still
+        # pending. Example devices arrive once they confirm it, so the
+        # first confirmation is the genuine first one.
+        with _LOCK:
+            _STATE["security_inventory_pending"] = True
     try:
         in_app_notifications.record(
             "Preview sandbox готов",
@@ -1141,7 +1152,56 @@ def after_public_auth(result: Dict[str, Any]) -> None:
             "current_session_id": str(context.get("session_id") or ""),
         })
         _write_manifest()
-    ensure_synthetic_dataset(uid)
+    ensure_synthetic_dataset(uid, include_security=False)
+
+
+def _own_client_confirmed(user_id: int) -> bool:
+    """True once this account has confirmed a client of its own."""
+    try:
+        with account_auth._LOCK:
+            doc = account_auth._read_doc()
+            user = account_auth._user(doc, int(user_id))
+            if not user:
+                return False
+            canonical = account_auth._user_uuid(user)
+            for row in security_devices._devices(doc):
+                if not isinstance(row, dict):
+                    continue
+                if str(row.get("user_uuid") or "") != canonical:
+                    continue
+                if str(row.get("status") or "") == security_devices.STATUS_TRUSTED:
+                    return True
+                if str(row.get("confirmed_at_utc") or ""):
+                    return True
+            # Session-only trust leaves the client pending on purpose; the
+            # confirmation still happened, and it is recorded on the session.
+            for row in doc.get("sessions") or []:
+                if not isinstance(row, dict) or row.get("revoked"):
+                    continue
+                if int(row.get("user_id") or 0) != int(user_id):
+                    continue
+                if str(row.get("device_confirmed_at_utc") or ""):
+                    return True
+    except Exception:
+        return False
+    return False
+
+
+def _seed_security_inventory_when_ready() -> None:
+    """Called from the sandbox clock; seeds the examples exactly once."""
+    with _LOCK:
+        user_id = int(_STATE.get("current_user_id") or 0)
+        pending = bool(_STATE.get("security_inventory_pending"))
+    if not user_id or not pending:
+        return
+    if not _own_client_confirmed(user_id):
+        return
+    try:
+        _seed_security_inventory(user_id)
+    except Exception:
+        return
+    with _LOCK:
+        _STATE["security_inventory_pending"] = False
 
 
 def activate_scenario(scenario: Any, *, device_credential: str) -> Dict[str, Any]:

@@ -5121,3 +5121,314 @@ html[data-orch-skin] .orch-fab:focus-visible {
   font: inherit; font-size: 9.5px; font-weight: 700; cursor: pointer;
 }
 .community-correction-target button:hover { color: #d5ecff; }
+
+/* ===========================================================================
+   Visual audit pass: login, registration and device confirmation aligned to
+   the approved reference screens. Sizes, weights and spacing below are the
+   measured design, not taste; the wording and the state machine are unchanged.
+   =========================================================================== */
+
+/* ---- login: a wider stage, a larger headline ------------------------------ */
+.auth-stage-login { width: min(100%, 760px); }
+.auth-stage-login .auth-copy h1 { font-size: clamp(26px, 3.1vw, 40px); margin-bottom: 10px; }
+.auth-stage-login .auth-copy p { font-size: clamp(14px, 1.2vw, 17px); margin-bottom: 24px; }
+.auth-stage-login .auth-card-lux { padding: 30px clamp(22px, 3.4vw, 44px) 24px; border-radius: 26px; }
+
+/* The QR sits on the card itself, split from its explanation by a hairline. */
+.auth-qr-panel {
+  display: flex; align-items: center; gap: clamp(18px, 3vw, 44px);
+  margin: 0 0 20px; padding: 4px 2px 0; border: 0; background: none;
+}
+.auth-qr-panel .auth-qr-copy { flex: 1 1 auto; gap: 8px; padding-right: clamp(14px, 3vw, 34px); border-right: 1px solid rgba(126,160,255,.16); }
+.auth-qr-panel .auth-qr-copy strong { font-size: 20px; letter-spacing: -.01em; }
+.auth-qr-panel .auth-qr-copy > span { font-size: 14.5px; line-height: 1.5; color: rgba(190,203,238,.7); }
+.auth-qr-badge {
+  width: 68px; height: 68px; margin-bottom: 12px; border-radius: 17px;
+  background: rgba(30,60,120,.34); color: #7fc0ff;
+}
+.auth-qr-badge svg { width: 34px; height: 34px; }
+.auth-qr-panel .auth-qr-frame {
+  position: relative; width: min(230px, 46%); padding: 13px; border-radius: 20px;
+  box-shadow: 0 0 0 1px rgba(126,160,255,.42), 0 0 42px rgba(80,130,255,.34), 0 22px 48px rgba(4,8,24,.6);
+}
+.auth-qr-logo {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  display: grid; place-items: center; width: 19%; height: 19%; border-radius: 7px; background: #fff;
+}
+.auth-qr-logo img { width: 100%; height: 100%; object-fit: contain; }
+.auth-qr-life { color: rgba(150,170,215,.6); font-size: 11.5px; }
+.auth-qr-fallback { display: block; margin: 0 0 18px; font-size: 12px; text-align: center; }
+.auth-or { margin: 0 0 22px; }
+
+.auth-method { min-height: 62px; padding: 11px 16px; gap: 16px; border-radius: 15px; font-size: 17px; font-weight: 600; }
+.auth-method-icon { width: 48px; height: 48px; border-radius: 13px; }
+.auth-method-icon svg { width: 26px; height: 26px; }
+.auth-method.telegram .auth-method-icon { background: linear-gradient(160deg, #35a7ff, #1f78d8); color: #fff; }
+.auth-method.google .auth-method-icon { background: #fff; }
+.auth-method.google .auth-method-icon svg { width: 24px; height: 24px; }
+.auth-method-label { display: flex; flex-direction: column; gap: 2px; }
+.auth-method-note { color: rgba(160,178,220,.62); font-size: 11px; font-style: normal; font-weight: 500; letter-spacing: .04em; }
+.auth-method-go { font-size: 19px; }
+
+.auth-foot-row.center { justify-content: center; }
+.auth-foot-right { display: inline-flex; align-items: center; gap: 18px; }
+.auth-promo-link { opacity: .72; font-size: 12px !important; }
+.auth-help { display: inline-flex; align-items: center; gap: 7px; }
+.auth-help-mark {
+  display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%;
+  border: 1px solid rgba(126,160,255,.42); font-size: 11px; line-height: 1;
+}
+
+/* ---- registration: step marker, fields, method cards ---------------------- */
+.auth-steps.bar { flex-direction: column; gap: 12px; margin-bottom: 22px; }
+.auth-step-caption { color: rgba(206,218,250,.9); font-size: 14px; }
+.auth-step-track { display: flex; align-items: center; gap: 10px; }
+.auth-step-bar { width: 68px; height: 5px; border-radius: 3px; background: rgba(126,160,255,.2); }
+.auth-step-bar.on { background: linear-gradient(90deg, #35a7ff, #a36eff); }
+.auth-steps:not(.bar) .auth-step-label { display: inline-flex; align-items: center; gap: 12px; padding: 8px 16px; font-size: 13px; }
+.auth-steps:not(.bar) .auth-step-dots { display: inline-flex; align-items: center; gap: 7px; }
+
+.auth-cosmos .field label { font-size: 13px; margin-bottom: 7px; }
+.auth-handle-input > span {
+  width: 46px; min-height: 50px; border-radius: 12px 0 0 12px; color: rgba(150,175,225,.75);
+}
+.auth-handle-input > span svg { width: 19px; height: 19px; }
+.auth-cosmos .field input { min-height: 50px; font-size: 14.5px; }
+.auth-inline-divider {
+  display: flex; align-items: center; gap: 14px; margin: 10px 0 2px;
+  color: rgba(190,203,238,.72); font-size: 13px;
+}
+.auth-inline-divider::before, .auth-inline-divider::after { content: ""; flex: 1; height: 1px; background: rgba(126,160,255,.18); }
+.auth-method-grid { gap: 14px; }
+.auth-method-card { gap: 12px; padding: 18px 10px 16px; border-radius: 15px; font-size: 14px; font-weight: 600; }
+.auth-method-card .auth-method-icon { width: 44px; height: 44px; border-radius: 50%; background: rgba(30,60,120,.34); }
+.auth-method-card .auth-method-icon svg { width: 26px; height: 26px; }
+.auth-method-card.telegram .auth-method-icon { background: linear-gradient(160deg, #35a7ff, #1f78d8); color: #fff; }
+.auth-method-card.google .auth-method-icon { background: #fff; }
+.auth-method-card.on { border-color: rgba(126,190,255,.72); background: rgba(24,40,84,.78); box-shadow: 0 0 0 1px rgba(126,190,255,.28), 0 0 26px rgba(70,130,255,.2); }
+.auth-method-card.email.on { border-color: rgba(163,110,255,.7); box-shadow: 0 0 0 1px rgba(163,110,255,.3), 0 0 26px rgba(120,80,255,.2); }
+
+/* ---- registration: the closing summary and consent ------------------------ */
+.auth-summary { padding: 2px 18px; border-radius: 16px; }
+.auth-summary > div { padding: 15px 0; }
+.auth-summary dt { display: flex; align-items: center; gap: 12px; font-size: 14px; }
+.auth-summary-icon { display: grid; place-items: center; width: 22px; height: 22px; color: rgba(140,180,255,.8); }
+.auth-summary-icon svg { width: 20px; height: 20px; }
+.auth-summary dd { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-size: 14.5px; }
+.auth-summary dd small { color: rgba(160,178,220,.6); font-size: 11.5px; }
+.auth-terms-box { max-height: 186px; padding: 16px 18px; border-radius: 16px; scrollbar-width: thin; scrollbar-color: rgba(126,160,255,.34) transparent; }
+.auth-terms-box::-webkit-scrollbar { width: 6px; }
+.auth-terms-box::-webkit-scrollbar-thumb { border-radius: 6px; background: rgba(126,160,255,.34); }
+.auth-terms-box strong { font-size: 15px; margin-bottom: 10px; }
+.auth-terms-box p + p { margin-top: 10px; }
+.auth-terms-clause { color: rgba(160,178,220,.62) !important; }
+.auth-terms-accept { align-items: center; gap: 12px; margin: 16px 0 14px; font-size: 13.5px; }
+.auth-terms-accept input { position: absolute; width: 20px; height: 20px; margin: 0; opacity: 0; }
+.auth-check {
+  flex: 0 0 auto; display: grid; place-items: center; width: 21px; height: 21px; border-radius: 6px;
+  border: 1px solid rgba(126,160,255,.5); background: rgba(10,15,32,.8); transition: background .14s ease, border-color .14s ease;
+}
+.auth-check::after {
+  content: ""; width: 11px; height: 6px; border-left: 2px solid #fff; border-bottom: 2px solid #fff;
+  transform: rotate(-45deg) translate(1px, -1px); opacity: 0; transition: opacity .14s ease;
+}
+.auth-terms-accept input:checked + .auth-check { border-color: transparent; background: linear-gradient(135deg, #35a7ff, #4a7dff); }
+.auth-terms-accept input:checked + .auth-check::after { opacity: 1; }
+.auth-terms-accept input:focus-visible + .auth-check { outline: 3px solid rgba(120,180,255,.45); outline-offset: 2px; }
+.auth-full-terms { display: flex; align-items: center; justify-content: center; gap: 9px; }
+.auth-full-terms svg { width: 17px; height: 17px; }
+.auth-cosmos .auth-main-action { min-height: 52px; font-size: 15px; }
+
+/* ---- device confirmation: first login ------------------------------------ */
+.device-shield-art { display: block; width: 118px; margin: 0 auto 18px; }
+.device-shield-art svg { width: 100%; height: auto; filter: drop-shadow(0 14px 30px rgba(40,90,200,.32)); }
+.device-confirmation-heading h1 { font-size: clamp(26px, 3.6vw, 34px); }
+.device-confirmation-heading p:not(.device-confirmation-kicker) { font-size: 14.5px; }
+.device-access-summary.compact { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: center; gap: 4px 10px; max-width: 590px; padding: 10px 16px; text-align: center; }
+.device-access-summary.compact strong { font-size: 13px; }
+.device-trust-choices { gap: 18px; }
+.device-trust-choice { min-height: 0; gap: 12px; padding: 20px 20px 18px; border-radius: 18px; }
+.device-trust-choice.permanent { border-color: rgba(52,211,153,.4); background: rgba(52,211,153,.07); }
+.device-trust-choice.session { border-color: rgba(123,92,255,.42); background: rgba(123,92,255,.08); }
+.device-trust-choice:hover { transform: none; }
+.device-choice-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; }
+.device-trust-choice strong { font-size: 16.5px; }
+.device-trust-choice.permanent strong { color: #4ade9b; }
+.device-trust-choice.session strong { color: #b39dff; }
+.device-choice-icon { flex: 0 0 auto; width: 42px; height: 42px; font-size: 22px; }
+.device-trust-choice > span { color: var(--tx-2); font-size: 13px; line-height: 1.55; }
+.device-choice-action {
+  width: 100%; min-height: 46px; margin-top: 6px; border: 0; border-radius: 12px;
+  color: #fff; font-size: 14px; font-weight: 650; cursor: pointer; transition: filter .16s ease;
+}
+.device-choice-action:hover:not(:disabled) { filter: brightness(1.08); }
+.device-choice-action:disabled { opacity: .45; cursor: not-allowed; }
+.device-choice-action.permanent { background: linear-gradient(180deg, #22a86f, #178d5b); }
+.device-choice-action.session { background: linear-gradient(180deg, #7b5cff, #6540e6); }
+.device-choice-action:focus-visible { outline: 3px solid rgba(120,180,255,.55); outline-offset: 2px; }
+.device-pending-footer { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 22px; font-size: 13px; }
+.device-pending-mark { display: inline-grid; place-items: center; color: var(--tx-3); }
+.device-pending-mark svg { width: 17px; height: 17px; }
+.device-pending-footer strong { color: #ff9f43; font-size: 14px; }
+
+/* ---- device confirmation: the code ---------------------------------------- */
+.device-channel { flex-direction: row; align-items: center; gap: 12px; padding: 13px 15px; border-radius: 14px; }
+.device-channel-icon { flex: 0 0 auto; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; background: rgba(30,60,120,.4); color: #7fc0ff; }
+.device-channel-icon svg { width: 21px; height: 21px; }
+.device-channel[data-device-channel="telegram"] .device-channel-icon { background: linear-gradient(160deg, #35a7ff, #1f78d8); color: #fff; }
+.device-channel-copy { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.device-channel-copy strong { font-size: 14px; }
+.device-channel-copy span { color: var(--tx-3); font-size: 11.5px; }
+.device-channel.on { box-shadow: 0 0 0 1px var(--brand-line); }
+.device-code-form > label { text-align: center; font-size: 13px; }
+.device-code-inputs { gap: 11px; }
+.device-code-warning {
+  display: flex; align-items: center; gap: 10px; max-width: 590px; margin: 16px auto 0;
+  padding: 12px 14px; border: 1px solid var(--line); border-radius: 13px;
+  background: color-mix(in srgb, var(--bg-3) 70%, transparent); color: var(--tx-2); font-size: 12.5px; text-align: left;
+}
+.device-code-warning svg { flex: 0 0 auto; width: 20px; height: 20px; color: #7fc0ff; }
+.device-resend { font-size: 13px; }
+
+/* ---- device confirmation: confirmed --------------------------------------- */
+.device-success-seal {
+  display: grid; place-items: center; width: 64px; height: 64px; margin: 0 auto 16px; border-radius: 50%;
+  border: 1px solid rgba(52,211,153,.6); color: var(--ok); background: rgba(52,211,153,.12);
+  box-shadow: 0 0 34px rgba(52,211,153,.18);
+}
+.device-success-seal svg { width: 30px; height: 30px; }
+.device-success-card { display: block; padding: 16px 18px; border-radius: 16px; }
+.device-success-head { display: flex; align-items: center; gap: 14px; }
+.device-success-icon { flex: 0 0 auto; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; background: rgba(30,60,120,.4); color: #7fc0ff; }
+.device-success-icon svg { width: 24px; height: 24px; }
+.device-success-name { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 0; text-align: left; }
+.device-success-name strong { font-size: 15px; }
+.device-success-name span { color: var(--tx-2); font-size: 12.5px; }
+.device-success-name small { color: var(--tx-3); font-size: 11px; }
+.device-success-uses { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.device-success-uses p { margin: 0 0 10px; color: var(--tx-2); font-size: 12.5px; text-align: left; }
+.device-success-use {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 11px;
+  background: color-mix(in srgb, var(--bg-2) 70%, transparent); color: var(--tx); font-size: 13px;
+}
+.device-success-use + .device-success-use { margin-top: 8px; }
+.device-enter { min-height: 50px; margin-top: 18px; background: linear-gradient(90deg, #35a7ff, #a36eff); border: 0; color: #fff; font-weight: 650; }
+
+@media (max-width: 780px) {
+  .auth-qr-panel { flex-direction: column; align-items: stretch; }
+  .auth-qr-panel .auth-qr-copy { padding-right: 0; border-right: 0; align-items: center; text-align: center; }
+  .auth-qr-panel .auth-qr-frame { width: min(220px, 72%); }
+  .auth-step-bar { width: 54px; }
+  .device-trust-choices { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Registration: the reference labels the fields in sentence case, at reading
+   size, and pins the forward arrow to the edge of the primary button. */
+.auth-cosmos .field label { text-transform: none; letter-spacing: 0; font-size: 14.5px; font-weight: 500; color: rgba(200,214,246,.86); }
+.auth-cosmos .auth-copy h1 { font-size: clamp(24px, 3.4vw, 34px); }
+.auth-cosmos .auth-copy p { font-size: clamp(13.5px, 1.15vw, 16px); }
+.auth-stage-reg { width: min(100%, 640px); }
+.auth-cosmos .btn.primary.auth-main-action { position: relative; }
+.auth-cosmos .btn.primary.auth-main-action > span[aria-hidden="true"] { position: absolute; right: 22px; top: 50%; transform: translateY(-50%); font-size: 18px; }
+.auth-cosmos .field .auth-field-hint { font-size: 12px; }
+
+/* The reference puts the step-back control where a back control belongs. */
+.device-back { left: 30px; right: auto; }
+
+/* The client list stacks under its label; an inherited flex rule had put the
+   label and the first row side by side. */
+.device-success-card > .device-success-uses { display: block; }
+.device-success-use { width: 100%; }
+
+/* Security list: real marks instead of glyph placeholders, and the rename
+   affordance sits on the name as the reference draws it. */
+.security-machine-icon svg, .security-client-icon svg { width: 22px; height: 22px; }
+.security-name-edit {
+  display: inline-grid; place-items: center; width: 22px; height: 22px; padding: 0;
+  border: 0; border-radius: 6px; color: var(--tx-3); background: transparent; cursor: pointer;
+}
+.security-name-edit svg { width: 15px; height: 15px; }
+.security-name-edit:hover { color: var(--tx); background: var(--brand-soft); }
+.security-name-edit:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 1px; }
+
+/* ===========================================================================
+   SF Chat visual audit: the rail, the answer card and the pending verdict
+   brought to the approved reference. Behaviour, routing and the chat record
+   are untouched; this is arrangement and weight only.
+   =========================================================================== */
+
+/* ---- left rail ------------------------------------------------------------ */
+.orch-convo-tabs { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.orch-convo-tabs-scroll { display: flex; align-items: center; gap: 4px; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.orch-convo-tabs-scroll::-webkit-scrollbar { display: none; }
+.orch-convo-tab {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 4px 9px; border: 0; border-bottom: 2px solid transparent;
+  color: var(--tx-3); background: transparent; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.orch-convo-tab span { padding: 1px 6px; border-radius: 999px; background: var(--brand-soft); color: var(--tx-2); font-size: 10.5px; font-weight: 700; }
+.orch-convo-tab.active { color: var(--tx); border-bottom-color: var(--brand); }
+.orch-convo-tab:hover { color: var(--tx-2); }
+.orch-folder-add {
+  flex: 0 0 auto; display: grid; place-items: center; width: 30px; height: 30px; padding: 0;
+  border: 1px solid var(--line-2); border-radius: 9px; color: var(--tx-2); background: transparent; cursor: pointer;
+}
+.orch-folder-add:hover { color: var(--tx); border-color: var(--brand-line); background: var(--brand-soft); }
+.orch-folder-add svg { width: 16px; height: 16px; }
+.orch-convo-counter { display: block; margin: 2px 0 0; color: var(--tx-4); font-size: 11px; }
+.orch-convo-day {
+  margin: 14px 0 6px; padding: 0 2px; color: var(--tx-4);
+  font-size: 10.5px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+}
+.orch-convo-day:first-child { margin-top: 4px; }
+.orch-convo-title { display: flex; align-items: baseline; gap: 8px; }
+.orch-convo-title time { margin-left: auto; flex: 0 0 auto; color: var(--tx-4); font-size: 11px; font-weight: 500; }
+.orch-convo-sub { display: flex; align-items: center; gap: 8px; }
+.orch-convo-folder { padding: 1px 7px; border-radius: 999px; background: var(--brand-soft); color: var(--tx-3); font-size: 10px; }
+.orch-convo.active { border-color: var(--brand-line); background: var(--brand-soft); }
+
+/* ---- the answer card ------------------------------------------------------ */
+.orch-msg-card-head {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; margin-bottom: 8px;
+  color: var(--tx-3); font-size: 11.5px;
+}
+.orch-msg-author { color: var(--tx-2); font-weight: 650; }
+.orch-msg-model { color: var(--tx-4); }
+.orch-await { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.orch-await-label {
+  padding: 4px 10px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  background: linear-gradient(180deg, #f6b03c, #e0912a); color: #241703;
+}
+.orch-await .orch-fulfill-marks { display: inline-flex; align-items: center; gap: 6px; }
+.orch-await .orch-fulfill-btn {
+  display: grid; place-items: center; width: 26px; height: 26px; padding: 0;
+  border: 1px solid var(--line-2); border-radius: 8px; color: var(--tx-2);
+  background: color-mix(in srgb, var(--bg-2) 80%, transparent); cursor: pointer;
+}
+.orch-await .orch-fulfill-btn svg { width: 15px; height: 15px; }
+.orch-await .orch-fulfill-btn[data-orch-fulfill="done"]:hover { color: var(--ok); border-color: rgba(52,211,153,.6); background: rgba(52,211,153,.12); }
+.orch-await .orch-fulfill-btn[data-orch-fulfill="failed"]:hover { color: var(--neg); border-color: rgba(255,107,129,.6); background: rgba(255,107,129,.12); }
+.orch-await .orch-fulfill-btn:focus-visible { outline: 2px solid var(--brand-line); outline-offset: 1px; }
+
+/* The details strip reads as a footer row: timestamp on the left, the opener
+   on the right, exactly as the reference lays it out. */
+.orch-msg-tools-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.orch-msg-tools-summary time {
+  order: -1; padding: 4px 10px; border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-3) 70%, transparent); color: var(--tx-3); font-size: 11px;
+}
+
+/* A waiting client offers both approved answers, coloured as the reference
+   colours them: permanent trust in green, this session only in violet. */
+.btn.sec-approve-permanent { border-color: rgba(52,211,153,.5); color: #4ade9b; background: rgba(52,211,153,.12); }
+.btn.sec-approve-permanent:hover { background: rgba(52,211,153,.2); }
+.btn.sec-approve-session { border-color: rgba(123,92,255,.5); color: #b39dff; background: rgba(123,92,255,.14); }
+.btn.sec-approve-session:hover { background: rgba(123,92,255,.22); }
+
+/* Said once, quietly: the sign-in a minute ago is the proof, so no code. */
+.device-fresh-note {
+  max-width: 590px; margin: 0 auto 16px; padding: 10px 14px; border-radius: 12px;
+  border: 1px solid rgba(52,211,153,.3); background: rgba(52,211,153,.09);
+  color: var(--tx-2); font-size: 12.5px; text-align: center;
+}

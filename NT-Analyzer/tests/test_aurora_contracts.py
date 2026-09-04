@@ -762,7 +762,11 @@ def test_community_v2_and_unified_sf_chat_are_real_api_backed_surfaces():
     assert "mock" not in page.lower()
     assert "sfChatConversations" in ui and "sfChatConversation" in ui and "sfChatMessage" in ui
     assert 'id="orch-convo-search"' in ui and 'id="orch-new-side"' in ui
-    assert 'data-orch-convo-filter="pinned"' in ui and 'data-orch-convo-filter="recent"' in ui
+    # The rail's tabs are built from a list now (All, the two filters and the
+    # viewer's own folders), so the contract is the list, not literal markup.
+    assert 'data-orch-convo-filter="${esc(id)}"' in ui
+    assert "['pinned', 'Закреплённые']" in ui and "['recent', 'Недавние']" in ui
+    assert "orchAddFolder" in ui and "ORCH_FOLDER_KEY" in ui
     assert "ORCH.listQuery" in ui and "participant.username" in ui
     assert "sideCreate.hidden = ORCH.aiAvailable === false" in ui
     assert "NOTICE_MAX_VISIBLE = 1" in ui and "Открыть в чате" in ui

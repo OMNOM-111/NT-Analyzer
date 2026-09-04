@@ -404,13 +404,16 @@ def test_rename_is_user_scoped_and_client_revoke_does_not_touch_other_client(con
 
 def test_frontend_contract_has_session_mode_six_digits_and_no_day_based_copy():
     ui = (server_mod.STATIC_DIR / "aurora" / "assets" / "ui.js").read_text(encoding="utf-8")
-    assert "Доверять постоянно" in ui
-    assert "Разрешить до конца сессии" in ui
+    # Wording follows the approved screens; the contract is the pair of trust
+    # modes and the absence of any day- or hour-based grant.
+    assert "Подтвердить постоянно" in ui
+    assert "Только текущая сессия" in ui
+    assert "Разрешить только сейчас" in ui
     assert "data-device-code-digit" in ui
     assert "[1, 2, 3, 4, 5, 6]" in ui
     assert "one-time-code" in ui
     assert "Код истёк. Запросите новый код." in ui
-    assert "Доступ подтверждён" in ui
+    assert "Устройство подтверждено!" in ui
     assert "Перейти в кабинет" in ui
     assert "24 часа" not in ui
     assert "Временный доступ" not in ui
@@ -447,3 +450,113 @@ def test_pending_cookie_is_nonpersistent_and_permanent_cookie_has_max_age():
     handler._set_session_cookie("trusted-token", persistent=True)
     trusted_cookie = handler._extra_headers[-1][1]
     assert f"Max-Age={account_auth.SESSION_TTL_SEC}" in trusted_cookie
+
+
+def _fresh_access(login):
+    """The screen payload the client actually draws the confirmation from."""
+    context = account_auth.authenticate_session(login["session_token"])
+    access = security_devices.current_session_access(42, context["session_id"])
+    access["client_id"] = access["client"]["id"]
+    return context, access
+
+
+def test_first_confirmation_after_a_proved_signin_needs_no_second_code(confirmation_store):
+    """The sign-in a minute ago is the proof; the screen only asks how long."""
+    login = _login()
+    context, access = _fresh_access(login)
+    assert access["fresh_signin_provider"] == "email"
+    assert access["code_required"] is False
+
+    out = security_devices.approve_device(
+        user_id=42, device_id=access["client_id"], challenge_id="", code="",
+        trust_mode="permanent", session_id=context["session_id"],
+    )
+    assert out["ok"] is True
+    assert out["trust_mode"] == "permanent"
+    after = account_auth.authenticate_session(login["session_token"])
+    assert after["device_access"]["state"] == "active"
+
+
+def test_the_signin_proof_is_spent_by_the_confirmation_it_pays_for(confirmation_store):
+    login = _login()
+    context, access = _fresh_access(login)
+    security_devices.approve_device(
+        user_id=42, device_id=access["client_id"], challenge_id="", code="",
+        trust_mode="session", session_id=context["session_id"],
+    )
+    doc = account_auth._read_doc()
+    session = next(
+        row for row in doc["sessions"]
+        if account_auth._session_id(row) == context["session_id"]
+    )
+    assert "identity_verified_at_utc" not in session
+
+
+def test_another_client_never_rides_on_this_sessions_signin(confirmation_store):
+    """The proof covers the client that signed in, and nothing else."""
+    first = _login(credential="browser-a")
+    second = _login(credential="browser-b")
+    first_context, _ = _fresh_access(first)
+    _, second_access = _fresh_access(second)
+    with pytest.raises(security_devices.SecurityDeviceError) as wrong:
+        security_devices.approve_device(
+            user_id=42, device_id=second_access["client_id"], challenge_id="", code="",
+            trust_mode="permanent", session_id=first_context["session_id"],
+        )
+    assert wrong.value.code == "challenge_required"
+
+
+def test_a_stale_signin_falls_back_to_an_ordinary_code(confirmation_store, monkeypatch):
+    login = _login()
+    context, access = _fresh_access(login)
+    monkeypatch.setattr(
+        security_devices, "_now",
+        lambda: time.time() + security_devices.FRESH_IDENTITY_WINDOW_SEC + 60,
+    )
+    with pytest.raises(security_devices.SecurityDeviceError) as stale:
+        security_devices.approve_device(
+            user_id=42, device_id=access["client_id"], challenge_id="", code="",
+            trust_mode="permanent", session_id=context["session_id"],
+        )
+    assert stale.value.code == "challenge_required"
+
+
+def test_a_session_with_no_proved_signin_still_needs_a_code(confirmation_store):
+    """A desktop session was never a provider handshake, so nothing is skipped."""
+    login = account_auth.create_session_for_user(
+        42, ip="203.0.113.8", user_agent=UA, source="desktop_session",
+        require_google=False, skip_dual_auth_gate=True,
+        device_credential="browser-c", device_confirmation_required=True,
+    )
+    context, access = _fresh_access(login)
+    assert access["code_required"] is True
+    assert access["fresh_signin_provider"] == ""
+    with pytest.raises(security_devices.SecurityDeviceError) as needs:
+        security_devices.approve_device(
+            user_id=42, device_id=access["client_id"], challenge_id="", code="",
+            trust_mode="permanent", session_id=context["session_id"],
+        )
+    assert needs.value.code == "challenge_required"
+
+
+def test_a_second_client_signs_in_freshly_and_still_answers_a_code(confirmation_store):
+    """Only the first client rides on the sign-in; later ones are unknown devices."""
+    first = _login(credential="browser-a")
+    first_context, first_access = _fresh_access(first)
+    security_devices.approve_device(
+        user_id=42, device_id=first_access["client_id"], challenge_id="", code="",
+        trust_mode="permanent", session_id=first_context["session_id"],
+    )
+
+    second = _login(credential="browser-b")
+    second_context, second_access = _fresh_access(second)
+    assert second_access["code_required"] is True
+    assert second_access["fresh_signin_provider"] == ""
+    with pytest.raises(security_devices.SecurityDeviceError) as needs:
+        security_devices.approve_device(
+            user_id=42, device_id=second_access["client_id"], challenge_id="", code="",
+            trust_mode="permanent", session_id=second_context["session_id"],
+        )
+    assert needs.value.code == "challenge_required"
+    # The ordinary code path still confirms it.
+    assert _confirm(second, "permanent")["ok"] is True

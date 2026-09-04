@@ -1600,6 +1600,12 @@ def _current_session_access(
         if found is not None:
             machine = physical_devices.public_machine(found)
     pending_until = float(session.get("pending_expires_at") or 0)
+    # Exactly the predicate the approval enforces, so the screen never promises
+    # a code-free confirmation the server would refuse.
+    skip_provider = _session_may_skip_code(
+        doc, user_uuid=account_auth._user_uuid(user),
+        session_id=account_auth._session_id(session), device_id=device_id,
+    ) if state == STATUS_PENDING else ""
     return {
         "required": state == STATUS_PENDING,
         "state": state,
@@ -1629,6 +1635,10 @@ def _current_session_access(
         },
         "machine": machine,
         "confirmation_channels": _confirmation_channels(doc, user),
+        # A confirmation minutes after a proved sign-in asks for the trust
+        # mode only; the client uses this to skip the code screen.
+        "fresh_signin_provider": skip_provider,
+        "code_required": not skip_provider,
         "policy": {
             "pending_ttl_sec": PENDING_SESSION_TTL_SEC,
             "trust_modes": list(TRUST_MODES),
@@ -1933,6 +1943,67 @@ def _trust_machine_for(
     })]
 
 
+# How long a completed sign-in stands in for a fresh confirmation code. Short
+# enough that the person is still the one at the keyboard, long enough to read
+# the two trust modes and choose one.
+FRESH_IDENTITY_WINDOW_SEC = 15 * 60
+
+
+def _fresh_identity_proof(session: Dict[str, Any]) -> str:
+    """The provider this session proved, while that proof is still fresh."""
+    if not isinstance(session, dict):
+        return ""
+    stamp = str(session.get("identity_verified_at_utc") or "")
+    if not stamp:
+        return ""
+    try:
+        proved = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc).timestamp()
+    except Exception:
+        return ""
+    if _now() - proved > FRESH_IDENTITY_WINDOW_SEC:
+        return ""
+    return str(session.get("identity_provider") or "session")
+
+
+def _session_may_skip_code(doc: Dict[str, Any], *, user_uuid: str, session_id: str, device_id: str) -> str:
+    """A first confirmation may lean on the sign-in that just happened.
+
+    Every part has to line up: the caller is that session, the device being
+    confirmed is that session's own client, and the proof is minutes old. Any
+    other device, any other session and any later visit still needs a code.
+    """
+    if not session_id or not device_id:
+        return ""
+    session = account_auth._session_by_id(doc, session_id) if hasattr(account_auth, "_session_by_id") else None
+    if session is None:
+        for row in doc.get("sessions") or []:
+            if account_auth._session_id(row) == session_id:
+                session = row
+                break
+    if not isinstance(session, dict) or session.get("revoked"):
+        return ""
+    if _normalize_uuid(str(session.get("user_uuid") or "")) != _normalize_uuid(user_uuid):
+        return ""
+    # The client this session is bound to, not the user-agent fingerprint.
+    if str(session.get("trusted_device_id") or "") != str(device_id or ""):
+        return ""
+    # Only the very first client on the account rides on the sign-in. Once the
+    # account has a confirmed client, every further one -- a new browser, a later
+    # visit -- is an unknown device and answers a code of its own.
+    canonical = _normalize_uuid(user_uuid)
+    for other in _devices(doc):
+        if not isinstance(other, dict):
+            continue
+        if _normalize_uuid(str(other.get("user_uuid") or "")) != canonical:
+            continue
+        if str(other.get("device_id") or "") == str(device_id or ""):
+            continue
+        if str(other.get("status") or "") == STATUS_TRUSTED or other.get("confirmed_at_utc"):
+            return ""
+    return _fresh_identity_proof(session)
+
+
 def approve_device(
     *,
     user_id: Any,
@@ -1961,13 +2032,37 @@ def approve_device(
         if device.get("status") != STATUS_PENDING:
             raise SecurityDeviceError("Устройство не в состоянии ожидания.", 409, code="device_not_pending")
         mode = _normalize_trust_mode(trust_mode, required=True)
-        challenge, events = _consume_and_persist(
-            doc, uid=uid, ip=ip, challenge_id=challenge_id, code=code,
-            user_uuid=user_uuid, purpose=PURPOSE_DEVICE_CONFIRM,
-            device_id=str(device.get("device_id") or ""),
-            trust_mode=mode, session_id=str(session_id or ""),
-        )
-        provider = str(challenge.get("provider") or "")
+        fresh = ""
+        if not str(challenge_id or "").strip() and not str(code or "").strip():
+            fresh = _session_may_skip_code(
+                doc, user_uuid=user_uuid, session_id=str(session_id or ""),
+                device_id=str(device.get("device_id") or ""),
+            )
+            if not fresh:
+                raise SecurityDeviceError(
+                    "Требуется код подтверждения.", 400, code="challenge_required")
+        if fresh:
+            events = [("device_confirmed_by_fresh_signin", {
+                "device_id": str(device.get("device_id") or ""),
+                "trust_mode": mode,
+                "provider": fresh,
+                "session_id": str(session_id or ""),
+            })]
+            provider = fresh
+            # The proof is spent here: a later confirmation on this session
+            # asks for a code like any other.
+            for row in doc.get("sessions") or []:
+                if account_auth._session_id(row) == str(session_id or ""):
+                    row.pop("identity_verified_at_utc", None)
+                    break
+        else:
+            challenge, events = _consume_and_persist(
+                doc, uid=uid, ip=ip, challenge_id=challenge_id, code=code,
+                user_uuid=user_uuid, purpose=PURPOSE_DEVICE_CONFIRM,
+                device_id=str(device.get("device_id") or ""),
+                trust_mode=mode, session_id=str(session_id or ""),
+            )
+            provider = str(challenge.get("provider") or "")
         applied, activated = _apply_device_confirmation(
             doc, user_id=uid, user_uuid=user_uuid, device=device,
             provider=provider, trust_mode=mode, session_id=str(session_id or ""),

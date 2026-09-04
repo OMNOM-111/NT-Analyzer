@@ -1033,6 +1033,10 @@
     const client = access.client || {};
     const machine = access.machine || null;
     const channels = Array.isArray(access.confirmation_channels) ? access.confirmation_channels : [];
+    // The sign-in that just happened already proved who this is. In that short
+    // window the first confirmation asks for the trust mode and nothing else;
+    // every other case still goes through a code.
+    const freshSignin = !!access.fresh_signin_provider && access.code_required === false;
     const pendingDeadline = Date.parse(access.pending_expires_at_utc || '')
       || (Date.now() + Number(access.pending_expires_in_sec || 0) * 1000);
     let trustMode = '';
@@ -1095,10 +1099,21 @@
       challengeTick = null; challenge = null;
       const scope = shell(`
         <div class="device-confirmation-heading">
-          <span class="device-confirmation-symbol" aria-hidden="true">✓</span>
-          <p class="device-confirmation-kicker">Новый доступ</p>
-          <h1>Подтвердите доступ с этого устройства</h1>
-          <p>Это новый браузер или приложение. Выберите, как долго ему разрешён доступ.</p>
+          <span class="device-shield-art" aria-hidden="true">
+            <svg viewBox="0 0 96 84" fill="none">
+              <rect x="14" y="4" width="68" height="56" rx="12" fill="url(#dcShieldPlate)" stroke="rgba(126,180,255,.42)" stroke-width="1.5"></rect>
+              <path d="M48 17.5 34.5 22.6v11.3c0 8.2 5.6 15.1 13.5 18 7.9-2.9 13.5-9.8 13.5-18V22.6z" fill="url(#dcShieldFill)" stroke="rgba(160,205,255,.75)" stroke-width="1.6" stroke-linejoin="round"></path>
+              <path d="m42.2 33.4 4.3 4.3 7.6-8.2" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+              <path d="M40 60h16l2 10H38z" fill="rgba(96,132,210,.45)"></path>
+              <rect x="28" y="70" width="40" height="5" rx="2.5" fill="rgba(120,160,235,.55)"></rect>
+              <defs>
+                <linearGradient id="dcShieldPlate" x1="14" y1="4" x2="82" y2="60" gradientUnits="userSpaceOnUse"><stop stop-color="#1a2550"></stop><stop offset="1" stop-color="#101736"></stop></linearGradient>
+                <linearGradient id="dcShieldFill" x1="34" y1="17" x2="62" y2="52" gradientUnits="userSpaceOnUse"><stop stop-color="#3ea8ff"></stop><stop offset="1" stop-color="#7d6bff"></stop></linearGradient>
+              </defs>
+            </svg>
+          </span>
+          <h1>Подтвердите это устройство</h1>
+          <p>Это ваш первый вход. Для вашей безопасности<br>подтвердите это устройство.</p>
         </div>
         <div class="device-access-summary">
           <strong>${esc(machine?.display_name || client.display_name || client.client || 'Новый клиент')}</strong>
@@ -1106,26 +1121,26 @@
           ${auditLine() ? `<small>${auditLine()}</small>` : ''}
         </div>
         <div class="device-trust-choices">
-          <button type="button" class="device-trust-choice permanent" data-device-mode="permanent">
-            <span class="device-choice-icon" aria-hidden="true">∞</span>
-            <strong>Доверять постоянно</strong>
-            <span>Этот клиент будет доверен до тех пор, пока вы не отзовёте доступ в разделе «Безопасность».</span>
-            <em>Продолжить</em>
-          </button>
-          <button type="button" class="device-trust-choice session" data-device-mode="session">
-            <span class="device-choice-icon" aria-hidden="true">◷</span>
-            <strong>Разрешить до конца сессии</strong>
+          <div class="device-trust-choice permanent">
+            <div class="device-choice-head"><strong>Подтвердить постоянно</strong><span class="device-choice-icon" aria-hidden="true">∞</span></div>
+            <span>Устройство будет доверено до вашего отзыва в разделе «Безопасность».</span>
+            <button type="button" class="device-choice-action permanent" data-device-mode="permanent">Подтвердить постоянно</button>
+          </div>
+          <div class="device-trust-choice session">
+            <div class="device-choice-head"><strong>Только текущая сессия</strong><span class="device-choice-icon" aria-hidden="true">◷</span></div>
             <span>Доступ действует только сейчас. При следующем входе потребуется новый код.</span>
-            <em>Разрешить только сейчас</em>
-          </button>
+            <button type="button" class="device-choice-action session" data-device-mode="session">Разрешить только сейчас</button>
+          </div>
         </div>
-        ${channels.length ? '' : '<div class="device-confirmation-error" role="alert">Нет подтверждённого Telegram или e-mail. Завершите вход и восстановите способ подтверждения.</div>'}
-        <div class="device-pending-footer"><span>Если не подтвердить, доступ завершится через</span> <strong data-device-pending-time>--:--</strong></div>
+        ${freshSignin ? '<div class="device-fresh-note">Личность только что подтверждена при входе — код не понадобится.</div>' : (channels.length ? '' : '<div class="device-confirmation-error" role="alert">Нет подтверждённого Telegram или e-mail. Завершите вход и восстановите способ подтверждения.</div>')}
+        <div class="device-pending-footer"><span class="device-pending-mark" aria-hidden="true">${AUTH_ICON.clock}</span><span>Если не подтвердить — сессия завершится через</span> <strong data-device-pending-time>--:--</strong></div>
         <button type="button" class="btn ghost device-logout" data-device-logout>Выйти из аккаунта</button>
       `, 'Подтверждение нового доступа');
       qsa('[data-device-mode]', scope).forEach(button => {
-        button.disabled = !channels.length;
-        button.onclick = () => renderCode(String(button.dataset.deviceMode || ''));
+        button.disabled = !freshSignin && !channels.length;
+        button.onclick = () => (freshSignin
+          ? applyFreshTrust(scope, String(button.dataset.deviceMode || ''))
+          : renderCode(String(button.dataset.deviceMode || '')));
       });
       logoutButton(scope); wirePendingCountdown(scope);
     };
@@ -1243,17 +1258,35 @@
         fillCode(scope, '');
       }
     };
+    const applyFreshTrust = async (scope, mode) => {
+      trustMode = mode === 'session' ? 'session' : 'permanent';
+      const buttons = qsa('[data-device-mode]', scope);
+      buttons.forEach(button => { button.disabled = true; });
+      try {
+        const result = await API.http.accountDeviceApprove({
+          device_id: client.id, trust_mode: trustMode,
+        });
+        stopTicks();
+        renderSuccess(result);
+      } catch (error) {
+        buttons.forEach(button => { button.disabled = false; });
+        // The window can close between drawing the screen and pressing a
+        // button; then this is an ordinary confirmation and needs a code.
+        if (channels.length) { renderCode(mode); return; }
+        toast(String((error && error.message) || 'Не удалось подтвердить устройство.'));
+      }
+    };
     const renderCode = (mode) => {
       trustMode = mode === 'session' ? 'session' : 'permanent';
       const scope = shell(`
         <button type="button" class="device-back" data-device-back aria-label="Вернуться к выбору режима">←</button>
         <div class="device-confirmation-heading compact">
           <p class="device-confirmation-kicker">${trustMode === 'permanent' ? 'Постоянное доверие' : 'Только текущая сессия'}</p>
-          <h1>Подтвердите доступ</h1>
-          <p>Мы отправим 6-значный код только на подтверждённый канал.</p>
+          <h1>Подтвердите устройство</h1>
+          <p>Мы отправили 6-значный код<br>на ваш проверенный канал.</p>
         </div>
         <div class="device-channel-list" role="group" aria-label="Канал подтверждения">
-          ${channels.map(channel => `<button type="button" class="device-channel" data-device-channel="${esc(channel.provider)}"><strong>${esc(channel.label)}</strong><span>${esc(channel.masked_target)}</span></button>`).join('')}
+          ${channels.map(channel => `<button type="button" class="device-channel" data-device-channel="${esc(channel.provider)}"><span class="device-channel-icon" aria-hidden="true">${AUTH_ICON[channel.provider === 'telegram' ? 'telegram' : 'mail']}</span><span class="device-channel-copy"><strong>${esc(channel.label)}</strong><span>${esc(channel.masked_target)}</span></span></button>`).join('')}
         </div>
         <form class="device-code-form" data-device-code-form>
           <label id="device-code-label">Введите код из сообщения</label>
@@ -1270,7 +1303,7 @@
           <button type="submit" class="btn primary device-code-submit" data-device-submit>Подтвердить</button>
         </form>
         <button type="button" class="device-resend" data-device-resend disabled>Отправить код повторно</button>
-        <div class="device-code-warning">StratForge никогда не запрашивает этот код в других сообщениях.</div>
+        <div class="device-code-warning"><span aria-hidden="true">${AUTH_ICON.shield}</span><span>Коды никогда не запрашиваются нашим сервисом в других сообщениях.</span></div>
         <div class="device-pending-footer"><span>Доступ завершится через</span> <strong data-device-pending-time>--:--</strong></div>
         <button type="button" class="btn ghost device-logout" data-device-logout>Выйти из аккаунта</button>
       `, 'Ввод кода подтверждения');
@@ -1316,19 +1349,34 @@
       logoutButton(scope); wirePendingCountdown(scope);
       startChallenge(scope, channels[0].provider);
     };
+    // The machine card lists the clients the server actually grouped under it.
+    // Nothing is invented here: with no proven grouping the list stays empty.
+    const successClients = () => {
+      const rows = Array.isArray(machine && machine.clients) ? machine.clients : [];
+      const list = rows.length ? rows : (client && (client.display_name || client.client) ? [client] : []);
+      return list.map(row => ({
+        label: String(row.display_name || row.client || 'Клиент'),
+        state: row.active_now === false ? 'Активен' : 'Активен сейчас',
+      }));
+    };
     const renderSuccess = (result) => {
       const permanent = (result || {}).trust_mode === 'permanent';
       const scope = shell(`
         <div class="device-confirmation-heading success">
-          <span class="device-confirmation-symbol" aria-hidden="true">✓</span>
-          <p class="device-confirmation-kicker">Готово</p>
-          <h1>Доступ подтверждён</h1>
-          <p>${permanent ? 'Этот клиент останется доверенным до вашего отзыва.' : 'Доступ разрешён только для текущей сессии.'}</p>
+          <span class="device-success-seal" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6.5 12.4 3.6 3.6 7.4-8"></path></svg></span>
+          <h1>Устройство подтверждено!</h1>
+          <p>${permanent ? 'Теперь вы можете работать безопасно.' : 'Доступ разрешён только для текущей сессии.'}</p>
         </div>
         <div class="device-success-card">
-          <div><strong>${esc(machine?.display_name || client.display_name || client.client || 'Клиент')}</strong><span class="badge ${permanent ? 'live' : 'trial'}">${permanent ? 'Доверено' : 'Только текущая сессия'}</span></div>
-          <p>${esc([client.os_family, client.os_version, client.client].filter(Boolean).join(' · ') || 'Браузер или приложение')}</p>
-          ${auditLine() ? `<small>${auditLine()}</small>` : ''}
+          <div class="device-success-head">
+            <span class="device-success-icon" aria-hidden="true">${AUTH_ICON.monitor}</span>
+            <div class="device-success-name"><strong>${esc(machine?.display_name || client.display_name || client.client || 'Клиент')}</strong>
+              <span>${esc([client.os_family, client.os_version, client.device_kind || ''].filter(Boolean).join(' · ') || 'Браузер или приложение')}</span>
+              ${auditLine() ? `<small>${auditLine()}</small>` : ''}
+            </div>
+            <span class="badge ${permanent ? 'live' : 'trial'}">${permanent ? 'Доверено' : 'Только текущая сессия'}</span>
+          </div>
+          ${successClients().length ? `<div class="device-success-uses"><p>В этом устройстве используются:</p>${successClients().map(row => `<div class="device-success-use"><span>${esc(row.label)}</span><span class="badge live">${esc(row.state)}</span></div>`).join('')}</div>` : ''}
         </div>
         <button type="button" class="btn primary device-enter" data-device-enter>Перейти в кабинет</button>
       `, 'Доступ подтверждён');
@@ -3932,6 +3980,15 @@
     return '<span class="badge archived">Сессия завершена</span>';
   }
 
+  // Device and client marks for the security list. Stroke icons, no vendor
+  // logos: the row states what the client is, it does not advertise it.
+  const SECURITY_ICON = {
+    desktop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.8" y="4" width="18.4" height="12.5" rx="2.2"/><path d="M9 20h6M12 16.5V20"/></svg>',
+    laptop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4.5" width="16" height="11" rx="2"/><path d="M2.5 18.5h19"/></svg>',
+    browser: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.8"/><path d="M3.4 9.4h17.2M3.4 14.6h17.2"/><path d="M12 3.2c2.4 2.4 3.6 5.4 3.6 8.8s-1.2 6.4-3.6 8.8c-2.4-2.4-3.6-5.4-3.6-8.8S9.6 5.6 12 3.2Z"/></svg>',
+    connector: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8.5 3.5 12 7 15.5M17 8.5 20.5 12 17 15.5M13.8 5.5l-3.6 13"/></svg>',
+    pencil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z"/><path d="m14.5 5.5 4 4"/></svg>',
+  };
   function securityClientHtml(client, nested) {
     const audit = client.audit || {};
     const access = client.access || {};
@@ -3941,14 +3998,14 @@
     const canRevoke = !!(client.actions || {}).revoke;
     const pending = String(access.state || client.status || '') === 'pending';
     return `<article class="security-client ${nested ? 'nested' : 'standalone'}" data-security-client="${esc(client.id)}">
-      <div class="security-client-icon" aria-hidden="true">${client.kind === 'connector' ? '↔' : '◉'}</div>
+      <div class="security-client-icon" aria-hidden="true">${SECURITY_ICON[client.kind === 'connector' ? 'connector' : 'browser']}</div>
       <div class="security-client-main">
         <div class="security-client-title"><strong>${esc(client.display_name || 'Web Browser')}</strong>${securityAccessBadge(access, client.status)}</div>
         <div class="security-client-meta">${facts.length ? facts.map(esc).join(' · ') : 'Браузер или приложение'}</div>
         <div class="security-client-meta">Последняя активность: ${client.last_seen_at_utc ? secWhen(client.last_seen_at_utc) : '—'} · Активных сессий: ${active}</div>
       </div>
       <div class="security-row-actions">
-        ${pending ? `<button type="button" class="btn sm primary" data-sec-client-approve="${esc(client.id)}">Подтвердить постоянно</button>` : ''}
+        ${pending ? `<button type="button" class="btn sm sec-approve-permanent" data-sec-client-approve="${esc(client.id)}">Подтвердить постоянно</button><button type="button" class="btn sm sec-approve-session" data-sec-client-session="${esc(client.id)}">Только текущая сессия</button>` : ''}
         ${canRename ? `<button type="button" class="btn sm ghost" data-sec-client-rename="${esc(client.id)}" data-sec-name="${esc(client.display_name || '')}">Переименовать</button>` : ''}
         ${canRevoke ? `<button type="button" class="btn sm danger" data-sec-client-${pending ? 'reject' : 'revoke'}="${esc(client.id)}" data-sec-name="${esc(client.display_name || '')}">${pending ? 'Отклонить' : 'Отозвать клиент'}</button>` : ''}
       </div>
@@ -3964,9 +4021,9 @@
     const canRevoke = !!(machine.actions || {}).revoke;
     return `<article class="security-machine" data-security-machine="${esc(machine.id)}">
       <div class="security-machine-head">
-        <div class="security-machine-icon" aria-hidden="true">▣</div>
+        <div class="security-machine-icon" aria-hidden="true">${SECURITY_ICON[/mac|book/i.test(String(machine.auto_name || '')) ? 'laptop' : 'desktop']}</div>
         <div class="security-machine-main">
-          <div class="security-machine-title"><strong>${esc(machine.display_name || 'Компьютер')}</strong>${securityAccessBadge({ state: trust.status === 'trusted' ? 'active' : trust.status, trust_mode: trust.mode }, trust.status)}</div>
+          <div class="security-machine-title"><strong>${esc(machine.display_name || 'Компьютер')}</strong>${canRename ? `<button type="button" class="security-name-edit" data-sec-machine-rename="${esc(machine.id)}" data-sec-name="${esc(machine.display_name || '')}" title="Переименовать" aria-label="Переименовать устройство">${SECURITY_ICON.pencil}</button>` : ''}${securityAccessBadge({ state: trust.status === 'trusted' ? 'active' : trust.status, trust_mode: trust.mode }, trust.status)}</div>
           <div class="security-client-meta">${esc(machine.auto_name || 'Физическое устройство')}${audit.masked_ip ? ` · IP: ${esc(audit.masked_ip)}` : ''}${audit.location ? ` · ${esc(audit.location)}` : ''}</div>
           <div class="security-client-meta">Последняя активность: ${machine.last_seen_at_utc ? secWhen(machine.last_seen_at_utc) : '—'} · Клиентов: ${clients.length}</div>
         </div>
@@ -4165,6 +4222,17 @@
           if (!code) return;
           await API.http.accountDeviceApprove({ device_id: button.dataset.secClientApprove, challenge_id: started.challenge_id, code, trust_mode: 'permanent' });
           toast('Клиент подтверждён'); reload();
+        } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-sec-client-session]', cb).forEach(button => {
+      button.onclick = async () => {
+        try {
+          const started = await API.http.accountSecurityChallenge({ purpose: 'device_confirm', device_id: button.dataset.secClientSession, trust_mode: 'session' });
+          const code = started.test_code || await securityActionDialog({ title: 'Разрешить только текущую сессию', body: `Введите 6-значный код: ${SEC_PROVIDER_LABEL[started.provider] || started.provider} ${started.masked_target || ''}`, input: true, inputLabel: 'Код подтверждения', inputMode: 'numeric', maxlength: 6, pattern: /^\d{6}$/, inputError: 'Введите ровно 6 цифр.', confirmLabel: 'Разрешить' });
+          if (!code) return;
+          await API.http.accountDeviceApprove({ device_id: button.dataset.secClientSession, challenge_id: started.challenge_id, code, trust_mode: 'session' });
+          toast('Доступ разрешён до конца сессии'); reload();
         } catch (e) { reportError(e); }
       };
     });
@@ -4713,6 +4781,20 @@
   const AUTH_TRIAL_DEFAULT_DAYS = 7;
   const AUTH_TRIAL_DEFAULT_SECONDS = 5 * 3600;
   const AUTH_METHOD_LABEL = { telegram: 'Telegram', google: 'Google', email: 'E-mail' };
+  // Brand marks stay literal: Telegram's plane, Google's four-colour G and a
+  // plain envelope read instantly, where a glyph substitute reads as a bug.
+  const AUTH_ICON = {
+    telegram: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21.2 3.3 2.9 10.4c-1.1.4-1.1 1.1-.2 1.4l4.6 1.4 1.8 5.4c.2.6.4.8 1 .8.5 0 .7-.2 1-.5l2.2-2.2 4.6 3.4c.8.5 1.4.2 1.6-.8l3-14c.3-1.2-.5-1.8-1.3-1.4ZM7.9 13.6l9.5-6c.5-.3.9-.1.6.2l-8.1 7.3-.3 3.2-1.7-4.7Z"/></svg>',
+    google: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.18-2.05H12v3.88h5.38a4.6 4.6 0 0 1-2 3.02v2.5h3.24c1.9-1.74 2.98-4.3 2.98-7.35Z"/><path fill="#34A853" d="M12 22c2.7 0 4.96-.9 6.62-2.42l-3.24-2.5c-.9.6-2.04.96-3.38.96-2.6 0-4.8-1.76-5.59-4.12H3.06v2.58A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.41 13.92a6 6 0 0 1 0-3.84V7.5H3.06a10 10 0 0 0 0 9l3.35-2.58Z"/><path fill="#EA4335" d="M12 5.98c1.47 0 2.79.5 3.83 1.5l2.87-2.87C16.95 2.98 14.7 2 12 2a10 10 0 0 0-8.94 5.5l3.35 2.58C7.2 7.72 9.4 5.98 12 5.98Z"/></svg>',
+    mail: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.75" y="5" width="18.5" height="14" rx="2.5"/><path d="m3.5 7.5 7.4 5.2c.66.47 1.54.47 2.2 0l7.4-5.2"/></svg>',
+    scan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8.5V6a2 2 0 0 1 2-2h2.5M15.5 4H18a2 2 0 0 1 2 2v2.5M20 15.5V18a2 2 0 0 1-2 2h-2.5M8.5 20H6a2 2 0 0 1-2-2v-2.5"/><rect x="8" y="8" width="3.2" height="3.2" rx=".8"/><rect x="12.8" y="12.8" width="3.2" height="3.2" rx=".8"/><path d="M12.8 8H16v3.2M8 12.8v3.2h3.2"/></svg>',
+    user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M4.8 20a7.2 7.2 0 0 1 14.4 0"/></svg>',
+    enter: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 8l4 4-4 4M14 12H4"/></svg>',
+    clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/></svg>',
+    shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.9 5 5.5v5.9c0 4.2 2.9 7.8 7 9.2 4.1-1.4 7-5 7-9.2V5.5z"/><path d="m9 11.9 2.2 2.2 4-4.3"/></svg>',
+    monitor: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.8" y="4" width="18.4" height="12.5" rx="2.2"/><path d="M9 20h6M12 16.5V20"/></svg>',
+    external: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-8.5 8.5"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></svg>',
+  };
 
   function authShell(inner, modifier) {
     return `<div class="auth-screen auth-cosmos"><div class="auth-sky" aria-hidden="true"></div>`
@@ -4725,9 +4807,15 @@
     return `<section class="auth-card auth-card-lux${modifier ? ' ' + modifier : ''}">${inner}</section>`;
   }
 
-  function authSteps(current) {
+  // Two shapes, because the approved designs use two: the opening step wears a
+  // segmented bar under a plain label, the later steps a compact pill of dots.
+  function authSteps(current, variant) {
+    if (variant === 'bar') {
+      const bars = [1, 2, 3].map(index => `<span class="auth-step-bar${index <= current ? ' on' : ''}"></span>`).join('');
+      return `<div class="auth-steps bar" role="status" aria-live="polite"><span class="auth-step-caption">Шаг ${current} из 3</span><span class="auth-step-track" aria-hidden="true">${bars}</span></div>`;
+    }
     const dots = [1, 2, 3].map(index => `<span class="auth-step-dot${index === current ? ' on' : ''}${index < current ? ' done' : ''}"></span>`).join('');
-    return `<div class="auth-steps" role="status" aria-live="polite"><span class="auth-step-label">Шаг ${current} из 3</span><span class="auth-step-dots" aria-hidden="true">${dots}</span></div>`;
+    return `<div class="auth-steps" role="status" aria-live="polite"><span class="auth-step-label">Шаг ${current} из 3<span class="auth-step-dots" aria-hidden="true">${dots}</span></span></div>`;
   }
 
   function authError(message) {
@@ -4762,8 +4850,11 @@
   // active use is left, so the shell shows that quietly and nothing else.
   function trialHumanTime(seconds) {
     const total = Math.max(0, Math.round(Number(seconds) || 0));
-    const hours = Math.floor(total / 3600);
-    const minutes = Math.round((total % 3600) / 60);
+    // Rounding the remainder on its own produced "4 ч 60 мин": round the whole
+    // span to minutes first, then split it, so the parts can never carry.
+    const wholeMinutes = Math.round(total / 60);
+    const hours = Math.floor(wholeMinutes / 60);
+    const minutes = wholeMinutes % 60;
     if (hours && minutes) return `${hours} ч ${minutes} мин`;
     if (hours) return `${hours} ч`;
     if (minutes) return `${minutes} мин`;
@@ -4895,13 +4986,13 @@
           ${authError(message)}
           <div class="auth-choice">
             <button type="button" class="auth-choice-card" data-auth-go="login" data-autofocus>
-              <span class="auth-choice-icon" aria-hidden="true">&#8594;]</span>
+              <span class="auth-choice-icon" aria-hidden="true">${AUTH_ICON.enter}</span>
               <strong>Войти</strong>
               <span>Войдите в существующий аккаунт</span>
               <span class="auth-choice-go" aria-hidden="true">&#8594;</span>
             </button>
             <button type="button" class="auth-choice-card accent" data-auth-go="register">
-              <span class="auth-choice-icon" aria-hidden="true">&#43;</span>
+              <span class="auth-choice-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="3.6"/><path d="M3.6 20a6.4 6.4 0 0 1 11.3-4.1"/><path d="M18 14.5v6M15 17.5h6"/></svg></span>
               <strong>Зарегистрироваться</strong>
               <span>Создайте новый профиль в StratForge AI</span>
               <span class="auth-choice-go" aria-hidden="true">&#8594;</span>
@@ -4924,12 +5015,12 @@
       const qrBlock = flags.telegram
         ? `<div class="auth-qr-panel">
             <div class="auth-qr-copy">
-              <span class="auth-qr-badge" aria-hidden="true">&#9635;</span>
-              <strong>Быстрый вход с телефона</strong>
-              <span>Отсканируйте код телефоном и подтвердите вход</span>
+              <span class="auth-qr-badge" aria-hidden="true">${AUTH_ICON.scan}</span>
+              <strong>Быстрый вход по QR-коду</strong>
+              <span>Отсканируйте код телефоном<br>и подтвердите вход</span>
               <span class="auth-qr-life" data-auth-qr-life></span>
             </div>
-            <div class="auth-qr-frame" data-auth-qr>${qrSvg || '<div class="auth-qr-loading"><span class="spinner"></span></div>'}</div>
+            <div class="auth-qr-frame" data-auth-qr>${qrSvg || '<div class="auth-qr-loading"><span class="spinner"></span></div>'}${qrSvg ? `<span class="auth-qr-logo" aria-hidden="true"><img src="${BRAND_MARK}" alt=""></span>` : ''}</div>
           </div>
           ${webFallback ? `<a class="auth-qr-fallback" href="${esc(webFallback)}" rel="noopener">Telegram не установлен? Открыть в браузере</a>` : ''}
           <div class="auth-or"><span>или</span></div>`
@@ -4939,15 +5030,17 @@
         ${authError(message)}
         ${qrBlock}
         <div class="auth-methods">
-          <button type="button" class="auth-method telegram" data-auth-login="telegram" ${flags.telegram ? 'data-autofocus' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">&#9993;</span><span class="auth-method-label">Продолжить через Telegram</span><span class="auth-method-go" aria-hidden="true">&#8594;</span></button>
-          <button type="button" class="auth-method google" data-auth-login="google" ${flags.google ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">G</span><span class="auth-method-label">${flags.googleTest ? 'Google · Development test' : 'Продолжить через Google'}</span><span class="auth-method-go" aria-hidden="true">&#8594;</span></button>
-          <button type="button" class="auth-method email" data-auth-login="email" ${flags.email ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">&#9993;</span><span class="auth-method-label">Войти по e-mail</span><span class="auth-method-go" aria-hidden="true">&#8594;</span></button>
+          <button type="button" class="auth-method telegram" data-auth-login="telegram" ${flags.telegram ? 'data-autofocus' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">${AUTH_ICON.telegram}</span><span class="auth-method-label">Продолжить через Telegram</span><span class="auth-method-go" aria-hidden="true">&#8594;</span></button>
+          <button type="button" class="auth-method google" data-auth-login="google" ${flags.google ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">${AUTH_ICON.google}</span><span class="auth-method-label">Продолжить через Google${flags.googleTest ? '<em class="auth-method-note">Development test</em>' : ''}</span><span class="auth-method-go" aria-hidden="true">&#8594;</span></button>
+          <button type="button" class="auth-method email" data-auth-login="email" ${flags.email ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">${AUTH_ICON.mail}</span><span class="auth-method-label">Войти по e-mail</span><span class="auth-method-go" aria-hidden="true">&#8594;</span></button>
         </div>
         <div class="auth-foot-row">
           <button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button>
-          <button type="button" class="linklike" data-auth-promo>Промокод или донат</button>
-          <button type="button" class="linklike auth-help" data-auth-help>Нужна помощь? <span aria-hidden="true">?</span></button>
-        </div>`));
+          <span class="auth-foot-right">
+            <button type="button" class="linklike auth-promo-link" data-auth-promo>Промокод или донат</button>
+            <button type="button" class="linklike auth-help" data-auth-help>Нужна помощь? <span class="auth-help-mark" aria-hidden="true">?</span></button>
+          </span>
+        </div>`), 'auth-stage-login');
       qs('[data-auth-back]', content).onclick = () => renderWelcome('');
       qs('[data-auth-promo]', content).onclick = () => renderWelcomeAccess({ asOverlay: true });
       qs('[data-auth-help]', content).onclick = () => toast('Вход подтверждается в Telegram, Google или по коду на e-mail. Коды действуют несколько минут.');
@@ -5001,7 +5094,7 @@
       let login = {};
       try { login = await API.http.authLoginStart(); }
       catch (error) {
-        const back = mode === 'login' ? renderLogin : renderStep2;
+        const back = mode === 'login' ? renderLogin : renderStep1;
         back(authMessage(error, 'Не удалось начать вход через Telegram.'));
         return;
       }
@@ -5022,7 +5115,7 @@
         ${manual ? `<details class="auth-manual-fallback"><summary>Другой способ · ввести код вручную</summary><div class="auth-note">Отправьте боту команду:<br><span class="mono">${esc(manual)}</span> <button class="btn sm ghost" id="auth-copy-code" type="button">Копировать</button></div></details>` : ''}
         <div class="auth-wait"><span class="spinner"></span><span>Ждём подтверждения…</span></div>
         <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
-      qs('[data-auth-back]', content).onclick = () => (mode === 'login' ? renderLogin('') : renderStep2(''));
+      qs('[data-auth-back]', content).onclick = () => (mode === 'login' ? renderLogin('') : renderStep1(''));
       const copy = qs('#auth-copy-code', content);
       if (copy) copy.onclick = async () => {
         try { await navigator.clipboard.writeText(manual); toast('Код скопирован'); }
@@ -5080,7 +5173,7 @@
         if (started.auth_url) { location.assign(started.auth_url); return; }
         throw new Error('');
       } catch (error) {
-        const back = mode === 'login' ? renderLogin : renderStep2;
+        const back = mode === 'login' ? renderLogin : renderStep1;
         back(authMessage(error, 'Не удалось войти через Google. Попробуйте ещё раз.'));
       }
     };
@@ -5097,7 +5190,7 @@
           <button class="btn primary auth-main-action" type="submit">Получить код</button>
         </form>
         <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
-      qs('[data-auth-back]', content).onclick = () => (mode === 'login' ? renderLogin('') : renderStep2(''));
+      qs('[data-auth-back]', content).onclick = () => (mode === 'login' ? renderLogin('') : renderStep1(''));
       const form = qs('[data-auth-email-form]', content);
       form.onsubmit = async (event) => {
         event.preventDefault();
@@ -5191,22 +5284,44 @@
     // ---- registration -------------------------------------------------------
     const renderStep1 = (message) => {
       stopPolling();
+      const flags = providerFlags();
+      // An identity verified before the profile keeps its method; everyone else
+      // picks one here, on the same step as the name, exactly as the design has it.
+      const preVerified = !!(draft.method && draft.challenge_id);
+      const available = ['telegram', 'google', 'email'].filter(m => flags[m]);
+      if (!preVerified && (!draft.method || !available.includes(draft.method))) draft.method = available[0] || '';
+      const methodBlock = preVerified ? '' : `
+          <div class="auth-inline-divider"><span>Способ регистрации</span></div>
+          <div class="auth-method-grid" role="radiogroup" aria-label="Способ регистрации">
+            <button type="button" role="radio" class="auth-method-card telegram${draft.method === 'telegram' ? ' on' : ''}" aria-checked="${draft.method === 'telegram'}" data-auth-method="telegram" ${flags.telegram ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">${AUTH_ICON.telegram}</span><strong>Через Telegram</strong></button>
+            <button type="button" role="radio" class="auth-method-card google${draft.method === 'google' ? ' on' : ''}" aria-checked="${draft.method === 'google'}" data-auth-method="google" ${flags.google ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">${AUTH_ICON.google}</span><strong>Через Google</strong></button>
+            <button type="button" role="radio" class="auth-method-card email${draft.method === 'email' ? ' on' : ''}" aria-checked="${draft.method === 'email'}" data-auth-method="email" ${flags.email ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">${AUTH_ICON.mail}</span><strong>Через e-mail</strong></button>
+          </div>`;
       content.innerHTML = authShell(authCard(
-        `${authSteps(1)}
-        <div class="auth-copy"><h1>Создание профиля</h1><p>Сначала выберите, как вас будет видеть StratForge</p></div>
+        `${authSteps(1, 'bar')}
+        <div class="auth-copy"><h1>Создание профиля</h1><p>Сначала выберите, как вас будет видеть система</p></div>
         ${authError(message)}
         <form class="auth-form" data-auth-profile-form>
           <div class="field">
-            <label for="auth-handle">Имя пользователя StratForge</label>
-            <div class="auth-handle-input"><span aria-hidden="true">@</span><input id="auth-handle" autocomplete="username" required maxlength="32" placeholder="dmytro" value="${esc(draft.handle)}" aria-describedby="auth-handle-hint" data-autofocus></div>
+            <label for="auth-handle">Имя пользователя</label>
+            <div class="auth-handle-input"><span aria-hidden="true">${AUTH_ICON.user}</span><input id="auth-handle" autocomplete="username" required maxlength="32" placeholder="Введите имя пользователя" value="${esc(draft.handle)}" aria-describedby="auth-handle-hint" data-autofocus></div>
             <div class="auth-field-hint" id="auth-handle-hint" data-auth-handle-state>Латинские буквы, цифры, точка и подчёркивание. Это имя не зависит от Google или Telegram.</div>
           </div>
-          <div class="field"><label for="auth-first">Имя</label><input id="auth-first" autocomplete="given-name" required maxlength="80" placeholder="Введите ваше имя" value="${esc(draft.first_name)}"></div>
-          <div class="field"><label for="auth-last">Фамилия <span class="auth-optional">(необязательно)</span></label><input id="auth-last" autocomplete="family-name" maxlength="80" placeholder="Введите вашу фамилию" value="${esc(draft.last_name)}"></div>
+          <div class="field"><label for="auth-first">Имя</label><div class="auth-handle-input"><span aria-hidden="true">${AUTH_ICON.user}</span><input id="auth-first" autocomplete="given-name" required maxlength="80" placeholder="Введите ваше имя" value="${esc(draft.first_name)}"></div></div>
+          <div class="field"><label for="auth-last">Фамилия <span class="auth-optional">(необязательно)</span></label><div class="auth-handle-input"><span aria-hidden="true">${AUTH_ICON.user}</span><input id="auth-last" autocomplete="family-name" maxlength="80" placeholder="Введите вашу фамилию" value="${esc(draft.last_name)}"></div></div>
+          ${methodBlock}
           <button class="btn primary auth-main-action" type="submit">Продолжить <span aria-hidden="true">&#8594;</span></button>
         </form>
-        <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+        <div class="auth-foot-row center"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`), 'auth-stage-reg');
       qs('[data-auth-back]', content).onclick = () => renderWelcome('');
+      qsa('[data-auth-method]', content).forEach(button => button.onclick = () => {
+        draft.method = String(button.dataset.authMethod || '');
+        qsa('[data-auth-method]', content).forEach(other => {
+          const on = other === button;
+          other.classList.toggle('on', on);
+          other.setAttribute('aria-checked', on ? 'true' : 'false');
+        });
+      });
       const handleInput = qs('#auth-handle', content);
       const state = qs('[data-auth-handle-state]', content);
       let probe = null;
@@ -5233,9 +5348,12 @@
           if (!out.available) { renderStep1(out.reason || 'Это имя пользователя недоступно.'); return; }
         } catch (e) { /* server re-checks on create */ }
         // An identity verified before the profile (e-mail that had no account)
-        // keeps its place; otherwise continue to the method step.
-        if (draft.method && draft.challenge_id) renderStep3('');
-        else renderStep2('');
+        // keeps its place; otherwise the method chosen here starts verification.
+        if (preVerified) { renderStep3(''); return; }
+        if (draft.method === 'telegram') { renderTelegramWait('register'); return; }
+        if (draft.method === 'google') { startGoogle('register'); return; }
+        if (draft.method === 'email') { renderEmailEntry('register', ''); return; }
+        renderStep2('Выберите способ регистрации.');
       };
       focusFirst();
     };
@@ -5265,28 +5383,31 @@
 
     const renderStep3 = (message) => {
       stopPolling();
+      // Three lines, as the approved design has it: who you are, how you get in,
+      // and what the starting grant is. The secondary note keeps the verified
+      // identity and the full name visible without a fourth and fifth row.
       const rows = [
-        ['Имя пользователя', '@' + (draft.handle || '')],
-        ['Имя', [draft.first_name, draft.last_name].filter(Boolean).join(' ')],
-        ['Способ входа', AUTH_METHOD_LABEL[draft.method] || ''],
-        ['Подтверждено', draft.identity || ''],
-        ['Стартовый доступ', trialGrantLabel()],
-      ].filter(row => row[1]);
+        ['user', 'Имя пользователя', '@' + (draft.handle || ''), [draft.first_name, draft.last_name].filter(Boolean).join(' ')],
+        ['enter', 'Способ входа', AUTH_METHOD_LABEL[draft.method] || '', draft.identity || ''],
+        ['clock', 'Пробный доступ', trialGrantLabel(), 'активного использования'],
+      ].filter(row => row[2]);
       content.innerHTML = authShell(authCard(
         `${authSteps(3)}
         <div class="auth-copy"><h1>Завершение регистрации</h1><p>Подтвердите условия и создайте профиль</p></div>
         ${authError(message)}
-        <dl class="auth-summary">${rows.map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl>
+        <dl class="auth-summary">${rows.map(([mark, label, value, note]) => `<div><dt><span class="auth-summary-icon" aria-hidden="true">${AUTH_ICON[mark]}</span>${esc(label)}</dt><dd>${esc(value)}${note ? `<small>${esc(note)}</small>` : ''}</dd></div>`).join('')}</dl>
         <div class="auth-terms-box">
           <strong>Условия использования</strong>
+          <p>Добро пожаловать в StratForge AI. Используя сервис, вы соглашаетесь с настоящими Условиями использования и Политикой конфиденциальности. Пожалуйста, внимательно ознакомьтесь с ними.</p>
+          <p class="auth-terms-clause">1. Общие положения</p>
           <p>StratForge AI предоставляет аналитические инструменты и данные финансовых рынков в информационных целях. Мы не даём финансовых рекомендаций, а торговые решения и риски остаются за вами.</p>
           <p>После подтверждения личности новый пользователь получает полный доступ ко всем функциям StratForge на ${trialGrantLabel()} активного использования: время расходуется только во время работы. Живые графики используют только разрешённый для аккаунта источник market data.</p>
         </div>
-        <label class="auth-terms-accept"><input type="checkbox" data-auth-accept> <span>Я ознакомился(лась) с <button type="button" class="linklike" data-auth-terms>условиями использования</button> и <button type="button" class="linklike" data-auth-privacy>политикой конфиденциальности</button></span></label>
-        <button type="button" class="btn ghost auth-main-action" data-auth-full-terms>Открыть полный текст</button>
+        <label class="auth-terms-accept"><input type="checkbox" data-auth-accept><span class="auth-check" aria-hidden="true"></span> <span>Я ознакомился(лась) с <button type="button" class="linklike" data-auth-terms>условиями использования</button> и <button type="button" class="linklike" data-auth-privacy>политикой конфиденциальности</button></span></label>
+        <button type="button" class="btn ghost auth-main-action auth-full-terms" data-auth-full-terms><span aria-hidden="true">${AUTH_ICON.external}</span>Открыть полный текст</button>
         <button type="button" class="btn primary auth-main-action" data-auth-create data-autofocus>Создать профиль</button>
-        <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
-      qs('[data-auth-back]', content).onclick = () => renderStep2('');
+        <div class="auth-foot-row center"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+      qs('[data-auth-back]', content).onclick = () => renderStep1('');
       const terms = qs('[data-auth-terms]', content); if (terms) terms.onclick = () => showTermsModal();
       const privacy = qs('[data-auth-privacy]', content); if (privacy) privacy.onclick = () => showTermsModal();
       const full = qs('[data-auth-full-terms]', content); if (full) full.onclick = () => showTermsModal();
@@ -5365,7 +5486,7 @@
           <button class="btn primary auth-main-action" type="submit">Продолжить <span aria-hidden="true">&#8594;</span></button>
         </form>
         <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
-      qs('[data-auth-back]', content).onclick = () => renderStep2('');
+      qs('[data-auth-back]', content).onclick = () => renderStep1('');
       const form = qs('[data-auth-tg-email]', content);
       form.onsubmit = (event) => {
         event.preventDefault();
@@ -8717,14 +8838,13 @@
         <button type="button" class="orch-drawer-scrim" id="orch-drawer-scrim" aria-label="Закрыть список диалогов" tabindex="-1"></button>
         <aside class="orch-convos" id="orch-convos" aria-label="Диалоги">
           <div class="orch-convo-tools">
-            <div class="orch-convo-tools-head"><span>Диалоги</span><span id="orch-convo-count">0</span></div>
+            <div class="orch-convo-tabs" role="tablist" aria-label="Папки и фильтры диалогов">
+              <div class="orch-convo-tabs-scroll" id="orch-convo-tabs"></div>
+              <button class="orch-folder-add" id="orch-folder-add" type="button" title="Добавить папку" aria-label="Добавить папку">${icon('plus')}</button>
+            </div>
             <label class="orch-convo-search" for="orch-convo-search">${icon('search')}<input id="orch-convo-search" type="search" autocomplete="off" placeholder="Поиск диалогов" aria-label="Поиск диалогов"></label>
             <button class="orch-convo-new" id="orch-new-side" type="button">${icon('plus')}<span>Новый диалог</span></button>
-            <div class="orch-convo-filters" role="tablist" aria-label="Фильтр диалогов">
-              <button type="button" class="active" data-orch-convo-filter="all" role="tab" aria-selected="true">Все</button>
-              <button type="button" data-orch-convo-filter="pinned" role="tab" aria-selected="false">Закреплённые</button>
-              <button type="button" data-orch-convo-filter="recent" role="tab" aria-selected="false">Недавние</button>
-            </div>
+            <span class="orch-convo-counter" id="orch-convo-count">0</span>
           </div>
           <div class="orch-convo-list" id="orch-convo-list"></div>
         </aside>
@@ -8770,6 +8890,8 @@
     qs('#orch-drawer-scrim', panel).addEventListener('click', () => panel.classList.remove('show-convos'));
     qs('#orch-new', panel).addEventListener('click', () => { orchCloseSkinMenu(); orchNewConversation(); });
     qs('#orch-new-side', panel).addEventListener('click', () => { orchCloseSkinMenu(); orchNewConversation(); });
+    const folderAdd = qs('#orch-folder-add', panel);
+    if (folderAdd) folderAdd.addEventListener('click', () => { orchCloseSkinMenu(); orchAddFolder(); });
     qs('#orch-convo-search', panel).addEventListener('input', (e) => {
       // Filtering rebuilt the whole rail on every character. One render per
       // typing pause keeps the field responsive on a large list.
@@ -9128,15 +9250,115 @@
   // Upper bound on rows put in the DOM at once. Far above any realistic rail,
   // so it never fires in ordinary use; it only stops a pathological list from
   // freezing the click that produced it.
+  // Folders are a rail-side arrangement, not a property of the conversation:
+  // they live in this browser only and never touch the chat record. Deleting a
+  // folder therefore loses no message and no conversation.
+  const ORCH_FOLDER_KEY = 'stratforge.sfchat.folders';
+  function orchLoadFolders() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(ORCH_FOLDER_KEY) || '{}');
+      const names = Array.isArray(raw.names) ? raw.names.filter(n => typeof n === 'string' && n.trim()) : [];
+      const of = raw.of && typeof raw.of === 'object' ? raw.of : {};
+      return { names, of };
+    } catch (e) { return { names: [], of: {} }; }
+  }
+  function orchSaveFolders(state) {
+    try { localStorage.setItem(ORCH_FOLDER_KEY, JSON.stringify({ names: state.names, of: state.of })); }
+    catch (e) { /* a browser with storage off still gets a working rail */ }
+    ORCH.folders = state;
+  }
+  function orchFolders() {
+    if (!ORCH.folders) ORCH.folders = orchLoadFolders();
+    return ORCH.folders;
+  }
+  function orchAddFolder() {
+    const name = prompt('Название папки:', '');
+    if (name == null) return;
+    const clean = String(name).trim().slice(0, 40);
+    if (!clean) return;
+    const state = orchFolders();
+    if (!state.names.includes(clean)) state.names.push(clean);
+    orchSaveFolders(state);
+    ORCH.listFilter = 'folder:' + clean;
+    orchRenderConversations();
+  }
+  function orchMoveToFolder(cid) {
+    const state = orchFolders();
+    const current = String(state.of[cid] || '');
+    const hint = state.names.length ? `Доступные папки: ${state.names.join(', ')}` : 'Папок пока нет — введите название новой.';
+    const name = prompt(`${hint}${String.fromCharCode(10)}Папка для диалога (пусто — без папки):`, current);
+    if (name == null) return;
+    const clean = String(name).trim().slice(0, 40);
+    if (!clean) delete state.of[cid];
+    else {
+      if (!state.names.includes(clean)) state.names.push(clean);
+      state.of[cid] = clean;
+    }
+    orchSaveFolders(state);
+    orchRenderConversations();
+  }
+  function orchRenderFolderTabs(counts) {
+    const wrap = qs('#orch-convo-tabs'); if (!wrap) return;
+    const state = orchFolders();
+    const tabs = [['all', 'All'], ['pinned', 'Закреплённые'], ['recent', 'Недавние']]
+      .concat(state.names.map(name => ['folder:' + name, name]));
+    const html = tabs.map(([id, label]) => {
+      const active = ORCH.listFilter === id;
+      const n = counts[id];
+      return `<button type="button" role="tab" class="orch-convo-tab${active ? ' active' : ''}" data-orch-convo-filter="${esc(id)}" aria-selected="${active}">${esc(label)}${n ? `<span>${n}</span>` : ''}</button>`;
+    }).join('');
+    if (wrap._orchTabs !== html) { wrap._orchTabs = html; wrap.innerHTML = html; }
+    qsa('[data-orch-convo-filter]', wrap).forEach(button => button.onclick = () => {
+      ORCH.listFilter = button.dataset.orchConvoFilter || 'all';
+      orchRenderConversations();
+    });
+  }
+  // Rail day headings, in the reference's wording.
+  function orchDayLabel(iso) {
+    if (!iso) return 'Ранее';
+    const zone = (window.AuroraDomain && AuroraDomain.PT_ZONE) || 'America/Los_Angeles';
+    const day = (value) => {
+      try { return new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(value); }
+      catch (e) { return String(value); }
+    };
+    const when = new Date(iso);
+    if (isNaN(when.getTime())) return 'Ранее';
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 86400000);
+    if (day(when) === day(now)) return 'Сегодня';
+    if (day(when) === day(yesterday)) return 'Вчера';
+    try { return new Intl.DateTimeFormat('ru-RU', { timeZone: zone, day: '2-digit', month: 'short' }).format(when); }
+    catch (e) { return 'Ранее'; }
+  }
+  function orchRowTime(iso) {
+    if (!iso) return '';
+    try {
+      return new Intl.DateTimeFormat('ru-RU', {
+        timeZone: (window.AuroraDomain && AuroraDomain.PT_ZONE) || 'America/Los_Angeles',
+        hour: '2-digit', minute: '2-digit',
+      }).format(new Date(iso));
+    } catch (e) { return ''; }
+  }
   const ORCH_LIST_RENDER_CAP = 300;
   function orchRenderConversations() {
     const wrap = qs('#orch-convo-list') || qs('#orch-convos'); if (!wrap) return;
     const unreadMap = NOTICE.unreadByConversation || {};
     const query = String(ORCH.listQuery || '').trim().toLocaleLowerCase('ru-RU');
-    const filter = ['all', 'pinned', 'recent'].includes(ORCH.listFilter) ? ORCH.listFilter : 'all';
+    const folderState = orchFolders();
+    const known = ['all', 'pinned', 'recent'].concat(folderState.names.map(n => 'folder:' + n));
+    const filter = known.includes(ORCH.listFilter) ? ORCH.listFilter : 'all';
     let visible = ORCH.conversations.slice();
     if (filter === 'pinned') visible = visible.filter(c => !!(c.pinned || c.is_default));
+    if (filter.indexOf('folder:') === 0) {
+      const wanted = filter.slice(7);
+      visible = visible.filter(c => String(folderState.of[c.conversation_id] || '') === wanted);
+    }
     if (filter === 'recent') visible.sort((a, b) => String(b.updated_at_utc || '').localeCompare(String(a.updated_at_utc || '')));
+    const tabCounts = { all: ORCH.conversations.length, pinned: ORCH.conversations.filter(c => !!(c.pinned || c.is_default)).length };
+    folderState.names.forEach(name => {
+      tabCounts['folder:' + name] = ORCH.conversations.filter(c => String(folderState.of[c.conversation_id] || '') === name).length;
+    });
+    orchRenderFolderTabs(tabCounts);
     if (query) visible = visible.filter(c => {
       const participant = c.participant || {};
       return [c.title, c.subtitle, c.last_message_preview, participant.display_name, participant.username]
@@ -9145,11 +9367,7 @@
     const count = qs('#orch-convo-count');
     if (count) count.textContent = visible.length === ORCH.conversations.length
       ? String(visible.length) : `${visible.length}/${ORCH.conversations.length}`;
-    qsa('[data-orch-convo-filter]').forEach(button => {
-      const active = button.dataset.orchConvoFilter === filter;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-selected', active ? 'true' : 'false');
-    });
+
     // A filter or a cleared search re-renders every matching row. At 2000
     // conversations that is ~30k nodes and ~1.2s of blocked main thread for one
     // click. The rail renders a bounded window and says so; the counter above it
@@ -9157,7 +9375,7 @@
     const total = visible.length;
     const truncated = Math.max(0, total - ORCH_LIST_RENDER_CAP);
     if (truncated) visible = visible.slice(0, ORCH_LIST_RENDER_CAP);
-    const rows = visible.map(c => {
+    const rowHtml = visible.map(c => {
       const active = c.conversation_id === ORCH.currentId;
       const human = orchIsHumanConversation(c);
       const canEdit = !human && !c.is_default;
@@ -9172,23 +9390,33 @@
         ? `<img src="${esc(participant.avatar_url)}" alt="">`
         : esc(String(participant.display_name || c.title || '?').slice(0, 1).toUpperCase())}</span>` : '';
       const subtitle = human
-        ? [String(c.last_message_preview || ''), orchFmtTime(c.updated_at_utc)].filter(Boolean).join(' · ')
-        : `${orchFmtTime(c.updated_at_utc)} · ${Number(c.message_count || 0)} сообщ.`;
+        ? String(c.last_message_preview || 'личная переписка')
+        : `${Number(c.message_count || 0)} сообщений`;
       const state = human
         ? '<div class="orch-convo-state human">личная переписка</div>'
         : `<div class="orch-convo-state ${(c.closed ? 'closed' : (c.is_default ? 'open' : (ORCH_WORK_STATES[c.work_state] || ORCH_WORK_STATES.open)[1]))}">${c.closed ? 'закрыта' : (c.is_default ? 'всегда открыт' : (ORCH_WORK_STATES[c.work_state] || ORCH_WORK_STATES.open)[0])}</div>`;
+      const folderName = String(folderState.of[c.conversation_id] || '');
       return `<div class="orch-convo ${active ? 'active' : ''} ${pinned ? 'pinned' : ''}${unreadCls}" data-cid="${esc(c.conversation_id)}" role="button" tabindex="0">
         ${face}
         <div class="orch-convo-main">
-          <div class="orch-convo-title">${pinned ? icon('pin') : ''}${esc(c.title || 'Диалог')}${unreadBadge}</div>
-          <div class="orch-convo-sub">${esc(subtitle)}</div>
+          <div class="orch-convo-title">${esc(c.title || 'Диалог')}${unreadBadge}<time>${esc(orchRowTime(c.updated_at_utc))}</time></div>
+          <div class="orch-convo-sub">${esc(subtitle)}${folderName ? `<span class="orch-convo-folder">${esc(folderName)}</span>` : ''}</div>
           ${state}
         </div>
         <div class="orch-convo-acts">
           ${human ? '' : (c.is_default ? '<span class="orch-convo-sys" title="Системный чат — всегда закреплён">AI</span>' : `<button class="orch-icon-btn sm ${pinned ? 'on' : ''}" data-pin="${esc(c.conversation_id)}" data-pinned="${pinned ? '1' : '0'}" title="${pinned ? 'Открепить' : 'Закрепить вверху'}" aria-label="Закрепить">${icon('pin')}</button>`)}
+          <button class="orch-icon-btn sm" data-folder="${esc(c.conversation_id)}" title="Папка диалога" aria-label="Папка диалога">${icon('layers')}</button>
           ${canEdit ? `<button class="orch-icon-btn sm" data-rename="${esc(c.conversation_id)}" title="Переименовать" aria-label="Переименовать">${icon('edit')}</button><button class="orch-icon-btn sm" data-del="${esc(c.conversation_id)}" title="Удалить" aria-label="Удалить">${icon('trash')}</button>` : ''}
         </div>
       </div>`;
+    });
+    // Days, in the reference's shape: one quiet heading above each group.
+    let lastDay = '';
+    const rows = rowHtml.map((html, index) => {
+      const day = orchDayLabel(visible[index] && visible[index].updated_at_utc);
+      const heading = day === lastDay ? '' : `<div class="orch-convo-day">${esc(day)}</div>`;
+      lastDay = day;
+      return heading + html;
     }).join('');
     const error = ORCH.loadError
       ? '<div class="empty-state">Не удалось обновить список. Показана сохранённая история; повторите после восстановления соединения.</div>'
@@ -9219,6 +9447,8 @@
         if (rename) { e.stopPropagation(); orchRename(rename.dataset.rename); return; }
         const remove = e.target.closest('[data-del]');
         if (remove) { e.stopPropagation(); orchDelete(remove.dataset.del); return; }
+        const folder = e.target.closest('[data-folder]');
+        if (folder) { e.stopPropagation(); orchMoveToFolder(folder.dataset.folder); return; }
         const row = e.target.closest('.orch-convo');
         if (row) orchSelectConversation(row.dataset.cid);
       });
@@ -9466,6 +9696,21 @@
       </div>
     </details>`;
   }
+  // Shown only while the verdict is genuinely open: a task or a report that
+  // nobody has marked done or failed yet. Plain chat never asks for one.
+  function orchAwaitHtml(row) {
+    if (!row || row.role === 'user' || !row.message_id) return '';
+    const kind = orchInferKind(row);
+    if (kind === 'chat' || kind === 'informational') return '';
+    if (orchFulfillmentOf(row) !== 'unset') return '';
+    return `<div class="orch-await">
+      <span class="orch-await-label">Жду ваш ответ</span>
+      <div class="orch-fulfill-marks compact" data-orch-fulfill-id="${esc(row.message_id)}" data-fulfillment="unset">
+        <button type="button" class="orch-fulfill-btn" data-orch-fulfill="done" title="Правильно или выполнено" aria-label="Правильно или выполнено">${icon('check')}</button>
+        <button type="button" class="orch-fulfill-btn" data-orch-fulfill="failed" title="Неправильно или не выполнено" aria-label="Неправильно или не выполнено">${icon('close')}</button>
+      </div>
+    </div>`;
+  }
   function orchMessageHtml(row) {
     const humanMessage = row.sender_type === 'human' || !!row.sender_profile_id;
     if (humanMessage) {
@@ -9501,7 +9746,13 @@
     const face = isUser ? '' : agentAvatarHtml(agentRef, {
       label: agentLabel, cls: 'orch-msg-face', messageId: row.message_id || '',
     });
-    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}">${face}<div class="orch-msg-stack"><div class="orch-msg-body">${esc(row.content || '')}</div>${media}${actions}${footer}</div></div>`;
+    // The answer wears its own header (who answered, on which model) and, while
+    // it still waits for a verdict, the approve / reject pair sits on the card
+    // itself instead of inside the collapsed details panel.
+    const model = String(row.model || '').trim();
+    const provider = String(row.provider || '').trim();
+    const head = isUser ? '' : `<div class="orch-msg-card-head"><span class="orch-msg-author">${esc(agentLabel)}</span>${model ? `<span class="orch-msg-model">модель: ${esc(model)}${provider ? ` (${esc(provider)})` : ''}</span>` : ''}${orchAwaitHtml(row)}</div>`;
+    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}">${face}<div class="orch-msg-stack">${head}<div class="orch-msg-body">${esc(row.content || '')}</div>${media}${actions}${footer}</div></div>`;
   }
   function orchStopFeedbackVoice() {
     const voice = ORCH.feedbackVoice;
