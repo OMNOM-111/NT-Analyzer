@@ -395,3 +395,13 @@ def test_preview_logout_cannot_sign_the_owner_out_of_the_real_contour(preview_en
         "unauthenticated" if name == server._DEV_PREVIEW_MODE_COOKIE else ""
     )
     assert handler._dev_preview_mode_cookie_name() not in {server._DEV_PREVIEW_MODE_COOKIE}
+
+
+def test_scenario_users_carry_a_stratforge_handle(preview_env):
+    """A scenario member must look like a registered one in Social and Chat."""
+    result = preview_sandbox.activate_scenario(
+        "trusted_device", device_credential="preview-browser-handle",
+    )
+    context = account_auth.authenticate_session(result["session_token"])
+    assert context["user"]["handle"], "synthetic scenario user has no handle"
+    assert account_auth.normalize_handle(context["user"]["handle"])

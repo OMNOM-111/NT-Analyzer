@@ -437,6 +437,21 @@ def _register_synthetic_user(device_credential: str, generation: int) -> Dict[st
     if not user:
         raise PreviewSandboxError("Synthetic Preview user не найден.", 503)
     marked = _mark_preview_user(int(user.get("user_id") or 0))
+    # A scenario user is meant to look like a real registered member, and a
+    # member's name in Social and Chat comes from the StratForge handle.
+    with account_auth._LOCK:
+        doc = account_auth._read_doc()
+        stored = account_auth._user(doc, int(marked.get("user_id") or 0))
+        if stored is not None and not str(stored.get("handle") or "").strip():
+            try:
+                account_auth._assign_handle_in_doc(
+                    doc, stored,
+                    account_auth.suggest_handle(email=email) or f"preview{generation}",
+                )
+                account_auth._write_doc(doc)
+                marked = dict(stored)
+            except account_auth.AccountAuthError:
+                pass
     result["user_id"] = int(marked.get("user_id") or 0)
     result["user_uuid"] = str(marked.get("user_uuid") or "")
     result["email"] = email
