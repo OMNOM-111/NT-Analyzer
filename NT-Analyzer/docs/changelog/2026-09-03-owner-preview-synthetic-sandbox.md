@@ -120,3 +120,26 @@ Development-окружением, test-auth и высокоэнтропийны�
 - Production bundle pre-release check: `476` файлов, четыре гейта PASS.
 - Canary/Production не затрагивались; owner visual acceptance и живая
   доставка Telegram/e-mail остаются отдельными шагами.
+
+## Unified Local beta.96 — contextual registration delta
+
+В интеграционной ветке `integration/stratforge-unified-local` (PR #280,
+implementation `42a99a85f164f69c6ddd0edf46859ef005e787e2`) Preview приведён в
+соответствие с новым трёхшаговым onboarding. Удалён ускоренный сценарий,
+который выбирал e-mail, получал код и отмечал согласие вместо owner. Теперь
+каждый настоящий экран остаётся в цепочке, а локальная synthetic-кнопка
+заменяет только credential/provider side: профиль, Telegram, Google, e-mail,
+OTP или QR.
+
+Telegram использует настоящий challenge и обычное завершение регистрации;
+Google — настоящий staged-registration; e-mail — обычный OTP state. Terms,
+создание профиля, Device Confirmation и permanent/session-only choice не
+автоматизируются. Все synthetic identity/provider endpoints закрыты
+Preview-флагом и HttpOnly control cookie, внешние Telegram/Google переходы и
+provider transports в sandbox не выполняются. Обычный Local возвращает `404`
+на synthetic endpoint, а `Exit Preview` возвращает исходный owner account,
+balance, runtime и status без замены или изменения owner-данных.
+
+Проверено: focused suite `173 passed`; full regression `2680 passed, 44
+skipped`; ручной browser walkthrough всех трёх provider, QR, обоих режимов
+доверия и восстановления Owner Local — PASS, browser console errors — 0.

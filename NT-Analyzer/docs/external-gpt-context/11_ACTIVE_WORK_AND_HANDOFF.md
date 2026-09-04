@@ -1,13 +1,40 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-02T16:16:41Z
+- Last verified UTC: 2026-09-04T19:05:50Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Development branch implementation SHA: `c0bcf7af1a460d52212a596d0cdcfc100aadfacb` (PR #270; Community IA plus browser QA scenarios A-D on the restored DEV contour; not deployed)
+- Unified Local implementation SHA: `42a99a85f164f69c6ddd0edf46859ef005e787e2`
+- Development branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`, not deployed
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`
-- Scope: beta.87 live baseline plus isolated Community/SF Chat Development branch
+- Scope: beta.87 live baseline plus unified Local auth, Device Confirmation, SF Social, SF Chat and Owner Preview
 - Status: PARTIAL
+
+## Active Unified Local — beta.96
+
+- The current Local build combines the rebuilt login/registration, proof-based
+  Device Confirmation, SF Social, SF Chat and isolated Owner Preview. The
+  StratForge handle selected at registration is the shared profile/social/chat
+  identity; there is no Community-side second registration or DM store.
+- Owner Preview remains an isolated loopback process with its own data root,
+  cookies and synthetic non-owner identity. It never turns the parent Local
+  runtime into a reduced sandbox. `Exit Preview` returned to the original owner
+  account and unchanged balance, workspace/runtime data and owner navigation in
+  the browser acceptance run; private Local values are intentionally omitted.
+- Preview registration is contextual rather than automatic. Profile,
+  Telegram, Google, e-mail, OTP and QR each expose their own local synthetic
+  action on the real screen. Terms, final profile creation, Device Confirmation
+  and permanent/session-only choice remain manual.
+- Synthetic actions reuse normal auth state: Telegram login challenge, Google
+  staged registration, e-mail OTP and `/api/auth/register/complete`. Provider
+  network effects are blocked; the Preview endpoint is `404` in ordinary
+  Local and unavailable in Canary/Production.
+- Evidence at implementation `42a99a85f164f69c6ddd0edf46859ef005e787e2`:
+  focused `173 passed`, full `2680 passed, 44 skipped`, Python/JavaScript/static
+  checks PASS, manual browser walkthrough of all providers, QR, both device
+  trust modes and Owner Local restore PASS, browser console errors 0.
+- No Agent World code or documents were changed by this Preview delta. Agent
+  World work starts only as a separate task after this gate and Git closeout.
 
 ## Active isolated development — Community / SF Chat
 
@@ -98,6 +125,7 @@
 
 | Field | Value |
 | --- | --- |
+| Unified Local implementation | `42a99a85f164f69c6ddd0edf46859ef005e787e2` on `integration/stratforge-unified-local`; PR #280; `0.10.0-beta.96`; not deployed |
 | Current Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (deployed beta.87 baseline) |
 | Development Git implementation | `c0bcf7af1a460d52212a596d0cdcfc100aadfacb` on `codex/community-social-network`; PR #270; not deployed |
 | Deployed Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (beta.87) |

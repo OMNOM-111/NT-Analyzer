@@ -1,14 +1,16 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
-- Last verified UTC: 2026-09-02T16:16:41Z
+- Last verified UTC: 2026-09-04T19:05:50Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
+- Unified Local implementation SHA: `42a99a85f164f69c6ddd0edf46859ef005e787e2`
+- Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`, not deployed
 - Development branch implementation SHA: `27b4de3d65eb4e1d753302b90fec45c90a51765a` (PR #270; final SF Chat messenger presentation pass; not deployed)
 - Device-confirmation Development implementation SHA: `19e0f43a35bee5a2e396538962e8f24e92bed6ef` (PR #278; isolated branch; not deployed)
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production
-- Scope: Current factual subsystem snapshot only
+- Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
 ## Evidence modes
@@ -23,6 +25,11 @@
 - Device-confirmation Development evidence: isolated branch
   `codex/device-confirmation-trusted-access`; automated verification is tracked
   in its canonical changelog. It does not modify Community or SF Chat.
+- Unified Local evidence: auth/onboarding, Device Confirmation, SF Social,
+  SF Chat and isolated Owner Preview coexist in `0.10.0-beta.96`. Contextual
+  Preview registration verification is `173 passed` focused and `2680 passed,
+  44 skipped` full, plus a manual browser walkthrough of Telegram, Google,
+  e-mail/OTP, QR, permanent/session-only trust and Owner Local restore.
 - Operational evidence: Release Center closeout, server symlinks and read-only
   Production audit/acceptance evidence in the current handoff.
 - Canonical live release snapshot:
@@ -32,17 +39,17 @@
 
 | Subsystem | Status | Current fact | Remaining limit |
 | --- | --- | --- | --- |
-| Auth / owner identity | `BETA` | One canonical owner UUID is preserved across isolated environments; Telegram QR/one-tap confirmation uses the shared environment-routed bot flow. Post-revoke Google OAuth and Resend smoke passed on Canary and Production | Platform secrets have a canonical external storage contract; three older platform secrets still legally remain in `production-app.env` until separately migrated |
-| Device confirmation / trusted access | `IN DEVELOPMENT` | Every new unknown human browser/app access starts as a five-minute pending session. OTP is limited to confirmed Telegram or verified email; the user selects permanent client trust or access only for the current auth session. Machine → Client → Session grouping requires Connector hardware identity or attested pairing; unbound clients remain separate | Not present in the deployed beta.87 artifact. PR #278 carries per-head CI evidence; real-provider acceptance, manual visual acceptance, merge and Canary/Production remain separate gates |
+| Auth / owner identity | `BETA` in Unified Local | `0.10.0-beta.96` has one three-step registration contract for Telegram, Google and e-mail, a stable StratForge handle shared by profile/SF Social/SF Chat, final clickwrap consent and the existing shared environment-routed provider architecture. Owner Preview uses the same state transitions with sandbox-only synthetic credentials | Not present in the deployed beta.87 artifact; live real-provider acceptance and immutable Canary/Production promotion remain separate gates |
+| Device confirmation / trusted access | `BETA` in Unified Local | Every new unknown human browser/app access starts as a two-minute pending session. The first freshly authenticated device can choose permanent trust or current-session-only without a redundant second OTP; later unknown clients still use confirmed Telegram or verified e-mail. Machine → Client → Session grouping remains proof-based | Integrated and browser-verified in Local beta.96, but not present in deployed beta.87; real-provider acceptance and release promotion remain separate gates |
 | Legacy UI / Telegram Mini App | `DEPRECATED` | Merged main serves Aurora only; legacy UI, Mini App, remote-access and tunnel routes fail with HTTP 410. Classic assets are available only in a separate localhost read-only Legacy Viewer. Telegram `/start` uses a normal URL button | beta.87 is live in Canary and Production; historical snapshots remain until owner review |
-| User entry and trial access | `BETA` | Anonymous preview access is removed. A verified new account receives one full seven-day product trial; owner extension records actor, reason and before/after history | Product access does not grant third-party market-data redistribution rights |
+| User entry and trial access | `BETA` in Unified Local | Anonymous product access is removed. Every verified account receives the same full product with a default five-hour active-use starting grant; idle time is not charged. Profile/security remain available after exhaustion | Not present in deployed beta.87; product access does not grant third-party market-data redistribution rights |
 | Admin / Release Center | `BETA` | A versioned release/change record is visible with title, summary, PRs, SHA, build/artifact, stage, checks, duration and environment identity. Production approval/promotion fails closed without title, summary, source SHA and verification PASS | beta.87 acceptance is recorded; any application change starts a new artifact cycle |
-| Test isolation | `AVAILABLE` | Legacy-isolation full regression passed `2430 passed, 34 skipped`; live data roots are excluded from test fixtures | real-PostgreSQL groups require their explicit test DSNs |
+| Test isolation | `AVAILABLE` | Unified Local contextual Preview regression passed `2680 passed, 44 skipped`; live owner data stayed outside the sandbox and synthetic endpoints return `404` in ordinary Local | real-PostgreSQL groups require their explicit test DSNs |
 | Market data / TopstepX | `BETA` | TopstepX remains the primary independent read-only history/realtime chart source; the accepted gateway/SignalR/cache/failover/rendering baseline was not changed by PR #254/#255 or the beta.86 release-record work | cross-user owner-feed redistribution remains `EXTERNAL BLOCKED` without written authority |
 | Charts / fan-out | `BETA` | Browser clients consume same-origin StratForge market-data WebSockets; provider credentials are not delivered to browsers and consumers do not create their own TopstepX loginKey/SignalR sessions | broader design acceptance is separate from this Connector closeout |
 | NinjaTrader / Connector | `BETA` | Production Connector on VMNINJA is `0.4.2-dev.20`; SERVER BACKTEST, cancel state machine, device catalog, account snapshot and Connector LIVE/GRACE/OFFLINE presentation are accepted | public installer distribution remains `EXTERNAL BLOCKED` on authorized Authenticode material |
 | Production worker queue | `AVAILABLE` | Eleven worker slots remain 4/4/2/1; empty workers use adaptive jittered backoff and one 30-second stale sweeper. Later auth hot-spot work reduced `/api/auth/status` latency but did not claim CPU improvement outside noise | DB tx/s still lacks a safe first-class diagnostics path |
-| Community / SF Chat | `BETA` in Development | Isolated branch has real profiles/privacy/social feed/search/follows/interactions, Channels compatibility, moderation/soft delete, server-attested Demo/Backtest result posts and one human SF Chat store shared by Community profiles and the global launcher. The latest presentation pass (`27b4de3d65eb4e1d753302b90fec45c90a51765a`) keeps the accepted Community composition and gives the Orbital Glass SF Chat shell a messenger-first presentation: compact right user bubbles, separate left AI/human avatars with glass bubbles, secondary disclosure-based response controls, denser real-data sidebar, clean composer and restrained vector SF branding. The desktop shell remains linked to the real launcher by a presentation-only light trajectory; mobile remains full-screen without that decoration. Existing notification state, human routing and AI Orchestrator storage remain authoritative. PostgreSQL documents fail closed and migrations `0020`/`0021` add allowlist plus FK/index/FORCE-RLS mirrors | Not present in the deployed artifact. Strategy/Chart/Live object adapters, credentialed PostgreSQL acceptance, owner visual acceptance, owner-approved merge and Canary/Production remain separate gates |
+| SF Social / SF Chat | `BETA` in Unified Local | The former Community tab is the integrated SF Social network: profiles, privacy/social graph, feed/search/interactions, moderation and server-attested Demo/Backtest posts. SF Chat is the single human/AI conversation surface and keeps existing Orchestrator storage/routing. Registration handle and identity are shared across auth, profile, SF Social and SF Chat | Not present in deployed beta.87. Strategy/Chart/Live object adapters, credentialed PostgreSQL acceptance, owner-approved merge and Canary/Production remain separate gates |
 | Documents | `BETA` | Current handoff and Context Pack identify beta.87 as live; hidden Markdown amendment blocks are removed and AI provenance is infrastructure-only or absent | beta.87 exact operational identity is recorded in its changelog closeout |
 | Legal | `AVAILABLE` | One official onboarding agreement `2026-08-30-v2` is the sole versioned clickwrap; related official policies are readable informational documents; owner configuration is absent from both document API namespaces | Live Trading remains unavailable pending separate release and legal requirements |
 
