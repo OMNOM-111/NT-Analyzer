@@ -46,7 +46,10 @@ def preview_env(tmp_path, monkeypatch):
 
     mutable = root / "ai_lab"
     monkeypatch.setattr(ai_lab_paths, "MUTABLE_AI_LAB_DIR", mutable)
+    # Every path the module exposes, including the ones ``ensure_dirs`` touches:
+    # a partially redirected module still creates files in the repository tree.
     for name, relative in (
+        ("AI_LAB_DIR", ""),
         ("REGISTRY_DIR", "registry"),
         ("EXPERIMENTS_DIR", "registry/experiments"),
         ("POSTMORTEMS_DIR", "registry/strategy_postmortems"),
@@ -55,10 +58,24 @@ def preview_env(tmp_path, monkeypatch):
         ("PROMPTS_LOG_DIR", "registry/prompts_log"),
         ("ACTIVITY_DIR", "registry/activity"),
         ("USER_RESEARCH_DIR", "user_research"),
+        ("PROMPTS_DIR", "prompts"),
+        ("SCHEMAS_DIR", "schemas"),
+        ("REFERENCE_STRATEGIES_DIR", "reference_strategies"),
         ("MIRRORS_DIR", "mirrors"),
         ("SOURCE_SNAPSHOTS_DIR", "mirrors/source_snapshots"),
+        ("QUARANTINE_DIR", "quarantine/compile_failed"),
+        ("INDEX_PATH", "registry/index.json"),
+        ("MODEL_BENCHMARK_PATH", "registry/model_benchmark_latest.json"),
+        ("ERROR_LOG_PATH", "registry/error_log.jsonl"),
+        ("ERROR_PATTERNS_PATH", "registry/error_patterns.json"),
+        ("LESSON_LOG_PATH", "registry/lesson_log.jsonl"),
+        ("REJECTED_HYPOTHESES_PATH", "registry/rejected_hypotheses.jsonl"),
+        ("DEMO_MISMATCH_PATH", "registry/demo_mismatch_registry.jsonl"),
+        ("COMPILE_FAIL_PATH", "registry/compile_fail_registry.jsonl"),
+        ("INFRA_FAIL_PATH", "registry/infra_fail_registry.jsonl"),
     ):
-        monkeypatch.setattr(ai_lab_paths, name, mutable.joinpath(*relative.split("/")))
+        target = mutable.joinpath(*relative.split("/")) if relative else mutable
+        monkeypatch.setattr(ai_lab_paths, name, target)
     account_auth._clear_doc_cache()
     security_devices._CHALLENGE_RATE.clear()
     preview_sandbox._ENTRY_CONSUMED = False

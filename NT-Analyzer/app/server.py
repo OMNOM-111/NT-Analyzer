@@ -3697,6 +3697,13 @@ class Handler(BaseHTTPRequestHandler):
                 },
                 "email": email,
             },
+            "registration": {
+                # The trial length is an existing product contract, not a
+                # number invented by the sign-up screen.
+                "trial_days": subscriptions.INITIAL_TRIAL_DAYS,
+                "handle_min_len": account_auth.HANDLE_MIN_LEN,
+                "handle_max_len": account_auth.HANDLE_MAX_LEN,
+            },
         }
 
     def _auth_status(self) -> None:
@@ -4073,6 +4080,27 @@ class Handler(BaseHTTPRequestHandler):
             path = str(identity.get("return_path") or "/ui/")
             if identity.get("purpose") == "login":
                 tunnel_ip, forwarded_ip = self._request_ips()
+                if not identity.get("accept_terms"):
+                    # Registration consent belongs to the last step, so a Google
+                    # identity that has no account yet waits in a staged
+                    # registration instead of silently creating one here.
+                    try:
+                        staged = account_auth.stage_google_registration(
+                            google_sub=identity["google_sub"],
+                            google_email=identity.get("google_email") or "",
+                            google_name=identity.get("google_name") or "",
+                            email_verified=bool(identity.get("email_verified")),
+                            ip=forwarded_ip or tunnel_ip,
+                            user_agent=str(self.headers.get("User-Agent") or ""),
+                        )
+                    except account_auth.AccountAuthError as exc:
+                        if getattr(exc, "code", "") != "google_already_registered":
+                            raise
+                    else:
+                        self._html_redirect(path + ("&" if "?" in path else "?")
+                                            + "google_registration="
+                                            + urllib.parse.quote(staged["registration_id"]))
+                        return
                 out = account_auth.login_via_google_identity(
                     device_credential=self._device_credential(),
                     google_sub=identity["google_sub"],
@@ -4454,6 +4482,27 @@ class Handler(BaseHTTPRequestHandler):
                     return_path=str(body.get("return_path") or "/ui/"),
                     accept_terms=bool(body.get("accept_terms")),
                 )
+            elif path == "/api/auth/register/complete":
+                out = account_auth.complete_registration(
+                    method=body.get("method"),
+                    challenge_id=body.get("challenge_id"),
+                    handle=body.get("handle"),
+                    first_name=body.get("first_name"),
+                    last_name=body.get("last_name"),
+                    code=body.get("code"),
+                    email=body.get("email"),
+                    accept_terms=bool(body.get("accept_terms")),
+                    ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
+                    api_call=telegram_service._api_call, owner_chat_id=owner_id,
+                    device_credential=self._device_credential(),
+                )
+                if out.get("status") == "authenticated":
+                    preview_sandbox.after_public_auth(out)
+                    self._set_session_cookie(
+                        str(out.pop("session_token")),
+                        persistent=bool(out.get("session_cookie_persistent")),
+                    )
+                    self._clear_dev_preview_mode_cookie()
             elif path == "/api/auth/email/start":
                 out = account_auth.start_email_auth(
                     body.get("email"), ip=ip,
@@ -4481,6 +4530,19 @@ class Handler(BaseHTTPRequestHandler):
                     google_sub=str(body.get("google_sub") or ""),
                     email=str(body.get("email") or ""),
                 )
+                if str(body.get("intent") or "").strip().lower() == "register":
+                    # Same staged-consent contract as the real OAuth callback,
+                    # so Development and Preview exercise the production shape.
+                    out = account_auth.stage_google_registration(
+                        google_sub=identity["google_sub"],
+                        google_email=identity["google_email"],
+                        google_name=str(body.get("google_name")
+                                        or identity.get("google_name") or ""),
+                        email_verified=True,
+                        ip=ip, user_agent=str(self.headers.get("User-Agent") or ""),
+                    )
+                    self._json(HTTPStatus.OK, out)
+                    return
                 out = account_auth.login_via_google_identity(
                     device_credential=self._device_credential(),
                     google_sub=identity["google_sub"],
@@ -6109,6 +6171,24 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/auth/providers":
             self._json(HTTPStatus.OK, self._auth_providers_payload())
+            return
+
+        if path == "/api/auth/handle/check":
+            # Public: the registration form has to answer "is this name free?"
+            # before an account exists. It returns availability only, never who
+            # holds a taken name.
+            self._json(HTTPStatus.OK, account_auth.handle_available(
+                (qs.get("handle") or [""])[0],
+            ))
+            return
+
+        if path == "/api/auth/registration/state":
+            try:
+                self._json(HTTPStatus.OK, account_auth.registration_state(
+                    (qs.get("id") or [""])[0],
+                ))
+            except account_auth.AccountAuthError as exc:
+                self._err(exc.status, str(exc), code=getattr(exc, "code", "") or "")
             return
 
         if path == "/api/legal/terms":
@@ -9970,6 +10050,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/auth/login/start", "/api/auth/login/status", "/api/auth/profile",
             "/api/auth/google/login/start", "/api/auth/email/start",
             "/api/auth/email/verify", "/api/auth/test/google-login",
+            "/api/auth/register/complete",
         }:
             self._auth_public_post(path)
             return

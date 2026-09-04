@@ -237,6 +237,11 @@ def _sandbox_environment(
         "NTA_EMAIL_AUTH_FROM", "NTA_RESEND_API_KEY",
     ):
         env[key] = ""
+    # A synthetic bot name, never the owner's real one. Delivery still cannot
+    # happen — the token is empty and the child cannot open a socket — but the
+    # login screen can render its QR and Telegram option, which is what the
+    # owner is here to look at.
+    env["NTA_TELEGRAM_BOT_USERNAME"] = "stratforge_preview_bot"
     return env
 
 

@@ -1042,6 +1042,126 @@ def _clean_name(value: Any, label: str) -> str:
     return name
 
 
+# --------------------------------------------------------------------------- #
+# StratForge handle (the account's own public name).
+# --------------------------------------------------------------------------- #
+# ``username`` mirrors whatever Telegram reports and is rewritten on every
+# Telegram login, so it cannot be the name the person chose here. The handle is
+# owned by StratForge: the user picks it during registration, external identity
+# providers may only *suggest* it, and nothing but an explicit user action ever
+# changes it.
+HANDLE_MIN_LEN = 3
+HANDLE_MAX_LEN = 32
+_HANDLE_RE = re.compile(r"^[a-z0-9](?:[a-z0-9_.]*[a-z0-9])?$", re.ASCII)
+_HANDLE_RESERVED = frozenset({
+    "admin", "administrator", "root", "owner", "support", "help", "security",
+    "stratforge", "stratforgeai", "system", "moderator", "staff", "official",
+    "billing", "payments", "api", "bot", "null", "undefined", "me", "you",
+})
+
+
+def normalize_handle(value: Any, *, required: bool = True) -> str:
+    """Validate and canonicalise a StratForge handle.
+
+    The canonical form is lowercase; the user may type `@name` or `Name`.
+    """
+    raw = str(value or "").strip().lstrip("@").strip()
+    if not raw:
+        if required:
+            raise AccountAuthError(
+                "Придумайте имя пользователя StratForge.", 400, code="handle_required",
+            )
+        return ""
+    handle = raw.lower()
+    if not HANDLE_MIN_LEN <= len(handle) <= HANDLE_MAX_LEN:
+        raise AccountAuthError(
+            f"Имя пользователя — от {HANDLE_MIN_LEN} до {HANDLE_MAX_LEN} символов.",
+            400, code="handle_length",
+        )
+    if not _HANDLE_RE.match(handle):
+        raise AccountAuthError(
+            "Разрешены латинские буквы, цифры, точка и подчёркивание; "
+            "начинаться и заканчиваться — буквой или цифрой.",
+            400, code="handle_format",
+        )
+    if ".." in handle or "__" in handle:
+        raise AccountAuthError(
+            "Уберите повторяющиеся точки или подчёркивания.", 400, code="handle_format",
+        )
+    if handle in _HANDLE_RESERVED:
+        raise AccountAuthError(
+            "Это имя пользователя зарезервировано.", 409, code="handle_reserved",
+        )
+    return handle
+
+
+def _handle_owner_uuid(doc: Dict[str, Any], handle: str) -> str:
+    for row in doc.get("users") or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("handle") or "").strip().lower() == handle:
+            return _user_uuid(row)
+    return ""
+
+
+def handle_available(value: Any, *, user_uuid: str = "") -> Dict[str, Any]:
+    """Public availability probe used by the registration form."""
+    try:
+        handle = normalize_handle(value)
+    except AccountAuthError as exc:
+        return {
+            "handle": str(value or "").strip().lstrip("@").lower()[:HANDLE_MAX_LEN],
+            "available": False,
+            "reason": str(exc),
+            "code": getattr(exc, "code", "") or "handle_invalid",
+        }
+    with _LOCK:
+        doc = _read_doc()
+        owner = _handle_owner_uuid(doc, handle)
+    taken = bool(owner) and owner != str(user_uuid or "")
+    return {
+        "handle": handle,
+        "available": not taken,
+        "reason": "Это имя пользователя уже занято." if taken else "",
+        "code": "handle_taken" if taken else "",
+    }
+
+
+def _assign_handle_in_doc(doc: Dict[str, Any], user: Dict[str, Any], value: Any) -> str:
+    """Claim a handle for exactly one account, or fail closed."""
+    handle = normalize_handle(value)
+    owner = _handle_owner_uuid(doc, handle)
+    if owner and owner != _user_uuid(user):
+        raise AccountAuthError(
+            "Это имя пользователя уже занято.", 409, code="handle_taken",
+        )
+    user["handle"] = handle
+    user["handle_set_at_utc"] = user.get("handle_set_at_utc") or _now_iso()
+    user["updated_at_utc"] = _now_iso()
+    return handle
+
+
+def suggest_handle(*, email: Any = "", username: Any = "", name: Any = "") -> str:
+    """A safe starting point for the field; never applied without the user."""
+    for candidate in (
+        str(username or "").strip().lstrip("@"),
+        str(email or "").split("@", 1)[0],
+        str(name or "").strip().replace(" ", "_"),
+    ):
+        cleaned = re.sub(r"[^a-z0-9_.]+", "", str(candidate or "").lower())
+        cleaned = re.sub(r"[._]{2,}", "_", cleaned).strip("._")
+        if len(cleaned) < HANDLE_MIN_LEN:
+            continue
+        cleaned = cleaned[:HANDLE_MAX_LEN]
+        try:
+            normalized = normalize_handle(cleaned)
+        except AccountAuthError:
+            continue
+        if handle_available(normalized)["available"]:
+            return normalized
+    return ""
+
+
 def _device_label(user_agent: Any) -> str:
     """A short, non-identifying device label parsed from a User-Agent."""
     ua = str(user_agent or "")
@@ -1342,7 +1462,7 @@ def avatar_file(user_id: Any) -> Optional[Path]:
 def _public_user(user: Dict[str, Any], *, include_contact: bool = False,
                  include_legacy: bool = False) -> Dict[str, Any]:
     out = {key: user.get(key) for key in (
-        "username", "first_name", "last_name", "role", "status",
+        "username", "handle", "first_name", "last_name", "role", "status",
         "is_owner", "created_at_utc", "approved_at_utc", "revoked_at_utc",
         "last_login_at_utc", "phone_verified_at_utc",
         "last_login_source", "last_login_device", "last_login_machine",
@@ -4536,6 +4656,220 @@ def verify_email_auth(
     state = login_state(cid)
     state["user"] = public
     return state
+
+
+# --------------------------------------------------------------------------- #
+# Staged registration: identity first, consent and account creation last.
+# --------------------------------------------------------------------------- #
+REGISTRATION_TTL_SEC = 15 * 60
+
+
+def stage_google_registration(
+    *, google_sub: Any, google_email: Any, google_name: Any = "",
+    email_verified: bool, ip: str = "", user_agent: str = "",
+) -> Dict[str, Any]:
+    """Hold a verified Google identity until the person accepts the terms.
+
+    Sign-up must not create an account the moment Google answers: consent is
+    the last step of registration, so the verified identity waits in the same
+    short-lived, single-use challenge store the other providers use.
+    """
+    sub = str(google_sub or "").strip()
+    if not sub:
+        raise AccountAuthError("Google identity не содержит subject.", 400)
+    if not email_verified:
+        raise AccountAuthError("Email Google не подтверждён.", 403)
+    email = _valid_email(google_email)
+    registration_id = secrets.token_urlsafe(24)
+    with _LOCK:
+        doc = _read_doc()
+        _cleanup(doc)
+        if _identity(doc, "google", sub):
+            raise AccountAuthError(
+                "Этот Google-аккаунт уже зарегистрирован.", 409, code="google_already_registered",
+            )
+        doc["challenges"].append({
+            "challenge_id": registration_id,
+            "status": "awaiting_registration",
+            "purpose": "google_registration",
+            "provider": "google",
+            "provider_subject": sub,
+            "google_email": email,
+            "google_name": str(google_name or "")[:120],
+            "environment": runtime_env.deployment_environment(),
+            "created_at_utc": _now_iso(),
+            "expires_at": time.time() + REGISTRATION_TTL_SEC,
+            "ip_hash": hashlib.sha256(str(ip or "").encode()).hexdigest(),
+            "ua_hash": hashlib.sha256(str(user_agent or "").encode()).hexdigest(),
+        })
+        _write_doc(doc)
+    _audit("google_registration_staged", ip=ip)
+    return {
+        "registration_id": registration_id,
+        "provider": "google",
+        "email": email,
+        "name": str(google_name or "")[:120],
+        "expires_in_sec": REGISTRATION_TTL_SEC,
+    }
+
+
+def registration_state(registration_id: Any) -> Dict[str, Any]:
+    """What the final registration step may show about a staged identity."""
+    cid = str(registration_id or "")
+    with _LOCK:
+        doc = _read_doc()
+        challenge = _challenge(
+            doc, challenge_id=cid, statuses=("awaiting_registration",),
+        )
+    if challenge is None:
+        raise AccountAuthError(
+            "Подтверждение личности истекло. Начните регистрацию заново.",
+            410, code="registration_expired",
+        )
+    email = str(challenge.get("google_email") or "")
+    return {
+        "registration_id": cid,
+        "provider": str(challenge.get("provider") or ""),
+        "email": email,
+        "name": str(challenge.get("google_name") or ""),
+        "suggested_handle": suggest_handle(email=email, name=challenge.get("google_name")),
+    }
+
+
+def _finish_google_registration(
+    registration_id: str, *, handle: str, first_name: str, last_name: str,
+    ip: str, user_agent: str, api_call: Optional[Callable[..., Any]],
+    owner_chat_id: str, device_credential: str,
+) -> Dict[str, Any]:
+    with _LOCK:
+        doc = _read_doc()
+        challenge = _challenge(
+            doc, challenge_id=registration_id, statuses=("awaiting_registration",),
+        )
+        if challenge is None or str(challenge.get("provider") or "") != "google":
+            raise AccountAuthError(
+                "Подтверждение личности истекло. Начните регистрацию заново.",
+                410, code="registration_expired",
+            )
+        # Single use: the staged identity is spent before the account exists,
+        # so a replayed request cannot create a second account.
+        challenge["status"] = "consumed"
+        google_sub = str(challenge.get("provider_subject") or "")
+        google_email = str(challenge.get("google_email") or "")
+        google_name = str(challenge.get("google_name") or "")
+        _write_doc(doc)
+    out = login_via_google_identity(
+        google_sub=google_sub,
+        google_email=google_email,
+        google_name=google_name or f"{first_name} {last_name}".strip(),
+        email_verified=True,
+        accept_terms=True,
+        ip=ip,
+        user_agent=user_agent,
+        api_call=api_call,
+        owner_chat_id=owner_chat_id,
+        device_credential=device_credential,
+    )
+    with _LOCK:
+        doc = _read_doc()
+        user = _user_by_uuid(doc, str((out.get("user") or {}).get("id") or ""))
+        if user is not None:
+            user["first_name"] = first_name
+            user["last_name"] = last_name
+            _assign_handle_in_doc(doc, user, handle)
+            _write_doc(doc)
+            out["user"] = _public_user(user, include_contact=True)
+    return out
+
+
+def complete_registration(
+    *,
+    method: Any,
+    challenge_id: Any,
+    handle: Any,
+    first_name: Any,
+    last_name: Any = "",
+    code: Any = "",
+    email: Any = "",
+    accept_terms: bool = False,
+    ip: str = "",
+    user_agent: str = "",
+    api_call: Optional[Callable[..., Any]] = None,
+    owner_chat_id: str = "",
+    device_credential: str = "",
+) -> Dict[str, Any]:
+    """Create the account only after the person has seen and accepted terms.
+
+    Identity verification (Telegram, Google, e-mail code) has already happened
+    in the previous step; this is the single call every registration method
+    ends with, so consent and the StratForge handle are always applied to the
+    account that is being created.
+    """
+    provider = str(method or "").strip().lower()
+    if provider not in {"email", "telegram", "google"}:
+        raise AccountAuthError("Неизвестный способ регистрации.", 400, code="method_invalid")
+    if not accept_terms:
+        raise AccountAuthError(
+            "Необходимо принять условия использования.", 400, code="terms_required",
+        )
+    wanted_handle = normalize_handle(handle)
+    probe = handle_available(wanted_handle)
+    if not probe["available"]:
+        raise AccountAuthError(
+            probe["reason"] or "Это имя пользователя уже занято.",
+            409, code=probe["code"] or "handle_taken",
+        )
+    clean_first = _clean_name(first_name, "Имя")
+    # A family name is optional for the person; the account model still wants a
+    # value, so an omitted one is stored as an explicit dash rather than a
+    # guess derived from the login provider.
+    clean_last = _clean_name(last_name, "Фамилия") if str(last_name or "").strip() else "—"
+    cid = str(challenge_id or "")
+
+    if provider == "google":
+        return _finish_google_registration(
+            cid, handle=wanted_handle, first_name=clean_first, last_name=clean_last,
+            ip=ip, user_agent=user_agent, api_call=api_call,
+            owner_chat_id=owner_chat_id, device_credential=device_credential,
+        )
+
+    if provider == "email":
+        out = verify_email_auth(
+            cid,
+            code=str(code or ""),
+            profile={
+                "first_name": clean_first,
+                "last_name": clean_last,
+                "accept_terms": True,
+            },
+            ip=ip, user_agent=user_agent, api_call=api_call,
+            owner_chat_id=owner_chat_id, device_credential=device_credential,
+        )
+    else:
+        out = complete_profile(
+            cid,
+            {
+                "first_name": clean_first,
+                "last_name": clean_last,
+                "email": email,
+                "accept_terms": True,
+            },
+            api_call=api_call, owner_chat_id=owner_chat_id,
+            ip=ip, user_agent=user_agent,
+        )
+
+    canonical = str((out.get("user") or {}).get("id") or "")
+    with _LOCK:
+        doc = _read_doc()
+        user = _user_by_uuid(doc, canonical) if canonical else None
+        if user is None:
+            challenge = _challenge(doc, challenge_id=cid)
+            user = _user(doc, int((challenge or {}).get("user_id") or 0))
+        if user is not None:
+            _assign_handle_in_doc(doc, user, wanted_handle)
+            _write_doc(doc)
+            out["user"] = _public_user(user, include_contact=True)
+    return out
 
 
 def login_via_google_identity(
