@@ -4907,6 +4907,7 @@
               <span class="auth-choice-go" aria-hidden="true">&#8594;</span>
             </button>
           </div>
+          <div class="auth-hero-seal" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.75 4.75 5.5v6.1c0 4.4 3 8.1 7.25 9.65 4.25-1.55 7.25-5.25 7.25-9.65V5.5z"></path><path d="m8.9 11.9 2.2 2.2 4-4.3"></path></svg></div>
           <p class="auth-hero-foot">Продолжая, вы сможете выбрать удобный способ входа<br>или создать новый профиль</p>
         </div>`, 'auth-stage-wide');
       const go = qsa('[data-auth-go]', content);
