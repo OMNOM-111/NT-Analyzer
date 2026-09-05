@@ -195,6 +195,107 @@ def test_concurrent_same_key_retries_commit_one_graph(service, round_index):
     assert len(set(event_ids)) == len(event_ids)
 
 
+@pytest.mark.parametrize("round_index", [0, None])
+def test_run_limit_rejects_new_keys_but_replays_existing_key_without_writes(service, monkeypatch, round_index):
+    from app.ai_control_center import demo_workflows
+    monkeypatch.setattr(demo_workflows, "MAX_DEMO_RUNS", 2)
+    first = run(service, key="limited-demo-first", round_index=round_index)
+    run(service, key="limited-demo-second", round_index=round_index)
+    before = events(service)
+    with pytest.raises(ContractError, match="demo_run_limit_reached"):
+        run(service, key="limited-demo-third", round_index=round_index)
+    assert events(service) == before
+    assert len(rows(service, EntityKind.INTENT)) == 2
+    assert len(rows(service, EntityKind.TASK)) == 8
+    replay = run(service, key="limited-demo-first", round_index=round_index)
+    assert replay["run"]["replayed"] is True
+    assert replay["run"]["id"] == first["run"]["id"]
+    assert events(service) == before
+
+
+def test_run_limit_is_isolated_by_owner_and_workspace(service, monkeypatch):
+    from app.ai_control_center import demo_workflows
+    monkeypatch.setattr(demo_workflows, "MAX_DEMO_RUNS", 2)
+    run(service, key="limited-owner-first")
+    run(service, key="limited-owner-second")
+    foreign_user = UUID(int=88)
+    contexts = (
+        replace(CONTEXT, user_uuid=foreign_user,
+                actor=c.ActorRef(kind=c.ActorKind.HUMAN, actor_id=foreign_user)),
+        replace(CONTEXT, scope=replace(SCOPE, workspace_id="ws_limit_other")),
+    )
+    for context in contexts:
+        assert run(service, key="limited-owner-first", context=context)["overview"]["summary"]["completed"] == 4
+        assert service._run_count(context) == 1
+    assert service._run_count(CONTEXT) == 2
+    with pytest.raises(ContractError, match="demo_run_limit_reached"):
+        run(service, key="limited-owner-third")
+
+
+def test_run_count_follows_scoped_pages_and_excludes_foreign_owner(service, monkeypatch):
+    from app.ai_control_center import demo_workflows
+    from app.ai_control_center.repositories import Page
+    monkeypatch.setattr(demo_workflows, "MAX_DEMO_RUNS", 2)
+    run(service)
+    own = rows(service, EntityKind.INTENT)[0]
+    foreign = replace(own, header=replace(own.header, owner_user_uuid=UUID(int=88)))
+    seen = []
+    original = service.repository.list
+    def paginated(*, context, kind, page):
+        if kind != EntityKind.INTENT:
+            return original(context=context, kind=kind, page=page)
+        seen.append(page.cursor)
+        if page.cursor is None:
+            return Page(items=(foreign,) * 100, next_cursor="scoped-next-page")
+        return Page(items=(own, own))
+    monkeypatch.setattr(service.repository, "list", paginated)
+    with pytest.raises(ContractError, match="demo_run_limit_reached"):
+        run(service, key="limited-after-foreign-page")
+    assert seen == [None, "scoped-next-page"]
+
+
+def test_work_owner_filter_precedes_limit_with_over_100_foreign_tasks(service, monkeypatch):
+    from app.ai_control_center.repositories import Page
+    run(service)
+    own = rows(service, EntityKind.TASK)
+    foreign = tuple(replace(own[0],
+        header=replace(own[0].header, owner_user_uuid=UUID(int=88), entity_id=UUID(int=1000 + index)),
+        checkpoint=c.SnapshotRef(artifact_id=UUID(int=2000 + index), sha256="0" * 64, scope=SCOPE))
+        for index in range(105))
+    seen = []
+    original = service.repository.list
+    def paginated(*, context, kind, page):
+        if kind != EntityKind.TASK:
+            return original(context=context, kind=kind, page=page)
+        seen.append(page.cursor)
+        if page.cursor is None:
+            return Page(items=foreign[:100], next_cursor="scoped-work-next")
+        return Page(items=foreign[100:] + own)
+    monkeypatch.setattr(service.repository, "list", paginated)
+    visible = service.work(context=CONTEXT)
+    assert {task["id"] for task in visible} == {str(task.header.entity_id) for task in own}
+    assert len(visible) == 4
+    assert seen == [None, "scoped-work-next"]
+    assert len(service.work(context=CONTEXT, page=PageRequest(limit=2))) == 2
+
+
+def test_same_key_that_appears_during_limit_check_is_replayed(service, monkeypatch):
+    from app.ai_control_center import demo_workflows
+    monkeypatch.setattr(demo_workflows, "MAX_DEMO_RUNS", 1)
+    original = service._run_count
+    created = []
+    def concurrent_count(context):
+        if not created:
+            created.append(True)
+            run(service, key="limited-concurrent-key")
+        return original(context)
+    monkeypatch.setattr(service, "_run_count", concurrent_count)
+    result = run(service, key="limited-concurrent-key")
+    assert result["run"]["replayed"]
+    assert len(rows(service, EntityKind.INTENT)) == 1
+    assert len(rows(service, EntityKind.TASK)) == 4
+
+
 @pytest.mark.parametrize("changes,error", [
     ({"synthetic": False}, "demo_not_enabled"), ({"synthetic": "true"}, "demo_not_enabled"),
     ({"enabled": False}, "demo_not_enabled"), ({"enabled": 1}, "demo_not_enabled"),

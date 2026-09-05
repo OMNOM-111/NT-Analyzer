@@ -20,6 +20,7 @@ from .states import ContractError, EntityKind, INITIAL_STATES
 
 
 _NAMESPACE = UUID("9cf71c69-cfb2-53f4-a352-12c82f9f732b")
+MAX_DEMO_RUNS = 20
 _PERSONAS = {row["key"]: row for row in PERSONAS}
 _POLICY = {"schema_version": 1, "version": BENCHMARK_VERSION,
            "source": "synthetic", "executor": EXECUTOR, "risk": "low", "autonomy": "draft",
@@ -102,6 +103,25 @@ class DemoWorkflowService:
             raise ContractError("invalid_artifact_url_prefix")
         self.repository = repository
         self.artifact_url_prefix = artifact_url_prefix
+
+    def _run_count(self, context):
+        """Count admitted runs for this owner only, including unfinished runs.
+
+        The HTTP Preview data-operation lock serializes new admissions and Reset.
+        This guard is not a cross-process quota or a replacement for that lock.
+        Repository pages remain tenant-scoped; other owners do not spend slots.
+        """
+        count, cursor, seen = 0, None, set()
+        while True:
+            page = self.repository.list(context=context, kind=EntityKind.INTENT,
+                                        page=PageRequest(limit=100, cursor=cursor))
+            count += sum(item.header.owner_user_uuid == context.user_uuid for item in page.items)
+            if count >= MAX_DEMO_RUNS or not page.next_cursor:
+                return count
+            if page.next_cursor in seen:
+                raise ContractError("demo_pagination_invalid")
+            seen.add(page.next_cursor)
+            cursor = page.next_cursor
 
     def _put(self, context, admission, value, *, media_type="application/json"):
         admission.validate(context)
@@ -241,9 +261,17 @@ class DemoWorkflowService:
                 return self._run_result(context, run_id, replayed=True)
             if existing.deadline <= _now():
                 raise ContractError("demo_deadline_expired")
-        elif round_index is None:
-            page = self.repository.list(context=context, kind=EntityKind.INTENT, page=PageRequest(limit=100))
-            round_index = len([item for item in page.items if item.header.owner_user_uuid == context.user_uuid]) % 3
+        else:
+            count = self._run_count(context)
+            if count >= MAX_DEMO_RUNS:
+                # A concurrent retry can observe its own intent after the first
+                # lookup but before counting. It remains a replay, not a new slot.
+                if self.repository.get(context=context, kind=EntityKind.INTENT, entity_id=run_id) is not None:
+                    return self.run(context=context, admission=admission, idempotency_key=idempotency_key,
+                                    round_index=requested_round)
+                raise ContractError("demo_run_limit_reached")
+            if round_index is None:
+                round_index = count % 3
         source = fixture(round_index)
         policy = self._put(context, admission, _POLICY)
         roles = self._catalog(context, admission, policy)
@@ -382,9 +410,20 @@ class DemoWorkflowService:
                 "dependencies": [str(ref.entity_id) for ref in task.dependencies]}
 
     def work(self, *, context, page: PageRequest | None = None) -> list[dict]:
-        found = self.repository.list(context=context, kind=EntityKind.TASK, page=page or PageRequest(limit=100))
-        return sorted([self._task_dto(context, task) for task in found.items
-                       if task.checkpoint is not None and task.header.owner_user_uuid == context.user_uuid],
+        requested = page or PageRequest(limit=100)
+        owned, cursor, seen = [], requested.cursor, set()
+        while len(owned) < requested.limit:
+            found = self.repository.list(context=context, kind=EntityKind.TASK,
+                                         page=PageRequest(limit=100, cursor=cursor))
+            owned.extend(task for task in found.items if task.checkpoint is not None
+                         and task.header.owner_user_uuid == context.user_uuid)
+            if len(owned) >= requested.limit or not found.next_cursor:
+                break
+            if found.next_cursor in seen:
+                raise ContractError("demo_pagination_invalid")
+            seen.add(found.next_cursor)
+            cursor = found.next_cursor
+        return sorted([self._task_dto(context, task) for task in owned[:requested.limit]],
                       key=lambda item: (item["created_at"], item["id"]), reverse=True)
 
     def agents(self, *, context) -> list[dict]:

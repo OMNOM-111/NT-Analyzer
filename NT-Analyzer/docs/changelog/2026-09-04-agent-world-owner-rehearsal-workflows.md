@@ -18,6 +18,16 @@ context and revalidate existing access, device, capability, flags and zero-cost
 budget authority before each checkpoint. Admissions and work deadlines expire;
 interrupted in-deadline runs resume from durable state without duplicate tasks.
 Concurrent same-key requests coalesce to the first committed fixture and graph.
+New run keys are capped server-side at 20 runs per synthetic user/workspace
+(at most 80 tasks). Completed, failed and unfinished runs all occupy a slot;
+`demo_run_limit_reached` stops a new admission before evidence or record writes.
+Existing keys remain replayable at the limit. Counting follows scoped pages and
+excludes other owners. The existing Preview HTTP data-operation lock serializes
+admission and Reset; this local guard is not a multi-process quota system.
+The Work read model follows workspace pages and applies its owner filter before
+the 100-record DTO limit, so another participant's tasks cannot displace the
+owner's tasks from the visible list. Unavailable foreign artifact references
+are never read during this filtering.
 
 An independent deterministic checker recomputes expected arithmetic and validates
 SVG geometry/provenance/hash. Producing and verifying services have distinct
@@ -43,8 +53,9 @@ are not turned into an invented cross-role ranking. Ratings have no routing effe
   writes, private owner/workspace access, deadline/admission denial, access-expiry
   resume, concurrent and sequential idempotency, fixture deduplication, accepted
   roster compatibility and absence of network/process effects.
-- Focused repository + workflow regression: `98 passed`, no skips (57 storage
-  tests and 41 workflow tests). New modules and tests pass Python compilation.
+- Focused repository + workflow regression: `104 passed`, no skips (57 storage
+  tests and 47 workflow tests), 44.52 s after the run-limit/pagination follow-up.
+  New modules and tests pass Python compilation.
   `git diff --check` passes for the exact staged source/test/change-record scope.
 - Full regression, browser evidence, SF Chat projection, Context Pack updates,
   final commit/PR identity and `STAGE CLOSED` are owned by the parent integration
