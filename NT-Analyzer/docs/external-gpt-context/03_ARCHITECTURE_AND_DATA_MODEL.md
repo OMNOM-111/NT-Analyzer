@@ -1,12 +1,13 @@
 # 03. Architecture and Data Model
 
 - Context Pack document: 03_ARCHITECTURE_AND_DATA_MODEL.md
-- Last verified UTC: 2026-09-05T01:43:39Z
+- Last verified UTC: 2026-09-05T04:04:22Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: fc78677dfa258fb56042866a6764e8c8a45c42e6
-- Unified Local accepted base: beta.96, open PR #280; owner-review branch is stacked above foundation PR #281
+- Local source verified SHA: 486db834850d465006a3983d2d83ee809202df60 (clean beta.96 runtime baseline)
+- New integrated domain/model/social source: dirty worktree above 486db834; final commit and runtime acceptance pending
+- Unified Local base: beta.96, open PR #280; owner-review branch is stacked above foundation PR #281; no merge or Canary/Production promotion
 - Scope: Current components, trust boundaries, entities and key flows
-- Status: DONE
+- Status: IN DEVELOPMENT
 
 ## System shape
 
@@ -67,7 +68,7 @@ flowchart LR
 | TopstepX | independent read-only chart/history/realtime source | authoritative for chart feed when selected; never for order execution |
 | Owner market-data gateway | one authorized Production hub plus authenticated Canary/Development consumers and same-origin browser fan-out | owns the only direct owner loginKey/SignalR lifecycle; never grants unrelated-user redistribution rights |
 | Local runtime stores | local-first queues, DPAPI secrets, runtime snapshots | current dev/desktop data path |
-| PostgreSQL + RLS schema | authoritative server-side model for users, workspaces, jobs, commands, budgets, releases and documents | existing server authority; new Agent World repository implementations are deferred |
+| PostgreSQL + RLS schema | authoritative server-side model for users, workspaces, jobs, commands, budgets, releases and documents | existing server authority; no Agent World PostgreSQL domain adapter exists, so that domain remains Development-only/fail-closed |
 | Governance store | `data/governance/*` editable source, `docs/governance/*` rendered layer | authoritative for governance texts and laws |
 | Community | network-wide safe profiles, privacy/social graph, feed/search/interactions, Channels and moderation | `app/community.py`; no human DM authority |
 | SF Chat | one human conversation/read/unread/attachment state plus a facade over unchanged AI conversations | `app/sf_chat.py` for human state; existing AI Orchestrator remains authoritative for AI state |
@@ -102,6 +103,7 @@ flowchart LR
 | `sf_documents` / revisions | global/workspace/strategy/changelog document revisions | `0011_document_specifications.sql` |
 | Worker / service / NT resource leases | bounded background execution and shared resource ownership | `app/production_workers.py`, `0008_ninjatrader_resource_leases.sql` |
 | Community / SF Chat mirrors | profiles/posts/edges/moderation and conversations/participants/messages/reads | `0020_community_sf_chat_repositories.sql`, `0021_community_sf_chat_relational_mirrors.sql` |
+| Agent World domain records | Persona, Role, Provider Account, Model, Intent, Task, Contribution, Decision, Execution, Outcome, Evaluation, Memory, StrategyProject, Routine, CalendarItem, CourtCase and CourtVote | `app/ai_control_center/{contracts,domain_contracts,model_contracts}.py`; Development SQLite revision/event/outbox repository only |
 
 ## Authoritative storage model
 
@@ -114,14 +116,27 @@ flowchart LR
 - Governance laws are not stored in workspace docs; they live in the dedicated
   governance store and rendered docs pipeline.
 
-## Agent World owner-review vertical slice
+## Agent World integrated Local delta
+
+Runtime and implementation are different checkpoints. Local `8765` now serves
+clean `486db834850d465006a3983d2d83ee809202df60`, beta.96, from a separate clean
+runtime worktree with the original owner data/settings. The new domain/model/
+social implementation below is still an uncommitted integration delta and is
+not yet that live build. Its real-provider, browser and owner acceptance remain
+pending. The previous `fc78677dfa258fb56042866a6764e8c8a45c42e6` snapshot described
+the earlier owner-review adapters; it is history, not the current implementation
+claim. The deployed anchor `8f42158661e8247832c90bea8fc4d9f0071e647b` is unchanged;
+Production was not inspected or modified in this work.
 
 Foundation contracts distinguish Persona, Role, Provider Account, Model, Intent,
 Task, Contribution, Decision, Execution, Outcome and Memory. Explicit scope and
 pure legacy projections remain; legacy statuses are not mass-rewritten.
 
-The local SQLite adapter now implements CAS/history/events/idempotency/outbox and
-private immutable artifacts. The narrow Preview-only facade reuses existing
+The local SQLite adapter implements CAS/history/events/idempotency/outbox and
+private immutable artifacts. Read-only construction never creates an absent DB,
+migrates a schema or changes persisted data; existing WAL contents remain visible.
+Operational SQLite WAL/SHM sidecars are distinct from domain mutations. Inbox
+receipt lookup reuses the existing delivery ledger. The separate Preview facade reuses existing
 auth, device, role, capability, CSRF and zero-cost budget admission. Four scoped
 flags enable UI/read model/task graph/shadow evaluation only for a controlled
 synthetic workspace. No new permissions catalog, queue or paid-budget ledger.
@@ -140,8 +155,37 @@ Desktop uses its existing command queue; server-validated command/scope, a bound
 real canvas PNG and a receipt are projected into the existing AI chat history.
 There is no alternate chart renderer, market-data source or Connector refactor.
 
-PostgreSQL/RLS migration, outbox delivery, general coordinator, new Router, Court,
-Execution V2, memory and social publication remain unimplemented/OFF.
+The integrated domain service adds owned Persona profiles, controlled private/
+task/working/verified-lesson Memory, explicit shared-Memory grants, versioned
+Strategy Projects, manual routine/calendar follow-ups and Consensus proposals.
+Memory publication is a separate active workspace record: source revoke/TTL or
+publication revoke removes its read grant without exposing private artifact APIs.
+Read admission may expose a same-workspace published note to a current member;
+mutations of another owner's records remain forbidden.
+
+Private ModelService uses separate Provider Account/Model/Persona IDs, existing
+DPAPI and the guarded existing model client. Actual provider receipts, independent
+bounded evaluations and application evidence attach to the same revision graph.
+Selected model requests reuse the existing worker queue and Chief/SF Chat
+conversation authority. No second jobs, permissions, budgets or chat store is
+introduced. An ambiguous in-flight provider response is not silently retried.
+
+Court is now implemented in this dirty Local delta: one immutable packet,
+three isolated judge contexts, immutable real-model contribution-bound votes and
+unweighted 2-of-3 quorum; critical cases need failure-domain diversity. Approval
+is advisory, not execution authority. It does not rename the legacy committee.
+SF Social prepares a sanitized verified snapshot and publishes only after the
+human approves its exact hash/revision and permanence. Existing Community
+storage/idempotency is reused; private Memory, prompts and judge reasoning stay
+private. Routine/calendar acceptance creates an existing-queue manual reminder,
+not an autonomous scheduler.
+
+All registry defaults remain OFF. Exact opted-in Development workspaces enable
+eight gates for read/UI/tasks/evaluation/memory/consensus/Court/social in the new
+composition; Router shadow and Execution V2 remain OFF. Preview retains its
+separate four-flag synthetic configuration. The 41 actual isolated PostgreSQL
+tests concern existing RLS/migrations `0001`–`0022`, not an Agent World PG adapter.
+No Agent World PG migration or non-DEV storage fallback is delivered here.
 See [ADR-0010](../adr/0010-agent-world-owner-review.md),
 [ADR-0011](../adr/0011-agent-world-real-local-jobs.md) and
 [the implementation status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
@@ -169,8 +213,10 @@ See [ADR-0010](../adr/0010-agent-world-owner-review.md),
 
 - The architecture clearly points toward PostgreSQL/RLS authority, but local
   development and some operator flows still rely on local files by design.
-- Multi-user identity and trusted-device pieces exist in schema and code, but
-  the full user-facing lifecycle is still partial.
+- Auth, registration, Device Confirmation permanent/current-session, SF Social
+  and SF Chat remain the preserved beta.96 base, not new competing Agent World
+  subsystems. The new integrated delta is `IN DEVELOPMENT`; Local readiness,
+  Git/CI closeout, owner acceptance and program stages 0–13 are separate gates.
 
 ## Canonical evidence
 

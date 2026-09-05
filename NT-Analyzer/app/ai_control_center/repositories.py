@@ -88,6 +88,15 @@ class EventRepository(Protocol):
         """
         ...
 
+    def is_acknowledged(self, *, context: RequestContext, consumer: str,
+                        event_id: UUID) -> bool:
+        """Read a consumer receipt through the same fresh scoped event view.
+
+        Unknown/foreign events return false. This never creates an inbox row,
+        reserves work, grants visibility or acknowledges an unfinished effect.
+        """
+        ...
+
 
 def validate_commit(*, context: RequestContext, record: Record, expected_revision: int,
                     event: EventEnvelope, mutation: MutationIdentity,

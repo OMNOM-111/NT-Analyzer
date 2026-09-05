@@ -93,6 +93,7 @@ def owner(monkeypatch, tmp_path):
 
     monkeypatch.setattr(gateway.account_auth, "find_active_user", find_user)
     monkeypatch.setattr(gateway.workspaces, "require_workspace_writer", writer)
+    monkeypatch.setattr(gateway.workspaces, "require_workspace_access", writer)
     monkeypatch.setattr(gateway.permissions, "resolve_for_user_id", permissions)
     monkeypatch.setattr(gateway.permissions, "enforce", enforce)
     monkeypatch.setattr(gateway.ai_budgets, "check_budget", budget)
@@ -234,12 +235,13 @@ def test_existing_budget_can_deny_after_admission(owner):
         authorized["admit"]()
 
 
-def test_only_three_local_flags_enabled_and_snapshot_is_workspace_scoped(owner, monkeypatch):
+def test_only_approved_local_flags_enabled_and_snapshot_is_workspace_scoped(owner, monkeypatch):
     authorized = gateway.access(owner.scope)
     snapshot = authorized["snapshot"]
     enabled = {flag for flag in REGISTRY if resolve(flag, scope=authorized["context"].scope, snapshot=snapshot).enabled}
-    assert enabled == {Flag.AI_CONTROL_CENTER_READ_MODEL, Flag.AI_COMMAND_CENTER_UI, Flag.AI_TASK_GRAPH_V2}
-    assert not resolve(Flag.AI_EVALUATION_SHADOW, scope=authorized["context"].scope, snapshot=snapshot).enabled
+    assert enabled == {Flag.AI_CONTROL_CENTER_READ_MODEL, Flag.AI_COMMAND_CENTER_UI, Flag.AI_TASK_GRAPH_V2,
+                       Flag.AI_EVALUATION_SHADOW, Flag.AI_MEMORY_V2, Flag.AI_CONSENSUS_V2, Flag.AI_COURT_V1, Flag.AI_SOCIAL_PUBLISH_V1}
+    assert resolve(Flag.AI_EVALUATION_SHADOW, scope=authorized["context"].scope, snapshot=snapshot).enabled
     foreign = TenantScope(environment=Environment.DEVELOPMENT, workspace_id=OTHER_WORKSPACE)
     assert not any(resolve(flag, scope=foreign, snapshot=snapshot).enabled for flag in REGISTRY)
     assert gateway.flag_snapshot(authorized["context"]) is snapshot
@@ -252,20 +254,21 @@ def test_only_three_local_flags_enabled_and_snapshot_is_workspace_scoped(owner, 
 
 @pytest.mark.parametrize("raw,allowed", [
     ({"is_owner": True, "role": "owner", "source": "local"}, True),
-    ({"is_owner": True, "role": "owner", "source": "browser", "device_confirmation_state": "active"}, True),
+    ({"is_owner": True, "role": "owner", "source": "browser", "device_confirmation_state": "active", "session_id": "fixture-confirmed"}, True),
     ({"is_owner": True, "role": "owner", "device_confirmation_state": "pending"}, False),
     ({"is_owner": True, "role": "owner"}, False),
     ({"is_owner": True, "role": "read_only", "source": "local"}, False),
     ({"is_owner": False, "role": "owner", "source": "local"}, False),
 ])
-def test_handler_requires_real_local_entry_or_confirmed_owner_session(owner, raw, allowed):
+def test_handler_requires_real_local_entry_or_confirmed_owner_session(owner, raw, allowed, monkeypatch):
+    monkeypatch.setattr(gateway.account_auth, "local_session_is_active", lambda sid, uid: sid == "fixture-confirmed")
     handler = SimpleNamespace(_remote_context=raw, _ai_conversation_scope=lambda: owner.scope)
     if allowed:
         assert gateway.from_handler(handler)["context"].user_uuid == UUID(USER_UUID)
     else:
         with pytest.raises(ContractError, match="agent_world_confirmed_owner_required"):
             gateway.from_handler(handler)
-    assert gateway.navigation(handler)["enabled"] is allowed
+    assert gateway.navigation(handler)["enabled"] is (allowed or raw.get("role") == "read_only")
     assert gateway.navigation(handler)["synthetic"] is False
 
 
@@ -304,7 +307,7 @@ def test_overview_uses_authorized_service_scope_and_only_terminal_outcomes(owner
     assert [item["source_job_id"] for item in result["outcomes"]] == ["job-done", "job-failed"]
     assert result["stats"]["active_tasks"] == 2 and result["stats"]["completed_tasks"] == 1
     assert result["scope"] == {"environment": "development", "workspace_id": WORKSPACE, "synthetic": False}
-    assert result["flags"][Flag.AI_EVALUATION_SHADOW.value] is False
+    assert result["flags"][Flag.AI_EVALUATION_SHADOW.value] is True
     assert result["capabilities"]["can_run_demo"] is False
     for method, kwargs in calls:
         assert kwargs["source_scope"] == authorized["source_scope"]

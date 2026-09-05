@@ -18,7 +18,8 @@ from .states import ContractError
 
 PREFIX = "/api/ai-control-center/"
 WORKSPACES_ENV = "STRATFORGE_AGENT_WORLD_LOCAL_WORKSPACES"
-_FLAGS = (Flag.AI_CONTROL_CENTER_READ_MODEL, Flag.AI_COMMAND_CENTER_UI, Flag.AI_TASK_GRAPH_V2)
+_FLAGS = (Flag.AI_CONTROL_CENTER_READ_MODEL, Flag.AI_COMMAND_CENTER_UI, Flag.AI_TASK_GRAPH_V2,
+          Flag.AI_EVALUATION_SHADOW, Flag.AI_MEMORY_V2, Flag.AI_CONSENSUS_V2, Flag.AI_COURT_V1, Flag.AI_SOCIAL_PUBLISH_V1)
 _LOCK = threading.RLock()
 _SNAPSHOTS: dict[tuple, FlagSnapshot] = {}
 BACKTEST_EXAMPLE = "Толик, запусти бэктест SampleMACrossOver на MNQ 09-26, 5m, с 2026-08-24 по 2026-08-29, Fast=10, Slow=25"
@@ -77,11 +78,11 @@ def flag_snapshot(context: RequestContext) -> FlagSnapshot:
     with _LOCK:
         if key not in _SNAPSHOTS:
             reference = audit_events.record(str(context.user_uuid), "agent_world.local_flags_activated", "agent_world",
-                                            workspace_id=context.scope.workspace_id, resource_id="owner-real-jobs-v1",
+                                            workspace_id=context.scope.workspace_id, resource_id="owner-domains-v1",
                                             details={"flags": [flag.value for flag in _FLAGS], "synthetic": False})
             if len(_SNAPSHOTS) >= 256:
                 _SNAPSHOTS.clear()
-            _SNAPSHOTS[key] = FlagSnapshot(revision="owner-real-jobs-v1", audit_ref=UUID(reference.removeprefix("aud_")),
+            _SNAPSHOTS[key] = FlagSnapshot(revision="owner-domains-v1", audit_ref=UUID(reference.removeprefix("aud_")),
                                           rules=tuple(FlagRule(environment=Environment.DEVELOPMENT, flag=flag, enabled=True,
                                                                workspace_id=workspace)
                                                       for flag in _FLAGS for workspace in (None, context.scope.workspace_id)))
@@ -119,7 +120,8 @@ def navigation(handler) -> dict:
     enabled = False
     if configured():
         try:
-            authorized = from_handler(handler)
+            from . import domain_gateway
+            authorized = domain_gateway.from_handler(handler, read_only=True)
             enabled = resolve(Flag.AI_COMMAND_CENTER_UI, scope=authorized["context"].scope, snapshot=authorized["snapshot"]).enabled
         except (ContractError, account_auth.AccountAuthError, workspaces.WorkspaceError, permissions.PermissionError):
             pass
@@ -173,7 +175,7 @@ def overview(authorized: dict) -> dict:
             "limitations": ["Реальные исторические бэктесты выполняет существующий NinjaTrader. Торговые ордера не отправляются.",
                             "Успешное выполнение не означает прибыль. В отчёте сохраняются убыточные результаты и ограничения риск-профиля.",
                             "Показываются только поручения этого владельца из SF Chat/AI Центра; ручные и synthetic запуски не смешиваются.",
-                            "Качество моделей не оценено: рейтинг NEW. Court, новая память, Router/Execution V2, Canary/Production выключены."]}
+                            "Этот совместимый срез показывает реальные поручения NinjaTrader/Рабочего стола. Модели и их оценки доступны в доменах AI Центра. Router/Execution V2, Canary/Production выключены."]}
 
 
 def parse_backtest(text: str) -> dict:
@@ -200,6 +202,14 @@ def parse_backtest(text: str) -> dict:
 def try_chat(message: str, *, scope: dict | None, conversation_id: str, request_id: str, source: str) -> dict | None:
     if source != "app" or not configured(str((scope or {}).get("workspace_id") or "")):
         return None
+    from . import model_chat, application_chat
+    model_reply = model_chat.try_chat(message, scope=scope, conversation_id=conversation_id, request_id=request_id, source=source)
+    if model_reply is not None:
+        return model_reply
+    application_reply = application_chat.try_chat(message, scope=scope, conversation_id=conversation_id,
+                                                   request_id=request_id, source=source)
+    if application_reply is not None:
+        return application_reply
     backtest = bool(re.search(r"(?:запусти|запустить|выполни|проведи|run)\b.*(?:бэктест|backtest)", message, re.I))
     chart = bool(re.search(r"(?:сделай|создай|покажи)\b.*(?:снимок|скриншот).*рабоч", message, re.I))
     if not backtest and not chart:
@@ -250,6 +260,12 @@ def poll_once() -> dict:
             deliveries += result["delivered"]
             errors.extend(result["errors"])
             deliveries += live_charts.reconcile(authorized)["delivered"]
+            from . import application_chat, domain_gateway
+            domain = domain_gateway.access(authorized["chat_scope"])
+            service = domain_gateway.models(domain)
+            application = application_chat.reconcile(domain, service)
+            deliveries += len(application["completed"])
+            errors.extend(application["errors"])
         except (ContractError, workspaces.WorkspaceError, account_auth.AccountAuthError, permissions.PermissionError):
             errors.append({"code": "agent_world_local_admission_denied"})
     return {"enabled": True, "delivered": deliveries, "errors": errors}

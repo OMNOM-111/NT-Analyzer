@@ -209,3 +209,166 @@ Desktop receipt выполняются существующим кодом. Те
 regression/CI closeout и не подтверждение запуска реального NinjaTrader.
 Code freeze передан основному исполнителю для общей регрессии и браузерной
 проверки. Stage/commit этим исполнителем в интеграционном checkout не выполнялись.
+
+## Полный набор инструментов на одной странице — новое поручение owner
+
+Исходная точка: `486db834850d465006a3983d2d83ee809202df60`. Это продолжение
+локальной реализации, не смена версии, release, merge или deployment.
+
+Три основных режима «Обзор / Работа / Агенты» сохранены; теперь они не
+ограничивают функциональный объём. Постоянная панель инструментов открывает
+на этой же странице Решения / Court, Память, Эксперименты, Модели,
+Strategy Projects, Рутины, Календарь и Систему. Persona открывается из
+«Агенты → Создать / изменить Persona», карточки рабочего пространства или
+навигации любой панели. Task Inspector и профиль остаются боковыми панелями.
+Ссылки на старые AI Lab/подключения больше не выдаются за реализацию этих
+инструментов; при полностью выключенном AI Центре прежние совместимые пути
+остаются доступны.
+
+UI использует согласованный scoped facade: GET `domains/{domain}` и
+`domains/{domain}/{id}`, POST `domains/{domain}/{id-or-new}/{action}`.
+Mutation envelope — `payload`, `idempotency_key`, для существующих записей
+доступная `expected_revision`. Действия доступны только из server-issued
+`actions`; task cancel/retry — из `allowed_actions`. Формы не отправляют
+user/workspace, роль, permissions или лимит бюджета. Backend повторно
+проверяет полномочия и принадлежность; UI не является security authority.
+
+- Persona: создание, изменение, активация, приостановка и архив по текущему
+  разрешённому состоянию; личность не объединяется с моделью или ролью.
+- Память: черновик, редактирование, основание продвижения/отзыва, источники
+  и retention. Скрытое backend содержимое после TTL/revoke не восстанавливается.
+- Проекты: описание, strategy key, версии с JSON-параметрами и архив.
+- Рутины/календарь: создание, принятие/отклонение предложения, интервал или
+  локальное время с сохранением UTC. UI явно не обещает фоновое исполнение.
+- Решения/Court: proposal, risk, trigger, собственные JSON evidence candidates,
+  выбор трёх проверяющих, реальные verdict/rationale/packet/session provenance.
+  Клиент не голосует от имени модели и не разрешает исполнение решения.
+- Модели: свой ключ в password-поле, активная Persona, model/external-agent
+  connection, провайдеры только из server catalog, test/task/disconnect.
+  Ключ не заполняется из DTO, не сохраняется в browser storage и очищается
+  после подтверждённого действия. Сырые ошибки провайдера не выводятся.
+- Эксперименты: одинаковый проверяемый вход для 2–3 подключённых моделей,
+  реальные ответы, independent checks, latency и доступная cost-информация.
+  Отсутствие расходов/Model ID показывается как неизвестное, не как ноль
+  или угаданная модель. Наблюдение одного ответа не называется общим рейтингом.
+- История моделей открывается из «Модели → История задач моделей»;
+  ответ/проверки доступны в record inspector и через существующий SF Chat.
+- Система: только inline чтение опубликованных status/flags/budget/limitations,
+  без форм управления глобальными настройками.
+
+Внешние test/task/comparison/Court вызовы требуют отдельного ручного checkbox
+перед POST; cancel/disconnect/archive/revoke также явно подтверждаются.
+Успешное принятие запроса не называется завершением задачи. Повтор после
+неподтверждённого ответа сохраняет idempotency key. Все подписи/параметры
+экранируются; секретоподобные поля в structured preview скрываются.
+
+UI checkpoint: **142 passed**, включая исполнение реальных JS event handlers
+для открытия доменов, моделей/Persona, CAS update, ручного consent, actual
+response/evaluation, cancel, idempotency retry и отсутствия secret echo.
+Это DOM/service-contract tests, не browser/provider acceptance. Фактические
+внешние вызовы, endpoint/ключ/budget отрицательные сценарии и owner visual QA
+проверяются основным исполнителем на согласованном runtime; их PASS здесь
+не заявляется. Current/status/Context Pack и общий Git closeout ведёт основной
+исполнитель. Scoped файлы оставлены без stage/commit.
+
+## Реальный PostgreSQL acceptance — fixture drift, без изменения RLS
+
+По отдельному поручению основного исполнителя исправлены только устаревшие
+fixtures `test_production_storage.py`, `test_production_workers.py` и
+`test_stage8_postgresql.py`. SF Chat relational fixture уже корректно задавал
+service scope и не изменён.
+
+Raw fixture connections задают `stratforge.service_scope=global`, как настоящий
+PostgresClient для служебной транзакции. Auth document fixtures содержат
+канонический UUID, требуемый writer после identity transition. Ожидаемый набор
+миграций соответствует фактическим `0001`–`0022`. Неисполняемый тест с
+отсутствующими `core.init_pool/flush_workspaces` и несуществующими SQL-колонками
+заменён проверкой действующего DocumentRepository: повторный membership upsert
+сохраняет одну строку, изменяет роль и не разрушает FK уже созданной задачи.
+Outage checks резервируют отдельный loopback-порт без listener вместо
+предположения о фиксированном порте `55432`.
+
+Проверка выполнена runner основного исполнителя на fresh fixture cluster:
+PostgreSQL **17.10**, `127.0.0.1:55439`, база
+`agent_world_acceptance_20260905`, TLS `sslmode=require`.
+`stratforge_test_admin` и `stratforge_app` — `NOSUPERUSER NOBYPASSRLS`.
+Прямое чтение pg_stat_ssl/pg_roles/pg_class подтверждает TLS и сохранение
+RLS/FORCE RLS. Это реальная изолированная тестовая БД, не mocks и не Production.
+
+**41 passed, 0 skipped, 0 errors**, **124.45 s**: storage **12**, workers **12**,
+Stage 8 **8**, SF Chat relational **9**. UI повторно после финального
+отображения requested/actual model — **142 passed**. Production-код,
+schema/RLS policies, реальные пользовательские данные и глобальные настройки
+не изменялись. Общий full regression/CI и runtime acceptance ведёт основной
+исполнитель.
+
+## Дополнение: полная панель действий, публикация и HTTP authority contracts
+
+Сохранены одна страница и три основных поверхности «Обзор / Работа / Агенты».
+Решения/Court, Memory, Strategy Projects, routines/calendar, модели,
+эксперименты и публикация проверенных результатов в SF Social открываются
+внутри той же панели. Принятые страницы Auth, Security, SF Chat и SF Social
+не переписывались. Legacy `community*` API/страница остаются действующими.
+
+Формы используют разрешённые сервером actions, обычный mutation envelope
+с revision/idempotency и свежие списки собственных сущностей. Привязка
+существующей Local-модели появляется только по server `bind_existing` и
+`owner_bindings`: ключ не копируется и новый бюджет не создаётся. Private
+Memory публикуется в workspace только по отдельной кнопке и после явного
+согласия с аудиторией. Consensus/routine proposals принимают минимум два
+реальных contribution/outcome ID; браузер не создаёт голоса, результаты,
+оценки или разрешение автоматизации.
+
+Публикация в SF Social — два разных запроса: подготовка серверного снимка и
+подтверждённая публикация. Предпросмотр показывает только разрешённые публичные
+поля, hashes и source revision, не raw model response/private Memory/ключи.
+После просмотра пользователь выбирает видимость (исходно «Только я») и сам
+подтверждает постоянный снимок. Publish отправляет точные source/hash/revision
+из prepare, а не из редактируемых полей. Неопределённый ответ не считается
+успехом; ключ повторной отправки сохраняется.
+
+Добавлены `test_agent_world_domain_gateway.py`: реальный scoped ModelService,
+domain facade, state/evidence contracts и SF Chat adapter при изолированных
+in-memory границах провайдера, canonical queue и social store. Проверены
+ordinary-user history, отзыв сессии/owner/runtime, запрет глобальных ключей,
+существующий бюджет, exact queue identity, scope/body/query tampering,
+действующие JSON/Origin/CSRF методы Handler, read-only история после истечения
+доступа, публикационный whitelist и обязательное отдельное подтверждение.
+Найденные свежими тестами дефекты owner-binding revocation и backtest callback
+исправлены основным исполнителем и перепроверены, без ослабления assertions.
+
+Итоговые focused результаты этого дополнения:
+
+- UI/helper/DOM-event contracts: **171 passed**.
+- Domain/model-chat/publication gateway contracts: **93 passed**.
+- Disposable actual HTTPServer/Handler contracts: **36 passed**.
+- `node --check`, Python compilation и scoped `git diff --check`: **PASS**.
+
+Actual HTTP no-write check по-прежнему сравнивает файлы и SQL rows до/после
+GET/open-chat: не скрывает инициализацию storage предварительным fixture seed.
+Разрешена только одна обязательная audit-запись восьми Development feature flags.
+Reader history не означает право на NT/Desktop owner runtime либо mutation.
+
+Это не credentialed provider/browser acceptance, не full regression и не
+Canary/Production readiness. Эти проверки, current/Context Pack и общий Git
+closeout выполняет основной исполнитель. Все перечисленные изменения
+оставлены без stage/commit; версия этой записью не изменяется.
+
+### Финальная проверка Preview-панелей и publication flag
+
+Добавлены actual HTTP-проверки всех 13 известных `domains/*` Preview-панелей:
+ответ содержит только explanatory `enabled=false`, `synthetic=true`, пустые
+items/actions/source candidates и выключенный social publishing. Доступ всё
+ещё требует Owner Preview control cookie. Запрещённые domain POST не открывают
+SQLite, не создают файлы и не входят в Local/model/provider adapters. Неизвестный
+domain не превращается в разрешённый инструмент.
+
+Отдельные проверки отключают `AI_SOCIAL_PUBLISH_V1` на environment- и
+workspace-уровне, оставляя Task Graph включённым: публикационные GET, prepare
+и publish отклоняются до вызова сервиса. Флаг включается только восьмым явно
+разрешённым Development opt-in flag; Preview/Canary/Production не наследуют grant.
+
+Итог повторного запуска: **142 passed** — actual HTTP **47** и domain gateway
+**95**, без skipped; Python compilation и scoped diff-check **PASS**.
+UI остаётся неизменным после **171 PASS**. PostgreSQL-кластер этим slice не
+затрагивался; его независимый повтор ведёт основной исполнитель.

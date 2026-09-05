@@ -17,6 +17,7 @@ import secrets
 import sqlite3
 from contextlib import contextmanager
 from dataclasses import fields, is_dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid5
 from xml.etree import ElementTree
@@ -153,24 +154,63 @@ class SQLiteAgentWorldRepository:
     in this checkpoint. Future PostgreSQL support needs its own tested adapter.
     """
 
-    def __init__(self, path: str | Path, *, environment: c.Environment = c.Environment.DEVELOPMENT):
+    def __init__(self, path: str | Path, *, environment: c.Environment = c.Environment.DEVELOPMENT,
+                 read_only: bool = False):
         if environment is not c.Environment.DEVELOPMENT:
             raise ContractError("agent_world_sqlite_development_only")
         if not isinstance(path, (str, Path)) or str(path) in {"", ":memory:"}:
             raise ContractError("durable_path_required")
+        if type(read_only) is not bool:
+            raise ContractError("invalid_read_only_mode")
         self.path = Path(path).resolve()
         self.environment = environment
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._initialize()
+        self.read_only = read_only
+        self._empty_read_only = read_only and not self.path.exists()
+        if read_only:
+            if not self._empty_read_only:
+                self._validate_read_only()
+        else:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._initialize()
         self.events = _SQLiteEvents(self)
 
     def _connect(self):
-        connection = sqlite3.connect(str(self.path), timeout=10, isolation_level=None)
+        connection = sqlite3.connect(self.path.as_uri() + "?mode=ro" if self.read_only else str(self.path),
+                                     timeout=10, isolation_level=None, uri=self.read_only)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA busy_timeout=10000")
-        connection.execute("PRAGMA synchronous=FULL")
+        connection.execute("PRAGMA query_only=ON" if self.read_only else "PRAGMA synchronous=FULL")
         return connection
+
+    def _validate_read_only(self):
+        """Validate without migration, journal mode or persisted metadata writes.
+
+        SQLite may materialize operational -wal/-shm sidecars even in mode=ro.
+        We retain ordinary locking and current WAL visibility, not immutable=1
+        (which would silently ignore committed WAL records) or exclusive locks.
+        """
+        with self._transaction() as connection:
+            if connection.execute("PRAGMA application_id").fetchone()[0] != _APPLICATION_ID:
+                raise ContractError("agent_world_storage_identity_mismatch")
+            if connection.execute("PRAGMA user_version").fetchone()[0] != _SCHEMA_VERSION:
+                raise ContractError("agent_world_storage_schema_unsupported")
+            tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if not {"aw_meta", "aw_records", "aw_revisions", "aw_events", "aw_outbox", "aw_mutations", "aw_inbox", "aw_artifacts"} <= tables:
+                raise ContractError("agent_world_storage_schema_unsupported")
+            row = connection.execute("SELECT value FROM aw_meta WHERE key='cursor_key'").fetchone()
+            key = row[0] if row else None
+            if not isinstance(key, str) or not re.fullmatch("[0-9a-f]{64}", key):
+                raise ContractError("agent_world_storage_identity_mismatch")
+            self._cursor_key = bytes.fromhex(key)
+
+    @staticmethod
+    def _empty_page(page):
+        if not isinstance(page, PageRequest):
+            raise ContractError("page_required")
+        if page.cursor is not None:
+            raise ContractError("invalid_cursor")
+        return Page(items=(), next_cursor=None)
 
     def _initialize(self):
         connection = self._connect()
@@ -203,6 +243,10 @@ class SQLiteAgentWorldRepository:
 
     @contextmanager
     def _transaction(self, *, write=False):
+        if self.read_only and write:
+            raise ContractError("agent_world_repository_read_only")
+        if self._empty_read_only:
+            raise ContractError("agent_world_storage_unavailable")
         connection = None
         try:
             connection = self._connect()
@@ -258,8 +302,53 @@ class SQLiteAgentWorldRepository:
     def get(self, *, context: c.RequestContext, kind: EntityKind, entity_id: UUID) -> c.Record | None:
         self._context(context)
         self._identity(kind, entity_id)
+        if self._empty_read_only:
+            return None
         with self._transaction() as connection:
             return self._row(connection, context, kind, entity_id)
+
+    def get_revision(self, *, context: c.RequestContext, kind: EntityKind,
+                     entity_id: UUID, revision: int) -> c.Record | None:
+        """Read an immutable revision under the current record's private ACL."""
+        self._context(context)
+        self._identity(kind, entity_id)
+        c.require_revision(revision)
+        if self._empty_read_only:
+            return None
+        with self._transaction() as connection:
+            record = self._row(connection, context, kind, entity_id, revision=revision)
+            return record if record is not None and record.header.owner_user_uuid == context.user_uuid else None
+
+    def lookup_mutation(self, *, context: c.RequestContext, operation: str,
+                        idempotency_key: str) -> CommitResult | None:
+        """Read an existing atomic result, never reserve a second replay ledger.
+
+        Application services compare their canonical semantic request digest
+        before returning it. Only this exact user's committed result is visible.
+        """
+        scope = self._context(context)
+        c.require_token(operation, limit=100)
+        if (not isinstance(idempotency_key, str) or not 8 <= len(idempotency_key) <= 160
+                or any(ord(char) < 33 or ord(char) > 126 for char in idempotency_key)):
+            raise ContractError("invalid_idempotency_key")
+        key_hash = hashlib.sha256(idempotency_key.encode("utf-8")).hexdigest()
+        if self._empty_read_only:
+            return None
+        with self._transaction() as connection:
+            row = connection.execute("""SELECT v.payload AS record_payload,e.payload AS event_payload
+                FROM aw_mutations m JOIN aw_revisions v ON v.seq=m.revision_seq
+                JOIN aw_events e ON e.event_id=m.event_id
+                WHERE m.environment=? AND m.workspace_id=? AND m.operation=? AND m.key_hash=?
+                AND m.user_uuid=?""", (*scope, operation, key_hash, str(context.user_uuid))).fetchone()
+            if row is None:
+                return None
+            record, event = decode_record(row["record_payload"]), decode_event(row["event_payload"])
+            if self._row(connection, context, record.KIND, record.header.entity_id,
+                         revision=record.header.revision) is None:
+                raise ContractError("record_unavailable")
+            self._verify_references(connection, context, record)
+            self._verify_references(connection, context, event)
+            return CommitResult(record=record, event=event, replayed=True)
 
     def _cursor(self, *, context, filter_key, snapshot, after):
         value = [1, *self._context(context), str(context.user_uuid), filter_key, snapshot, after]
@@ -299,6 +388,8 @@ class SQLiteAgentWorldRepository:
     def list(self, *, context: c.RequestContext, kind: EntityKind, page: PageRequest) -> Page[c.Record]:
         scope = self._context(context)
         c.require_enum(kind, EntityKind)
+        if self._empty_read_only:
+            return self._empty_page(page)
         with self._transaction() as connection:
             snapshot, after = self._page_start(connection, context=context, filter_key=kind.value,
                                                 page=page, table="aw_revisions")
@@ -349,6 +440,11 @@ class SQLiteAgentWorldRepository:
 
     def get_artifact(self, *, context: c.RequestContext, reference: c.SnapshotRef) -> tuple[bytes, str] | None:
         self._context(context)
+        if not isinstance(reference, c.SnapshotRef):
+            raise ContractError("snapshot_required")
+        c.require_same_scope(context.scope, reference.scope)
+        if self._empty_read_only:
+            return None
         with self._transaction() as connection:
             return self._artifact(connection, context, reference)
 
@@ -356,6 +452,8 @@ class SQLiteAgentWorldRepository:
         """HTTP facade lookup without accepting a client-asserted content hash."""
         scope = self._context(context)
         c.require_uuid(artifact_id)
+        if self._empty_read_only:
+            return None
         with self._transaction() as connection:
             row = connection.execute("""SELECT sha256 FROM aw_artifacts WHERE environment=? AND workspace_id=?
                 AND owner_uuid=? AND artifact_id=?""", (*scope, str(context.user_uuid), str(artifact_id))).fetchone()
@@ -364,6 +462,74 @@ class SQLiteAgentWorldRepository:
             reference = c.SnapshotRef(artifact_id=artifact_id, sha256=row["sha256"], scope=context.scope)
             content, media_type = self._artifact(connection, context, reference)
             return reference, content, media_type
+
+    def read_memory_artifact(self, *, context: c.RequestContext, memory_id: UUID,
+                             artifact_id: UUID, now: datetime | None = None) -> tuple[c.SnapshotRef, bytes, str] | None:
+        """Read ONLY content explicitly published by an active same-tenant Memory.
+
+        This does not impersonate the publisher and does not relax the private
+        artifact APIs. Source revocation/expiry removes the grant immediately;
+        no GET mutates history. The service must freshly admit workspace access.
+        """
+        scope = self._context(context)
+        c.require_uuid(memory_id)
+        c.require_uuid(artifact_id)
+        stamp = now or datetime.now(timezone.utc)
+        c.require_utc(stamp)
+        if self._empty_read_only:
+            return None
+        with self._transaction() as connection:
+            memory = self._row(connection, context, EntityKind.MEMORY, memory_id)
+            if (not isinstance(memory, c.Memory) or memory.status != "active"
+                    or memory.visibility != c.Visibility.WORKSPACE or memory.memory_class != c.MemoryClass.WORKSPACE
+                    or memory.retention_until <= stamp or not memory.verification
+                    or artifact_id not in {memory.content.artifact_id, memory.verification.artifact_id}):
+                return None
+
+            def bytes_for(reference):
+                row = connection.execute("""SELECT content,media_type,sha256 FROM aw_artifacts
+                    WHERE environment=? AND workspace_id=? AND owner_uuid=? AND artifact_id=?""",
+                                         (*scope, str(memory.header.owner_user_uuid), str(reference.artifact_id))).fetchone()
+                if row is None:
+                    return None
+                content = bytes(row["content"])
+                if row["sha256"] != reference.sha256 or hashlib.sha256(content).hexdigest() != reference.sha256:
+                    raise ContractError("artifact_integrity_mismatch")
+                _validate_artifact(content, row["media_type"])
+                return reference, content, row["media_type"]
+
+            proof = bytes_for(memory.verification)
+            if proof is None or proof[2] != "application/json":
+                return None
+            publication = json.loads(proof[1])
+            if (not isinstance(publication, dict) or publication.get("type") != "workspace_memory_publication"
+                    or publication.get("memory_id") != str(memory_id)
+                    or publication.get("owner_user_uuid") != str(memory.header.owner_user_uuid)
+                    or publication.get("content_sha256") != memory.content.sha256):
+                return None
+            source = connection.execute("""SELECT v.payload FROM aw_records r JOIN aw_revisions v ON v.seq=r.seq
+                WHERE r.environment=? AND r.workspace_id=? AND r.kind='memory' AND r.entity_id=? AND r.owner_uuid=?""",
+                                        (*scope, publication.get("source_memory_id"), str(memory.header.owner_user_uuid))).fetchone()
+            if source is None:
+                return None
+            original = decode_record(source["payload"])
+            if (not isinstance(original, c.Memory) or original.header.scope != context.scope
+                    or original.header.owner_user_uuid != memory.header.owner_user_uuid or original.status != "active"
+                    or original.retention_until <= stamp or original.content != memory.content
+                    or original.header.revision != publication.get("source_revision")):
+                return None
+            if original.memory_class == c.MemoryClass.VERIFIED_LESSON:
+                content = bytes_for(memory.content)
+                if content is None or content[2] != "application/json":
+                    return None
+                origin = json.loads(content[1])
+                outcome_row = connection.execute("""SELECT v.payload FROM aw_records r JOIN aw_revisions v ON v.seq=r.seq
+                    WHERE r.environment=? AND r.workspace_id=? AND r.kind='outcome' AND r.entity_id=? AND r.owner_uuid=?""",
+                                                  (*scope, origin.get("verified_outcome_id"), str(memory.header.owner_user_uuid))).fetchone()
+                outcome = decode_record(outcome_row["payload"]) if outcome_row else None
+                if not isinstance(outcome, c.Outcome) or outcome.status != "verified" or outcome.verification != original.verification:
+                    return None
+            return bytes_for(memory.content if artifact_id == memory.content.artifact_id else memory.verification)
 
     def _verify_references(self, connection, context, value, *, pending=None):
         for reference in _references(value):
@@ -452,6 +618,8 @@ class _SQLiteEvents:
     def list(self, *, context: c.RequestContext, page: PageRequest) -> Page[EventEnvelope]:
         repo = self._repository
         scope = repo._context(context)
+        if repo._empty_read_only:
+            return repo._empty_page(page)
         with repo._transaction() as connection:
             snapshot, after = repo._page_start(connection, context=context, filter_key="events",
                                                page=page, table="aw_events")
@@ -467,6 +635,26 @@ class _SQLiteEvents:
             cursor = (repo._cursor(context=context, filter_key="events", snapshot=snapshot,
                                    after=rows[page.limit - 1]["seq"]) if len(rows) > page.limit else None)
             return Page(items=events, next_cursor=cursor)
+
+    def is_acknowledged(self, *, context: c.RequestContext, consumer: str, event_id: UUID) -> bool:
+        """Read this consumer's receipt only through the caller's visible event.
+
+        A receipt is never an authorization grant. In particular an event ID
+        from another user/workspace cannot disclose whether it was consumed.
+        """
+        repo = self._repository
+        scope = repo._context(context)
+        c.require_token(consumer, limit=100)
+        c.require_uuid(event_id)
+        if repo._empty_read_only:
+            return False
+        with repo._transaction() as connection:
+            row = connection.execute("SELECT * FROM aw_events WHERE environment=? AND workspace_id=? AND user_uuid=? AND event_id=?",
+                                     (*scope, str(context.user_uuid), str(event_id))).fetchone()
+            if row is None or self._visible(connection, context, row) is None:
+                return False
+            return connection.execute("SELECT 1 FROM aw_inbox WHERE environment=? AND workspace_id=? AND consumer=? AND event_id=?",
+                                      (*scope, consumer, str(event_id))).fetchone() is not None
 
     def acknowledge(self, *, context: c.RequestContext, consumer: str, event_id: UUID) -> bool:
         repo = self._repository

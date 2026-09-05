@@ -251,7 +251,7 @@ def test_foundation_core_stays_pure_and_runtime_composition_is_narrow():
                 names = [node.module or ""] + [alias.name for alias in node.names]
             else:
                 continue
-            if not foundation and path.name not in {"server.py", "chief_agent.py"} and any("ai_control_center" in name for name in names):
+            if not foundation and path.name not in {"server.py", "chief_agent.py", "local_worker.py", "universal_llm.py"} and any("ai_control_center" in name for name in names):
                 violations.append(f"{path.name}: runtime importer")
             if foundation and path.name in pure_modules and any(name.split(".")[0] in {
                 "os", "pathlib", "socket", "requests", "urllib", "sqlite3", "subprocess", "threading", "asyncio",

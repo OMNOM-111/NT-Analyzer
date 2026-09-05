@@ -376,6 +376,7 @@ def _is_self_service_post(path: str) -> bool:
         or path.startswith("/api/ninjatrader/jobs")
         or path == "/api/demo-backtests"
         or path == "/api/ops/runtime/bars/batch"
+        or permissions.agent_world_history_request(path, "POST")
     )
 
 
@@ -3306,7 +3307,10 @@ class Handler(BaseHTTPRequestHandler):
             # Access accounting must never be the reason a request fails.
             return True
         context["trial_usage"] = usage
-        if not usage.get("expired") or _trial_gate_allows(path):
+        # Existing own Agent World evidence remains readable after expiry;
+        # domain auth still enforces confirmed session, user and workspace.
+        agent_world_history = permissions.agent_world_history_request(path, getattr(self, "command", "GET"))
+        if not usage.get("expired") or _trial_gate_allows(path) or agent_world_history:
             return True
         self._err(
             HTTPStatus.PAYMENT_REQUIRED,
@@ -3732,6 +3736,9 @@ class Handler(BaseHTTPRequestHandler):
             "is_owner": bool(context.get("is_owner")),
             "display_name": display,
             "capabilities": context.get("capabilities") if isinstance(context.get("capabilities"), dict) else {},
+            # Non-secret lease reference lets scoped Agent World workers observe
+            # logout/device revocation before provider transmission.
+            "auth_session_id": str(context.get("session_id") or ""),
         }
         user_uuid = str(user.get("user_uuid") or user.get("id") or "").strip()
         if not user_uuid:

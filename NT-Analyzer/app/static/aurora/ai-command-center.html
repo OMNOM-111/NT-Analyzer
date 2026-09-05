@@ -6,7 +6,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
 <title>AI Центр — StratForge AI</title>
 <link rel="stylesheet" href="assets/theme.css?v=20260902-permanent-record">
-<link rel="stylesheet" href="assets/pages/ai-command-center.css?v=20260904-agent-world2">
+<link rel="stylesheet" href="assets/pages/ai-command-center.css?v=20260904-agent-world3">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 </head>
 <body data-page="ai" data-title="AI Центр" data-kicker="StratForge AI · Мир агентов">
@@ -31,16 +31,27 @@
     <button id="aw-tab-work" role="tab" aria-selected="false" aria-controls="aw-content" tabindex="-1" data-aw-tab="work">Работа</button>
     <button id="aw-tab-agents" role="tab" aria-selected="false" aria-controls="aw-content" tabindex="-1" data-aw-tab="agents">Агенты</button>
   </nav>
+  <nav class="aw-domain-launcher" id="aw-domain-launcher" aria-label="Инструменты AI Центра">
+    <button data-aw-domain="decisions"><span aria-hidden="true">◇</span>Решения / Court</button>
+    <button data-aw-domain="memory"><span aria-hidden="true">▧</span>Память</button>
+    <button data-aw-domain="experiments"><span aria-hidden="true">⌁</span>Эксперименты</button>
+    <button data-aw-domain="models"><span aria-hidden="true">◈</span>Модели</button>
+    <button data-aw-domain="projects"><span aria-hidden="true">▤</span>Strategy Projects</button>
+    <button data-aw-domain="routines"><span aria-hidden="true">↻</span>Рутины</button>
+    <button data-aw-domain="calendar"><span aria-hidden="true">▦</span>Календарь</button>
+    <button data-aw-domain="publications"><span aria-hidden="true">↗</span>В SF Social</button>
+    <button data-aw-domain="system"><span aria-hidden="true">⚙</span>Система</button>
+  </nav>
   <div id="aw-content" class="aw-content" role="tabpanel" aria-labelledby="aw-tab-overview" aria-busy="true" tabindex="0">
     <div class="aw-skeleton-grid" aria-label="Загрузка AI Центра"><div class="aw-skeleton"></div><div class="aw-skeleton"></div><div class="aw-skeleton"></div></div>
   </div>
   <footer class="aw-footer"><span>Решения и действия проверяются сервером. Persona не расширяет права доступа.</span><span id="aw-updated"></span></footer>
 </div>
-<script src="assets/api.js?v=20260904-agent-world1"></script>
+<script src="assets/api.js?v=20260904-agent-world3"></script>
 <script src="assets/domain.js?v=20260629-final4"></script>
 <script src="assets/ambient.js?v=20260703-stratforge1"></script>
-<script src="assets/ui.js?v=20260904-agent-world1"></script>
+<script src="assets/ui.js?v=20260904-agent-world3"></script>
 <script src="assets/victor.js?v=20260718-contours2"></script>
-<script src="assets/pages/ai-command-center.js?v=20260904-agent-world2"></script>
+<script src="assets/pages/ai-command-center.js?v=20260904-agent-world3"></script>
 </body>
 </html>

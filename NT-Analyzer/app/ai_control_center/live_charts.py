@@ -191,13 +191,17 @@ def reconcile(authorized):
     return {"delivered": delivered}
 
 
-def details(authorized):
+def details(authorized, *, command_id=None):
     from ..ai_lab import chief_agent
-    pending = {row["id"]: row for row in commands(authorized)}
+    if command_id is not None and not re.fullmatch(r"cc_[0-9a-f]{32}", str(command_id)):
+        raise ContractError("desktop_command_scope_required")
+    pending = {row["id"]: row for row in commands(authorized) if command_id is None or row["id"] == command_id}
     receipts = {}
     for row in chief_agent.agent_world_live_messages(scope=authorized["chat_scope"]):
         for action in row.get("actions") or []:
-            if action.get("source_kind") == "desktop_chart" and re.fullmatch(r"cc_[0-9a-f]{32}", str(action.get("command_id") or "")):
+            if (action.get("source_kind") == "desktop_chart"
+                    and re.fullmatch(r"cc_[0-9a-f]{32}", str(action.get("command_id") or ""))
+                    and (command_id is None or action.get("command_id") == command_id)):
                 receipts[action["command_id"]] = (row, action)
     result = []
     for command_id in set(pending) | set(receipts):

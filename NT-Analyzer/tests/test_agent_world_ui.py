@@ -103,17 +103,22 @@ def test_page_uses_existing_transport_and_does_not_create_auth_or_chat_store():
     assert "idempotency_key: demoKey" in script
 
 
-def test_inactive_sections_are_one_compact_card_and_do_not_load_sensitive_data():
+def test_domain_tools_remain_accessible_on_one_page_and_load_only_on_request():
     script = SCRIPT.read_text(encoding="utf-8")
     assert "function foundationCard()" in script
-    assert "Решения · Память · Эксперименты" in script
+    parser = Tags()
+    parser.feed(PAGE.read_text(encoding="utf-8"))
+    launcher = [attrs["data-aw-domain"] for tag, attrs in parser.tags if "data-aw-domain" in attrs]
+    assert launcher == ["decisions", "memory", "experiments", "models", "projects", "routines", "calendar", "publications", "system"]
     assert "capability('can_view_system') ? flagRows(overview.flags) : []" in script
     assert "API.aiControlCenterSection(" not in script
-    assert "renderSection" not in script
+    for method in ["Domain", "DomainItem", "DomainAction"]:
+        assert f"API.aiControlCenter{method}(" in script
     assert "request !== overviewGeneration" in script
     assert "IN DEVELOPMENT" in script
-    assert "href=\"ai-lab.html\"" in script
-    assert "href=\"ai-agents.html\"" in script
+    card = script.split("function foundationCard()", 1)[1].split("function realWorkHint", 1)[0]
+    assert "href=" not in card
+    assert "data-aw-domain=\"personas\"" in card
 
 
 def test_overview_places_work_results_team_and_rating_together_without_sample_values():
@@ -396,3 +401,445 @@ def test_source_does_not_invent_quality_ranks_or_execute_risky_actions():
     assert "localStorage" not in script
     assert "Math.random" not in script
     assert "исход" in script.lower() or "Исходные данные тестовые" in script
+
+
+@pytest.mark.parametrize("domain", ["personas", "decisions", "memory", "projects", "routines", "calendar", "models", "model_tasks", "experiments", "system", "publications"])
+def test_all_requested_domains_have_known_same_page_routes(domain):
+    assert evaluate(f"ui.knownDomain({json.dumps(domain)})") is True
+
+
+@pytest.mark.parametrize("domain", [None, "__proto__", "constructor", "../../secrets", "community", "trade", "production"])
+def test_generic_domain_ui_does_not_accept_arbitrary_routes(domain):
+    assert evaluate(f"ui.knownDomain({json.dumps(domain)})") is False
+
+
+def test_domain_actions_require_enabled_server_projection_and_explicit_allowlist():
+    result = evaluate("[ui.allowedDomainActions({enabled:true,actions:['create','execute','__proto__']}),ui.allowedDomainActions({enabled:false,actions:['create']}),ui.allowedDomainActions({enabled:'true',actions:['create']}),ui.allowedDomainActions({enabled:true,actions:['create']},{actions:['update','archive','delete_everything']}),ui.allowedDomainActions({enabled:true,capabilities:{can_create:true}})]")
+    assert result == [["create"], [], [], ["update", "archive"], []]
+
+
+def test_persona_payload_is_distinct_from_model_credentials_scope_and_role_authority():
+    payload = {"name": "Research helper", "description": "Local comparison", "style": "Concise", "workspace_id": "foreign", "api_key": "secret", "permissions": ["admin"], "model": "injected", "role": "owner"}
+    result = evaluate(f"ui.domainPayload('personas','create',{json.dumps(payload)})")
+    assert result == {"name": "Research helper", "description": "Local comparison", "style": "Concise"}
+
+
+@pytest.mark.parametrize("domain,action,values,expected", [
+    ("memory", "create", {"title": "Note", "content": "Measured output", "purpose": "Review", "retention_days": "14"}, {"title": "Note", "content": "Measured output", "purpose": "Review", "retention_days": 14, "source_ids": []}),
+    ("projects", "create", {"title": "Strategy", "strategy_key": "SampleMACrossOver"}, {"title": "Strategy", "description": "", "strategy_key": "SampleMACrossOver"}),
+    ("routines", "create", {"title": "Weekly review", "interval_minutes": "10080"}, {"title": "Weekly review", "description": "", "interval_minutes": 10080, "source_ids": []}),
+    ("projects", "version", {"notes": "Change Fast", "parameters": '{"Fast": 10, "Slow": 25}'}, {"notes": "Change Fast", "parameters": {"Fast": 10, "Slow": 25}}),
+    ("memory", "revoke", {"reason": "No longer current", "content": "must not rewrite"}, {"reason": "No longer current"}),
+    ("models", "test", {"rubric_key": "extract_facts", "input_text": "must not send"}, {}),
+    ("models", "disconnect", {"api_key": "must not send", "scope": "foreign"}, {}),
+    ("tasks", "cancel", {"reason": "Owner cancelled", "job_id": "foreign"}, {"reason": "Owner cancelled"}),
+])
+def test_domain_form_payloads_match_actual_service_fields(domain, action, values, expected):
+    assert evaluate(f"ui.domainPayload({json.dumps(domain)},{json.dumps(action)},{json.dumps(values)})") == expected
+
+
+@pytest.mark.parametrize("domain,action,values", [
+    ("memory", "create", {"title": "Note", "content": "x", "purpose": "Review", "retention_days": "0"}),
+    ("memory", "create", {"title": "Note", "content": "x", "purpose": "Review", "retention_days": "366"}),
+    ("routines", "create", {"title": "Too frequent", "interval_minutes": "4"}),
+    ("routines", "create", {"title": "Invalid", "interval_minutes": "5.5"}),
+    ("projects", "version", {"notes": "Invalid", "parameters": "[]"}),
+    ("projects", "version", {"notes": "Invalid", "parameters": '{"__proto__": {"admin": true}}'}),
+    ("projects", "version", {"notes": "Invalid", "parameters": "not JSON"}),
+    ("projects", "create", {"title": "Missing strategy key"}),
+    ("calendar", "create", {"title": "Backwards", "starts_at": "2026-09-05T00:00:00Z", "ends_at": "2026-09-04T00:00:00Z"}),
+    ("calendar", "create", {"title": "Invalid", "starts_at": "not a date", "ends_at": "2026-09-05T00:00:00Z"}),
+    ("tasks", "cancel", {"reason": ""}),
+])
+def test_domain_forms_reject_invalid_values_before_network(domain, action, values):
+    assert evaluate(f"(() => {{ try {{ ui.domainPayload({json.dumps(domain)},{json.dumps(action)},{json.dumps(values)}); return false; }} catch (error) {{ return Boolean(error.message); }} }})()") is True
+
+
+def test_calendar_preserves_explicit_time_and_sends_utc_not_owner_scope():
+    result = evaluate("ui.domainPayload('calendar','create',{title:'Research review',starts_at:'2026-09-04T12:30:00-07:00',ends_at:'2026-09-04T13:30:00-07:00',workspace_id:'foreign'})")
+    assert result == {"title": "Research review", "description": "", "starts_at": "2026-09-04T19:30:00.000Z", "ends_at": "2026-09-04T20:30:00.000Z", "source_ids": []}
+
+
+def test_court_form_collects_evidence_and_model_ids_never_votes_or_execution_permission():
+    identity = "12345678-1234-1234-1234-123456789abc"
+    decision = {"title": "Review", "proposal": "Test strategy", "evidence_ids": [identity], "risk": "moderate", "trigger": "requested_review", "verdict": "approved", "votes": ["yes"], "execution_allowed": True}
+    result = evaluate(f"ui.domainPayload('decisions','create',{json.dumps(decision)})")
+    assert set(result) == {"title", "proposal", "evidence_ids", "risk", "trigger"}
+    ids = [identity, identity[:-1] + "d", identity[:-1] + "e"]
+    result = evaluate(f"ui.domainPayload('decisions','review',{json.dumps({'model_ids': ids, 'votes': ['approved']})})")
+    assert result == {"model_ids": ids}
+    invalid = {"model_ids": [identity, identity, identity]}
+    assert evaluate(f"(() => {{try {{ui.domainPayload('decisions','review',{json.dumps(invalid)});return false;}}catch (_){{return true;}}}})()") is True
+
+
+def test_model_connect_form_uses_server_providers_and_never_returns_the_stored_secret():
+    fields = evaluate("ui.domainFormFields('models','connect')")
+    provider = next(field for field in fields if field["key"] == "provider")
+    secret = next(field for field in fields if field["key"] == "api_key")
+    assert provider["type"] == "provider" and "options" not in provider
+    assert secret["type"] == "password"
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "dependencies.models?.providers" in source
+    assert "spec.type === 'password' ? ''" in source
+    assert 'autocomplete="new-password"' in source
+    assert "keyInput.value = ''" in source
+    assert "person.status === 'active'" in source
+
+
+def test_model_response_evidence_uses_actual_checks_and_scope_not_a_fake_llm_rating():
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "value.rubric || value.checks" in source
+    assert "value.verifier || value.evaluator" in source
+    assert "value.score_pct ?? value.observed_score_pct" in source
+    assert "value.response_sha256" in source
+    assert "value.input_sha256" in source
+    assert "item.court_cases" in source
+    assert "vote.model_key" in source and "vote.session_id" in source
+    result = evaluate("ui.sourceMeta({synthetic:false,source_kind:'real_model_response'})")
+    assert result == {"kind": "real_model_response", "label": "Модель · фактический ответ", "reportUrl": ""}
+
+
+def test_server_errors_and_structured_preview_cannot_echo_provider_secrets():
+    result = evaluate("({message:ui.domainError({status:500,message:'api_key=private-secret',code:'private-secret'}),json:ui.publicJSON({safe:'Keep',nested:{api_key:'secret',password:'secret',authorization:'secret'},metrics:{score:99}})})")
+    assert "private-secret" not in result["message"]
+    assert "secret" not in result["json"]
+    assert "Keep" in result["json"] and '"score": 99' in result["json"]
+
+
+def test_mutation_envelope_revision_idempotency_and_manual_external_consent_are_explicit():
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "{ payload, idempotency_key: state.key }" in source
+    assert "body.expected_revision = state.revision" in source
+    assert "!form.reportValidity()" in source
+    assert 'name="confirmation" required' in source
+    assert "name=\"confirmation\" checked" not in source
+    assert "task.allowed_actions" in source
+    assert "API.aiControlCenterDomainAction(state.domain, state.id, state.action, body)" in source
+
+
+def run_domain_ui(scenario: str):
+    """Run the real event handlers with a minimal DOM, never a browser/account."""
+    code = r"""(async () => {
+      const fs = require('node:fs'), vm = require('node:vm');
+      const calls=[], listeners={}, nodes=new Map(); let started, drawer, seq=0, failPost=false, previewOverrides={};
+      const ids={persona:'11111111-1111-1111-1111-111111111111',model:'22222222-2222-2222-2222-222222222222',task:'33333333-3333-3333-3333-333333333333'};
+      const task={id:ids.task,title:'Actual task',status:'ready',revision:7,allowed_actions:['cancel'],actions:['cancel'],source_kind:'real_model_response',synthetic:false,lead:{id:ids.persona,display_name:'Owner persona'},model:'requested-model'};
+      const response={...task,task,result_text:'ACTUAL_RESPONSE',actual_model:'provider-receipt-model',evaluation:{observed_score_pct:100,evaluator:'independent_local_evidence_verifier',rubric_key:'connection_exact',checks:[{key:'exact_response',passed:true}],response_sha256:'a'.repeat(64)}};
+      const domains={
+        personas:{enabled:true,actions:['create'],items:[{id:ids.persona,title:'Owner persona',name:'Owner persona',status:'active',revision:7,actions:['update','suspend'],description:'Owned description'}]},
+        models:{enabled:true,actions:['connect'],providers:[{id:'deepseek',label:'Server-listed provider'}],items:[{id:ids.model,title:'Own model',label:'Own model',model:'requested-model',provider:'deepseek',connected:true,credentials_configured:true,status:'active',actions:['test','task','disconnect'],api_key:'must-not-render-returned-secret'}]},
+        model_tasks:{enabled:true,actions:[],items:[response]},
+        experiments:{enabled:true,actions:['create'],items:[]},
+        memory:{enabled:true,actions:['create'],items:[]},
+        decisions:{enabled:true,actions:['create'],items:[],evidence_candidates:[{id:ids.task,title:'Stored JSON evidence',media_type:'application/json',sha256:'b'.repeat(64)}]},
+        projects:{enabled:true,actions:['create'],items:[]},routines:{enabled:true,actions:['create'],items:[]},calendar:{enabled:true,actions:['create'],items:[]},
+        publications:{enabled:true,actions:['prepare'],items:[],source_candidates:[{source_kind:'outcome',source_id:ids.task,title:'Verified result for review'}]},
+        system:{enabled:true,actions:[],items:[{id:'runtime',title:'Real runtime state',status:'active',summary:'Recorded status',fields:{secret:'must-not-render-system-secret',state:'healthy'}}]},
+      };
+      const tabs=['overview','work','agents'].map(key=>({dataset:{awTab:key},setAttribute(){}}));
+      function node(key){if(!nodes.has(key))nodes.set(key,{innerHTML:'',textContent:'',hidden:false,disabled:false,setAttribute(){},addEventListener(){},focus(){},classList:{toggle(){}},querySelectorAll(){return key==='#aw-center'?tabs:[];},contains(target){return target.area==='shell';}});return nodes.get(key);}
+      const document={activeElement:{focus(){}},querySelector:node,addEventListener(type,fn){listeners[type]=fn;},removeEventListener(){}};
+      const state={enabled:true,scope:{synthetic:false,workspace_id:'own'},capabilities:{},stats:{active_tasks:1,completed_tasks:0,agents:0,attention:0},tasks:[task],agents:[],attention:[]};
+      const http={
+        async aiControlCenterOverview(){calls.push({method:'overview'});return state;},
+        async aiControlCenterTasks(){return {items:[task]};},
+        async aiControlCenterTask(id){calls.push({method:'task',id});return {task};},
+        async aiControlCenterDomain(domain,params){calls.push({method:'list',domain,params});if(!domains[domain])throw {status:404};return JSON.parse(JSON.stringify(domains[domain]));},
+        async aiControlCenterDomainItem(domain,id){calls.push({method:'detail',domain,id});const item=domains[domain].items.find(item=>item.id===id);if(!item)throw {status:404};return JSON.parse(JSON.stringify(item));},
+        async aiControlCenterDomainAction(domain,id,action,body){calls.push({method:'post',domain,id,action,body:JSON.parse(JSON.stringify(body))});if(failPost)throw {status:500,message:'leaked credential must-not-render-error-secret'};
+          if(domain==='publications'&&action==='prepare')return {snapshot:{source_id:body.payload.source_id,source_revision:7,title:'Reviewed <script>snapshot</script>',summary:'Only public verified fields',synthetic:false,kind:'Agent World Result',timestamp_utc:'2026-09-05T12:00:00Z',metrics:{Checks:4},evidence_sha256:['a'.repeat(64)],limitations:['Not general model quality'],raw_response:'must-not-render-private-answer',api_key:'must-not-render-published-secret'},snapshot_sha256:'b'.repeat(64),source_revision:7,permanent:true,requires_explicit_confirmation:true,...previewOverrides};
+          if(domain==='publications'&&action==='publish')return {ok:true,post:{id:'existing-social-post'},snapshot_sha256:body.payload.approved_snapshot_sha256,permanent:true,published_to:'sf_social'};
+          if(domain==='models'&&['test','task'].includes(action))return response;
+          if(domain==='tasks'){task.status='cancelled';task.allowed_actions=[];return {task};}
+          const old=id==='new'?{}:domains[domain].items.find(item=>item.id===id)||{};
+          const item={...old,...body.payload,id:id==='new'?ids.persona:id,title:body.payload.title||body.payload.name||old.title,status:'active',revision:(old.revision||0)+1,actions:['update']};
+          const at=domains[domain].items.findIndex(row=>row.id===item.id);if(at<0)domains[domain].items.push(item);else domains[domain].items[at]=item;return {ok:true,item};
+        },
+      };
+      const window={UI:{ready(fn){started=fn();},signal(){},onLeave(){},wireAgentFaces(){},closeDrawer(){if(drawer)drawer.closed=true;},drawer(title,html){
+        drawer={title,innerHTML:html,closed:false,classList:{contains(value){return value==='open'&&!drawer.closed;},add(){}},setAttribute(){},focus(){},querySelector(selector){return selector==='.aw-inspector'?{}:null;},querySelectorAll(){return[];},contains(target){return target.area==='drawer';}};return drawer;
+      }},API:{http},location:{hash:'',search:''},history:{replaceState(_a,_b,url){window.location.hash=url;}},crypto:{randomUUID(){return '44444444-4444-4444-4444-'+String(++seq).padStart(12,'0');}},clearTimeout(){}};
+      vm.runInNewContext(fs.readFileSync(require.resolve(PATH_TO_SCRIPT),'utf8'),{window,document,URLSearchParams,Date}); await started;
+      async function settle(){for(let i=0;i<12;i++)await Promise.resolve();await new Promise(resolve=>setImmediate(resolve));}
+      async function click(dataset,area='drawer'){
+        const target={dataset,area,hasAttribute(name){return name==='data-aw-domain-refresh'&&dataset.refresh===true;},closest(selector){return selector==='button, a'?target:selector==='.aw-inspector'?{}:null;}};
+        listeners.click({target});await settle();return drawer?.innerHTML||'';
+      }
+      function form(values={},confirmation=false){
+        const html=drawer.innerHTML, error={textContent:'',hidden:true}, controls={};
+        for(const [key,value]of Object.entries(values))controls[key]={value};
+        const result={id:'aw-domain-form',area:'drawer',elements:{namedItem(key){return controls[key]||null;}},reportValidity(){return !html.includes('name="confirmation" required')||confirmation;},
+          querySelector(selector){return selector==='#aw-form-error'?error:null;},querySelectorAll(selector){if(selector==='button, input, select, textarea')return Object.values(controls);const match=selector.match(/input\[name="([^"]+)"\]:checked/);return match?(Array.isArray(values[match[1]])?values[match[1]].map(value=>({value})):[]):[];},error,controls};return result;
+      }
+      async function submit(f){await listeners.submit({target:f,preventDefault(){}});await settle();}
+      SCENARIO
+    })()"""
+    return evaluate(code.replace("PATH_TO_SCRIPT", json.dumps(str(SCRIPT))).replace("SCENARIO", scenario))
+
+
+def test_domain_models_form_uses_real_handlers_and_server_listed_provider_only():
+    result = run_domain_ui("""
+      const initial=calls.length;
+      await click({awDomain:'models'},'shell');
+      const list=drawer.innerHTML;
+      await click({awDomainAction:'connect',awEntity:'new'});
+      return {initial,list,form:drawer.innerHTML,calls};
+    """)
+    assert result["initial"] == 1
+    assert "Own model" in result["list"]
+    assert "must-not-render-returned-secret" not in result["list"]
+    assert "Server-listed provider" in result["form"]
+    assert 'value="deepseek"' in result["form"]
+    assert 'type="password" value=""' in result["form"]
+    assert [(call["method"], call.get("domain")) for call in result["calls"]] == [("overview", None), ("list", "models"), ("list", "personas")]
+    assert not any(call["method"] == "post" for call in result["calls"])
+
+
+def test_persona_update_real_handler_sends_cas_revision_and_narrow_envelope():
+    result = run_domain_ui("""
+      await click({awDomain:'personas'},'shell');
+      await click({awDomainAction:'update',awEntity:ids.persona});
+      const edit=drawer.innerHTML;
+      await submit(form({name:'Changed persona',description:'Kept purpose',style:'Concise',workspace_id:'foreign',role:'owner'}));
+      return {edit,html:drawer.innerHTML,posts:calls.filter(call=>call.method==='post')};
+    """)
+    assert 'value="Owner persona"' in result["edit"]
+    assert "Owned description" in result["edit"]
+    assert len(result["posts"]) == 1
+    post = result["posts"][0]
+    assert (post["domain"], post["action"]) == ("personas", "update")
+    assert post["body"]["expected_revision"] == 7
+    assert post["body"]["payload"] == {"name": "Changed persona", "description": "Kept purpose", "style": "Concise"}
+    assert post["body"]["idempotency_key"]
+    assert "Changed persona" in result["html"]
+
+
+def test_external_model_task_requires_manual_consent_then_renders_actual_response_evidence():
+    result = run_domain_ui("""
+      await click({awDomain:'models'},'shell');
+      await click({awDomainAction:'task',awEntity:ids.model});
+      const shown=drawer.innerHTML;
+      await submit(form({rubric_key:'connection_exact'},false));
+      const before=calls.filter(call=>call.method==='post').length;
+      await submit(form({rubric_key:'connection_exact'},true));
+      return {shown,before,posts:calls.filter(call=>call.method==='post'),html:drawer.innerHTML};
+    """)
+    assert 'name="confirmation" required' in result["shown"]
+    assert result["before"] == 0
+    assert len(result["posts"]) == 1
+    assert result["posts"][0]["body"]["payload"] == {"rubric_key": "connection_exact"}
+    assert "ACTUAL_RESPONSE" in result["html"]
+    assert "independent_local_evidence_verifier" in result["html"]
+    assert "exact_response" in result["html"]
+    assert "RESPONSE SHA256" in result["html"]
+
+
+def test_domain_cancel_task_requires_allowed_action_and_owner_confirmation():
+    result = run_domain_ui("""
+      await click({awTask:ids.task},'shell');
+      const detail=drawer.innerHTML;
+      await click({awTaskAction:'cancel'});
+      await submit(form({reason:'Stop my queued task'},false));
+      const before=calls.filter(call=>call.method==='post').length;
+      await submit(form({reason:'Stop my queued task'},true));
+      return {detail,before,posts:calls.filter(call=>call.method==='post')};
+    """)
+    assert 'data-aw-task-action="cancel"' in result["detail"]
+    assert 'data-aw-task-action="retry"' not in result["detail"]
+    assert result["before"] == 0
+    assert len(result["posts"]) == 1
+    assert result["posts"][0]["body"]["expected_revision"] == 7
+    assert result["posts"][0]["body"]["payload"] == {"reason": "Stop my queued task"}
+
+
+def test_failed_mutation_retry_keeps_idempotency_key_and_does_not_echo_server_secret():
+    result = run_domain_ui("""
+      await click({awDomain:'personas'},'shell');
+      await click({awDomainAction:'create',awEntity:'new'});
+      failPost=true;
+      const f=form({name:'Persona with uncertain reply'});
+      await submit(f);const message=f.error.textContent;
+      await submit(f);
+      return {message,posts:calls.filter(call=>call.method==='post')};
+    """)
+    assert len(result["posts"]) == 2
+    assert result["posts"][0]["body"]["idempotency_key"] == result["posts"][1]["body"]["idempotency_key"]
+    assert "must-not-render-error-secret" not in result["message"]
+    assert "не создаёт дубликат" in result["message"]
+
+
+def test_system_is_inline_read_only_and_court_sources_are_server_provided():
+    result = run_domain_ui("""
+      await click({awDomain:'system'},'shell');const system=drawer.innerHTML;
+      await click({awDomain:'decisions'},'shell');
+      await click({awDomainAction:'create',awEntity:'new'});
+      return {system,form:drawer.innerHTML,posts:calls.filter(call=>call.method==='post').length};
+    """)
+    assert "Real runtime state" in result["system"]
+    assert 'data-aw-domain-item="runtime"' not in result["system"]
+    assert "must-not-render-system-secret" not in result["system"]
+    assert "Stored JSON evidence" in result["form"]
+    assert result["posts"] == 0
+
+
+def test_forged_ui_action_not_granted_by_server_does_not_open_mutation_form():
+    result = run_domain_ui("""
+      await click({awDomain:'personas'},'shell');const prior=drawer.innerHTML;
+      await click({awDomainAction:'activate',awEntity:ids.persona});
+      return {unchanged:drawer.innerHTML===prior,posts:calls.filter(call=>call.method==='post').length};
+    """)
+    assert result == {"unchanged": True, "posts": 0}
+
+
+def test_owner_binding_requires_server_action_and_selects_only_returned_registry_id():
+    result = run_domain_ui("""
+      await click({awDomain:'models'},'shell');const ordinary=drawer.innerHTML;
+      domains.models.actions.push('bind_existing');
+      domains.models.owner_bindings=[{id:'AGT-ABCDEFGHIJKL',name:'Approved Local connection',provider:'openai',model:'existing-model',api_key:'must-not-render-global-secret'}];
+      await click({awDomain:'models'},'shell');
+      await click({awDomainAction:'bind_existing',awEntity:'new'});
+      const shown=drawer.innerHTML;
+      await submit(form({registry_id:'AGT-ABCDEFGHIJKL',persona_id:ids.persona,label:'Bound model',api_key:'must-not-send',daily_budget_usd:'999'}));
+      return {ordinary,shown,posts:calls.filter(call=>call.method==='post')};
+    """)
+    assert 'data-aw-domain-action="bind_existing"' not in result["ordinary"]
+    assert 'value="AGT-ABCDEFGHIJKL"' in result["shown"]
+    assert "Approved Local connection" in result["shown"]
+    assert "must-not-render-global-secret" not in result["shown"]
+    assert 'name="api_key"' not in result["shown"]
+    assert result["posts"][0]["body"]["payload"] == {"registry_id": "AGT-ABCDEFGHIJKL", "persona_id": "11111111-1111-1111-1111-111111111111", "label": "Bound model"}
+
+
+@pytest.mark.parametrize("identity", ["AGT-x", "../../private", "owner-token", "AGT-ABCDEFGHIJKL?workspace=other", "AGT-abcdefghijkl"])
+def test_binding_payload_refuses_noncanonical_registry_identity(identity):
+    value = {"registry_id": identity, "persona_id": "11111111-1111-1111-1111-111111111111"}
+    assert evaluate(f"(() => {{try {{ui.domainPayload('models','bind_existing',{json.dumps(value)});return false;}}catch (_){{return true;}}}})()") is True
+
+
+def test_memory_publication_requires_server_action_and_explicit_audience_confirmation():
+    result = run_domain_ui("""
+      domains.memory.items=[{id:ids.persona,title:'Verified note',status:'active',revision:3,content:'Approved content',actions:['publish_to_workspace']}];
+      await click({awDomain:'memory'},'shell');
+      await click({awDomainAction:'publish_to_workspace',awEntity:ids.persona});
+      const shown=drawer.innerHTML;
+      await submit(form({reason:'Share approved lesson'},false));
+      const before=calls.filter(call=>call.method==='post').length;
+      await submit(form({reason:'Share approved lesson',workspace_id:'foreign',content:'must-not-send'},true));
+      return {shown,before,posts:calls.filter(call=>call.method==='post')};
+    """)
+    assert "участникам этого рабочего пространства" in result["shown"]
+    assert "Личный источник сохраняется" in result["shown"]
+    assert result["before"] == 0
+    assert result["posts"][0]["body"]["payload"] == {"reason": "Share approved lesson"}
+    assert result["posts"][0]["body"]["expected_revision"] == 3
+
+
+def test_consensus_proposal_uses_real_contribution_candidates_without_browser_votes():
+    result = run_domain_ui("""
+      domains.decisions.actions.push('propose_consensus');
+      domains.decisions.contribution_candidates=[{id:ids.persona,title:'Accepted contribution A'},{id:ids.model,title:'Accepted contribution B'}];
+      await click({awDomain:'decisions'},'shell');
+      await click({awDomainAction:'propose_consensus',awEntity:'new'});
+      const shown=drawer.innerHTML;
+      await submit(form({title:'Compare accepted inputs',proposal:'Verified proposal',risk:'low',trigger:'requested_review',contribution_ids:[ids.persona,ids.model],votes:[{verdict:'approve'}],workspace_id:'foreign'}));
+      return {shown,posts:calls.filter(call=>call.method==='post')};
+    """)
+    assert "Accepted contribution A" in result["shown"]
+    assert "Выбор не создаёт голосов" in result["shown"]
+    assert result["posts"][0]["action"] == "propose_consensus"
+    assert result["posts"][0]["body"]["payload"] == {
+        "title": "Compare accepted inputs", "proposal": "Verified proposal", "risk": "low",
+        "trigger": "requested_review", "contribution_ids": ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"],
+    }
+
+
+def test_routine_suggestion_uses_two_verified_outcomes_and_does_not_request_automation():
+    result = run_domain_ui("""
+      domains.routines.actions.push('suggest_routine');
+      domains.routines.outcome_candidates=[{id:ids.persona,title:'Verified outcome A'},{id:ids.model,title:'Verified outcome B'}];
+      await click({awDomain:'routines'},'shell');
+      await click({awDomainAction:'suggest_routine',awEntity:'new'});
+      const shown=drawer.innerHTML;
+      await submit(form({title:'Follow up verified work',interval_minutes:'60',outcome_ids:[ids.persona,ids.model],automation_enabled:true}));
+      return {shown,posts:calls.filter(call=>call.method==='post')};
+    """)
+    assert "Verified outcome A" in result["shown"]
+    assert "Автоматическое исполнение не включается" in result["shown"]
+    assert result["posts"][0]["body"]["payload"] == {
+        "title": "Follow up verified work", "interval_minutes": 60,
+        "outcome_ids": ["11111111-1111-1111-1111-111111111111", "22222222-2222-2222-2222-222222222222"],
+    }
+
+
+@pytest.mark.parametrize("domain,action,key", [
+    ("decisions", "propose_consensus", "contribution_ids"),
+    ("routines", "suggest_routine", "outcome_ids"),
+])
+@pytest.mark.parametrize("identities", [[], ["11111111-1111-1111-1111-111111111111"], ["not-a-uuid", "also-not-a-uuid"]])
+def test_derived_proposals_require_two_distinct_canonical_source_records(domain, action, key, identities):
+    payload = {"title": "Bounded proposal", "proposal": "Review", "risk": "low", "trigger": "requested_review",
+        "interval_minutes": 60, key: identities}
+    assert evaluate(f"(() => {{try {{ui.domainPayload('{domain}','{action}',{json.dumps(payload)});return false;}}catch (_){{return true;}}}})()") is True
+
+
+def test_social_publication_requires_reviewed_snapshot_and_second_explicit_confirmation():
+    result = run_domain_ui("""
+      await click({awDomain:'publications'},'shell');
+      await click({awDomainAction:'prepare',awEntity:'new'});
+      const choose=drawer.innerHTML;
+      await submit(form({source:'outcome:'+ids.task,raw_response:'must-not-send'}));
+      const preview=drawer.innerHTML;
+      await submit(form({text:'My reviewed comment',visibility:'followers'},false));
+      const before=calls.filter(call=>call.method==='post').length;
+      await submit(form({text:'My reviewed comment',visibility:'followers',source_id:ids.persona,source_kind:'memory',approved_snapshot_sha256:'wrong',confirm_permanent:false},true));
+      return {choose,preview,before,posts:calls.filter(call=>call.method==='post'),success:drawer.innerHTML};
+    """)
+    assert "Verified result for review" in result["choose"]
+    assert "ПРЕДПРОСМОТР · НЕ ОПУБЛИКОВАНО" in result["preview"]
+    assert "&lt;script&gt;snapshot&lt;/script&gt;" in result["preview"]
+    assert "<script>" not in result["preview"]
+    assert "must-not-render-private-answer" not in result["preview"]
+    assert "must-not-render-published-secret" not in result["preview"]
+    assert "постоянного снимка" in result["preview"]
+    assert result["before"] == 1
+    prepare, publish = result["posts"]
+    assert prepare["body"]["payload"] == {"source_kind": "outcome", "source_id": "33333333-3333-3333-3333-333333333333"}
+    assert publish["action"] == "publish" and publish["id"] == "new"
+    assert publish["body"]["expected_revision"] == 7
+    assert publish["body"]["payload"] == {"text": "My reviewed comment", "visibility": "followers",
+        "source_kind": "outcome", "source_id": "33333333-3333-3333-3333-333333333333",
+        "approved_snapshot_sha256": "b" * 64, "confirm_permanent": True}
+    assert "ОПУБЛИКОВАНО В SF SOCIAL" in result["success"]
+    assert "Мои подписчики" in result["success"] and 'href="community.html"' in result["success"]
+
+
+@pytest.mark.parametrize("change", [
+    {"permanent": False}, {"requires_explicit_confirmation": False}, {"snapshot_sha256": "invalid"},
+    {"source_revision": 0}, {"source_revision": 8}, {"snapshot": {"synthetic": True}},
+])
+def test_invalid_publication_preview_never_opens_publish_form(change):
+    result = run_domain_ui("""
+      previewOverrides=OVERRIDES;
+      await click({awDomain:'publications'},'shell');
+      await click({awDomainAction:'prepare',awEntity:'new'});
+      const original=form({source:'outcome:'+ids.task});
+      await submit(original);
+      return {html:drawer.innerHTML,error:original.error.textContent,posts:calls.filter(call=>call.method==='post')};
+    """.replace("OVERRIDES", json.dumps(change)))
+    assert "постоянного снимка" not in result["html"]
+    assert result["error"] and len(result["posts"]) == 1 and result["posts"][0]["action"] == "prepare"
+
+
+def test_publication_action_cannot_be_opened_without_prepare_even_if_forged_in_collection():
+    result = run_domain_ui("""
+      domains.publications.actions.push('publish');
+      await click({awDomain:'publications'},'shell');const before=drawer.innerHTML;
+      await click({awDomainAction:'publish',awEntity:'new'});
+      return {unchanged:before===drawer.innerHTML,posts:calls.filter(call=>call.method==='post').length};
+    """)
+    assert result == {"unchanged": True, "posts": 0}
+
+
+@pytest.mark.parametrize("source", ["memory:11111111-1111-1111-1111-111111111111", "outcome:garbage", "decision:../../other", "backtest:a?owner=true", "https://external.invalid"])
+def test_publication_prepare_does_not_accept_memory_arbitrary_urls_or_invalid_ids(source):
+    assert evaluate(f"(() => {{try {{ui.domainPayload('publications','prepare',{{source:{json.dumps(source)}}});return false;}}catch (_){{return true;}}}})()") is True

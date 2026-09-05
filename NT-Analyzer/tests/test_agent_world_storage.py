@@ -5,6 +5,7 @@ import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from threading import Barrier
 from uuid import UUID, uuid4
 
@@ -261,11 +262,112 @@ def test_event_pagination_and_consumer_inbox_survive_restart(repo):
     remaining = repo.events.list(context=context(), page=PageRequest(cursor=first.next_cursor))
     assert first.items + remaining.items == tuple(item.event for item in committed)
     event_id = committed[0].event.event_id
+    assert repo.events.is_acknowledged(context=context(), consumer="projection-a", event_id=event_id) is False
     assert repo.events.acknowledge(context=context(), consumer="projection-a", event_id=event_id) is True
     restarted = SQLiteAgentWorldRepository(repo.path)
+    assert restarted.events.is_acknowledged(context=context(), consumer="projection-a", event_id=event_id) is True
+    assert restarted.events.is_acknowledged(context=context(), consumer="projection-b", event_id=event_id) is False
+    assert restarted.events.is_acknowledged(context=context(user=2), consumer="projection-a", event_id=event_id) is False
+    assert restarted.events.is_acknowledged(context=context(workspace="ws_example02"), consumer="projection-a", event_id=event_id) is False
+    assert restarted.events.is_acknowledged(context=context(), consumer="projection-a", event_id=uuid4()) is False
     assert restarted.events.acknowledge(context=context(), consumer="projection-a", event_id=event_id) is False
     assert restarted.events.acknowledge(context=context(), consumer="projection-b", event_id=event_id) is True
     assert restarted.events.acknowledge(context=context(), consumer="projection-a", event_id=uuid4()) is False
+
+
+@pytest.mark.parametrize("consumer,event_id", [("", UUID(int=1)), ("bad consumer", UUID(int=1)),
+                                                ("x" * 101, UUID(int=1)), ("projection", "not-a-uuid")])
+def test_inbox_receipt_lookup_validates_identifiers_without_writes(repo, consumer, event_id):
+    with pytest.raises(ContractError):
+        repo.events.is_acknowledged(context=context(), consumer=consumer, event_id=event_id)
+    with sqlite3.connect(repo.path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM aw_inbox").fetchone()[0] == 0
+
+
+def test_read_only_missing_store_exposes_empty_scope_checked_views_without_creating_paths(tmp_path):
+    path = tmp_path / "never-created" / "nested" / "agent-world.sqlite3"
+    empty = SQLiteAgentWorldRepository(path, read_only=True)
+    identity = uuid4()
+    ref = c.SnapshotRef(scope=context().scope, artifact_id=identity, sha256="a" * 64)
+    assert empty.get(context=context(), kind=EntityKind.TASK, entity_id=identity) is None
+    assert empty.get_revision(context=context(), kind=EntityKind.TASK, entity_id=identity, revision=1) is None
+    assert empty.list(context=context(), kind=EntityKind.TASK, page=PageRequest()).items == ()
+    assert empty.lookup_mutation(context=context(), operation="test.read", idempotency_key="missing-key-0001") is None
+    assert empty.get_artifact(context=context(), reference=ref) is None
+    assert empty.get_artifact_by_id(context=context(), artifact_id=identity) is None
+    assert empty.read_memory_artifact(context=context(), memory_id=identity, artifact_id=identity) is None
+    assert empty.events.list(context=context(), page=PageRequest()).items == ()
+    assert empty.events.is_acknowledged(context=context(), consumer="test", event_id=identity) is False
+    with pytest.raises(ContractError, match="read_only"):
+        empty.put_artifact(context=context(), content=b'{"x":1}', media_type="application/json")
+    with pytest.raises(ContractError, match="read_only"):
+        empty.events.acknowledge(context=context(), consumer="test", event_id=identity)
+    with pytest.raises(ContractError, match="scope_mismatch"):
+        empty.get(context=context(environment=c.Environment.CANARY), kind=EntityKind.TASK, entity_id=identity)
+    with pytest.raises(ContractError, match="invalid_cursor"):
+        empty.list(context=context(), kind=EntityKind.TASK, page=PageRequest(cursor="invalid"))
+    with pytest.raises(ContractError, match="scope_mismatch"):
+        empty.get_artifact(context=context(workspace="ws_example02"), reference=ref)
+    assert not path.parent.parent.exists()
+
+
+def test_read_only_existing_store_never_changes_schema_data_or_metadata_and_rejects_writes(repo):
+    args = arguments(persona(repo))
+    committed = repo.commit(**args)
+    repo.events.acknowledge(context=context(), consumer="seen", event_id=committed.event.event_id)
+    before = repo.path.read_bytes()
+    reader = SQLiteAgentWorldRepository(repo.path, read_only=True)
+    assert reader.get(context=context(), kind=EntityKind.PERSONA, entity_id=committed.record.header.entity_id) == committed.record
+    assert reader.get_revision(context=context(), kind=EntityKind.PERSONA,
+                               entity_id=committed.record.header.entity_id, revision=1) == committed.record
+    assert reader.list(context=context(), kind=EntityKind.PERSONA, page=PageRequest()).items == (committed.record,)
+    assert reader.events.list(context=context(), page=PageRequest()).items == (committed.event,)
+    assert reader.events.is_acknowledged(context=context(), consumer="seen", event_id=committed.event.event_id) is True
+    assert reader.get_artifact(context=context(), reference=committed.record.profile) is not None
+    with pytest.raises(ContractError, match="read_only"):
+        reader.commit(**args)
+    with pytest.raises(ContractError, match="read_only"):
+        reader.put_artifact(context=context(), content=b'{"x":1}', media_type="application/json")
+    with pytest.raises(ContractError, match="read_only"):
+        reader.events.acknowledge(context=context(), consumer="new", event_id=committed.event.event_id)
+    with reader._transaction() as connection:
+        with pytest.raises(sqlite3.OperationalError):
+            connection.execute("DELETE FROM aw_inbox")
+    assert repo.path.read_bytes() == before
+    # SQLite can materialize its operational WAL/SHM sidecars in mode=ro; the
+    # semantic DB bytes/schema are unchanged and reads must not ignore the WAL.
+
+
+def test_read_only_includes_committed_wal_records_without_exclusive_writer_lock(repo):
+    with repo._connect() as held:
+        held.execute("PRAGMA wal_autocheckpoint=0")
+        committed = repo.commit(**arguments(persona(repo)))
+        assert Path(str(repo.path) + "-wal").stat().st_size > 0
+        reader = SQLiteAgentWorldRepository(repo.path, read_only=True)
+        assert reader.get(context=context(), kind=EntityKind.PERSONA,
+                          entity_id=committed.record.header.entity_id) == committed.record
+        following = update(committed.record)
+        repo.commit(**arguments(following))
+        assert reader.get(context=context(), kind=EntityKind.PERSONA,
+                          entity_id=following.header.entity_id) == following
+
+
+def test_read_only_rejects_unrelated_or_incomplete_store_without_initializing(tmp_path):
+    unrelated = tmp_path / "unrelated.sqlite3"
+    with sqlite3.connect(unrelated) as connection:
+        connection.execute("CREATE TABLE owner_data(value TEXT)")
+    before = unrelated.read_bytes()
+    with pytest.raises(ContractError, match="identity_mismatch"):
+        SQLiteAgentWorldRepository(unrelated, read_only=True)
+    assert unrelated.read_bytes() == before
+    path = tmp_path / "incomplete.sqlite3"
+    repo = SQLiteAgentWorldRepository(path)
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP TABLE aw_inbox")
+    before = path.read_bytes()
+    with pytest.raises(ContractError, match="schema_unsupported"):
+        SQLiteAgentWorldRepository(path, read_only=True)
+    assert path.read_bytes() == before
 
 
 def test_artifacts_are_content_addressed_private_durable_and_hash_verified(repo):

@@ -3706,6 +3706,31 @@ def authenticate_session(token: str) -> Optional[Dict[str, Any]]:
         return _session_context(user, session)
 
 
+def local_session_is_active(session_id: str, user_id: Any) -> bool:
+    """Revalidate a previously admitted Local worker without persisting tokens.
+
+    This is a read-only lease check, never authentication or session creation.
+    PostgreSQL-backed environments use their own authority and fail closed here.
+    """
+    if not runtime_env.is_development() or _authoritative_storage():
+        return False
+    sid = str(session_id or "")
+    if not sid or len(sid) > 80:
+        return False
+    try:
+        uid = int(user_id)
+    except (ValueError, TypeError):
+        return False
+    with _LOCK:
+        doc = _read_doc()
+        user = _user(doc, uid)
+        if not user or user.get("status") != "active":
+            return False
+        return any(_session_id(row) == sid and int(row.get("user_id") or 0) == uid
+                   and not row.get("revoked") and float(row.get("expires_at") or 0) > time.time()
+                   and _session_confirmation_state(row) == "active" for row in doc.get("sessions", []))
+
+
 def start_nt_telegram_confirm(
     user_id: Any,
     *,

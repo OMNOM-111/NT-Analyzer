@@ -23,6 +23,7 @@ Resolution order for a non-owner user's capability ``C``:
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import subscriptions
@@ -438,6 +439,18 @@ def beginner_path_denied(path: str) -> bool:
     return False
 
 
+def agent_world_history_request(path: str, method: str = "GET") -> bool:
+    """Read-only Agent World routes, including the legacy chat-link POST.
+
+    This is an entitlement exception, not authentication or workspace authority.
+    The chat-link endpoint accepts only an empty body and never appends a message.
+    """
+    verb, target = str(method).upper(), str(path)
+    return ((verb in {"GET", "HEAD"} and target.startswith("/api/ai-control-center/"))
+            or (verb == "POST" and re.fullmatch(
+                r"/api/ai-control-center/tasks/[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}/chat", target) is not None))
+
+
 def enforce(path: str, context: Optional[Dict[str, Any]]) -> None:
     """Raise ``PermissionError`` when the request's user lacks the capability
     that ``path`` requires. The owner is always allowed; unrestricted paths and
@@ -488,7 +501,10 @@ def enforce(path: str, context: Optional[Dict[str, Any]]) -> None:
         cap == "backtesting" and method in {"GET", "HEAD"}
         and p.startswith("/api/jobs") and bool(caps.get("demo_backtest"))
     )
-    if not caps.get(cap) and not demo_job_read:
+    agent_world_history_read = (
+        cap == "ai_lab" and agent_world_history_request(p, method) and ux_mode == "professional"
+    )
+    if not caps.get(cap) and not demo_job_read and not agent_world_history_read:
         label = next((c.get("label") for c in CAPABILITIES if c.get("id") == cap), cap)
         raise PermissionError(
             f"«{label}» недоступно в вашем тарифе. Активируйте подписку, "

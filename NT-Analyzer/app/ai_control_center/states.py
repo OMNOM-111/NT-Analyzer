@@ -25,6 +25,12 @@ class EntityKind(str, Enum):
     EXECUTION = "execution"
     OUTCOME = "outcome"
     MEMORY = "memory"
+    STRATEGY_PROJECT = "strategy_project"
+    ROUTINE = "routine"
+    CALENDAR_ITEM = "calendar_item"
+    COURT_CASE = "court_case"
+    COURT_VOTE = "court_vote"
+    EVALUATION = "evaluation"
 
 
 def _graph(**edges: tuple[str, ...]):
@@ -66,6 +72,12 @@ TRANSITIONS = MappingProxyType({
         disputed=("verified", "rejected", "superseded")),
     EntityKind.MEMORY: _graph(
         draft=("active", "revoked", "expired"), active=("superseded", "revoked", "expired")),
+    EntityKind.STRATEGY_PROJECT: _graph(draft=("active", "archived"), active=("archived",)),
+    EntityKind.ROUTINE: _graph(proposed=("accepted", "dismissed"), accepted=("dismissed",)),
+    EntityKind.CALENDAR_ITEM: _graph(proposed=("accepted", "dismissed"), accepted=("dismissed",)),
+    EntityKind.COURT_CASE: _graph(open=("voting", "withdrawn"), voting=("decided", "blocked", "withdrawn")),
+    EntityKind.COURT_VOTE: _graph(recorded=()),
+    EntityKind.EVALUATION: _graph(recorded=()),
 })
 
 INITIAL_STATES = MappingProxyType({
@@ -74,6 +86,9 @@ INITIAL_STATES = MappingProxyType({
     EntityKind.INTENT: "draft", EntityKind.TASK: "planned",
     EntityKind.CONTRIBUTION: "draft", EntityKind.DECISION: "proposed",
     EntityKind.EXECUTION: "requested", EntityKind.OUTCOME: "pending", EntityKind.MEMORY: "draft",
+    EntityKind.STRATEGY_PROJECT: "draft", EntityKind.ROUTINE: "proposed",
+    EntityKind.CALENDAR_ITEM: "proposed", EntityKind.COURT_CASE: "open",
+    EntityKind.COURT_VOTE: "recorded", EntityKind.EVALUATION: "recorded",
 })
 
 
@@ -93,6 +108,12 @@ EDITABLE_STATES = MappingProxyType({
     EntityKind.EXECUTION: frozenset({"requested", "queued", "running", "review"}),
     EntityKind.OUTCOME: frozenset({"pending", "disputed"}),
     EntityKind.MEMORY: frozenset({"draft"}),
+    EntityKind.STRATEGY_PROJECT: frozenset({"draft", "active"}),
+    EntityKind.ROUTINE: frozenset({"proposed"}),
+    EntityKind.CALENDAR_ITEM: frozenset({"proposed"}),
+    EntityKind.COURT_CASE: frozenset({"open", "voting"}),
+    EntityKind.COURT_VOTE: frozenset(),
+    EntityKind.EVALUATION: frozenset(),
 })
 
 

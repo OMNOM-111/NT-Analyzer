@@ -239,7 +239,9 @@ def test_get_and_open_chat_never_mutate_jobs_or_chat_allow_one_flag_activation_a
     assert len(http_live.owner.calls["audit"]) == 1
     event, data = http_live.owner.calls["audit"][0]
     assert event[1] == "agent_world.local_flags_activated"
-    assert len(data["details"]["flags"]) == 3 and data["details"]["synthetic"] is False
+    assert set(data["details"]["flags"]) == {"AI_CONTROL_CENTER_READ_MODEL", "AI_COMMAND_CENTER_UI", "AI_TASK_GRAPH_V2",
+        "AI_EVALUATION_SHADOW", "AI_MEMORY_V2", "AI_CONSENSUS_V2", "AI_COURT_V1", "AI_SOCIAL_PUBLISH_V1"}
+    assert data["details"]["synthetic"] is False
 
 
 def test_real_scope_cannot_run_synthetic_demo(http_live):
@@ -248,20 +250,16 @@ def test_real_scope_cannot_run_synthetic_demo(http_live):
     assert http_live.calls["starts"] == []
 
 
-@pytest.mark.parametrize("mode", ["off", "nonowner", "read_only", "pending_device", "foreign_identity", "revoked_writer", "missing_ai", "budget"])
+@pytest.mark.parametrize("mode", ["off", "nonowner", "pending_device", "foreign_identity", "missing_ai", "budget"])
 def test_actual_http_admission_revalidates_owner_scope_before_any_domain_access(http_live, monkeypatch, mode):
     if mode == "off":
         monkeypatch.delenv(gateway.WORKSPACES_ENV)
     elif mode == "nonowner":
         http_live.state["raw_changes"]["is_owner"] = False
-    elif mode == "read_only":
-        http_live.state["raw_changes"]["role"] = "read_only"
     elif mode == "pending_device":
         http_live.state["raw_changes"].update(source="browser", device_confirmation_state="pending")
     elif mode == "foreign_identity":
         http_live.state["raw_changes"]["user"] = {**http_live.owner.state["user"], "user_uuid": FOREIGN_UUID}
-    elif mode == "revoked_writer":
-        http_live.owner.state["workspaces"][WORKSPACE]["membership"]["role"] = "viewer"
     elif mode == "missing_ai":
         http_live.owner.state["permissions"]["capabilities"]["ai_lab"] = False
     else:
@@ -269,6 +267,32 @@ def test_actual_http_admission_revalidates_owner_scope_before_any_domain_access(
     assert http_live.request("overview")[0] == 403
     assert http_live.request("tasks/" + http_live.own["task_id"] + "/chat", {})[0] == 403
     assert http_live.calls["reads"] == http_live.calls["starts"] == http_live.calls["chat_reads"] == []
+
+
+def test_read_only_local_history_does_not_grant_backtest_or_domain_mutation(http_live):
+    http_live.state["raw_changes"]["role"] = "read_only"
+    assert http_live.request("overview")[0] == 200
+    assert http_live.request("tasks/" + http_live.own["task_id"])[0] == 200
+    status, _ = http_live.request("backtests", {"spec": _spec(), "idempotency_key": "read-only-must-not-run",
+        "conversation_id": CONVERSATION})
+    assert status == 403
+    status, _ = http_live.request("domains/personas/new/create", {
+        "payload": {"name": "must-not-create", "description": "", "style": ""}, "idempotency_key": "readonly-domain-reject"})
+    assert status == 403 and http_live.calls["starts"] == []
+
+
+def test_workspace_reader_gets_history_without_owner_runtime_or_write_authority(http_live):
+    http_live.owner.state["workspaces"][WORKSPACE]["membership"]["role"] = "viewer"
+    status, result = http_live.request("overview")
+    assert status == 200 and result["enabled"] is True
+    assert result["tasks"] == []  # no access to the global owner's NT/Desktop sources
+    status, _ = http_live.request("backtests", {"spec": _spec(), "idempotency_key": "reader-must-not-run",
+        "conversation_id": CONVERSATION})
+    assert status == 403
+    status, _ = http_live.request("domains/personas/new/create", {
+        "payload": {"name": "must-not-create", "description": "", "style": ""}, "idempotency_key": "reader-domain-reject"})
+    assert status == 403 and http_live.calls["starts"] == []
+    assert http_live.calls["reads"] == http_live.calls["chat_reads"] == []
 
 
 @pytest.mark.parametrize("identifier", ["foreign_job", "foreign_chart", "12000000-0000-4000-8000-000000000099"])
@@ -360,3 +384,73 @@ def test_proper_preview_http_stays_synthetic_and_never_enters_real_facade(http_p
     assert result["capabilities"]["can_run_demo"] is True
     assert all(task["synthetic"] is True for task in result["tasks"])
     assert CONVERSATION not in json.dumps(result) and CHART_CONVERSATION not in json.dumps(result)
+
+
+PREVIEW_DOMAINS = ("personas", "models", "model_tasks", "tasks", "decisions", "court", "memory", "experiments",
+                   "projects", "routines", "calendar", "system", "publications")
+
+
+@pytest.fixture
+def guarded_preview_panels(http_preview, active, monkeypatch):
+    from app.ai_control_center import domain_gateway, model_execution
+    from app.ai_lab import agent_registry
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Disabled Preview drawer entered Local data, global credentials or model execution")
+
+    for name in ("from_handler", "access", "models", "repository", "social", "list_domain", "mutate"):
+        monkeypatch.setattr(domain_gateway, name, forbidden)
+    monkeypatch.setattr(gateway, "access", forbidden)
+    monkeypatch.setattr(gateway, "from_handler", forbidden)
+    monkeypatch.setattr(agent_registry, "list_agents", forbidden)
+    monkeypatch.setattr(agent_registry, "get_agent", forbidden)
+    monkeypatch.setattr(model_execution.ModelExecutor, "__call__", forbidden)
+    original = socket.create_connection
+
+    def loopback_only(address, *args, **kwargs):
+        assert address[0] == "127.0.0.1", "Preview panel attempted an external network connection"
+        return original(address, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "create_connection", loopback_only)
+    return SimpleNamespace(request=http_preview, root=active["root"])
+
+
+def test_known_preview_domain_gets_are_explanatory_disabled_without_files_or_local_data(guarded_preview_panels):
+    preview = guarded_preview_panels
+    before = {str(path.relative_to(preview.root)) for path in preview.root.rglob("*") if path.is_file()}
+    for domain in PREVIEW_DOMAINS:
+        status, result = preview.request(gateway.PREFIX + "domains/" + domain)
+        assert status == 200, (domain, result)
+        assert result["enabled"] is False and result["synthetic"] is True
+        assert result["status"] == "EXTERNAL BLOCKED"
+        assert result["items"] == result["actions"] == result["source_candidates"] == []
+        assert result["limitations"] and "Exit Preview" in result["message"]
+        assert result["flags"]["AI_SOCIAL_PUBLISH_V1"] is False
+        for owner_data in (USER_UUID, WORKSPACE, CONVERSATION, CHART_CONVERSATION):
+            assert owner_data not in json.dumps(result)
+    assert not (preview.root / "agent-world.sqlite3").exists()
+    assert {str(path.relative_to(preview.root)) for path in preview.root.rglob("*") if path.is_file()} == before
+
+
+@pytest.mark.parametrize("route", [
+    "domains/models/new/connect", "domains/models/new/bind_existing", "domains/personas/new/create",
+    "domains/memory/new/create", "domains/publications/new/prepare", "domains/publications/new/publish",
+])
+def test_preview_real_domain_posts_are_forbidden_before_storage_or_external_effects(guarded_preview_panels, route):
+    preview = guarded_preview_panels
+    before = {str(path.relative_to(preview.root)) for path in preview.root.rglob("*") if path.is_file()}
+    status, result = preview.request(gateway.PREFIX + route, {"payload": {}, "idempotency_key": "preview-real-domain-denied"})
+    assert status in {403, 404}, result
+    assert not (preview.root / "agent-world.sqlite3").exists()
+    assert {str(path.relative_to(preview.root)) for path in preview.root.rglob("*") if path.is_file()} == before
+
+
+@pytest.mark.parametrize("suffix", ["models", "memory", "publications"])
+def test_preview_disabled_domain_get_still_requires_owner_control_cookie(guarded_preview_panels, suffix):
+    status, result = guarded_preview_panels.request(gateway.PREFIX + "domains/" + suffix, control=False)
+    assert status == 403, result
+
+
+def test_unknown_preview_domain_is_not_promoted_to_a_known_disabled_tool(guarded_preview_panels):
+    status, result = guarded_preview_panels.request(gateway.PREFIX + "domains/arbitrary-admin")
+    assert status == 404 and result["code"] == "route_not_found"

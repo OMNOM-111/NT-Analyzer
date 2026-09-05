@@ -41,8 +41,25 @@ def handle_get(handler, path: str, qs: dict) -> None:
 
 def _handle_get(handler, path: str, qs: dict) -> None:
     try:
-        context, snapshot, service = _open(handler)
         route = path.removeprefix(gateway.PREFIX)
+        if route.startswith("domains/"):
+            context = gateway.request_context(handler._remote_context or {}, control_authorized=handler._preview_control_authorized())
+            snapshot = gateway.flag_snapshot(context)
+            if not gateway.resolve(gateway.Flag.AI_CONTROL_CENTER_READ_MODEL, scope=context.scope, snapshot=snapshot).enabled:
+                raise ContractError("agent_world_disabled")
+            if route.count("/") != 1 or route.split("/")[1] not in {
+                    "personas", "models", "model_tasks", "tasks", "decisions", "court", "memory", "experiments",
+                    "projects", "routines", "calendar", "system", "publications"}:
+                handler._err(404, "Маршрут AI Центра не найден.", code="route_not_found")
+                return
+            note = ("Это изолированный synthetic Preview. Здесь доступны проверочные задачи и их история; "
+                    "полные рабочие инструменты и свои подключения открываются после Exit Preview в Local. "
+                    "Реальные credentials, модели и публикация в SF Social в этом контуре заблокированы.")
+            handler._json(200, {"enabled": False, "items": [], "actions": [], "status": "EXTERNAL BLOCKED",
+                "synthetic": True, "message": note, "limitations": [note], "source_candidates": [],
+                "flags": gateway.enrich({}, context, snapshot)["flags"]})
+            return
+        context, snapshot, service = _open(handler)
         if route == "overview":
             handler._json(200, gateway.enrich(service.overview(context=context), context, snapshot))
         elif route == "tasks":
@@ -157,6 +174,9 @@ def _handle_post(handler, path: str) -> None:
         handler._err(400, "Требуется JSON object.", code="invalid_request")
         return
     try:
+        if path.removeprefix(gateway.PREFIX).startswith("domains/"):
+            gateway.request_context(handler._remote_context or {}, control_authorized=handler._preview_control_authorized())
+            raise ContractError("agent_world_preview_domain_disabled")
         context, snapshot, service = _open(handler)
         permit = gateway.admission(handler, context, snapshot)
         route = path.removeprefix(gateway.PREFIX)

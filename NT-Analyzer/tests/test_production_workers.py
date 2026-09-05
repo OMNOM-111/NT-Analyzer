@@ -34,6 +34,8 @@ def worker_store():
     workspace_ids = [f"ws_stage7_{suffix}000000" for suffix in "ABCDE"]
     user_ids = [77001, 77002, 77003, 77004, 77005]
     with psycopg.connect(ADMIN_URL, autocommit=True) as conn:
+        # Seeding uses a scoped service session, never BYPASSRLS or disabled RLS.
+        conn.execute("SELECT set_config('stratforge.service_scope', 'global', false)")
         conn.execute("DELETE FROM sf_jobs")
         conn.execute("DELETE FROM sf_commands")
         conn.execute("DELETE FROM sf_idempotency_keys")
@@ -85,6 +87,7 @@ def worker_store():
     }
     production_workers.reset_for_tests()
     with psycopg.connect(ADMIN_URL, autocommit=True) as conn:
+        conn.execute("SELECT set_config('stratforge.service_scope', 'global', false)")
         conn.execute("DELETE FROM sf_jobs")
         conn.execute("DELETE FROM sf_commands")
         conn.execute("DELETE FROM sf_idempotency_keys")
@@ -111,7 +114,7 @@ def _enqueue(store, index: int, key: str, **kwargs):
 
 def test_worker_migration_and_class_contract(worker_store) -> None:
     plan = MigrationRunner(ADMIN_URL).plan()
-    assert plan["applied_versions"] == list(range(1, 22))
+    assert plan["applied_versions"] == list(range(1, 23))
     assert plan["pending"] == []
     configs = worker_store["queue"].class_configs()
     assert set(configs) == set(production_workers.DEFAULT_WORKER_CLASSES)

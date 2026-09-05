@@ -1,9 +1,18 @@
 # Aurora UI API map
 
-Актуально на 2026-09-01. Виктор является AI-собеседником по умолчанию, а StratForge
+Актуально на 2026-09-05 для интегрированного Development-кода. Виктор является AI-собеседником по умолчанию, а StratForge
 Orchestrator — единым внутренним AI-шлюзом внутри пользовательской оболочки
 `SF Chat`. Единственный HTTP-адаптер интерфейса находится в
 `app/static/aurora/assets/api.js`. Production не загружает mock-данные.
+
+Local 8765 уже работает на чистом `486db834850d465006a3983d2d83ee809202df60`,
+beta.96, с исходными owner-данными после проверенного переключения. Новые
+model/domain/social-контракты ниже пока находятся в незакоммиченном diff отдельного
+task worktree и ещё не активированы на этом runtime. Их статус — `IN DEVELOPMENT`;
+live model/browser acceptance не заявлена. Canary/Production в этой задаче
+не проверялись и не обновлялись. Канон:
+[Agent World status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) и
+[ADR-0012](../adr/0012-agent-world-integrated-local.md).
 
 Планируемый multi-user слой не должен расширять текущую роль auth до подписки
 или владения NinjaTrader. Новые контракты `workspace`, `subscription`,
@@ -28,16 +37,65 @@ Orchestrator — единым внутренним AI-шлюзом внутри 
 | Стратегии | profiles/archive, AI lifecycle/cell history, coverage, instruments, persistent portfolio registry | статус/удаление профиля, add root/cell, archive cell, hide runtime class, NinjaTrader cleanup |
 | AI Lab | summary, experiments/activity, staged run/current status, параллельно проектируемая следующая стратегия, Orchestrator conversation/model/actions, performance board, model-performance, cloud-agent roles/pricing/usage, calendar, compile source, errors, LM Studio | natural-language Orchestrator chat; ручной run/cancel, bootstrap/unload, operator note, stale sweep, user-research scan; локальная настройка cloud keys, role routes и hard budgets |
 | AI Agents / API Keys | `/api/ai-agents`, usage, account/provider/role catalogs, DPAPI status, shared grant/budget totals | Add/Edit/Delete model, Test Connection, Enable/Disable, supported balance sync; transport/auth определяются автоматически, ключ возвращается только маской |
+| AI Center (`IN DEVELOPMENT`) | `/api/ai-control-center/overview`, `/tasks`, `/tasks/<UUID>`, `/domains/<domain>`, private evidence и отдельные active Memory grants | ровно три основные вкладки «Обзор / Работа / Агенты»; Task Inspector, Persona, Models, Decisions/Court, Memory, Experiments, Projects, routines/calendar, System и SF Social — drawers той же страницы; явные действия через существующие полномочия/worker/budget/SF Chat |
 | Новости | `/api/news`, `/api/news/live`, `/api/ai-lab/news-analysis` | read-only; официальный календарь, анализ Никиты, рекомендации, здоровье источников и приоритетные ленты |
 | TopStep | `/api/topstep/status` | read-only scaffold; live-действия принудительно отключены до отдельной валидации |
 | Telegram, вход и безопасность | `/api/auth/status`, `/api/auth/login/*`, `/api/auth/profile`, `/api/auth/me`, `/api/account/security`, `/api/account/{devices,machines,sessions}/*`, `/api/telegram/status` | новый human access: pending → OTP через Telegram/verified email → permanent или current-session-only; machine/client rename, раздельные session/client/machine revoke; секреты не возвращаются |
-| SF Chat (`BETA` в DEV-ветке) | `/api/community/v2/*`, совместимые `/api/community/*` Channels | профили/privacy, server-side feed/search/pagination, follow/block, реакции, комментарии, bookmarks, soft delete, жалобы/moderation; публикация завершённого Demo/Backtest result только через server-attested snapshot |
+| SF Social (`BETA` в DEV-ветке) | `/api/community/v2/*`, совместимые `/api/community/*` Channels | профили/privacy, server-side feed/search/pagination, follow/block, реакции, комментарии, bookmarks, soft delete, жалобы/moderation; публикация завершённого Demo/Backtest result только через server-attested snapshot |
 | SF Chat (`BETA` в DEV-ветке) | `/api/sf-chat/*` + существующие `/api/ai-lab/orchestrator*` | единые human conversations/messages/attachments/unread/read/block enforcement и прежние AI conversations в общей оболочке; Community не хранит отдельные DM |
 | Виктор | `/api/ai-lab/orchestrator*`, `/api/vitek/*` | единый естественный диалог; status/time-windows, event scan, rest/resume, plans, tasks and incident decisions; в сообщении видны фактический агент, модель/provider и проверяемые action-status без скрытых рассуждений |
 | Документы | governance documents, runtime defaults, history | save с actor/reason и подтверждением |
 
 ## Новые постоянные контракты
 
+- `GET /api/ai-control-center/overview|tasks`, `GET /tasks/<UUID>` и
+  `GET /domains/<domain>[/<UUID>]` используют свежую существующую confirmed
+  session, UUID, membership и capabilities. Scope/actor не берутся из payload.
+  Read-only repository не создаёт отсутствующую DB/схему и читает существующий
+  WAL. GET не ставит задачи, не вызывает модели, не подтверждает delivery и
+  не публикует посты. История после исчерпания trial/budget не даёт права на
+  новые model calls/jobs/posts. Local domain storage — только Development SQLite;
+  настоящие PG regression-тесты проверяют существующие migrations 1–22, не
+  отсутствующий Agent World PG adapter.
+- `POST /api/ai-control-center/domains/<domain>/<new-or-UUID>/<action>` принимает
+  `{payload, expected_revision, idempotency_key}`. Серверные actions/capabilities
+  определяют доступные действия; stale revision и повтор ключа с другим смыслом
+  конфликтуют. `personas` создаёт/изменяет профиль, `models` подключает собственную
+  модель, тестирует и запускает bounded task; `bind_existing` доступен только
+  действительному owner в рамках уже существующих caps. `model_tasks`/`tasks`
+  показывают историю и отмену, `experiments` сравнивает одинаковый input.
+  `decisions`/`court`, `memory`, `projects`, `routines`/`calendar`, `publications`
+  и `system` переиспользуют существующие authority и stores. Точные actions и
+  payload описаны в [API reference](../external-gpt-context/12_API_AND_SCHEMA_REFERENCE.md).
+- Настоящее SF Chat поручение модели использует сохранённое user message и
+  выбранную собственную Model. Проверенный план Толика/Ивана поступает в
+  существующие NinjaTrader/Desktop механизмы; план сам по себе не завершает
+  задачу. Только исходный проверенный report/PNG receipt создаёт application
+  Outcome/Evaluation и окончательный статус в том же чате. UI открывает
+  существующий conversation через `POST /api/ai-control-center/tasks/<UUID>/chat`
+  с пустым `{}`; этот endpoint ничего не дописывает. Независимые оценки
+  реальных distinct inputs не меняют Router; при n < 3 статус остаётся NEW.
+- `GET /api/ai-control-center/artifacts/<UUID>` остаётся private owner read.
+  Shared Memory открывает `/api/ai-control-center/memory-artifacts/<memory-UUID>/<artifact-UUID>`
+  только через активный same-workspace grant с проверкой TTL, source revision
+  и hash. Публикация/отзыв явные; читатель не может изменять чужой private source.
+  Court запечатывает evidence packet, использует три изолированных судейских
+  контекста и неизменяемые голоса 2-of-3; verdict не исполняет работу.
+  Принятие routine/calendar создаёт ручной follow-up в существующей очереди,
+  не автономный scheduler; automation остаётся OFF.
+- `POST /api/ai-control-center/domains/publications/new/prepare` формирует
+  проверенный allowlisted snapshot из собственного Outcome/Decision без записи
+  поста. Отдельный `.../publish` требует `approved_snapshot_sha256`, исходную
+  revision и `confirm_permanent=true`; перед записью повторно проверяются
+  source и community capability. Existing Community idempotency и private
+  approval evidence сохраняют replay/actor/requester. Prompts, raw answers,
+  private Memory, judge rationale и credentials в публикацию не попадают.
+- Все десять flags по умолчанию OFF. Только exact server-side
+  `STRATFORGE_AGENT_WORLD_LOCAL_WORKSPACES` в Development включает восемь:
+  read/UI/tasks/evaluation/memory/consensus/Court/social. Router shadow и
+  Execution V2 остаются OFF; Preview имеет отдельные четыре fixture flags и
+  не вызывает реальные domain/provider/social side effects. Выбор UI не
+  включает flag и не повышает permissions/budget.
 - `GET /api/community/v2/feed|saved|profiles|search` выполняет social filtering,
   privacy и cursor pagination на сервере. Мутации `profile`, `follows`, `posts`,
   `reaction`, `comments`, `bookmark`, `blocks`, `reports` и owner-only

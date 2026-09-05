@@ -23,5 +23,6 @@ acceptance. Изменение принятого решения требует 
 | [0009](0009-agent-world-foundation.md) | Agent World: сущности, статусы, scope, events, repositories и default-off flags (`Proposed`) |
 | [0010](0010-agent-world-owner-review.md) | Agent World: изолированный owner-review с SQLite, проверочными задачами, UI и SF Chat; production/design acceptance отдельно |
 | [0011](0011-agent-world-real-local-jobs.md) | Agent World: explicit default-OFF Local owner, реальные исторические NT jobs, Desktop PNG receipts и существующий SF Chat; Local switch и real E2E/visual acceptance ещё не приняты |
+| [0012](0012-agent-world-integrated-local.md) | Agent World: разрешённый Local switch, модели и проверенные application tasks, все domain drawers, память/Court и явная SF Social публикация; текущие acceptance gates в canonical status |
 
 Главный аудит и поэтапный план: [STRATFORGE_NEXT_ARCHITECTURE_AUDIT_AND_IMPLEMENTATION_PLAN_2026-08-01.md](../current/STRATFORGE_NEXT_ARCHITECTURE_AUDIT_AND_IMPLEMENTATION_PLAN_2026-08-01.md).

@@ -1,5 +1,10 @@
 # ADR-0011 — real Local owner jobs and Desktop receipts in Agent World
 
+Historical decision checkpoint: the Local-switch authorization and domain/model
+scope were extended by [ADR-0012](0012-agent-world-integrated-local.md). Statements
+below about an unanswered switch and evaluation/domain flags OFF describe this
+earlier checkpoint, not the current program status.
+
 Status: implemented in the current Development checkout; final integration
 verification and owner visual acceptance are pending. This decision extends the
 bounded owner-review implementation, not the overall completion of stages 0–13.
