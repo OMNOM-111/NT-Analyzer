@@ -5,6 +5,7 @@
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
+- Current program delta: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — application receipt observations, explicit typed fact handoff, manual follow-up delivery and ordinary-session Memory HTTP evidence; final activation/acceptance is separately recorded there.
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`; not released to Canary/Production
 - Active Local 8765: clean `95912cbff8152905966e6bb7bfc2a45d3db15f80`, build `dev-0.10.0-beta.96-95912cbff815`, original owner data, Preview=false

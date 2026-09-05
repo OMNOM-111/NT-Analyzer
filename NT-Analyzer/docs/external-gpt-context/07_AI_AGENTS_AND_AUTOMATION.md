@@ -5,6 +5,7 @@
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
+- Current program delta: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — application receipt observations, explicit typed fact handoff, manual follow-up delivery and ordinary-session Memory HTTP evidence; final activation/acceptance is separately recorded there.
 - Active scope: verified integrated Local, result presentation, same-input Consensus and three-model Court; full program and owner-dependent acceptance remain open
 - Scope: Agent hierarchy, AI Lab, queues, workspace boundaries and model-usage rules
 - Status: IN DEVELOPMENT
@@ -61,7 +62,7 @@ above Vitek.
 
 | Surface | Status | Current fact |
 | --- | --- | --- |
-| Agent World | `IN DEVELOPMENT` | Exactly Overview/Work/Agents plus contextual drawers; integrated domain/private-model/Court/social delta over existing SF Chat and queues, with isolated Preview; not yet the live runtime or an accepted release |
+| Agent World | `IN DEVELOPMENT` | Exactly Overview/Work/Agents plus contextual drawers; integrated domain/private-model/Court/social paths are active on isolated Local with real owner data; Preview is separate, no accepted release |
 | Vitek / default assistant | `DONE` | default owner-facing operator, incidents, tasks, plans and summaries |
 | Management tiers | `DONE` | manager / deputy / secretary tiers exist with different execution posture |
 | Specialist personas | `DONE` | Marina, Tolik, Nikita and Ivan are stable named personas with scoped domains |
@@ -205,6 +206,22 @@ implied by local contract tests or simulated provider responses.
 See [ADR-0010](../adr/0010-agent-world-owner-review.md),
 [ADR-0011](../adr/0011-agent-world-real-local-jobs.md) and
 [Agent World status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
+
+## Bounded integrated handoff and manual review
+
+Explicit verified-application fact handoff uses an immutable parent Task revision,
+shared correlation and the existing model queue/SF Chat. A different active
+Persona receives allowlisted scalar facts only. The `extract_facts` score measures
+transfer accuracy, not image/strategy analysis. Both source and child chat
+messages plus current authority are rechecked before the provider call; no
+autonomous recursive selection or extra budget/permission/job system is added.
+
+Actual application receipt observations are separate per backtest/PNG class and
+distinct input, NEW below three observations. They neither replace arithmetic
+scores nor claim market profitability/general model quality. Accepted routine/
+calendar records have a separate explicit `open_chat` action: one system message
+and receipt in the existing SF Chat. Automation/due-time execution stays OFF.
+The source/handoff links and job status are visible on the same page.
 
 ## What external GPT should not over-assume
 

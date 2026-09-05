@@ -85,7 +85,9 @@ def from_handler(handler, *, read_only=False):
         scope["auth_session_id"] = str(raw.get("session_id") or scope.get("auth_session_id") or "")
         if not scope["auth_session_id"]:
             raise ContractError("agent_world_confirmed_session_required")
-    return access(scope, read_only=read_only)
+    result = access(scope, read_only=read_only)
+    result["session_read_only"] = raw.get("role") == "read_only"
+    return result
 
 
 def domain_admission(authorized, domain, action="read"):
@@ -182,6 +184,7 @@ def models(authorized, repo=None):
             raise ContractError("model_context_required")
         return owner_binding(authorized, profile.get("existing_registry_id"))["id"]
     return ModelService(repo or repository(authorized),
+        chat_scope=authorized["chat_scope"],
         admit=lambda context, operation, estimate: _model_admit(authorized, context, operation, estimate),
         enqueue=lambda **kw: enqueue_model(authorized, **kw),
         executor=ModelExecutor(budget_limits=_private_limits, owner_binding=bind),
@@ -194,6 +197,7 @@ def history_models(authorized):
         raise ContractError("model_history_context_required")
     from .model_service import ModelService
     return ModelService(repository(authorized),
+        chat_scope=authorized["chat_scope"],
         admit=lambda context, operation, estimate: _model_admit(authorized, context, operation, estimate))
 
 
@@ -349,6 +353,22 @@ def system(authorized):
         "flags": flags, "capabilities": authorized["chat_scope"]["capabilities"], "actions": [], "limitations": []}
 
 
+def _followup_projection(authorized, service, domain, row):
+    """Expose a separate manual action; reading never queues or runs work."""
+    if domain not in {"routines", "calendar"} or not row or row.get("status") != "accepted":
+        return row
+    from . import followup_chat
+    row = dict(row)
+    try:
+        row["followup_chat"] = followup_chat.projection(authorized, service, domain, row["id"])
+    except ContractError:
+        row["limitations"] = [*row.get("limitations", []),
+            "Источник ручного разбора недоступен или изменён. Автоматизация выключена."]
+        return row
+    row["actions"] = [*row.get("actions", []), "open_chat"]
+    return row
+
+
 def list_domain(authorized, domain, *, identity=None, limit=50, cursor=None):
     if domain not in DOMAINS:
         raise ContractError("unknown_domain")
@@ -398,8 +418,11 @@ def list_domain(authorized, domain, *, identity=None, limit=50, cursor=None):
         return result
     service = domains(authorized, model_service.repository)
     if identity:
-        return service.get(context=context, admit=admit, domain=domain, entity_id=identity)
+        return _followup_projection(authorized, service, domain,
+            service.get(context=context, admit=admit, domain=domain, entity_id=identity))
     result = service.list(context=context, admit=admit, domain=domain, limit=limit, cursor=cursor)
+    if domain in {"routines", "calendar"}:
+        result["items"] = [_followup_projection(authorized, service, domain, row) for row in result["items"]]
     result["actions"] = ["create"] if result["capabilities"].get("can_create") else []
     if domain in {"decisions", "routines"}:
         result["evidence_candidates"] = service.evidence_candidates(context=context, admit=admit)
@@ -416,11 +439,12 @@ def list_domain(authorized, domain, *, identity=None, limit=50, cursor=None):
 def history_projection(authorized, result, *, domain=""):
     """Hide unavailable mutations, not existing evidence, after entitlement expiry."""
     caps = authorized["chat_scope"].get("capabilities") or {}
-    blocked = (not caps.get("ai_lab") or authorized["chat_scope"].get("membership_role") != "owner"
-               or (domain in {"models", "model_tasks", "tasks", "experiments"} and
-                   (not caps.get("ai_pro_models") or not ai_budgets.check_budget(authorized["context"].scope.workspace_id, 0.0).get("ok"))))
-    if not blocked:
-        return result
+    blocked = (authorized.get("session_read_only") or not caps.get("ai_lab")
+               or authorized["chat_scope"].get("membership_role") != "owner")
+    model_domain = domain in {"models", "model_tasks", "tasks", "experiments"}
+    model_blocked = (not caps.get("ai_pro_models") or
+                     ((model_domain or not domain) and not ai_budgets.check_budget(
+                         authorized["context"].scope.workspace_id, 0.0).get("ok")))
     def project(value):
         if isinstance(value, list):
             return [project(item) for item in value]
@@ -429,7 +453,12 @@ def history_projection(authorized, result, *, domain=""):
         return {key: [] if key in {"actions", "allowed_actions", "owner_bindings"} else
                 False if key.startswith("can_") and key not in {"can_view_models", "can_view_system"} else project(item)
                 for key, item in value.items()}
-    return project(result)
+    if blocked or (model_domain and model_blocked):
+        return project(result)
+    if not domain and model_blocked and isinstance(result, dict):
+        return {key: project(value) if key in {"tasks", "agents", "outcomes"} else value
+                for key, value in result.items()}
+    return result
 
 
 def _application_workflows(legacy_tasks, model_rows):
@@ -494,11 +523,15 @@ def enrich_overview(authorized, base=None):
         bound = [row for row in configured_models if row.get("persona_id") == person["id"]]
         mine = [row for row in model_rows if row.get("persona_id") == person["id"]]
         evaluation = {"sample_size": 0, "score_pct": None, "confidence": "insufficient", "label": "NEW"}
-        observations = []
+        observations, application_observations = [], []
         for model in bound:
             stats = model_service.evaluations(context=context, model_id=model["id"])
             observations.append({"model_id": model["id"], "model": model["model"],
                                  "connection_status": model["status"], "task_class": stats["rubric_key"], **stats})
+            application_stats = model_service.evaluations(context=context, model_id=model["id"],
+                                                          rubric_key="application_execution")
+            application_observations.append({**application_stats, "model_id": model["id"],
+                "model": model["model"], "connection_status": model["status"]})
         active_observations = [row for row in observations if row["connection_status"] == "active"]
         if len(active_observations) == 1:
             # Retired bindings remain history, but cannot erase the current
@@ -510,12 +543,15 @@ def enrich_overview(authorized, base=None):
             "application_role": person.get("application_role", ""),
             "role": role_spec.get("label", "Персона · роль не назначена"), "status": "working" if any(row["status"] in {"ready", "running", "waiting"} for row in mine) else person["status"],
             "synthetic": False, "models": bound, "model_observations": observations,
+            "application_observations": application_observations,
             "tasks_completed": sum(row["status"] == "succeeded" for row in mine),
             "task_ids": [row["id"] for row in tasks if (row.get("lead") or {}).get("id") == person["id"]], "evaluation": evaluation,
             "compatibility_history": {"label": "История исходного Local-исполнителя; не оценка модели", "source": legacy} if legacy else None})
     model_outcomes = [{"task_id": row["id"], "title": row["title"], "summary": row.get("result_text") or row.get("summary"),
                        "status": row["status"], "source_kind": "real_model_response", "synthetic": False,
                        "application_result": row.get("application_result"), "source_job_id": row.get("source_job_id"),
+                       "artifact": next((item for item in row.get("artifacts", [])
+                                         if item.get("mime_type") == "image/png"), None),
                        "created_at": row["updated_at"]} for row in model_rows if row["status"] in {"succeeded", "failed", "review", "blocked", "cancelled"}]
     costs = [row["cost_usd"] for row in model_rows if isinstance(row.get("cost_usd"), (int, float))]
     completed = sum(row["status"] == "succeeded" for row in tasks)
@@ -525,7 +561,7 @@ def enrich_overview(authorized, base=None):
         "outcomes": model_outcomes + [row for row in base.get("outcomes") or [] if row.get("task_id") not in folded],
         "stats": {**base.get("stats", {}), "tasks_total": len(tasks), "active_tasks": active, "running": active,
                   "completed": completed, "completed_tasks": completed, "agents": len(agents), "attention": len(attention),
-                  "failed": len(attention), "evaluations": sum(bool(row.get("evaluation_id")) for row in model_rows),
+                  "failed": len(attention), "evaluations": sum(len(row.get("evaluations") or []) for row in model_rows),
                   "artifacts": sum(row.get("evidence_count", 0) for row in tasks),
                   "paid_calls": sum(cost > 0 for cost in costs), "cost_usd": round(sum(costs), 8) if costs else None},
         "activity": [{"title": row["title"], "summary": row["title"] + " · " + row["status"], "task_id": row["id"], "time": row["updated_at"]} for row in tasks[:8]],
@@ -559,6 +595,11 @@ def mutate(authorized, domain, identity, action, body):
             return model_chat.start(authorized, service, identity, payload, key, test=action == "test")
         if action == "disconnect" and not payload:
             return service.disconnect(context=context, model_id=identity)
+    elif domain in {"model_tasks", "tasks"} and action == "handoff":
+        if set(payload) != {"target_model_id"}:
+            raise ContractError("invalid_domain_request")
+        from . import result_handoff
+        return result_handoff.start(authorized, service, identity, payload["target_model_id"], key)
     elif domain in {"model_tasks", "tasks"} and action == "cancel":
         if set(payload) - {"reason"}:
             raise ContractError("invalid_domain_request")
@@ -583,6 +624,12 @@ def mutate(authorized, domain, identity, action, body):
                 expected_revision=body.get("expected_revision"), idempotency_key=key, **payload)
     elif domain not in {"models", "model_tasks", "tasks", "experiments", "system", "publications"}:
         domain_service = domains(authorized, service.repository)
+        if domain in {"routines", "calendar"} and action == "open_chat" and identity != "new":
+            if payload:
+                raise ContractError("invalid_domain_request")
+            from . import followup_chat
+            return followup_chat.start(authorized, domain_service, domain, identity,
+                body.get("expected_revision"), key)
         if domain == "decisions" and identity == "new" and action == "propose_consensus":
             if set(payload) - {"title", "proposal", "contribution_ids", "risk", "trigger"}:
                 raise ContractError("invalid_domain_request")
@@ -610,7 +657,8 @@ def execute_worker(job, cancelled, heartbeat):
             or str(scope.get("user_id") or "") != str(job.get("user_id") or "")):
         raise ContractError("model_worker_scope_required")
     delivery = job.get("kind") == "agent_world_model" and payload.get("phase") == "delivery"
-    if payload.get("phase") and not delivery:
+    followup_delivery = job.get("kind") == "agent_world_followup" and payload.get("phase") == "chat_delivery"
+    if payload.get("phase") and not (delivery or followup_delivery):
         raise ContractError("model_worker_phase_invalid")
     authorized = access(scope, read_only=True) if delivery else access(scope)
     authorized["admit"]()
@@ -637,6 +685,9 @@ def execute_worker(job, cancelled, heartbeat):
         events = repository({**authorized, "read_only": False}).events
         return model_chat.deliver(authorized, history_models(authorized), task_id=payload["task_id"],
             event_id=payload["event_id"], checkpoint_sha256=payload.get("checkpoint_sha256"), events=events)
+    if followup_delivery:
+        from . import followup_chat
+        return followup_chat.execute(authorized, job, cancelled, heartbeat)
     if job["kind"] == "agent_world_followup":
         request = payload.get("request") or {}
         if request.get("automation_enabled") is not False or request.get("manual_review_required") is not True:

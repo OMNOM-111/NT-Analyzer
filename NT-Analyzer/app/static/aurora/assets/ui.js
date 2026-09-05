@@ -9871,6 +9871,7 @@
     unset: 'не отмечено', done: 'выполнено', failed: 'не выполнено', na: 'переписка',
   };
   function orchInferKind(row) {
+    if (row.role === 'system' && row.source === 'agent_world_followup') return 'informational';
     const explicit = String(row.message_kind || '').trim();
     if (ORCH_KIND_LABELS[explicit]) return explicit;
     const actions = Array.isArray(row.actions) ? row.actions.filter(a => a && typeof a === 'object') : [];

@@ -16,6 +16,8 @@ from .states import ContractError
 
 VERSION = "model-evidence-v1"
 RUBRICS = ("connection_exact", "json_arithmetic", "extract_facts")
+APPLICATION_RUBRIC = "application_execution"
+APPLICATION_SOURCES = {"ninjatrader_report": "backtest", "desktop_chart": "chart"}
 
 
 def json_bytes(value):
@@ -164,3 +166,66 @@ def reputation(observations, *, rubric_key):
             "confidence": "low" if count >= 3 else "insufficient", "label": "OBSERVED" if count >= 3 else "NEW",
             "mode": "real_model_bounded_capability", "routing_effect": "none",
             "limitation": "Distinct bounded inputs; not independent market samples or calibrated general quality."}
+
+
+def is_application_observation(row):
+    """Recognize the existing application's receipt rubric, never a model score.
+
+    The service additionally checks typed links, immutable artifacts and the
+    original model response before passing an observation to this projection.
+    This predicate alone is not authority to record or publish an execution.
+    """
+    if not isinstance(row, dict):
+        return False
+    verification = row.get("verification")
+    return (row.get("rubric_key") == APPLICATION_RUBRIC
+        and row.get("source") == "existing_application_receipt"
+        and row.get("evaluator") == "existing_application_evidence_verifier"
+        and row.get("self_scored") is False and row.get("synthetic") is False
+        and row.get("passed") is True and type(row.get("observed_score_pct")) in {int, float}
+        and row["observed_score_pct"] == 100
+        and isinstance(row.get("source_kind"), str) and row["source_kind"] in APPLICATION_SOURCES
+        and isinstance(row.get("source_id"), str) and bool(row["source_id"])
+        and isinstance(row.get("task_id"), str) and bool(row["task_id"])
+        and isinstance(row.get("model_id"), str) and bool(row["model_id"])
+        and isinstance(row.get("artifact_ids"), list) and bool(row["artifact_ids"])
+        and all(isinstance(value, str) and value for value in row["artifact_ids"])
+        and bool(re.fullmatch(r"[0-9a-f]{64}", str(row.get("input_sha256") or "")))
+        and isinstance(verification, dict) and verification.get("verified") is True
+        and verification.get("synthetic") is False
+        and verification.get("source_id") == row["source_id"]
+        and verification.get("source_kind") == row["source_kind"]
+        and bool(re.fullmatch(r"[0-9a-f]{64}", str(verification.get("sha256") or "")))
+        and bool(re.fullmatch(r"[0-9a-f]{64}", str(verification.get("request_sha256") or ""))))
+
+
+def application_reputation(observations):
+    """Read-only execution conformance, deliberately separate from text quality.
+
+    Only independently verified receipts contribute. Replayed source receipts
+    and repeated requests cannot inflate samples. Missing/failed executions
+    remain task history, not invented failed model-quality observations. The
+    denominator therefore describes verified requests, NOT an execution success
+    rate. Backtest and chart scores are never averaged together.
+    """
+    receipts = {}
+    for row in observations:
+        if is_application_observation(row):
+            receipts.setdefault((row["source_kind"], row["source_id"]), row)
+    classes = []
+    for source_kind, application_kind in APPLICATION_SOURCES.items():
+        rows = [row for row in receipts.values() if row["source_kind"] == source_kind]
+        count = len({row["input_sha256"] for row in rows})
+        classes.append({"rubric_key": APPLICATION_RUBRIC, "application_kind": application_kind,
+            "source_kind": source_kind, "sample_size": count, "receipt_count": len(rows),
+            "passed": count, "failed": 0, "score_pct": 100 if count >= 3 else None,
+            "confidence": "low" if count >= 3 else "insufficient",
+            "label": "OBSERVED" if count >= 3 else "NEW"})
+    return {"rubric_key": APPLICATION_RUBRIC, "sample_size": sum(row["sample_size"] for row in classes),
+        "receipt_count": len(receipts), "task_count": len({row["task_id"] for row in receipts.values()}),
+        "score_pct": None, "confidence": "not_pooled", "label": "SEPARATE_CLASSES" if receipts else "NEW",
+        "classes": classes, "mode": "real_application_execution_conformance", "synthetic": False,
+        "routing_effect": "none", "denominator": "distinct_verified_application_requests",
+        "market_performance_claim": False, "general_model_quality_claim": False,
+        "limitation": "Verified receipt conformance only, not execution success rate, profitability, freshness or general model quality. "
+                      "Backtest and chart classes are separate; failed and missing-source attempts remain in task history."}

@@ -137,6 +137,29 @@ of a new Agent World PostgreSQL adapter. SQLite read mode creates no absent DB
 or schema, reads committed WAL and denies mutation. Operational WAL/SHM sidecars
 are distinguished from semantic state.
 
+## Explicit result handoff and manual follow-up
+
+One completed real application result may be handed to a different active
+Persona/model by an explicit human action. The child reuses the existing worker,
+SF Chat and `extract_facts` verifier. Its immutable Task dependency pins the
+parent revision and correlation; only allowlisted scalar facts/source hashes
+are transferred. Parent/child chat messages, source, target and fresh authority
+are rechecked before transmission. This is faithful fact transfer, not an
+independent strategy/image review, recursive delegation or a Router replacement.
+
+Application receipt observations (`application_execution`) remain separate from
+model-plan/arithmetic/fact-transfer evaluations. Backtest and PNG observations
+have separate distinct-input denominators, NEW below three inputs, no pooled
+quality/profitability claim or routing effect. GET never manufactures evidence.
+
+Accepted Routine/CalendarItem records expose a separate explicit `open_chat`
+action after acceptance commits. It uses the existing `agent_world_followup`
+worker with a narrow `chat_delivery` phase, typed source manifest and inbox
+receipt. The one system message is informational, not an agent-rated answer.
+Delivery is immediate on request; due-time automation and provider calls stay
+OFF. Old accepted job receipts are retained, not silently reinterpreted as
+scheduled model execution. No new queue, scheduler or numbered migration exists.
+
 ## Acceptance and rollback
 
 Port 8765 was beta.93 because its scheduled task still used the original dirty

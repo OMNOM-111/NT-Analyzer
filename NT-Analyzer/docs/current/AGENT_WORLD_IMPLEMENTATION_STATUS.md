@@ -36,6 +36,50 @@ Desktop plans/images, historical `c9b2883`, foundation records and
 [ADR-0011](../adr/0011-agent-world-real-local-jobs.md) are not erased.
 [ADR-0012](../adr/0012-agent-world-integrated-local.md) records the current scope.
 
+## Integrated program continuation — owner review
+
+SF Chat in-app dialog correction is **complete** and is not being reimplemented.
+The next scoped program delta is documented in the
+[integrated review change record](../changelog/2026-09-05-agent-world-program-review.md).
+It adds separate genuine application-result observations, explicit typed fact
+handoff to another Persona in the same SF Chat, and manual routine/calendar
+discussion delivery. Root owns gateway/UI/current docs; delegated scopes own
+application/handoff, follow-up, and isolated HTTP/contract tests respectively.
+
+The candidate is based on `f80d67f7`; until its clean activation passes,
+the active Local identity in the table above remains authoritative. Frozen
+full suite is **4235 PASS / 44 skipped**, 1129.40 s; 542-file staged bundle,
+root static/context/diff checks PASS. Skips are 41 unconfigured PostgreSQL
+acceptance cases and three Windows-inapplicable shell/POSIX cases, not PASS.
+New live flow acceptance must not be inferred from focused fixture PASS.
+Memory now has 26 actual HTTP/SQLite synthetic-session cases (190 combined PASS);
+live multi-human browser sharing remains a separate pending scenario.
+
+### Coverage against all canonical stages
+
+| Stage | Implemented scope available for Local review | Not closed / missing target work |
+| --- | --- | --- |
+| 0 Baseline / isolation | Separate branch/runtime, preserved real data and rollback | No merge of dependencies or release |
+| 1 ADR / contracts | Typed entities, state transitions, authority/event/repository contracts | Later general engine contracts require their review |
+| 2 Repository / ledger | Development SQLite revisions, artifacts, inbox/outbox, tenant isolation | Agent World PostgreSQL/RLS adapter not implemented |
+| 3 Facade / adapters | Authenticated scoped APIs and existing NT/Desktop/Chat adapters | Production transport/storage acceptance not performed |
+| 4 Command Center | Three main tabs with same-page drawers and source receipts | Owner visual acceptance pending |
+| 5 Intent / task graph | Real bounded app tasks, exact dependent fact handoff and correlation | General autonomous decomposition/recursive delegation not implemented |
+| 6 Models / Router | Own connections and explicit approved owner bindings | Separate ordinary/external key live tests pending; Router shadow not switched |
+| 7 Roles / Persona | Create/edit/activate, explicit backtest/chart roles, separate model account | No inferred rights or automatic role assignment |
+| 8 Outcomes / evaluation | Independent rubric + application receipts, distinct-input observations | No general calibrated reputation or automatic routing influence |
+| 9 Consensus / Court | Same-input contributions, isolated three-model votes, advisory verdict | Verdict does not execute actions or replace human approval |
+| 10 Execution / deviations | Existing worker/NT/Desktop lease, cancellation and delivery authorities | New Execution Engine/Deviation Control not implemented |
+| 11 Memory / projects / schedule | Source-bound Memory/grants, versioned projects, accepted events and manual discussion | Autonomous due-time execution not implemented; live multi-user Memory acceptance pending |
+| 12 SF Chat / SF Social | Same-chat report/PNG and handoff, explicit sanitized publication preview | Permanent SF Social write awaits exact owner approval |
+| 13 Cutover / release | Isolated Local review and scoped Git/CI evidence | No merge, legacy removal, Canary/Production or release acceptance |
+
+Ordinary-account draft currently reports an expired/used email challenge.
+Registration and user-supplied key must be completed by the user; no ordinary
+live connection or finished wizard session is falsely claimed. The connection
+form itself is implemented with an exact key-field guide and no owner-key copy.
+This limitation does not stop the other review paths.
+
 ## SF Chat application-local decisions
 
 Canonical feature status: `BETA` (active and browser-verified on Local 95912cbf).

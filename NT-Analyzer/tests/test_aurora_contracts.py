@@ -292,7 +292,7 @@ def test_every_aurora_page_uses_current_ui_cache_version():
             continue
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
     assert versions
-    assert set(versions.values()) == {"20260905-app-dialogs"}, versions
+    assert set(versions.values()) == {"20260905-agent-world-followup"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():

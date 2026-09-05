@@ -5,9 +5,22 @@
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
+- Current program delta: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — application receipt observations, explicit typed fact handoff, manual follow-up delivery and ordinary-session Memory HTTP evidence; final activation/acceptance is separately recorded there.
 - Active Local 8765: clean `95912cbff8152905966e6bb7bfc2a45d3db15f80`, build `dev-0.10.0-beta.96-95912cbff815`, original owner data, Preview=false
 - Scope: Canonical test layers, release gates, acceptance and rollback expectations
 - Status: IN DEVELOPMENT
+
+## Current program delta evidence
+
+Final integrated focused gateway/model/follow-up/presentation subset: 267 PASS,
+zero skipped, 278.92 s. Memory has 26 actual HTTP/SQLite tests with synthetic
+ordinary cookie sessions (190 combined PASS); private/granted artifact access,
+revocation/TTL/source supersession, foreign membership, device/session and CSRF
+checks are not replaced by an owner fallback. This is not multi-human browser
+acceptance. Real provider handoff/manual discussion and final full-suite/Local
+identity evidence belong to the linked integrated review operational closeout.
+The interrupted pre-freeze full run is not PASS. Existing real historical NT/PNG
+proof, synthetic provider fixtures and fresh live execution are separate layers.
 
 ## Previous verified model/domain checkpoint — aa54c294
 

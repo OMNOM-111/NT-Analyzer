@@ -5,6 +5,7 @@
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
+- Current program delta: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — application receipt observations, explicit typed fact handoff, manual follow-up delivery and ordinary-session Memory HTTP evidence; final activation/acceptance is separately recorded there.
 - Active Local 8765: clean `95912cbff8152905966e6bb7bfc2a45d3db15f80`, build `dev-0.10.0-beta.96-95912cbff815`, original owner data, Preview=false
 - Unified Local accepted base: beta.96, open PR #280; no Canary/Production promotion
 - Scope: Major UI areas, visibility rules and important UX contracts
@@ -68,6 +69,22 @@ Router/Execution V2 OFF. Preview has separate synthetic flags, no real side effe
 The earlier 93bb1298/other-SHA test and provider history is preserved in the
 [canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
 [integrated changelog](../changelog/2026-09-05-agent-world-integrated-local.md).
+
+## Integrated review additions
+
+Real report/PNG outcomes remain prominent in Overview. Agent profiles separate
+application receipts from model-answer rubrics; a single source remains NEW.
+Task detail may explicitly hand verified facts to another connected Persona;
+the transfer's limitation and source hashes remain visible in the same SF Chat.
+Routine/calendar detail opens an immediate manual discussion only after a human
+action, with queued/delivered states and no agent rating on its system message.
+Readonly sessions and unavailable model allowance hide unavailable UI actions,
+not existing evidence. All tools remain drawers on the three-tab page.
+
+The own-model wizard identifies the real password field and links to separate
+OpenRouter inference-key creation and free-router documentation. It does not
+copy owner keys. The ordinary account's expired registration challenge is not a
+completed user-key acceptance session; that one external path remains pending.
 
 ## Major product areas
 

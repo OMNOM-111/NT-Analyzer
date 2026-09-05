@@ -16,7 +16,7 @@
     experiments: { title: 'Эксперименты', description: 'Одно проверяемое задание для 2–3 моделей. Сравнение строится по фактическим ответам, не по самооценке.', create: 'Сравнить модели' },
     system: { title: 'Система', description: 'Доступность, ограничения и состояние текущего рабочего пространства. Чтение не меняет флаги или бюджет.', create: '' },
   });
-  const ACTION_LABELS = Object.freeze({ create: 'Создать', connect: 'Подключить', bind_existing: 'Связать Local-подключение', update: 'Изменить', activate: 'Активировать', suspend: 'Приостановить', archive: 'В архив', promote: 'Продвинуть', publish_to_workspace: 'Опубликовать в workspace', propose_consensus: 'Собрать решение по вкладам', suggest_routine: 'Предложить по результатам', prepare: 'Подготовить снимок', publish: 'Опубликовать в SF Social', revoke: 'Отозвать', version: 'Новая версия', accept: 'Принять', dismiss: 'Отклонить', review: 'Проверить через Court', withdraw: 'Отозвать решение', test: 'Проверить соединение', task: 'Первое задание', disconnect: 'Отключить', cancel: 'Отменить задачу', retry: 'Повторить задачу' });
+  const ACTION_LABELS = Object.freeze({ create: 'Создать', connect: 'Подключить', bind_existing: 'Связать Local-подключение', update: 'Изменить', activate: 'Активировать', suspend: 'Приостановить', archive: 'В архив', promote: 'Продвинуть', publish_to_workspace: 'Опубликовать в workspace', propose_consensus: 'Собрать решение по вкладам', suggest_routine: 'Предложить по результатам', prepare: 'Подготовить снимок', publish: 'Опубликовать в SF Social', revoke: 'Отозвать', version: 'Новая версия', accept: 'Принять', dismiss: 'Отклонить', review: 'Проверить через Court', withdraw: 'Отозвать решение', test: 'Проверить соединение', task: 'Первое задание', disconnect: 'Отключить', cancel: 'Отменить задачу', retry: 'Повторить задачу', handoff: 'Передать факты агенту', open_chat: 'Открыть ручной разбор в SF Chat' });
   const STATUS = {
     running: ['В работе', 'good'], working: ['В работе', 'good'], active: ['Активен', 'good'], healthy: ['Работает', 'good'], succeeded: ['Завершено', 'good'], completed: ['Завершено', 'good'], verified: ['Проверено', 'good'], passed: ['Проверено', 'good'], accepted: ['Принято', 'good'], submitted: ['Вклад записан', 'info'],
     planned: ['Запланировано', 'neutral'], ready: ['В очереди', 'neutral'], queued: ['В очереди', 'neutral'], waiting: ['Ожидает', 'neutral'], pending: ['Ожидает', 'neutral'], free: ['Свободен', 'neutral'], available: ['Свободен', 'neutral'], idle: ['Свободен', 'neutral'],
@@ -59,7 +59,8 @@
       if (action === 'publish') return [field('text', 'Комментарий к публикации (необязательно)', 'textarea', { max: 4000, hint: 'Только ваш публичный комментарий. Не вставляйте ключи, личные данные, private Memory или сырой ответ модели.' }), field('visibility', 'Кто увидит публикацию', 'select', { required: true, options: [['private', 'Только я'], ['followers', 'Мои подписчики'], ['network', 'Социальная сеть']] })];
       return [];
     }
-    if (domain === 'tasks' && ['cancel', 'retry'].includes(action)) return [field('reason', 'Причина', 'textarea', { required: action === 'cancel', max: 1000 })];
+    if (['tasks', 'model_tasks'].includes(domain) && ['cancel', 'retry'].includes(action)) return [field('reason', 'Причина', 'textarea', { required: action === 'cancel', max: 1000 })];
+    if (['tasks', 'model_tasks'].includes(domain) && action === 'handoff') return [field('target_model_id', 'Другой агент / подключённая модель', 'model', { required: true, hint: 'Передаются только проверенные факты и метки источника. Это проверка точности передачи, не анализ стратегии или изображения. Автономное делегирование не включается.' })];
     if (domain === 'models') {
       if (action === 'bind_existing') return [field('registry_id', 'Разрешённое Local-подключение', 'binding', { required: true, hint: 'Список сформирован сервером только для текущего владельца. Исходный ключ и существующий бюджет не меняются.' }), field('persona_id', 'Активная Persona', 'persona', { required: true }), field('label', 'Название связи (необязательно)', 'text', { max: 80 })];
       if (action === 'connect') return [field('label', 'Название подключения', 'text', { required: true, max: 80 }), field('connection_kind', 'Тип подключения', 'select', { required: true, options: [['model', 'Своя модель'], ['external_agent', 'Внешний агент']] }), field('provider', 'Провайдер', 'provider', { required: true }), field('model', 'Идентификатор модели', 'text', { required: true, max: 120 }), field('base_url', 'Endpoint (для совместимого провайдера)', 'url', { max: 250, hint: 'Только разрешённый сервером HTTPS endpoint. Для стандартного провайдера оставьте пустым.' }), field('api_key', 'Ключ подключения', 'password', { required: true, max: 4096 }), field('persona_id', 'Persona', 'persona', { required: true })];
@@ -103,7 +104,7 @@
       } else if (['models', 'ids', 'evidence', 'records'].includes(spec.type)) {
         value = Array.from(new Set((Array.isArray(value) ? value : value.split(/[\s,]+/)).map(String).filter(Boolean)));
         if (value.some(id => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) || value.length < (spec.minItems || 0) || value.length > spec.maxItems) throw new Error('Проверьте UUID и количество в поле «' + spec.label + '».');
-      } else if (spec.type === 'persona' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new Error('Выберите сохранённую персону.');
+      } else if (['persona', 'model'].includes(spec.type) && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new Error('Выберите сохранённую персону или подключение.');
       else if (spec.type === 'provider' && !/^[a-z][a-z0-9_-]{1,40}$/.test(value)) throw new Error('Выберите поддерживаемого провайдера.');
       else if (spec.type === 'binding' && !/^AGT-[A-Z0-9]{12}$/.test(value)) throw new Error('Выберите разрешённое Local-подключение.');
       else if (spec.type === 'select' && !spec.options.some(([key]) => key === value)) throw new Error('Выберите допустимое значение «' + spec.label + '».');
@@ -151,6 +152,19 @@
     const confidence = { insufficient: 'недостаточно данных', low: 'низкая', medium: 'средняя', high: 'высокая' }[evaluation.confidence] || 'не оценена';
     return { sample, score: insufficient ? null : number(evaluation.score_pct), label: insufficient ? 'NEW' : pct(evaluation.score_pct), confidence, insufficient, observed: number(evaluation.observed_score_pct), mode: String(evaluation.mode || evaluation.scope || '') };
   }
+  function applicationRows(agent) {
+    if (agent?.synthetic !== false) return [];
+    return rows(agent.application_observations).filter(value => value.mode === 'real_application_execution_conformance')
+      .flatMap(value => rows(value.classes).filter(item => ['backtest', 'chart'].includes(item.application_kind))
+        .map(item => ({ ...item, model: value.model, connection_status: value.connection_status,
+          title: item.application_kind === 'backtest' ? 'Бэктест · соответствие отчёта' : 'График · подлинность PNG',
+          label: evaluationMeta({ evaluation: item }).label })));
+  }
+  function applicationTable(agents) {
+    const measured = rows(agents).flatMap(agent => applicationRows(agent).map(value => ({ ...value, agent: name(agent) })));
+    if (!measured.length) return '<p class="aw-note">Реальные прикладные результаты ещё не проверены. Арифметика и synthetic не заменяют отчёт или PNG.</p>';
+    return `<div class="aw-table-wrap"><table class="aw-table"><thead><tr><th>Агент / модель</th><th>Проверка результата</th><th>Источники</th><th>Выборка / оценка</th></tr></thead><tbody>${measured.map(value => `<tr><td>${esc(value.agent)}<div class="aw-table-sub">${esc(value.model)}${value.connection_status === 'active' ? '' : ' · архивное подключение'}</div></td><td>${esc(value.title)}</td><td>Проверенных входов: ${count(value.sample_size)}<div class="aw-table-sub">Записей: ${count(value.receipt_count)}</div></td><td>n = ${count(value.sample_size)} · ${esc(value.label)}</td></tr>`).join('')}</tbody></table></div><p class="aw-note">Проверяется связь исходного отчёта/PNG с поручением. Это не прибыльность стратегии, визуальное качество графика или общая оценка модели. Бэктест и график не усредняются; повтор одного входа не увеличивает n. NEW до трёх разных входов. Неуспешные и незавершённые попытки остаются в истории, но не подменяются проверенными источниками.</p>`;
+  }
   function safeArtifactUrl(value, sourceKind) {
     const path = String(value || '');
     // Authenticated opaque routes only; legacy Desktop snapshots also require proven source kind.
@@ -174,7 +188,13 @@
     return { label: known ? labels[kind] : 'Источник не подтверждён', kind: known ? kind : 'unknown', reportUrl };
   }
   function overviewOutcomes(data) {
-    if (Array.isArray(data?.outcomes)) return data.outcomes;
+    if (Array.isArray(data?.outcomes)) {
+      // Keep actual application artifacts discoverable after later model votes.
+      // Stable presentation ordering changes no stored history or verdict.
+      const priority = value => value?.status === 'succeeded' && value?.application_result?.verified === true
+        && ['ninjatrader_report', 'desktop_chart'].includes(sourceMeta(value).kind) ? 0 : 1;
+      return data.outcomes.slice().sort((left, right) => priority(left) - priority(right));
+    }
     // A completed task summary is real stored evidence, not an invented chart or score.
     return rows(data?.tasks).filter(task => ['succeeded', 'completed', 'verified'].includes(task.status)).slice(0, 3).map(task => ({
       title: task.title, summary: task.summary || '', task_id: taskId(task), status: task.status,
@@ -224,7 +244,21 @@
     return result;
   }
   // Pure presentation functions are executable in Node contract tests, without DOM or HTTP.
-  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, rows, items, taskMatches, evaluationMeta, safeArtifactUrl, sourceMeta, overviewOutcomes, realChatCommands, canRunDemo, flagRows, captureChart, knownDomain, allowedDomainActions, domainFormFields, domainPayload, actionLabel, domainError, publicJSON }; return; }
+  function handoffCard(task) {
+    const packet = task?.handoff;
+    if (task?.synthetic !== false || packet?.synthetic !== false || packet.kind !== 'verified_application_fact_handoff') return '';
+    return `<section class="aw-detail-section"><h3>Передача проверенных фактов</h3><p class="aw-note">${esc(packet.limitation)}</p><div class="aw-hash">SOURCE TASK ${esc(packet.parent_task_id)} · REV ${count(packet.parent_revision)}<br>FACTS SHA256 ${esc(packet.facts_sha256)}</div><pre class="aw-result-text">${esc(publicJSON(packet.facts))}</pre></section>`;
+  }
+  function followupCard(item) {
+    const followup = item?.followup_chat;
+    if (followup?.synthetic !== false || followup.automation_enabled !== false) return '';
+    const delivered = followup.status === 'delivered' && followup.message_id && /^AW-FU-[0-9a-f]{28}$/.test(followup.conversation_id || '');
+    return `<section class="aw-detail-section"><h3>Ручной разбор</h3><p class="aw-note">${delivered ? 'Уведомление сохранено в SF Chat.' : 'Запрос на доставку: ' + esc(followup.status || 'в очереди') + '. Обновите запись для проверки результата.'} Это не запуск по расписанию и не выполненное задание модели. Автоматизация выключена.</p>${delivered ? `<button class="btn primary" data-aw-followup-chat="${esc(followup.conversation_id)}">Открыть сохранённый разбор</button>` : ''}<div class="aw-hash">JOB ${esc(followup.job_id)}<br>SOURCE REV ${count(followup.source_revision)} · ${esc(followup.source_sha256)}</div></section>`;
+  }
+  function modelConnectionGuide() {
+    return '<aside class="aw-note"><strong>Отдельный тестовый ключ</strong><p>Можно выбрать OpenRouter и модель <code>openrouter/free</code>; Endpoint оставить пустым. Создайте отдельный inference API key на <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">странице ключей OpenRouter</a> и самостоятельно вставьте его в поле «Ключ подключения». Owner-ключи не копируются.</p><p><a href="https://openrouter.ai/docs/guides/routing/routers/free-router" target="_blank" rel="noopener noreferrer">Free router</a> выбирает доступную бесплатную модель; состав моделей и лимиты зависят от сервиса. Проверьте его условия. Секрет не отправляйте в чат.</p><p>«Внешний агент» здесь означает совместимый HTTPS chat-completions endpoint. Это не подключение произвольного MCP-сервера или удалённого рабочего стола.</p></aside>';
+  }
+  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, rows, items, taskMatches, evaluationMeta, applicationRows, applicationTable, safeArtifactUrl, sourceMeta, overviewOutcomes, realChatCommands, canRunDemo, flagRows, captureChart, knownDomain, allowedDomainActions, domainFormFields, domainPayload, actionLabel, domainError, publicJSON, handoffCard, followupCard, modelConnectionGuide }; return; }
 
   root.UI.ready(async function () {
     const UI = root.UI, API = root.API.http;
@@ -312,6 +346,8 @@
     function renderAgents() {
       const agents = rows(overview.agents);
       content.innerHTML = `<div class="aw-section-heading"><div><h2>Ваша команда</h2><p>Persona — имя, лицо и голос. Роль определяет обязанности; модель выбирается отдельно и не меняет личность агента.</p></div><div class="aw-actions"><button class="btn" data-aw-domain="personas">Создать / изменить Persona</button><button class="btn" data-aw-domain="models">Подключить свою модель</button></div></div>${agents.length ? `<div class="aw-agent-grid">${agents.map(agentCard).join('')}</div>` : empty('Команда пока пуста', 'Создайте персону и подключите свою модель через инструменты этого рабочего пространства.')}<div class="aw-note">Проверочный рейтинг — результат измеренных критериев конкретного класса задач. Сравнивайте только одинаковые классы и окна наблюдения. SYNTHETIC не оценивает качество внешней модели и не влияет на рабочую маршрутизацию.</div>${panel('Проверочный рейтинг', agents.length ? `<div class="aw-table-wrap"><table class="aw-table"><thead><tr><th>Агент / роль</th><th>Класс задачи</th><th>Наблюдения</th><th>Результат</th><th>Уверенность</th></tr></thead><tbody>${agents.map(agent => { const evaluation = evaluationMeta(agent); return `<tr><td><button class="aw-table-title" data-aw-agent="${esc(agentId(agent))}">${esc(name(agent))}</button><div class="aw-table-sub">${esc(role(agent))}</div></td><td>${esc(agent.evaluation?.task_class || '—')}</td><td>n = ${count(evaluation.sample)}</td><td>${esc(evaluation.label)}</td><td>${esc(evaluation.confidence)}</td></tr>`; }).join('')}</tbody></table></div>` : smallEmpty('Оценки не выставлены. Нулевая выборка не означает нулевое качество.'))}`;
+      if (overview?.scope?.synthetic === false) content.insertAdjacentHTML('beforeend',
+        panel('Реальные задания · отдельные проверки исполнения', applicationTable(agents)));
     }
     function renderHeader() {
       const stats = overview?.stats || {}, scope = overview?.scope || {};
@@ -468,7 +504,7 @@
       const verification = item.observed_eval || item.evaluation;
       const evaluationBody = verification ? evaluations([verification]) : '';
       const result = item.result_text || item.response_text || item.output_text;
-      const resultBody = result ? `<section class="aw-detail-section"><h3>Фактический ответ</h3><pre class="aw-result-text">${esc(result)}</pre></section>` : '';
+      const resultBody = (result ? `<section class="aw-detail-section"><h3>Фактический ответ</h3><pre class="aw-result-text">${esc(result)}</pre></section>` : '') + followupCard(item) + handoffCard(item);
       const sources = rows(item.source_ids || item.evidence_ids);
       const sourceBody = sources.length ? `<section class="aw-detail-section"><h3>Источники</h3>${sources.map(id => `<div class="aw-hash">ARTIFACT ${esc(id)}</div>`).join('')}</section>` : '';
       const versions = rows(item.versions);
@@ -514,6 +550,10 @@
         const sources = rows(dependencies.evidence).filter(item => item.media_type === 'application/json');
         input = sources.length ? `<div class="aw-choice-list">${sources.map(source => `<label><input type="checkbox" name="evidence_ids" value="${esc(recordId(source))}"><span><strong>${esc(source.title || 'JSON-доказательство')}</strong><small>${esc(source.sha256 || recordId(source))}</small></span></label>`).join('')}</div>` : '<p class="aw-field-hint">Сохранённые JSON-доказательства пока не опубликованы. Выполните проверяемую задачу через модель или существующее бэктестирование.</p>';
         input += `<textarea id="${id}" name="evidence_ids_manual" rows="2" placeholder="Известные UUID (необязательно при выборе выше)" spellcheck="false">${esc(value)}</textarea>`;
+      } else if (spec.type === 'model') {
+        const candidates = items(dependencies.models).filter(model => model.connected === true && model.status === 'active' && recordId(model) !== record?.model_id && model.persona_id !== record?.persona_id);
+        input = `<select ${attrs}><option value="">Выберите другого агента</option>${candidates.map(model => `<option value="${esc(recordId(model))}">${esc(model.label || model.model)} · ${esc(model.provider)}</option>`).join('')}</select>`;
+        if (!candidates.length) input += '<p class="aw-field-hint">Нужно активное подключение другой Persona. Новые ключи или бюджет автоматически не назначаются.</p>';
       } else if (spec.type === 'models') {
         const models = items(dependencies.models).filter(model => model.connected === true && !['disconnected', 'archived', 'disabled'].includes(model.status));
         input = models.length ? `<div class="aw-choice-list">${models.map(model => `<label><input type="checkbox" name="${esc(spec.key)}" value="${esc(recordId(model))}"><span><strong>${esc(model.label || model.model)}</strong><small>${esc(model.provider || '')} · ${esc(model.model || '')}</small></span></label>`).join('')}</div>` : '<div class="aw-small-empty">Нет доступных подключений. Сначала подключите и проверьте модели.</div><button type="button" class="aw-link-button" data-aw-domain="models">Открыть подключения →</button>';
@@ -530,7 +570,7 @@
     async function openDomainAction(action, id, task) {
       const key = task ? 'tasks' : domainState?.key;
       const record = task || (id === 'new' ? null : domainState?.item && recordId(domainState.item) === id ? domainState.item : items(domainState?.data).find(item => recordId(item) === id));
-      const allowed = task ? rows(task.allowed_actions) : allowedDomainActions(domainState?.data, record);
+      const allowed = task ? rows(task.allowed_actions || task.actions) : allowedDomainActions(domainState?.data, record);
       if (!key || !allowed.includes(action) || mutationBusy || id !== 'new' && !record) return;
       if (key === 'publications' && action === 'publish') return; // Only a validated, reviewed prepare response opens publishing.
       const request = ++detailGeneration;
@@ -539,13 +579,14 @@
       openDrawer(actionLabel(action), smallEmpty('Подготовка формы и проверка доступных записей…'));
       try {
         if (specs.some(spec => spec.type === 'persona')) dependencies.personas = await API.aiControlCenterDomain('personas', { limit: 100 }, { signal });
-        if (specs.some(spec => spec.type === 'models')) dependencies.models = await API.aiControlCenterDomain('models', { limit: 100 }, { signal });
+        if (specs.some(spec => ['models', 'model'].includes(spec.type))) dependencies.models = await API.aiControlCenterDomain('models', { limit: 100 }, { signal });
         if (disposed || request !== detailGeneration) return;
-        const external = ['test', 'task', 'review'].includes(action) || key === 'experiments';
+        const external = ['test', 'task', 'review', 'handoff'].includes(action) || key === 'experiments';
         const confirm = external ? 'Разрешаю отправить это задание выбранным подключениям в пределах существующего бюджета.' : action === 'publish_to_workspace' ? 'Разрешаю участникам этого рабочего пространства читать содержание и происхождение опубликованной записи.' : ['archive', 'revoke', 'withdraw', 'disconnect', 'cancel', 'dismiss', 'suspend'].includes(action) ? 'Подтверждаю это изменение выбранной записи.' : '';
         const warning = external ? note('Будут использованы реальные подключения. Измеренная стоимость может быть неизвестна до ответа; сервер проверяет существующий бюджет. Не отправляйте секреты или личные данные.') : action === 'publish_to_workspace' ? note('Будет создана отдельная общая запись в текущем workspace. Личный источник сохраняется. Не публикуйте секреты или чужие личные данные; отзыв общей записи или её источника прекращает доступ.') : action === 'bind_existing' ? note('Только связь с одним существующим разрешённым Local-подключением. Ключ не копируется; новый бюджет не создаётся. Отключение связи не удаляет исходное подключение владельца.') : key === 'routines' || key === 'calendar' ? note('Это запись предложения / события, не запуск фонового исполнителя. Автоматизация остаётся выключенной.') : '';
         const back = key === 'tasks' ? `<button type="button" class="btn" data-aw-task="${esc(id)}">Назад к задаче</button>` : `<button type="button" class="btn" data-aw-domain="${key}">Отмена</button>`;
         openDrawer(DOMAINS[key].title + ' · ' + actionLabel(action), `<div class="aw-domain-heading"><div><h2>${esc(actionLabel(action))}</h2><p>${esc(record?.title || record?.label || record?.name || DOMAINS[key].description)}</p></div></div>${warning}<form class="aw-form" id="aw-domain-form" autocomplete="off"><div class="aw-form-grid">${specs.map(spec => formField(spec, record, dependencies)).join('')}</div>${!specs.length ? '<p class="aw-text">Действие относится только к выбранной записи. История и права проверяются сервером.</p>' : ''}${confirm ? `<label class="aw-confirm"><input type="checkbox" name="confirmation" required><span>${esc(confirm)}</span></label>` : ''}<p class="aw-form-error" id="aw-form-error" role="alert" hidden></p><div class="aw-actions"><button type="submit" class="btn primary">${esc(actionLabel(action))}</button>${back}</div><p class="aw-field-hint">Ни workspace, ни права, ни бюджет не принимаются из формы. ${record ? 'Изменение привязано к ревизии ' + count(record.revision) + '.' : ''}</p></form>`);
+        if (key === 'models' && action === 'connect') qs('#aw-domain-form', currentDrawer)?.insertAdjacentHTML('beforebegin', modelConnectionGuide());
       } catch (error) { if (error?.name !== 'AbortError' && request === detailGeneration && !disposed) openDrawer(actionLabel(action), readError(error)); }
     }
     function openPublicationPreview(prepared, source) {
@@ -601,7 +642,8 @@
         await refresh();
         const resultItem = result.item || result.task || result;
         announce(resultItem.status === 'failed' || resultItem.status === 'external_blocked' ? 'Сервер записал неуспешный результат. Откройте историю и ограничения.' : 'Ответ сервера сохранён. Проверьте состояние и результат записи; принятие запроса не означает завершение задачи.');
-        if (state.domain === 'tasks') await openTask(taskId(resultItem) || state.id);
+        if (state.action === 'open_chat') { await openDomain(state.domain); await openDomainItem(state.id); }
+        else if (state.domain === 'tasks') await openTask(taskId(resultItem) || state.id);
         else {
           const target = state.domain === 'models' && ['test', 'task'].includes(state.action) ? 'model_tasks' : state.domain;
           await openDomain(target);
@@ -627,7 +669,8 @@
       else body = detailRows(rows(detail.errors), task.status === 'failed' ? 'Подробности ошибки не опубликованы.' : 'Зарегистрированных ошибок нет.');
       if (detailTab === 'summary' && detail.result_text) body = `<div class="aw-context"><span class="aw-context-mark">РЕЗУЛЬТАТ</span><span>${esc(detail.result_text)}</span></div><div class="aw-detail-section">${body}</div>`;
       if (detailTab === 'summary' && task.source_kind === 'real_model_response') body += `<section class="aw-detail-section"><h3>Исполнитель и происхождение результата</h3><dl class="aw-detail-grid"><div><dt>Запрошенная модель</dt><dd>${esc(task.model || 'Не предоставлена')}</dd></div><div><dt>Model ID от провайдера</dt><dd>${esc(detail.actual_model || 'Не предоставлен')}</dd></div><div><dt>Провайдер</dt><dd>${esc(task.provider || 'Не предоставлен')}</dd></div></dl>${['intent_id', 'execution_id', 'contribution_id', 'outcome_id', 'evaluation_id', 'conversation_id', 'message_id'].filter(key => task[key]).map(key => `<div class="aw-hash">${esc(key.toUpperCase())} ${esc(task[key])}</div>`).join('')}</section>`;
-      const taskActions = rows(task.allowed_actions).filter(action => ['cancel', 'retry'].includes(action)).map(action => `<button class="btn${action === 'cancel' ? ' aw-danger-action' : ''}" data-aw-task-action="${action}">${esc(actionLabel(action))}</button>`).join('');
+      body += handoffCard(task);
+      const taskActions = rows(task.allowed_actions || task.actions).filter(action => ['cancel', 'retry', 'handoff'].includes(action)).map(action => `<button class="btn${action === 'cancel' ? ' aw-danger-action' : ''}" data-aw-task-action="${action}">${esc(actionLabel(action))}</button>`).join('');
       const controls = `<div class="aw-actions"><button class="btn" data-aw-task-chat="${esc(taskId(task))}">Открыть в SF Chat</button>${source.reportUrl ? `<a class="btn" href="${esc(source.reportUrl)}">Открыть исходный отчёт</a>` : ''}${svg ? `<button class="btn primary" data-aw-chart-chat="${esc(taskId(task))}">Снимок графика → SF Chat</button>` : ''}${taskActions}</div>`;
       const tabs = `<nav class="aw-tabs" role="tablist" aria-label="Разделы задачи">${Object.entries(labels).map(([key, label]) => `<button role="tab" aria-selected="${detailTab === key}" tabindex="${detailTab === key ? 0 : -1}" data-aw-detail-tab="${key}">${label}</button>`).join('')}</nav>`;
       openDrawer('Задача · ' + (task.title || 'AI Центр'), `${controls}${tabs}<div role="tabpanel">${body}</div><div class="aw-hash">TASK ${esc(taskId(task))}${task.correlation_id ? `<br>CORRELATION ${esc(task.correlation_id)}` : ''}</div>`);
@@ -655,6 +698,7 @@
       else if (detailTab === 'rating') body = `<div class="aw-metrics"><div class="aw-metric"><div class="aw-metric-label">Результат проверок</div><div class="aw-metric-value">${esc(evaluation.label)}</div><div class="aw-metric-note">${evaluation.insufficient ? 'NEW · недостаточно наблюдений' : 'Критерии конкретного класса задач'}</div></div><div class="aw-metric"><div class="aw-metric-label">Размер выборки</div><div class="aw-metric-value">${count(evaluation.sample)}</div><div class="aw-metric-note">Уверенность: ${esc(evaluation.confidence)}</div></div></div><dl class="aw-detail-grid"><div><dt>Класс</dt><dd>${esc(found.evaluation?.task_class || '—')}</dd></div><div><dt>Окно наблюдений</dt><dd>${esc(found.evaluation?.window_label || 'Текущий локальный набор')}</dd></div><div><dt>Успешных проверок</dt><dd>${count(found.evaluation?.passed)}</dd></div><div><dt>Неуспешных проверок</dt><dd>${count(found.evaluation?.failed)}</dd></div></dl>${evaluation.insufficient && evaluation.observed != null ? note('Предварительное наблюдение: ' + pct(evaluation.observed) + '. Этого недостаточно для устойчивой оценки.') : ''}${note('Детерминированный synthetic benchmark не доказывает качество LLM и не повышает права агента. Оценки внешних моделей и реальной автономной работы ведутся отдельно.')}`;
       else if (detailTab === 'persona') body = `<dl class="aw-detail-grid"><div><dt>Persona</dt><dd>${esc(name(found))}</dd></div><div><dt>Agent Role</dt><dd>${esc(role(found))}</dd></div><div><dt>Голос</dt><dd>${esc(found.voice_label || 'Настройки существующего профиля')}</dd></div><div><dt>Model</dt><dd>${esc(found.model?.name || found.model || 'Назначается отдельно, не является Persona')}</dd></div></dl>${note('Смена модели не переименовывает агента, не меняет его историю и не выдаёт новые полномочия. Свои Persona создаются и редактируются в текущем рабочем пространстве.')}<div class="aw-actions"><button class="btn" data-aw-domain="personas">Управление Persona</button><button class="btn" data-aw-domain="models">Мои подключения</button></div>`;
       else body = `<div class="aw-inspector-summary"><h3>Роль и специализация</h3><p class="aw-text">${esc(found.description || found.specialization || role(found))}</p><dl class="aw-detail-grid"><div><dt>Текущая работа</dt><dd>${esc(found.current_task?.title || found.current_task_title || 'Нет активной задачи')}</dd></div><div><dt>Результат проверок</dt><dd>${esc(evaluation.label)} · n = ${count(evaluation.sample)}</dd></div><div><dt>Уверенность</dt><dd>${esc(evaluation.confidence)}</dd></div><div><dt>Контур</dt><dd>${found.synthetic ? 'Synthetic · детерминированные задачи' : 'Текущее рабочее пространство'}</dd></div></dl></div><section class="aw-detail-section"><h3>Последняя работа</h3>${tasks.length ? `<div class="aw-stack">${tasks.slice(0, 3).map(taskCard).join('')}</div>` : smallEmpty('Задач в текущей выборке нет.')}</section>`;
+      if (detailTab === 'rating' && found.synthetic === false) body += panel('Реальные задания · отдельно от тестов модели', applicationTable([found]));
       openDrawer('Профиль · ' + name(found), `<div class="aw-profile-head">${avatar(found, 'lg')}<div><h2>${esc(name(found))}</h2><p class="aw-agent-role">${esc(role(found))}</p>${badge(found.status || 'free')}</div></div><nav class="aw-tabs" role="tablist" aria-label="Профиль агента">${Object.entries(labels).map(([key, label]) => `<button role="tab" aria-selected="${detailTab === key}" tabindex="${detailTab === key ? 0 : -1}" data-aw-profile-tab="${key}">${label}</button>`).join('')}</nav>${body}`);
     }
     async function taskChat(id, screenshot, button) {
@@ -705,6 +749,7 @@
       else if (target.dataset.awDetailTab) { detailTab = target.dataset.awDetailTab; drawTask(); qs('[data-aw-detail-tab][aria-selected="true"]', currentDrawer)?.focus(); }
       else if (target.dataset.awProfileTab) { openProfile(agentId(profile), target.dataset.awProfileTab); qs('[data-aw-profile-tab][aria-selected="true"]', currentDrawer)?.focus(); }
       else if (target.dataset.awTaskChat) taskChat(target.dataset.awTaskChat, false, target);
+      else if (target.dataset.awFollowupChat && /^AW-FU-[0-9a-f]{28}$/.test(target.dataset.awFollowupChat)) { UI.closeDrawer(); UI.openSFChat({ conversationId: target.dataset.awFollowupChat, conversationType: 'ai' }); }
       else if (target.dataset.awChartChat) taskChat(target.dataset.awChartChat, true, target);
       else if (target.hasAttribute('data-aw-real-chat')) UI.openSFChat({ conversationType: 'ai' });
       else if (target.dataset.awFilter) { filter = target.dataset.awFilter; loadTab(); }
@@ -752,6 +797,10 @@
     await refresh();
     const linkedTask = locationParams.get('task') || new URLSearchParams(root.location.search).get('task');
     if (linkedTask && overview?.enabled) await openTask(linkedTask);
-    else if (knownDomain(locationParams.get('domain')) && overview?.enabled) await openDomain(locationParams.get('domain'));
+    else if (knownDomain(locationParams.get('domain')) && overview?.enabled) {
+      await openDomain(locationParams.get('domain'));
+      const entity = locationParams.get('entity');
+      if (/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(entity || '')) await openDomainItem(entity);
+    }
   });
 })(typeof window !== 'undefined' ? window : globalThis);

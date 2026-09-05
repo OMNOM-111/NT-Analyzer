@@ -5,6 +5,7 @@
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
+- Current program delta: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — application receipt observations, explicit typed fact handoff, manual follow-up delivery and ordinary-session Memory HTTP evidence; final activation/acceptance is separately recorded there.
 - Active scope: verified integrated Local, result presentation, same-input Consensus and three-model Court; full program and owner-dependent acceptance remain open
 - Unified Local base: beta.96, PR #280; separate owner-review slice above foundation PR #281; no merge or Canary/Production promotion
 - Scope: Compact index of important endpoint families, entities and capability names
@@ -142,13 +143,27 @@ semantic requests conflict. Scope comes only from fresh server admission.
 | `personas` | create/update, activate/suspend/archive |
 | `memory` | create/update draft, promote/revoke/expire, explicit `publish_to_workspace`; purpose/TTL/source-bound retrieval |
 | `projects` | create/update, append immutable parameter `version`, archive |
-| `routines`, `calendar` | create, accept/dismiss; routines also `suggest_routine` from verified Outcome IDs; acceptance is an existing-queue manual reminder, automation OFF |
+| `routines`, `calendar` | create, accept/dismiss; routines also `suggest_routine`; separate `open_chat` delivers an immediate manual discussion through the existing worker after exact accepted revision, automation OFF |
 | `decisions`, `court` | create proposal, `propose_consensus` from independent accepted Contributions, review with exactly three Model IDs, withdraw an eligible proposal; Court detail is read-only |
 | `models` | `connect`, owner-only `bind_existing`, connection `test`, bounded `task`, disconnect; no client budget grants |
-| `model_tasks`, `tasks` | owned task details/history and explicit cancel through the existing execution/queue authority |
+| `model_tasks`, `tasks` | owned task details/history, explicit cancel, bounded human `handoff` of a verified application source to a different Persona/model through existing execution/queue authority |
 | `experiments` | explicit same-input selected-model comparisons and independently checked per-input evidence, no Router change |
 | `publications` | eligible owned source candidates, read-only `prepare`, then explicit permanent `publish` |
 | `system` | scope, flags, existing capabilities/storage/worker limitations; no new control-plane authority |
+
+`handoff` takes payload `{target_model_id}` and the existing idempotency envelope.
+Source is the path's owned task; the browser cannot supply facts, scope or budgets.
+The dependent task seals parent revision/correlation and source facts before
+enqueue, rechecks source/chat/authority before transmit and rejects recursive
+handoff. The child `extract_facts` evaluation is separate from application receipt
+and model-plan checks; DTO exposes `handoff` and typed `dependencies`.
+
+`open_chat` takes empty payload plus `expected_revision` and idempotency key.
+Only already-accepted own routine/calendar records qualify. Existing
+`agent_world_followup` jobs get a narrow `chat_delivery` phase; manifest and
+receipt stay in existing artifacts/inbox. GET `followup_chat` projection creates
+nothing. Its status, source revision/hash and existing conversation are not
+execution-at-due-time or model completion. No new schema migration exists.
 
 Publication preparation payload is `{source_kind, source_id}` and returns
 `snapshot`, `snapshot_sha256`, `source_revision`, `permanent` and
