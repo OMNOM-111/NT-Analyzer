@@ -595,6 +595,20 @@ def test_domain_models_form_uses_real_handlers_and_server_listed_provider_only()
     assert not any(call["method"] == "post" for call in result["calls"])
 
 
+def test_calendar_detail_renders_local_time_and_accepted_label():
+    result = run_domain_ui("""
+      const starts='2026-09-05T07:00:00.000Z';
+      domains.calendar.items=[{id:ids.task,title:'Calendar review',status:'accepted',revision:2,
+        description:'Manual only',starts_at:starts,ends_at:'2026-09-05T07:30:00.000Z'}];
+      await click({awDomain:'calendar'},'shell');
+      await click({awDomainItem:ids.task});
+      return {html:drawer.innerHTML,local:new Date(starts).toLocaleString('ru-RU',{dateStyle:'short',timeStyle:'short'})};
+    """)
+    assert result["local"] in result["html"]
+    assert '2026-09-05T07:00:00.000Z' not in result["html"]
+    assert 'Принято' in result["html"] and 'Вклад принят' not in result["html"]
+
+
 def test_persona_update_real_handler_sends_cas_revision_and_narrow_envelope():
     result = run_domain_ui("""
       await click({awDomain:'personas'},'shell');

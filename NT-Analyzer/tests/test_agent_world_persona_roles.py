@@ -127,3 +127,23 @@ def test_legacy_projection_merges_only_explicit_role_and_keeps_rating_separate(e
     assert current["display_name"] == "Not Tolik" and current["evaluation"]["score_pct"] is None
     assert current["compatibility_history"]["source"]["evaluation"]["score_pct"] == 99
     assert base["agents"][0]["id"] == "tolik"
+
+
+@pytest.mark.parametrize("old_status,expected", [("retired", 100), ("suspended", 100), ("active", None)])
+def test_inactive_binding_keeps_history_without_hiding_current_rating(env, monkeypatch, old_status, expected):
+    person = assigned(env)
+    bindings = [{"id": "old", "model": "old-model", "status": old_status, "persona_id": person["id"]},
+                {"id": "current", "model": "current-model", "status": "active", "persona_id": person["id"]}]
+    stats = {"rubric_key": "json_arithmetic", "score_pct": 100, "sample_size": 3, "label": "OBSERVED"}
+    service = SimpleNamespace(repository=env.repo, tasks=lambda **_: {"items": []},
+        models=lambda **_: {"items": bindings}, evaluations=lambda **_: stats)
+    monkeypatch.setattr(domain_gateway, "models", lambda _: service)
+    monkeypatch.setattr(domain_gateway, "domains", lambda *_: env.service)
+    monkeypatch.setattr(domain_gateway, "system", lambda _: {"flags": {}})
+    result = domain_gateway.enrich_overview({"context": env.ctx, "admit": env.admit, "chat_scope": {"capabilities": {}}})
+    card = result["agents"][0]
+    assert card["evaluation"]["score_pct"] == expected
+    assert len(card["model_observations"]) == 2
+    assert card["model_observations"][0]["connection_status"] == old_status
+    if expected is not None:
+        assert card["evaluation"]["model_id"] == "current"

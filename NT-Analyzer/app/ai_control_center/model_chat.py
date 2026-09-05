@@ -33,6 +33,8 @@ def envelope(authorized, detail, *, request_id, pending=False):
             (result_text + "\n\nНезависимая проверка: " + ("PASS" if verified else "FAIL / требуется проверка") +
              " · " + str(task.get("task_class") or "") +
              ("\nПричина: " + str(task["error_code"]) if task.get("error_code") else "")))
+    if not pending and task.get("application_request") and evaluation.get("passed") is False:
+        text += "\nСпецификация модели не совпала с поручением. Команда приложению не отправлена; бэктест или снимок не выполнен."
     actual = detail.get("actual_model")
     return {"scope": authorized["chat_scope"], "conversation_id": task["conversation_id"], "request_id": request_id,
             "source_kind": "real_model_response", "synthetic": False, "task_id": task["id"],
@@ -117,7 +119,13 @@ def completion(authorized, service, task_id):
     context = authorized["context"]
     detail = service.task_detail(context=context, task_id=task_id)
     task = service._get(context, EntityKind.TASK, task_id)
-    if task.status not in {"succeeded", "failed", "cancelled"}:
+    # Review can be the sealed outcome of a rejected model response, not an
+    # unfinished provider call. Report that failure through the same claimed
+    # delivery path without approving, retrying or changing its review state.
+    rejected_response = (task.status == "review" and detail.get("stage") == "provider_receipt"
+                         and bool(detail.get("evaluation_id"))
+                         and (detail.get("evaluation") or {}).get("passed") is False)
+    if task.status not in {"succeeded", "failed", "cancelled"} and not rejected_response:
         # A failed admission/unknown transmit is a truthful blocked report,
         # not a completed response or an invitation to execute again.
         if task.status != "blocked" or not detail.get("error_code"):

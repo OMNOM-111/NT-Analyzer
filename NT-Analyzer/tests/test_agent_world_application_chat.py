@@ -174,15 +174,35 @@ def test_dispatch_saved_before_publication_failure_repair(model_setup, authorize
     assert len(live_charts.commands(authorized)) == 1
 
 
-def test_model_wrong_plan_no_queue_and_no_fallback(model_setup, authorized):
+@pytest.mark.parametrize("answer", [
+    '{"instrument":"MGC 12-26","timeframe":"5m"}',
+    '```json\n{"application":{"request":{"instrument":"MNQ 09-26","timeframe":"5m"},"authorizations":[]}}\n```',
+    '{"instrument":"MNQ 09-26","timeframe":"5m","tool":"place_order"}',
+])
+def test_model_wrong_plan_reports_failure_without_queue_or_fallback(model_setup, authorized, monkeypatch, answer):
     service, ctx, *_ = model_setup
     _model(model_setup)
     reply = app_chat.try_chat("Иван, сделай снимок рабочего стола MNQ 09-26, 5m", scope=authorized["chat_scope"],
                              conversation_id="chart-real-1", request_id="wrong-model-plan", source="app")
-    service.executor = lambda **_: response('{"instrument":"MGC 12-26","timeframe":"5m"}')
-    plan = service.execute(context=ctx, task_id=reply["actions"][0]["task_id"])
+    calls = []
+    def execute(**kwargs):
+        calls.append(kwargs)
+        return response(answer)
+    service.executor = execute
+    assert local_worker.run_once(worker_id="rejected-plan-source")["status"] == "succeeded"
+    plan = service.task_detail(context=ctx, task_id=reply["actions"][0]["task_id"])
     assert plan["status"] == "review"
     assert app_chat.finish_dispatch(authorized, service, plan)["dispatched"] is False
+    assert not live_charts.commands(authorized)
+    monkeypatch.setattr(service, "execute", lambda **_: pytest.fail("delivery retried the rejected model"))
+    delivered = local_worker.run_once(worker_id="rejected-plan-delivery")
+    assert delivered["status"] == "succeeded" and delivered["result"]["status"] == "delivered"
+    rows = chief_agent.agent_world_live_messages(scope=authorized["chat_scope"])
+    reports = [row for row in rows if row.get("message_kind") == "report"]
+    assert len(reports) == 1 and len(calls) == 1
+    assert "Команда приложению не отправлена" in reports[0]["content"]
+    assert reports[0]["actions"][0]["verification"]["passed"] is False
+    assert service.task_detail(context=ctx, task_id=plan["id"])["status"] == "review"
     assert not live_charts.commands(authorized)
 
 

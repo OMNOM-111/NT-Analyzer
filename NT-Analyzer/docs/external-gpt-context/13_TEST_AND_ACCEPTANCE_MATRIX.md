@@ -3,20 +3,23 @@
 - Context Pack document: 13_TEST_AND_ACCEPTANCE_MATRIX.md
 - Last verified UTC: 2026-09-05T04:22:06Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: ca505d83a25356df5de2fb468f5bc20666a436d5 (clean beta.96 runtime; scoped follow-up under verification)
-- Active Local 8765: clean `ca505d83a25356df5de2fb468f5bc20666a436d5`, build `dev-0.10.0-beta.96-ca505d83a253`, original owner data, Preview=false
+- Local source verified SHA: 34deb827e4ed0e6a29d5693650b575e86e0f33d6 (clean beta.96 runtime; rating/rejected-response follow-up under verification)
+- Active Local 8765: clean `34deb827e4ed0e6a29d5693650b575e86e0f33d6`, build `dev-0.10.0-beta.96-34deb827e4ed`, original owner data, Preview=false
 - Scope: Canonical test layers, release gates, acceptance and rollback expectations
 - Status: IN DEVELOPMENT
 
 ## Latest scoped checkpoint verification
 
-3906 passed, 44 skipped (770.01 s); legacy 13/13; Python compile, 23 JS files,
-root secret/Markdown/CSP scans, context validator and 533-file bundle PASS.
+Active 34deb827: 3906 passed, 44 skipped (770.01 s); legacy 13/13;
+Python/23-JS/root/context/533-file bundle PASS. Dispatched exact-SHA
+[CI 33951941036](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33951941036)
+passed all three jobs. Final corrective follow-up: **3914 passed / 44 skipped**,
+759.73 s, including calendar/version fixes; 218 focused UI/domain also PASS.
 The 44 skips remain explicit; 41 have separate actual isolated PG evidence.
-Three real DeepSeek/Gemini comparisons (six outputs, three distinct arithmetic
-inputs per model) passed: n=3, OBSERVED, low confidence, no routing effect.
-This supersedes pending automated/comparison notes in earlier checkpoints;
-remaining Desktop/domain/own-key/final-SHA CI and owner acceptance stay open.
+Three real comparisons passed, n=3/OBSERVED/low confidence, no routing effect.
+Actual NT/chat/restart, project version, private Memory promotion, manual routine/
+calendar and System checks passed; actual PNG, Court/shared Memory/Social,
+own-key and final corrected-SHA/owner acceptance remain open.
 
 ## Main gates
 
@@ -60,17 +63,17 @@ transport, contract assertion or HTTP 200 is actual provider/browser acceptance.
 
 | Current delta check | Result | Limit |
 | --- | --- | --- |
-| Broad checkpoint pytest | **3852 passed, 44 skipped**, 622.61 s | Later final claim/role/workspace changes require full rerun |
-| Scoped follow-up | **270 scope, 28 delivery, 18 explicit-role tests PASS** | Disposable stores; actual browser follow-up separate |
-| Later domain gateway checks | **96 passed** | Focused checks, not a replacement for final full tests |
+| Active 34deb827 checkpoint | **3906 passed, 44 skipped**, 770.01 s; exact-SHA CI three jobs PASS | Active Local, not a Canary/Production release |
+| Final corrective follow-up | **3914 passed, 44 skipped**, 759.73 s; **218 focused PASS** | Includes calendar/version fixes; earlier counts and interrupted run are retained in the changelog |
+| Rejected-result delivery and rating | **134 and 147 focused PASS** | Includes wrong plan/wrapper/trading-action rejection, claimed-worker recovery with one provider call and retired/suspended/ambiguous active model cases |
 | Actual isolated PostgreSQL 17.10 | **41 passed, zero skipped**, 122.71 s | TLS, non-superuser/NOBYPASSRLS roles, existing migrations 1–22 only; not an Agent World PostgreSQL adapter |
 | Agent World domain/storage/social | **348 passed** | Disposable-data service/contract scope; no live model/publication claim |
 | Session authority/history | **17 passed** | Disposable auth/device stores; final browser recheck remains separate |
-| Final SF Chat delivery recovery | **CONTRACT PASS** | One claimed existing-worker publisher; final runtime recheck pending |
+| SF Chat delivery recovery | **NT RESULT / RESTART PASS; REJECTION CONTRACT PASS** | Five original backtest messages survived restart; sealed Gemini rejection must be rechecked after corrected activation, without another provider call |
 | Live ordinary-user provider | **PENDING OWNER REGISTRATION / KEY** | Final Terms waiting on localhost; then own confirmed workspace and OpenRouter wizard; no copied owner credentials |
-| Actual owner providers / NT | **PARTIAL** | DeepSeek + Gemini CONNECTION_OK; SF Chat/model/NT original report PASS on ca505d83, Z.AI endpoint unavailable |
-| Final Desktop/domain/rating/restart browser acceptance | **PENDING** | Follow-up clean activation and remaining actual receipts still required |
-| Final static/context/bundle/CI | **PENDING** | Record final source and artifacts; older CI cannot certify the dirty delta |
+| Actual owner providers / NT | **PARTIAL** | DeepSeek + Gemini CONNECTION_OK and three comparisons PASS; SF Chat/model/NT original report PASS, Z.AI unavailable and Gemini's noncanonical chart plan rejected |
+| Initial domain/browser acceptance | **PARTIAL** | Project version, private Memory promotion, manual routine/calendar acceptance, System flags and NT/chat restart PASS. Local-time/rating corrections await activation; actual PNG, Court/shared Memory/Social remain pending |
+| Corrective static/context/bundle/CI | **PENDING FINAL CLOSEOUT** | Python/23-JS/root scans/legacy rerun PASS; exact final index/source checks remain required, 34deb827 CI cannot certify new code |
 
 The 41 generic PostgreSQL skips are covered by the separate real isolated DB run.
 Two shell checks and one POSIX permissions check remain unavailable on Windows;
@@ -78,12 +81,14 @@ those three are not Windows PASS. No Production DB or secrets are test fixtures.
 Agent World domain storage itself is Development SQLite only and fails closed
 outside Development; no new numbered migration or production repository is claimed.
 
-Initial switch and later clean `ca505d83` beta.96 activation passed preserved
-owner-data/copy/integrity checks. New scoped follow-up is not active yet. The manual NinjaTrader proof
+Initial switch, clean `ca505d83` and then `34deb827` beta.96 activation passed
+preserved owner-data/copy/integrity checks. The corrective follow-up is not active yet. The manual NinjaTrader proof
 `ui_20260905T003301149Z` contains 1,273 bars and 64 trades and remains excluded
 from Agent World statistics. Fresh SF Chat/model job 62182839 passed with original
-NT report; actual Desktop canvas and remaining model/rating/domain actions are
-still required. See
+NT report and survived restart without duplicate messages. Three actual model
+comparisons and initial domain actions passed. Gemini's chart plan failed the
+strict independent contract before Desktop dispatch; actual PNG and remaining
+Court/shared Memory/Social/private-key checks are still required. See
 [ADR-0012](../adr/0012-agent-world-integrated-local.md).
 
 ## Historical pre-model evidence

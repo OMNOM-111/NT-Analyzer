@@ -3,8 +3,8 @@
 - Context Pack document: 03_ARCHITECTURE_AND_DATA_MODEL.md
 - Last verified UTC: 2026-09-05T04:04:22Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: ca505d83a25356df5de2fb468f5bc20666a436d5 (clean beta.96 runtime; scoped follow-up under verification)
-- Scoped follow-up: delivery-only recovery, explicit Persona application roles, workflow projection and ordinary-user private workspace; final clean commit/activation acceptance pending
+- Local source verified SHA: 34deb827e4ed0e6a29d5693650b575e86e0f33d6 (clean beta.96 runtime; rating/rejected-response follow-up under verification)
+- Active scope: claimed delivery, explicit Persona roles, workflow projection and personal workspace at 34deb827; sealed-rejection delivery, active-binding rating and local-time display follow-up under verification
 - Unified Local base: beta.96, open PR #280; owner-review branch is stacked above foundation PR #281; no merge or Canary/Production promotion
 - Scope: Current components, trust boundaries, entities and key flows
 - Status: IN DEVELOPMENT
@@ -119,10 +119,12 @@ flowchart LR
 ## Agent World integrated Local delta
 
 Runtime and implementation are different checkpoints. Local `8765` now serves
-clean `ca505d83a25356df5de2fb468f5bc20666a436d5`, beta.96, from a separate clean
+clean `34deb827e4ed0e6a29d5693650b575e86e0f33d6`, beta.96, from a separate clean
 runtime worktree with the original owner data/settings. Integrated model/domain/
-social code is active; follow-up delivery/role/private-container changes await
-clean activation. Real SF Chat/model/NT report passed; remaining provider,
+social code and claimed delivery/explicit roles/private containers are active.
+Sealed rejected-response delivery, active-binding ratings and local-time display
+are the next verified-code activation, not a storage migration or permission change.
+Real SF Chat/model/NT report passed and survived restart; remaining provider,
 browser and owner acceptance is pending. The previous `fc78677dfa258fb56042866a6764e8c8a45c42e6` snapshot described
 the earlier owner-review adapters; it is history, not the current implementation
 claim. The deployed anchor `8f42158661e8247832c90bea8fc4d9f0071e647b` is unchanged;

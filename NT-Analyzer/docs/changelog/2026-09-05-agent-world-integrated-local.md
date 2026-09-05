@@ -9,12 +9,15 @@ Version remains `0.10.0-beta.96`; no next version or release assigned.
 Business requester: project owner. Technical attribution: AI-assisted change.
 Branch: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282).
 Starting SHA: `486db834850d465006a3983d2d83ee809202df60`; integrated source
-`ca505d83a25356df5de2fb468f5bc20666a436d5` is committed and active on Local.
-Claimed delivery/explicit roles/private-container follow-up is being verified.
+`ca505d83a25356df5de2fb468f5bc20666a436d5` was the initial model/domain checkpoint.
+Claimed delivery/explicit roles/private-container checkpoint
+`34deb827e4ed0e6a29d5693650b575e86e0f33d6` is committed, pushed and active on Local.
+Its [CI run 33951941036](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33951941036)
+passed Windows, Ubuntu and static jobs. Subsequent scoped fixes are tracked below.
 PR #280/#281 are dependencies, not merged here.
 Verification result: PENDING; owner acceptance not yet ready for the full delta.
 
-Scoped automated verification result: PASS — 3906 passed, 44 skipped, 770.01 s;
+Active 34deb827 automated verification: PASS — 3906 passed, 44 skipped, 770.01 s;
 legacy 13/13, Python compile, 23 JS checks, root secret/Markdown/CSP checks,
 context validation, 533-file actual bundle all passed. Skips and remaining live
 acceptance/CI gates below are not counted as PASS for the complete program.
@@ -33,11 +36,13 @@ acceptance/CI gates below are not counted as PASS for the complete program.
   `8de8d943b0dcbd543085f56730551843f2af48c1e8b2ca9b09d6e5f92023fde9`.
 - Only the matched Local supervisor/server/worker and scheduled-task action were
   retired/replaced. NinjaTrader and other processes were not stopped.
-- Clean detached `agent-world-local-runtime` at `486db834850d465006a3983d2d83ee809202df60`
-  now serves 8765, beta.96, build `dev-0.10.0-beta.96-486db834850d`, dirty=false,
+- Initial clean detached `agent-world-local-runtime` at `486db834850d465006a3983d2d83ee809202df60`
+  served 8765, beta.96, build `dev-0.10.0-beta.96-486db834850d`, dirty=false,
   Development, real owner/data root, Preview=false, live orders=false.
-- Later model/domain delta activation requires a tested clean commit and another
-  exact-PID/active-work check. No dirty hot-copy into that runtime is permitted.
+- Later ca505d83 and 34deb827 activations repeated exact-PID/active-work checks,
+  isolated-copy rehearsal and a 533-file exact runtime bundle PASS. Current
+  measured build is `dev-0.10.0-beta.96-34deb827e4ed`; five backtest SF Chat
+  messages and actual owner account/workspace survived restart unchanged.
 
 ## Implementation
 
@@ -61,13 +66,13 @@ Scoped implementation evidence:
 | Check | Result and limit |
 | --- | --- |
 | Broad pre-final pytest | Historical 3803/44, then 3852 passed, 44 skipped; 622.61 s. Later claim/role/workspace changes require rerun |
-| Follow-up contracts | 270 scoped tests, 28 delivery tests and 18 role/projection tests PASS; full follow-up run pending |
+| Follow-up contracts | 270 scoped tests, 28 delivery tests and 18 role/projection tests PASS; 34deb827 full run 3906 PASS / 44 skipped |
 | Rating class-label regression | 96 passed; each observed model score names its specific rubric |
 | Repeated actual PostgreSQL | 41 passed, zero skips, 122.71 s; isolated loopback TLS DB, non-superuser/NOBYPASSRLS roles; existing migrations 1–22 |
 | Migration set | `d3bc149957d7c9eb68a4b476d3958a5bb790b0ac995cc73dc76ca9031fd53601`, no pending/applied-now migrations on repeat |
 | Session authority/history | 17 passed; real disposable auth/device stores, permanent/session, revoke/expiry/foreign scope, no-write lease checks |
 | Live provider/browser/application | On ca505d83: DeepSeek CONNECTION_OK, fresh SF Chat → DeepSeek → NT → same-chat original report PASS; Z.AI endpoint unavailable, not PASS. Other scenarios remain separate |
-| Final static/context/bundle/CI | Pending final source; historical CI on b05ee124 not reused as current proof |
+| 34deb827 static/context/bundle/CI | PASS, including exact Windows/Ubuntu/static CI; later corrective delta requires its own verification |
 
 Forty-one generic Windows skips are covered by the separate actual PG run.
 Two shell tests and one POSIX permissions test require Linux; skipped is not PASS.
@@ -105,6 +110,42 @@ each used the same arithmetic input for both models, with three distinct input
 arrays overall. Six actual outputs passed independent checks; both models have
 n=3, OBSERVED, low confidence, no routing effect. Z.AI endpoint failure is
 retained; only the newly created failing binding was retired, not the owner key.
+
+## Continued browser checks and corrective delta
+
+Actual UI on 34deb827: explicit Tolik/Ivan role assignment yields two Personas;
+Strategy Project creation/version/history, source-bound private Memory promotion,
+manual routine acceptance and calendar creation/acceptance completed in the same
+AI Center drawer. Canonical status records exact new IDs; these are scoped Local
+review records, not synthetic provider claims or scheduled trading actions.
+
+Gemini chart task `4d1d5b2f-61e9-57d6-90fa-cbd0e2cb611d` returned an incorrectly
+wrapped specification. Strict verification rejected it, with no chart dispatch.
+Sealed `review` was missing from saved-result chat delivery, leaving the UI queued.
+The correction delivers the existing failure once through the same claimed worker
+and inbox, including after interruption; it does not approve the result or repeat
+a paid call. Planning instructions now explicitly prohibit wrappers/code fences.
+Additional correction selects the one active model for Persona rating while
+preserving retired/suspended bindings in history; ambiguous active models still
+have no combined rating. Targeted 134 model/application/delivery tests and 147
+delivery/role/gateway tests passed. Full follow-up: **3913 passed, 44 skipped**,
+738.37 s, before the subsequent calendar/version display corrections.
+
+Calendar correctly stored 00:00–00:30 local as 07:00–07:30 UTC but incorrectly
+displayed raw UTC under local-time labels. The display now uses the same local
+formatter as other dates. Accepted routine/calendar labels are neutral, and new
+project versions record their actual creation timestamp. Old snapshots are not
+rewritten or backdated. The first new UI test had a wrong nested fixture shape
+(217 passed/1 failed); it was corrected to the actual top-level DTO, then all
+218 focused tests passed. An early full run was interrupted, not counted PASS.
+Final corrective full run: **3914 passed, 44 skipped**, 759.73 s, XML
+`.artifacts/verification-20260905/full-regression-final-domain-ui-v2.xml`.
+Legacy **13/13**, Python compile, **23 JS**, root scan and context validator
+reruns passed. Exact staged bundle and new-SHA CI are recorded at closeout.
+Desktop showed real historical candles but its renderer later timed out; one
+reload did not recover it. Lightweight AI Center checks continued on another
+tab. Actual chart PNG acceptance remains pending, not replaced with headless
+or generated imagery. Ordinary signup consent and separate key remain pending.
 
 ## Release impact and rollback
 

@@ -3,15 +3,17 @@
 - Context Pack document: 12_API_AND_SCHEMA_REFERENCE.md
 - Last verified UTC: 2026-09-05T04:04:22Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: ca505d83a25356df5de2fb468f5bc20666a436d5 (clean beta.96 runtime; scoped follow-up under verification)
-- Scoped follow-up: delivery-only recovery, explicit Persona application roles, workflow projection and ordinary-user private workspace; final clean commit/activation acceptance pending
+- Local source verified SHA: 34deb827e4ed0e6a29d5693650b575e86e0f33d6 (clean beta.96 runtime; rating/rejected-response follow-up under verification)
+- Active scope: claimed delivery, explicit Persona roles, workflow projection and personal workspace at 34deb827; sealed-rejection delivery, active-binding rating and local-time display follow-up under verification
 - Unified Local base: beta.96, PR #280; separate owner-review slice above foundation PR #281; no merge or Canary/Production promotion
 - Scope: Compact index of important endpoint families, entities and capability names
 - Status: IN DEVELOPMENT
 
-Local `8765` currently serves the clean `ca505d83` beta.96 build with original
+Local `8765` currently serves the clean `34deb827` beta.96 build with original
 owner data/settings. Integrated domain/model/social endpoints are active; scoped
-claimed-delivery/explicit-role/private-container follow-up awaits clean activation.
+claimed-delivery/explicit-role/private-container changes are active. The pending
+follow-up changes sealed rejection delivery and projections, not API authority
+or numbered storage migrations.
 `fc78677` is the historical adapter snapshot. The deployed anchor
 `8f42158661e8247832c90bea8fc4d9f0071e647b` remains unchanged; Production was not
 rechecked in this task.

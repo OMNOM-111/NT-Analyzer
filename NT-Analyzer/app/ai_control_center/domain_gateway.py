@@ -496,9 +496,12 @@ def enrich_overview(authorized, base=None):
         for model in bound:
             stats = model_service.evaluations(context=context, model_id=model["id"])
             observations.append({"model_id": model["id"], "model": model["model"],
-                                 "task_class": stats["rubric_key"], **stats})
-        if len(observations) == 1:
-            evaluation = observations[0]
+                                 "connection_status": model["status"], "task_class": stats["rubric_key"], **stats})
+        active_observations = [row for row in observations if row["connection_status"] == "active"]
+        if len(active_observations) == 1:
+            # Retired bindings remain history, but cannot erase the current
+            # model's observed rating or be averaged into it.
+            evaluation = active_observations[0]
         role_spec = ROLES.get(person.get("application_role"), {})
         legacy = legacy_agents.get(role_spec.get("legacy_id")) if aliases.get(role_spec.get("legacy_id")) == person["id"] else None
         agents.append({"id": person["id"], "display_name": person.get("title") or person.get("name"),

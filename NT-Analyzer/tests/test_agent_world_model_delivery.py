@@ -14,7 +14,7 @@ from app.ai_lab import chief_agent
 from app.ai_control_center import contracts as c, domain_gateway as gateway, model_chat
 from app.ai_control_center.model_service import ModelService
 from app.ai_control_center.sqlite_repository import SQLiteAgentWorldRepository
-from app.ai_control_center.states import ContractError
+from app.ai_control_center.states import ContractError, EntityKind
 from tests.test_agent_world_domain_gateway import ordinary
 from tests.test_agent_world_live_gateway import isolated_runtime, owner
 from tests.test_agent_world_models import Secrets, response
@@ -33,6 +33,7 @@ def delivery(ordinary, tmp_path, monkeypatch, request):
     monkeypatch.setattr(chief_agent, "_explicit_production", lambda: False)
     path = tmp_path / "model-contracts.sqlite3"
     calls, secrets = [], Secrets()
+    response_text = ['{"count":4,"sum":34,"min":-4,"max":17,"mean":8.5}']
 
     def repository(auth):
         auth["admit"]()
@@ -40,7 +41,7 @@ def delivery(ordinary, tmp_path, monkeypatch, request):
 
     def execute(**kwargs):
         calls.append(kwargs)
-        return response('{"count":4,"sum":34,"min":-4,"max":17,"mean":8.5}')
+        return response(response_text[0])
 
     def models(auth, repo=None):
         return ModelService(repo or repository(auth), secrets=secrets, executor=execute,
@@ -61,7 +62,7 @@ def delivery(ordinary, tmp_path, monkeypatch, request):
     detail = model_chat.start(auth, service, model["id"], {"rubric_key": "json_arithmetic", "input_text": "[8,13,-4,17]"},
                               "delivery-task")
     return SimpleNamespace(account=ordinary, context=context, authorized=auth, service=service,
-        task_id=detail["id"], conversation=detail["conversation_id"], calls=calls, root=tmp_path,
+        task_id=detail["id"], conversation=detail["conversation_id"], calls=calls, response_text=response_text, root=tmp_path,
         source_id="wj_aw_model_" + UUID(detail["id"]).hex)
 
 
@@ -120,7 +121,10 @@ def test_transient_chat_failure_retries_persisted_result_without_second_call(del
     assert len(_reports(delivery)) == 1 and len(delivery.account.calls["budget"]) == budgets
 
 
-def test_restart_after_completion_before_delivery_enqueue_uses_bounded_existing_scan(delivery, monkeypatch):
+@pytest.mark.parametrize("rejected", [False, True])
+def test_restart_after_completion_before_delivery_enqueue_uses_bounded_existing_scan(delivery, monkeypatch, rejected):
+    if rejected:
+        delivery.response_text[0] = '{"wrong":"response"}'
     original = gateway.enqueue_model_delivery
     monkeypatch.setattr(gateway, "enqueue_model_delivery", lambda *a, **kw: (_ for _ in ()).throw(OSError("crash before enqueue")))
     assert local_worker.run_once(worker_id="lost-process")["status"] == "failed"
@@ -132,6 +136,15 @@ def test_restart_after_completion_before_delivery_enqueue_uses_bounded_existing_
     recovered = local_worker.run_once(worker_id="new-process")
     assert recovered["status"] == "succeeded" and recovered["payload"]["phase"] == "delivery"
     assert len(_reports(delivery)) == 1 and len(delivery.calls) == 1
+    assert _reports(delivery)[0]["actions"][0]["verification"]["passed"] is (not rejected)
+
+
+def test_unsealed_review_is_not_a_deliverable_model_result(delivery):
+    task = delivery.service._get(delivery.context, EntityKind.TASK, delivery.task_id)
+    task = delivery.service._change(delivery.context, task, "running")
+    delivery.service._change(delivery.context, task, "review")
+    assert model_chat.completion(delivery.authorized, delivery.service, delivery.task_id) is None
+    assert _reports(delivery) == [] and not delivery.calls
 
 
 def test_append_before_inbox_ack_is_repaired_idempotently(delivery, monkeypatch):

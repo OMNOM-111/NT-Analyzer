@@ -3,8 +3,8 @@
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
 - Last verified UTC: 2026-09-05T04:04:22Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: ca505d83a25356df5de2fb468f5bc20666a436d5 (clean beta.96 runtime; scoped follow-up under verification)
-- Scoped follow-up: delivery-only recovery, explicit Persona application roles, workflow projection and ordinary-user private workspace; final clean commit/activation acceptance pending
+- Local source verified SHA: 34deb827e4ed0e6a29d5693650b575e86e0f33d6 (clean beta.96 runtime; rating/rejected-response follow-up under verification)
+- Active scope: claimed delivery, explicit Persona roles, workflow projection and personal workspace at 34deb827; sealed-rejection delivery, active-binding rating and local-time display follow-up under verification
 - Unified Local base: `0.10.0-beta.96`, PR #280; no Canary/Production promotion
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: PARTIAL
@@ -115,8 +115,8 @@ Key admin capability names already in the contract: `admin.view`,
 The following Production/Canary facts are historical deployment evidence, not a
 fresh environment check. The shared deployed anchor
 `8f42158661e8247832c90bea8fc4d9f0071e647b` is unchanged. Local `8765` now serves
-the clean `ca505d83` beta.96 runtime with original owner data/settings; scoped
-delivery/role/private-container follow-up awaits activation. Earlier `fc78677`
+the clean `34deb827` beta.96 runtime with original owner data/settings and the
+scoped delivery/role/private-container changes active. Earlier `fc78677`
 owner-review notes remain history. Remaining real-provider/browser acceptance is pending.
 
 Development `POST /api/account/workspace/personal` creates/selects only the

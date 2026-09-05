@@ -3,11 +3,11 @@
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-05T04:22:06Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: ca505d83a25356df5de2fb468f5bc20666a436d5 (clean beta.96 runtime; scoped follow-up under verification)
+- Local source verified SHA: 34deb827e4ed0e6a29d5693650b575e86e0f33d6 (clean beta.96 runtime; rating/rejected-response follow-up under verification)
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Active branch: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; both dependencies remain open
-- Version: `0.10.0-beta.96`, `pre_release`; clean `ca505d83` is active on Local 8765, no Canary/Production promotion
-- Integration state: ca505d83 model/domain/social code is active on 8765; scoped follow-up is under verification in the task worktree
+- Version: `0.10.0-beta.96`, `pre_release`; clean `34deb827` is active on Local 8765, no Canary/Production promotion
+- Integration state: 34deb827 includes claimed delivery, explicit roles and private containers; sealed-rejection/rating/calendar follow-up is under verification in the task worktree
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
@@ -56,28 +56,36 @@ The original Local at 8765 served dirty beta.93 / `7062f749` because its schedul
 task still pointed at that checkout. This is historical, not the current runtime.
 After owner authorization, copy/cold backups, SQLite integrity and isolated-copy
 startup checks, only the matched Local process/task chain was replaced. Clean
-detached `agent-world-local-runtime` at `ca505d83a25356df5de2fb468f5bc20666a436d5`
-now serves beta.96, build `dev-0.10.0-beta.96-ca505d83a253`, with the original
+detached `agent-world-local-runtime` at `34deb827e4ed0e6a29d5693650b575e86e0f33d6`
+now serves beta.96, build `dev-0.10.0-beta.96-34deb827e4ed`, with the original
 owner data, account, workspace, history and NT heartbeat. No active job was lost.
-The integrated source is active; newer claimed-delivery/role/private-container
-follow-up has not yet been activated there.
+Claimed delivery, explicit roles and private containers are active. The next
+corrective slice handles sealed rejection delivery, single-active-model ratings,
+local calendar display and timestamps on new project versions.
 
 The manual NinjaTrader proof `ui_20260905T003301149Z` has 1,273 actual bars and
 64 trades, but is not Agent World-originated and remains excluded from statistics.
 Fresh SF Chat/model-created backtest `62182839-1c4c-563d-8186-bcef081ec599`
 passed on ca505d83: 64 trades, net -969.70, PF 0.725188, original report and hashes.
-Desktop-to-SF-Chat capture, real model ratings, domain actions and restart
-acceptance remain required. No second worker may share the owner data root. The ordinary
+Three real DeepSeek/Gemini comparisons passed, n=3/OBSERVED/low confidence. The
+verified backtest and five messages survived restart without duplication. Real
+project versioning, private Memory promotion, manual routine/calendar acceptance
+and System flags were exercised; Court/shared Memory/Social remain pending.
+A Gemini Desktop plan was rejected for a noncanonical JSON wrapper, without
+dispatch. Its terminal failure delivery is being fixed without accepting the
+plan or repeating a provider call. Actual PNG-to-SF-Chat remains unverified.
+No second worker may share the owner data root. The ordinary
 development profile resets data root to the code checkout; the verified Local
 wrapper reapplies the original data root after profile load. Original task XML,
 backups and manifests remain outside Git. Code rollback and data rollback are
 separate; preserve new owner writes before restoring a cold snapshot.
 
-The broad checkpoint before final claim/role/workspace changes passed **3852
-passed, 44 skipped**, 622.61 s. Scoped follow-up passed 270 domain/application/
-workspace/storage tests, 28 delivery tests and 18 role/projection tests. Saved
-completion uses one claimed existing-worker path, not competing direct writers.
-Final full follow-up regression remains pending. Actual isolated PostgreSQL 17.10 separately
+The active 34deb827 checkpoint passed **3906 tests, 44 skipped**, 770.01 s, all
+static/context/bundle gates and three exact-SHA dispatched CI jobs. Older 3852-test
+counts are historical. The final corrective follow-up passed **3914 tests,
+44 skipped**, 759.73 s, including calendar/version fixes, plus **218 focused tests**.
+Saved completion uses one claimed existing
+worker, not another provider call. Actual isolated PostgreSQL 17.10 separately
 passed **41 tests, zero skips**, 122.71 s, on existing migrations 1–22 with TLS
 and non-superuser/NOBYPASSRLS roles. The remaining two shell and one POSIX
 permissions tests are unavailable on Windows. There is no Agent World PG adapter:
@@ -131,8 +139,10 @@ green. No workflow or branch-protection changes are part of this slice.
 [Branch run 33937601902](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33937601902)
 historically passed **3/3** on `b05ee124caf652c77689fd749cd9eadc8265d564` (documentation after
 code `fc78677df`): Linux **3372 passed/41 skipped**, Windows **3369 passed/44 skipped**,
-static PASS. It does not certify the later `486db834` checkpoint or dirty
-model/domain/social delta. Final-SHA checks still have to run. PR #282 stays
+static PASS. This historical run is superseded for active 34deb827 by
+[run 33951941036](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33951941036),
+all three jobs successful. The uncommitted corrective slice requires its own
+exact-SHA checks. PR #282 stays
 draft for owner review; program stages remain open.
 
 ## Historical deployment identity
@@ -166,9 +176,11 @@ They no longer define the current Local baseline.
 - Development SQLite implements the Agent World repository; non-Development
   use fails closed. Actual PostgreSQL 41/41 covers existing relational/RLS
   migrations 1–22, not a missing Agent World PostgreSQL adapter.
-- DeepSeek and Gemini connection tests passed; fresh model/chat/NT original
-  report passed on ca505d83. Z.AI endpoint unavailable is not PASS. Remaining
-  Desktop/domain/rating/restart and final follow-up acceptance are still required.
+- DeepSeek and Gemini connections and three actual comparisons passed; fresh
+  model/chat/NT report passed on ca505d83 and survived 34deb827 restart. Z.AI
+  unavailability and Gemini's rejected chart plan are not PASS. Remaining PNG,
+  Court/shared Memory/Social, corrected projections/delivery and own-key
+  acceptance are still required.
 - Agent World is `IN DEVELOPMENT`: domain mechanisms are implemented, but the
   full local owner acceptance, Git/CI closeout and stages 0–13 are not closed.
 - Ordinary test signup `aw_model_review_0905` reached final Terms on localhost;
@@ -186,25 +198,26 @@ They no longer define the current Local baseline.
 
 ## Latest scoped checkpoint verification
 
-3906 passed, 44 skipped (770.01 s); legacy 13/13; Python compile, 23 JS files,
-root secret/Markdown/CSP scans, context validator and 533-file bundle PASS.
-The 44 skips remain explicit; 41 have separate actual isolated PG evidence.
-Three real DeepSeek/Gemini comparisons (six outputs, three distinct arithmetic
-inputs per model) passed: n=3, OBSERVED, low confidence, no routing effect.
-This supersedes pending automated/comparison notes in earlier checkpoints;
-remaining Desktop/domain/own-key/final-SHA CI and owner acceptance stay open.
+Active 34deb827: full 3906/44, legacy 13/13, Python/23-JS/root/context/533-file
+bundle PASS, exact-SHA CI 33951941036 all three jobs PASS. Final corrective slice:
+3914/44 (759.73 s), 218 focused UI/domain, legacy/Python/23-JS/root/context PASS.
+The 44 skips remain explicit; 41 have separate
+actual isolated PG evidence. Three real comparisons, NT/chat/restart and initial
+domain actions passed; remaining actual PNG, Court/shared Memory/Social, own-key
+and final corrected-SHA/owner acceptance stay open.
 
 ## Next safe step
 
-Finish the claimed-delivery/explicit-role/private-container regression rerun,
-static/context/exact-bundle checks and a clean scoped commit. Prepare the ordinary-user wizard without
+Finish the final exact-index bundle check and clean scoped commit for the
+tested rejection/rating/calendar/version fixes. Prepare the ordinary-user wizard without
 inventing credentials; exercise its real provider path when the owner enters
 the separate key.
 Activate that tested commit on Local only after another exact-PID/no-active-work
 check, preserving the verified original data-root binding and rollback evidence.
-Then complete actual model-to-NT/Desktop-to-SF-Chat browser flows, measured model
-comparisons/ratings, domain/Court/Memory/Social actions and restart/revocation
-checks. Record final-SHA CI and the owner's visual acceptance separately. Do not
+Then confirm the old rejected plan reaches its original chat without another
+provider call, the active-model rating and local calendar display are correct,
+and complete a fresh actual Desktop-to-SF-Chat receipt plus remaining Court/
+shared Memory/Social actions and revocation checks. Record final-SHA CI and the owner's visual acceptance separately. Do not
 mark completion from a mock transport, historical report or successful HTTP
 response, and do not infer any merge or Canary/Production authorization.
 

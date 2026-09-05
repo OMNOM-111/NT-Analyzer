@@ -18,7 +18,7 @@
   });
   const ACTION_LABELS = Object.freeze({ create: 'Создать', connect: 'Подключить', bind_existing: 'Связать Local-подключение', update: 'Изменить', activate: 'Активировать', suspend: 'Приостановить', archive: 'В архив', promote: 'Продвинуть', publish_to_workspace: 'Опубликовать в workspace', propose_consensus: 'Собрать решение по вкладам', suggest_routine: 'Предложить по результатам', prepare: 'Подготовить снимок', publish: 'Опубликовать в SF Social', revoke: 'Отозвать', version: 'Новая версия', accept: 'Принять', dismiss: 'Отклонить', review: 'Проверить через Court', withdraw: 'Отозвать решение', test: 'Проверить соединение', task: 'Первое задание', disconnect: 'Отключить', cancel: 'Отменить задачу', retry: 'Повторить задачу' });
   const STATUS = {
-    running: ['В работе', 'good'], working: ['В работе', 'good'], active: ['Активен', 'good'], healthy: ['Работает', 'good'], succeeded: ['Завершено', 'good'], completed: ['Завершено', 'good'], verified: ['Проверено', 'good'], passed: ['Проверено', 'good'], accepted: ['Вклад принят', 'good'], submitted: ['Вклад записан', 'info'],
+    running: ['В работе', 'good'], working: ['В работе', 'good'], active: ['Активен', 'good'], healthy: ['Работает', 'good'], succeeded: ['Завершено', 'good'], completed: ['Завершено', 'good'], verified: ['Проверено', 'good'], passed: ['Проверено', 'good'], accepted: ['Принято', 'good'], submitted: ['Вклад записан', 'info'],
     planned: ['Запланировано', 'neutral'], ready: ['В очереди', 'neutral'], queued: ['В очереди', 'neutral'], waiting: ['Ожидает', 'neutral'], pending: ['Ожидает', 'neutral'], free: ['Свободен', 'neutral'], available: ['Свободен', 'neutral'], idle: ['Свободен', 'neutral'],
     review: ['Нужна проверка', 'review'], awaiting_owner: ['Решение владельца', 'review'], approval_required: ['Нужно подтверждение', 'review'], court: ['Разбор Court', 'review'],
     blocked: ['Заблокировано', 'warning'], paused: ['На паузе', 'warning'], warning: ['Внимание', 'warning'],
@@ -455,7 +455,7 @@
       const fields = domainFormFields(key, key === 'models' ? 'connect' : 'create').filter(spec => spec.type !== 'password');
       const description = fields.filter(spec => recordValue(item, spec.key) !== undefined && recordValue(item, spec.key) !== null && recordValue(item, spec.key) !== '').map(spec => {
         const raw = recordValue(item, spec.key);
-        const value = typeof raw === 'object' ? publicJSON(raw) : String(raw);
+        const value = spec.type === 'datetime-local' ? date(raw) : typeof raw === 'object' ? publicJSON(raw) : String(raw);
         return `<div><dt>${esc(spec.label)}</dt><dd class="aw-pre-wrap">${esc(value)}</dd></div>`;
       }).join('');
       const verification = item.observed_eval || item.evaluation;

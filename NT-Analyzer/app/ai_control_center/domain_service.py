@@ -380,6 +380,7 @@ class DomainService:
             notes = _text(data["notes"], empty=True)
             snapshot = self._put(context, admit, {"version": len(record.versions) + 1, "notes": notes,
                                                  "parameters": data["parameters"], "definition": c.primitive(record.definition),
+                                                 "created_at": c.primitive(self.now()),
                                                  "created_by": str(context.user_uuid), "request_sha256": digest})
             following = self._change(record, versions=(*record.versions, snapshot))
         elif domain == "projects" and action == "archive":

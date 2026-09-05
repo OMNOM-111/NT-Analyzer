@@ -311,6 +311,8 @@ def test_project_versions_are_append_only_and_preserve_negative_parameters(env):
     first = act(env, item, "projects", "version", {"notes": "Initial", "parameters": {"offset": -4.5, "enabled": False}})["item"]
     second = act(env, first, "projects", "version", {"notes": "Second", "parameters": {"offset": -2}})["item"]
     assert second["version_count"] == 2 and second["versions"][0]["parameters"]["offset"] == -4.5
+    assert first["versions"][0]["created_at"] == c.primitive(env.state.now)
+    assert second["versions"][0] == first["versions"][0]
     changed = act(env, second, "projects", "update", project_payload(description="New description"))["item"]
     assert changed["versions"] == second["versions"]
     archived = act(env, changed, "projects", "archive")["item"]
