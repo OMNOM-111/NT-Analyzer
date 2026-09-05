@@ -352,6 +352,92 @@ def test_judge_packet_isolated_and_schema_score_not_reputation(setup):
     assert service.evaluations(context=ctx, model_id=model["id"], rubric_key="court_vote")["sample_size"] == 0
 
 
+def judge_request(setup, key):
+    from app.ai_control_center.domain_contracts import JudgeContext
+    model = connected(setup)
+    packet = json.dumps({"claim": "bounded historical report, no execution"}, sort_keys=True)
+    return JudgeContext(context=setup[1], model_id=UUID(model["id"]), case_id=uuid4(), session_id=uuid4(),
+        packet_json=packet, packet_sha256=hashlib.sha256(packet.encode()).hexdigest(), run_key=key)
+
+
+def test_inline_court_has_one_dispatch_owner_not_a_second_worker_job(setup):
+    service, ctx, _, calls, queued, *_ = setup
+    request = judge_request(setup, "court-single-dispatch")
+    def execute(**kwargs):
+        calls.append(kwargs)
+        return response('{"verdict":"approve","confidence":80,"rationale":"Evidence only"}')
+    service.executor = execute
+    vote = service.judge(request)
+    assert not queued, "Synchronous Court judge must not also enqueue a worker call"
+    assert service.judge(request) == vote and len(calls) == 1 and not queued
+    with pytest.raises(ContractError, match="model_rubric_not_supported"):
+        service.start_task(context=ctx, model_id=request.model_id,
+            payload={"rubric_key": "court_vote"}, idempotency_key="untrusted-court-rubric")
+
+
+@pytest.mark.parametrize("mode", ["valid", "invalid_vote", "missing_receipt", "wrong_request", "revoked",
+                                 "interrupt_1", "interrupt_2", "interrupt_3", "interrupt_4", "interrupt_5"])
+def test_court_legacy_blocked_receipt_recovery_never_transmits_again(setup, mode):
+    service, ctx, _, calls, queued, *_ = setup
+    request = judge_request(setup, "court-sealed-recovery")
+    def execute(**kwargs):
+        calls.append(kwargs)
+        return response('{"verdict":"approve","confidence":80,"rationale":"Evidence only"}'
+                        if mode != "invalid_vote" else '{"self_score":100}')
+    service.executor = execute
+    finish = service._finish
+    service._finish = lambda *args: (_ for _ in ()).throw(InterruptedError("after immutable receipt"))
+    with pytest.raises(InterruptedError):
+        service.judge(request)
+    task_id = UUID(calls[0]["request_id"])
+    record = service._get(ctx, EntityKind.TASK, task_id)
+    checkpoint = service._json(ctx, record.checkpoint)
+    original_receipt = dict(checkpoint["receipt"])
+    # Reproduce the old cross-process race: the worker saw an in-flight task
+    # while the synchronous caller subsequently persisted its authentic receipt.
+    record = service._change(ctx, record, "blocked")
+    service._change(ctx, service._execution(ctx, task_id), "review")
+    service._change(ctx, service._get(ctx, EntityKind.INTENT, record.intent.entity_id), "blocked")
+    if mode == "missing_receipt":
+        checkpoint.pop("receipt")
+    elif mode == "wrong_request":
+        receipt = service._json(ctx, checkpoint["receipt"])
+        receipt["request_sha256"] = "0" * 64
+        checkpoint["receipt"] = c.primitive(service._put(ctx, receipt))
+    if mode in {"missing_receipt", "wrong_request"}:
+        record = service._change(ctx, record, checkpoint=service._put(ctx, checkpoint))
+    service._finish = finish
+    if mode == "revoked":
+        service.admit = lambda *_: (_ for _ in ()).throw(ContractError("model_access_denied"))
+    if mode.startswith("interrupt_"):
+        change, writes = service._change, []
+        def interrupt_change(*args, **kwargs):
+            saved = change(*args, **kwargs)
+            writes.append(saved.ref())
+            if len(writes) == int(mode.rsplit("_", 1)[1]):
+                raise InterruptedError("during pure receipt recovery")
+            return saved
+        service._change = interrupt_change
+        with pytest.raises(InterruptedError):
+            service.judge(request)
+        service._change = change
+    if mode == "valid" or mode.startswith("interrupt_"):
+        vote = service.judge(request)
+        assert vote.verdict == "approve"
+        assert service.judge(request) == vote
+        assert service._get(ctx, EntityKind.TASK, task_id).status == "succeeded"
+        assert service._get(ctx, EntityKind.INTENT, record.intent.entity_id).status == "completed"
+        assert service._execution(ctx, task_id).status == "succeeded"
+    else:
+        with pytest.raises(ContractError):
+            service.judge(request)
+        assert service._get(ctx, EntityKind.TASK, task_id).status == ("review" if mode == "invalid_vote" else "blocked")
+    assert len(calls) == 1 and not queued
+    if mode in {"valid", "invalid_vote"} or mode.startswith("interrupt_"):
+        current = service._get(ctx, EntityKind.TASK, task_id)
+        assert service._json(ctx, current.checkpoint)["receipt"] == original_receipt
+
+
 def test_scoped_registry_nested_thread_isolation_and_default():
     class Adapter:
         def __getattr__(self, key):

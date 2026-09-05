@@ -183,6 +183,34 @@ New-SHA CI/activation remain separate; actual Azure/Court is not claimed from fi
 Browser project version 2 at revision 3 shows its actual local creation time,
 02:35 on September 5; original version 1 remains undated, never backdated.
 
+### Court single-dispatch and saved-receipt recovery
+
+Azure commit `bd239e76e548db818439bb77389f47c8aa9755f4` is committed, pushed,
+active on Local only and passed exact-SHA CI 33958551325 (Linux/Windows/static).
+Actual Anna connection d916ccc4 returned CONNECTION_OK, 2,235 ms and recorded
+cost $0.00005025. Existing key and budget are unchanged.
+
+Real Court case 86a650ab revealed synchronous/worker dual dispatch. DeepSeek
+task 8d256003 returned a valid sealed vote response but became blocked before
+Court could attach it; no verdict or execution is claimed. The regression test
+reproduced the extra worker enqueue and failed on old code. An initial test-only
+ID assumption was corrected to the actual executor request ID.
+
+The correction gives sealed Court tasks one synchronous dispatcher. Explicit
+admitted replay can close out the authentic immutable receipt without a second
+provider request; wrong/missing receipt and revoked authority fail closed, an
+invalid vote remains review. Existing task/intent/execution states, budgets and
+native clients remain authoritative. Fault injection at five recovery writes
+checks interruption safety and no additional calls. Eleven targeted cases PASS.
+Final focused **274 passed**, 253.84 s. Full **3936 passed, 44 skipped**,
+1035.64 s, XML `.artifacts/verification-20260905/full-regression-court-single-dispatch.xml`.
+Legacy 13/13, Python/root/context/diff PASS; exact-index/CI/activation are separate.
+No numbered migration, alternate worker engine or public API is added.
+
+The actual report drawer/chat check also exposed an empty Outcome projection and
+a JSON artifact incorrectly normalized as an image. This is a separate pending
+presentation correction, not a failed NT report or permission to rewrite history.
+
 ## Release impact and rollback
 
 Only Development owner review is in scope. Final artifact would include the

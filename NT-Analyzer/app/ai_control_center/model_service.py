@@ -361,6 +361,10 @@ class ModelService:
         if not isinstance(payload, dict) or set(payload) - {"rubric_key", "input_text"}:
             raise ContractError("model_task_field_invalid")
         spec = _sealed_spec if _sealed_spec is not None else prepare(payload.get("rubric_key", "json_arithmetic"), payload.get("input_text", ""))
+        # Court invokes judge() synchronously with a sealed server-side packet.
+        # Enqueuing the same call races the separate worker process; its in-flight
+        # safeguard can block the task after the inline caller receives a result.
+        inline_judge = _sealed_spec is not None and spec["rubric_key"] == "court_vote"
         # These optional IDs come from trusted chat integration, never payload.
         conversation, message = _chat_token(conversation_id), _chat_token(message_id)
         task_id = _id(context, "model-task:" + key)
@@ -380,7 +384,7 @@ class ModelService:
                     self._prepare_execution(context, existing, checkpoint)
                 # Queue delivery can be repaired, but provider dispatch is never
                 # repeated automatically after an ambiguous in-flight outcome.
-                if existing.status == "ready" and callable(self.enqueue):
+                if existing.status == "ready" and not inline_judge and callable(self.enqueue):
                     self.enqueue(context=context, task_id=str(task_id))
                 return self.task_detail(context=context, task_id=task_id)
             model = self._get(context, EntityKind.MODEL, model_id)
@@ -415,7 +419,7 @@ class ModelService:
                 intent=intent.ref(), role=role.ref(), checkpoint=self._put(context, goal))
             task = self._walk(context, task, "ready")
             self._prepare_execution(context, task, goal)
-            if callable(self.enqueue):
+            if not inline_judge and callable(self.enqueue):
                 self.enqueue(context=context, task_id=str(task_id))
         return self.task_detail(context=context, task_id=task_id)
 
@@ -456,6 +460,19 @@ class ModelService:
         execution = self._execution(context, task.header.entity_id)
         receipt_ref = c.SnapshotRef(scope=context.scope, artifact_id=_uuid(checkpoint["receipt"]["artifact_id"]),
                                     sha256=checkpoint["receipt"]["sha256"])
+        recovering_judge = (task.status in {"blocked", "ready", "running"}
+                            and checkpoint["spec"]["rubric_key"] == "court_vote"
+                            and execution.status == "review")
+        if recovering_judge:
+            # Explicit admitted Court replay may finish a legacy dual-dispatch
+            # collision only from the validated immutable receipt above. This
+            # cannot re-send a request or recover an ambiguous call without proof.
+            self._access(context, "complete")
+            task = self._walk(context, task, "ready", "running")
+            intent = self._get(context, EntityKind.INTENT, task.intent.entity_id)
+            if intent.status in {"blocked", "ready"}:
+                self._walk(context, intent, "ready", "running")
+            execution = self._change(context, execution, "succeeded", receipt=receipt_ref)
         if execution.status == "running":
             execution = self._change(context, execution, "succeeded", receipt=receipt_ref)
         evaluation = evaluate(checkpoint["spec"], receipt["response"])
@@ -500,7 +517,10 @@ class ModelService:
                 if application_result(self, context, task):
                     _complete_task(self, context, task)
                     return self.task_detail(context=context, task_id=task_id)
-            if task.status in {"succeeded", "review"} and checkpoint.get("receipt"):
+            sealed_judge_recovery = (task.status == "blocked"
+                                     and checkpoint.get("spec", {}).get("rubric_key") == "court_vote"
+                                     and self._execution(context, task_id).status == "review")
+            if (task.status in {"succeeded", "review"} or sealed_judge_recovery) and checkpoint.get("receipt"):
                 return self._finish(context, task, checkpoint)
             if task.status not in {"ready", "running"}:
                 return self.task_detail(context=context, task_id=task_id)

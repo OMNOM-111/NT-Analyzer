@@ -3,11 +3,19 @@
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
 - Last verified UTC: 2026-09-05T04:04:22Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: ef4006ebbdd95764636931d70fa7a742ceab756c (clean beta.96 runtime; native Azure binding compatibility under verification)
+- Local source verified SHA: bd239e76e548db818439bb77389f47c8aa9755f4 (clean beta.96 runtime; Azure PASS, Court dispatch correction under verification)
 - Active scope: roles/private containers/claimed delivery plus rejection/rating/calendar fixes at ef4006eb; native Azure owner-binding compatibility fully regression-tested, activation pending
 - Unified Local base: `0.10.0-beta.96`, PR #280; no Canary/Production promotion
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: PARTIAL
+
+## Current scoped follow-up
+
+Azure owner binding is active and actually verified on clean bd239e76 (CI 3/3).
+Court's actual synchronous/worker collision is under correction; no accepted vote
+is claimed from its blocked task. Only single-dispatch and immutable-receipt
+recovery change; API, SQL, authority, budgets and UI composition do not.
+Exact evidence and limits: [canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 
 ## Identity model
 

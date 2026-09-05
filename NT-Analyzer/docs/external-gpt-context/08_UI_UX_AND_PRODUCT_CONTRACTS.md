@@ -3,8 +3,8 @@
 - Context Pack document: 08_UI_UX_AND_PRODUCT_CONTRACTS.md
 - Last verified UTC: 2026-09-05T04:22:06Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: ef4006ebbdd95764636931d70fa7a742ceab756c (clean beta.96 runtime; native Azure binding compatibility under verification)
-- Active Local 8765: clean `ef4006ebbdd95764636931d70fa7a742ceab756c`, build `dev-0.10.0-beta.96-ef4006ebbdd9`, original owner data, Preview=false
+- Local source verified SHA: bd239e76e548db818439bb77389f47c8aa9755f4 (clean beta.96 runtime; Azure PASS, Court dispatch correction under verification)
+- Active Local 8765: clean `bd239e76e548db818439bb77389f47c8aa9755f4`, build `dev-0.10.0-beta.96-bd239e76e548`, original owner data, Preview=false
 - Unified Local accepted base: beta.96, open PR #280; no Canary/Production promotion
 - Scope: Major UI areas, visibility rules and important UX contracts
 - Status: IN DEVELOPMENT
@@ -14,6 +14,14 @@ completed program acceptance. Clean ef4006eb is active; actual backtest, Desktop
 PNG, ratings, initial domain actions and local-time display passed. Native Azure
 binding compatibility and remaining Court/shared/Social/own-key/owner review are separate.
 The shared deployment anchor above is unchanged; Production was not rechecked.
+
+## Current scoped follow-up
+
+Azure owner binding is active and actually verified on clean bd239e76 (CI 3/3).
+Court's actual synchronous/worker collision is under correction; no accepted vote
+is claimed from its blocked task. Only single-dispatch and immutable-receipt
+recovery change; API, SQL, authority, budgets and UI composition do not.
+Exact evidence and limits: [canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 
 ## Major product areas
 

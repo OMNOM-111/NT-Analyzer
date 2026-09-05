@@ -3,16 +3,37 @@
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
 - Last verified UTC: 2026-09-05T04:22:06Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: ef4006ebbdd95764636931d70fa7a742ceab756c (clean beta.96 runtime; native Azure binding compatibility under verification)
+- Local source verified SHA: bd239e76e548db818439bb77389f47c8aa9755f4 (clean beta.96 runtime; Azure PASS, Court dispatch correction under verification)
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`; not released to Canary/Production
-- Active Local 8765: clean `ef4006ebbdd95764636931d70fa7a742ceab756c`, build `dev-0.10.0-beta.96-ef4006ebbdd9`, original owner data, Preview=false
-- Agent World branch: `codex/agent-world-owner-preview`, stacked draft PR #282 above open #281/#280; clean ef4006eb is active on Local; native Azure binding compatibility is under verification
+- Active Local 8765: clean `bd239e76e548db818439bb77389f47c8aa9755f4`, build `dev-0.10.0-beta.96-bd239e76e548`, original owner data, Preview=false
+- Agent World branch: `codex/agent-world-owner-preview`, stacked draft PR #282 above open #281/#280; clean bd239e76 is active on Local; Court dispatch correction is under verification
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
+
+## Actual Local continuation — bd239e76
+
+The Azure compatibility commit is clean, pushed and active on Local only.
+Full **3925 passed / 44 skipped**, 187 focused, legacy 13/13 and staged/runtime
+533-file bundles passed. Exact-SHA
+[CI 33958551325](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33958551325)
+passed Linux, Windows and static jobs. Anna's original owner Azure binding
+returned CONNECTION_OK (2,235 ms; recorded cost $0.00005025); no key was copied.
+Backtest/chat (5 messages) and genuine chart/chat (13 messages) survived restart.
+
+Actual Court exposed a dual-dispatch collision: the synchronous judge also
+enqueued a separate worker job. DeepSeek returned a valid sealed response, but
+task 8d256003 remained blocked and case 86a650ab has no accepted vote. No verdict
+or execution is claimed. The narrow correction removes the duplicate Court queue
+submission and permits explicit, freshly admitted completion from that original
+immutable receipt only. Missing/wrong evidence and revoked authority fail closed;
+there is no automatic paid retry. New regression/activation and actual same-case
+continuation remain required. API, SQL migrations, native adapters, permissions,
+budgets, Router and Execution V2 are unchanged.
+See [canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 
 ## Latest scoped checkpoint verification
 

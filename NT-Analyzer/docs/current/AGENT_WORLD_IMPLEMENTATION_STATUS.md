@@ -14,9 +14,9 @@ No merge, Canary/Production, real orders or budget increase is authorized.
 | Foundation dependency | `d5d07ac6817cd10f57d916dab0ce655347a8cbde`; open [PR #281](https://github.com/OMNOM-111/NT-Analyzer/pull/281) |
 | Integration branch | `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282), base `codex/agent-world-foundation` |
 | Starting checkpoint | `486db834850d465006a3983d2d83ee809202df60`; integrated model/domain delta `ca505d83a25356df5de2fb468f5bc20666a436d5`; delivery/role/workspace checkpoint `34deb827e4ed0e6a29d5693650b575e86e0f33d6` committed, pushed and activated |
-| Active Local 8765 | Clean detached runtime checkout `StratForge-worktrees/agent-world-local-runtime`, SHA `ef4006ebbdd95764636931d70fa7a742ceab756c`, beta.96 |
+| Active Local 8765 | Clean detached runtime checkout `StratForge-worktrees/agent-world-local-runtime`, SHA `bd239e76e548db818439bb77389f47c8aa9755f4`, beta.96 |
 | Preserved real state | Original Development data root; actual owner identity/workspace, account/balance/history/configuration and authenticated NinjaTrader preserved |
-| Build identity | `dev-0.10.0-beta.96-ef4006ebbdd9`; rejection/rating/calendar fixes active, native Azure owner-binding compatibility under verification |
+| Build identity | `dev-0.10.0-beta.96-bd239e76e548`; Azure and prior corrections active; Court single-dispatch/recovery under verification |
 | Preview | Separate loopback synthetic child/data/cookies; never the real Local data root |
 | Version / release | `0.10.0-beta.96` unchanged; no next beta assigned, merge/deploy/signing not performed |
 | Shared numbered migrations | Still 1–22; no new Production/Canary schema migration |
@@ -226,6 +226,42 @@ cannot replace, trim or reseed real Local data.
   workspace opt-in is still server-side. OpenRouter / `openrouter/free` is the
   supported test choice; owner types the key into **Ключ подключения** personally.
   Native Gemini is supported for existing owner bindings, not this private wizard.
+
+### bd239e76 actual Azure and Court continuation
+
+Native Azure binding `bd80b782-1c31-5036-bd9b-1808fe994599` belongs to Anna,
+using only the existing approved owner registry. Task
+`d916ccc4-5149-5e12-afd6-e8eacabd2e79`: actual CONNECTION_OK, 2,235 ms,
+recorded cost $0.00005025. No new key or budget. Full 3925/44, focused 187,
+legacy 13/13, staged/runtime 533-file bundles and exact bd239e76
+[CI 33958551325](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33958551325)
+PASS. Original backtest and chart remained succeeded, chats retained 5 and 13
+messages after activation. Project version 2 / revision 3 displays actual
+02:35 local creation time; original version 1 stays undated.
+
+Real Court case `86a650ab-0e70-54da-b859-21280af8fef9` exposed a collision:
+judge() synchronously executed a task that start_task() also sent to the worker.
+DeepSeek task `8d256003-6513-5369-a204-89538c5fb402` has an authentic schema-PASS
+receipt (1,988 ms, $0.00025634), but is blocked; no vote has been attached and no
+verdict granted. The UI's original idempotency key is retained for explicit
+same-case continuation, not another paid request for this saved answer.
+
+Corrective scope: sealed Court calls have one synchronous dispatch owner, no
+duplicate worker enqueue. Freshly authorized replay may finish the original
+immutable receipt through existing states; missing/wrong receipt, invalid vote,
+revoked access and unknown in-flight execution are not converted to approval.
+Eleven focused fault cases PASS (including five interruption points).
+Final focused **274 PASS**, 253.84 s. Full **3936 passed / 44 skipped**,
+1035.64 s, XML `.artifacts/verification-20260905/full-regression-court-single-dispatch.xml`.
+Legacy 13/13, Python compile, root scan and context/diff PASS. Exact staged bundle
+and corrected-code activation remain separate.
+No new API, SQL migration, queue engine, budget or authority is introduced.
+
+Additional actual UI finding, not yet corrected by this Court slice: a verified
+model/application task still has an empty inspector Outcome list, and SF Chat
+normalizes its JSON artifact as an image with no clickable original-report action.
+Preserve existing report bytes/messages; next narrow projection fix must expose
+the actual source link and MIME type, not synthesize or rerun a report.
 
 ## Shared-file ownership
 

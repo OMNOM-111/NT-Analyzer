@@ -3,14 +3,35 @@
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-05T04:22:06Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: ef4006ebbdd95764636931d70fa7a742ceab756c (clean beta.96 runtime; native Azure binding compatibility under verification)
+- Local source verified SHA: bd239e76e548db818439bb77389f47c8aa9755f4 (clean beta.96 runtime; Azure PASS, Court dispatch correction under verification)
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Active branch: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; both dependencies remain open
-- Version: `0.10.0-beta.96`, `pre_release`; clean `ef4006eb` is active on Local 8765, no Canary/Production promotion
+- Version: `0.10.0-beta.96`, `pre_release`; clean `bd239e76` is active on Local 8765, no Canary/Production promotion
 - Integration state: ef4006eb includes delivery, roles, private containers and rejection/rating/calendar corrections; narrow Azure compatibility is under verification
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
+
+## Actual Local continuation — bd239e76
+
+The Azure compatibility commit is clean, pushed and active on Local only.
+Full **3925 passed / 44 skipped**, 187 focused, legacy 13/13 and staged/runtime
+533-file bundles passed. Exact-SHA
+[CI 33958551325](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33958551325)
+passed Linux, Windows and static jobs. Anna's original owner Azure binding
+returned CONNECTION_OK (2,235 ms; recorded cost $0.00005025); no key was copied.
+Backtest/chat (5 messages) and genuine chart/chat (13 messages) survived restart.
+
+Actual Court exposed a dual-dispatch collision: the synchronous judge also
+enqueued a separate worker job. DeepSeek returned a valid sealed response, but
+task 8d256003 remained blocked and case 86a650ab has no accepted vote. No verdict
+or execution is claimed. The narrow correction removes the duplicate Court queue
+submission and permits explicit, freshly admitted completion from that original
+immutable receipt only. Missing/wrong evidence and revoked authority fail closed;
+there is no automatic paid retry. New regression/activation and actual same-case
+continuation remain required. API, SQL migrations, native adapters, permissions,
+budgets, Router and Execution V2 are unchanged.
+See [canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 
 ## Current implementation checkpoint
 
