@@ -14,9 +14,9 @@ No merge, Canary/Production, real orders or budget increase is authorized.
 | Foundation dependency | `d5d07ac6817cd10f57d916dab0ce655347a8cbde`; open [PR #281](https://github.com/OMNOM-111/NT-Analyzer/pull/281) |
 | Integration branch | `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282), base `codex/agent-world-foundation` |
 | Starting checkpoint | `486db834850d465006a3983d2d83ee809202df60`; integrated model/domain delta `ca505d83a25356df5de2fb468f5bc20666a436d5`; delivery/role/workspace checkpoint `34deb827e4ed0e6a29d5693650b575e86e0f33d6` committed, pushed and activated |
-| Active Local 8765 | Clean detached runtime checkout `StratForge-worktrees/agent-world-local-runtime`, SHA `34deb827e4ed0e6a29d5693650b575e86e0f33d6`, beta.96 |
+| Active Local 8765 | Clean detached runtime checkout `StratForge-worktrees/agent-world-local-runtime`, SHA `ef4006ebbdd95764636931d70fa7a742ceab756c`, beta.96 |
 | Preserved real state | Original Development data root; actual owner identity/workspace, account/balance/history/configuration and authenticated NinjaTrader preserved |
-| Build identity | `dev-0.10.0-beta.96-34deb827e4ed`; rejected-response/rating/calendar follow-up is not yet claimed as active |
+| Build identity | `dev-0.10.0-beta.96-ef4006ebbdd9`; rejection/rating/calendar fixes active, native Azure owner-binding compatibility under verification |
 | Preview | Separate loopback synthetic child/data/cookies; never the real Local data root |
 | Version / release | `0.10.0-beta.96` unchanged; no next beta assigned, merge/deploy/signing not performed |
 | Shared numbered migrations | Still 1–22; no new Production/Canary schema migration |
@@ -47,24 +47,24 @@ Automated fixture checks are distinct from actual browser/provider verification.
 | Safe Local switch | Local 8765, runtime identity/account/status | Existing scheduled task/supervisor; clean code + original data root | **готово и проверено** for initial clean `486db834`: copy/cold backups, SQLite integrity, no active job loss, owner/runtime restored |
 | Auth, registration, device permanent/session | Entry, account → Security | Existing account_auth / security_devices | Baseline retained; new read-only worker session checks: 17 PASS. Final browser recheck: **реализовано, но не проверено** |
 | Preview registration and Exit | Owner Preview → New User, Reset, Exit | Existing sandbox credentials/state/backend flow | Baseline preserved; new real domain actions fail closed in Preview. Final walkthrough: **реализовано, но не проверено** |
-| Persona | Toolbar → Persona; create/edit/activate/suspend | DomainService + immutable Persona profile; explicit application-role association | **готово и проверено**: explicit Tolik backtest / Ivan chart role assignment and exactly two projected personas on 34deb827; retired model history preserved |
+| Persona | Toolbar → Persona; create/edit/activate/suspend | DomainService + immutable Persona profile; explicit application-role association | **готово и проверено**: Tolik backtest / Ivan chart roles; separate Anna review Persona without application role, three actual records; retired model history preserved |
 | Own models / supported compatible agent | Toolbar → Models; connect/test/task/disconnect | ModelService → existing secret store, universal client and worker | Scoped transport/authority/idempotency tests PASS; ordinary live credentials: **внешний blocker** until a user-owned connection is available; no owner key copying |
 | Existing owner connections | Models → bind existing approved connection | Fresh owner/runtime authority, exact existing registry ID/caps | DeepSeek Flash and Gemini Flash **готово и проверено**: real CONNECTION_OK; Z.AI **внешний blocker**: model_endpoint_unavailable; only its new binding retired, original registry preserved |
 | SF Chat → model → real backtest | Tolik command with explicit catalog strategy/instrument/period | application_chat → model plan → existing jobqueue/NT → verified source report | **готово и проверено**: model task 62182839, source awnt_7ed6…, 64 trades, -969.70 after commission; five same-chat messages survived 34deb827 restart without duplication, one folded source workflow |
-| SF Chat → model → actual Desktop screenshot | Ivan command; open Desktop matching instrument/timeframe | Existing Desktop command queue/canvas/snapshot store | Live Gemini specification rejected correctly; SF Chat failed to report sealed review. Follow-up fixes delivery without approving/retrying the plan. Successful actual PNG capture remains **реализовано, но не проверено** |
+| SF Chat → model → actual Desktop screenshot | Ivan command; open Desktop matching instrument/timeframe | Existing Desktop command queue/canvas/snapshot store | **готово и проверено** on ef4006eb: task c691534b, actual Gemini → Desktop PNG, 140/800 historical bars, same-chat report. Earlier rejected plan and initial no-bars timeout remain failures, not relabelled success |
 | Task Inspector / trace / history | Work row or task card → drawer → SF Chat/evidence | Intent/Task/Contribution/model Execution + application Execution/Outcome/Evaluation | Same-store lineage/idempotency tests PASS; live inspection: **реализовано, но не проверено** |
-| Automatic observed rating | Agents → profile/rating | Independent versioned deterministic rubric, distinct-input dedupe | **готово и проверено** per model: DeepSeek and Gemini, n=3 distinct real arithmetic inputs each, 3/3, OBSERVED/low confidence. Not general/trading quality; no routing effect |
+| Automatic observed rating | Agents → profile/rating | Independent versioned deterministic rubric, distinct-input dedupe | **готово и проверено**: DeepSeek/Gemini n=3 distinct arithmetic inputs each, 3/3 OBSERVED/low confidence, single active binding reflected in Persona on ef4006eb. Anna remains NEW, not assigned invented statistics. No routing effect |
 | Experiments / comparisons | Toolbar → Experiments → same-input comparison | ModelService + existing worker; separate actual responses | **готово и проверено** on ca505d83: three same-input comparisons, six actual verified model outputs; follow-up display/restart still to recheck |
 | Decisions / Consensus / Court | Toolbar → Decisions/Court; proposal, three isolated judges | DomainService + ModelService.judge; sealed packet, immutable votes, 2-of-3 | State/diversity/replay tests PASS; live judges: **реализовано, но не проверено**; verdict never executes work |
 | Memory / lessons / sharing | Toolbar → Memory; edit/promote/publish/revoke | Existing private artifacts + active TTL/purpose/source-revision grant | Private create/source binding/promote/read **готово и проверено** in browser on 34deb827. Sharing/revocation have contract PASS, separate multi-user visual acceptance pending |
 | Strategy Projects | Toolbar → Projects; definition/version/history | DomainService immutable StrategyProject revisions | Browser create/version/history **готово и проверено** on 34deb827; follow-up records timestamps for new versions, never invents dates for old snapshots |
-| Routines / calendar | Toolbar → routines/calendar; propose/accept/manual follow-up | DomainService → existing worker follow-up receipt | Browser creation/explicit acceptance **готово и проверено** on 34deb827. UTC storage correct; local-time display fix under verification. Autonomous scheduling is **не реализовано**; automation stays OFF |
-| System | Toolbar → System | Existing runtime/capabilities/registry flags, no secrets | Server/UI checks PASS; browser: **реализовано, но не проверено** |
+| Routines / calendar | Toolbar → routines/calendar; propose/accept/manual follow-up | DomainService → existing worker follow-up receipt | Browser creation/explicit acceptance **готово и проверено**; ef4006eb shows local 00:00–00:30 while preserving UTC 07:00–07:30 and revision 2. Autonomous scheduling is **не реализовано**; automation stays OFF |
+| System | Toolbar → System | Existing runtime/capabilities/registry flags, no secrets | **готово и проверено**: eight exact-workspace paths active, Router/Execution V2 and external actions OFF, existing worker and budget authorities visible |
 | SF Social publication | Toolbar → В SF Social; select source → exact preview → explicit permanent confirmation | SocialPublicationService → existing Community store/idempotency | 41 service checks PASS plus HTTP/UI contracts; local publication/browser: **реализовано, но не проверено** |
-| Restart / cancel / retry / isolation | Existing Local worker, task status and same conversation | Existing queues/leases/inbox; fresh authority before transmission | Contract tests PASS; live restart: **реализовано, но не проверено** |
+| Restart / cancel / retry / isolation | Existing Local worker, task status and same conversation | Existing queues/leases/inbox; fresh authority before transmission | Contract PASS; actual restart retained backtest chat and recovered one sealed rejected-model report without a second provider job. Other-user/live revocation remains pending |
 | Existing PostgreSQL regression | Disposable loopback test DB only | Existing migrations 1–22 and RLS-enabled app role, TLS | **готово и проверено**: 41 PASS, zero skips, 122.71 s on repeated actual DB run |
 | General Router / new Execution Engine / Agent World PostgreSQL adapter | Not switched into runtime | Existing Router/executors remain authorities | **не реализовано** for new replacement systems; no new PG adapter or Production fallback is claimed |
-| Full suite / final SHA CI / owner design | Verification and draft PR | Existing test/static/context/bundle/CI gates | 34deb827: 3906 PASS / 44 skips plus Windows/Linux/static CI PASS. Rejected-response/rating follow-up: 3913 PASS / 44 skips; subsequent calendar/version corrections require final rerun. Owner design acceptance separate/pending |
+| Full suite / final SHA CI / owner design | Verification and draft PR | Existing test/static/context/bundle/CI gates | ef4006eb: final 3914 PASS / 44 skips, 533-file staged and runtime bundles PASS; CI 33956017912 recorded separately. Native Azure binding: 187 focused PASS, 3925 full PASS / 44 skips; exact-bundle/activation pending. Owner acceptance remains separate |
 
 The manual historical job `ui_20260905T003301149Z` (1273 bars, 64 trades) remains
 excluded from Agent World statistics. It proves the original executor can return
@@ -118,10 +118,38 @@ bounded arithmetic evidence. Failed Z.AI connection remains visible in history.
   repeated control attempts stopped. A separate lightweight AI Center tab works.
   Neither a blank screenshot nor a source timeout counts as chart acceptance.
 
-Current corrective delta: one claimed delivery of sealed rejected responses,
+Activated ef4006eb corrections: one claimed delivery of sealed rejected responses,
 stronger exact-JSON planning instructions (verification remains strict), active
 model-only persona rating with retired history retained, local calendar time
 display, neutral accepted label and timestamps for new project versions.
+
+### ef4006eb actual Desktop and recovery
+
+The old rejected Gemini plan now has a single failure report in its original
+chat, unchanged evaluation `cb36b176-4f1d-502d-8401-bdd55f3faa10`, no Desktop
+dispatch and no replacement provider task. The browser recovered after the Local
+restart and showed that failure explicitly. A new correct model plan initially
+timed out waiting for chart bars (task `c5442d2e-bd79-5270-9476-87d4ed3392a5`).
+After real bars loaded, a fresh user-command test succeeded:
+
+- Model task `c691534b-0670-5313-af39-491b46564248`, actual Gemini 724 ms.
+- Desktop command `cc_b739f32e686c4c33982c927c87901e46`, source task
+  `6f3a28a2-6234-579a-b7ed-4abb0da1c400`, original SF Chat `C-9D163439293C`.
+- PNG artifact `42edb20c-eeea-54cd-87cd-6ef9f51d2e4a`, SHA256
+  `45ba864f7ccb06c9fba8655a4839378e1e9fd049d0d5f3d350567ae3081e9c40`.
+- 140 visible bars / 800 total; MNQ 09-26, 5m, range
+  2026-09-04 09:25–21:00 UTC; current view preserved. Historical OFFLINE
+  provenance and price_marker_live=false remain explicit. PNG rendered in chat.
+- Chat now contains 13 messages for three distinct attempts, not three successes.
+
+Anna `66d0522d-5d81-56f5-8c23-443ddc9cf220` is an active independent review
+Persona without an application role or fabricated rating. Its existing Azure
+owner binding revealed a compatibility error: the approved native endpoint's
+sole api-version query was rejected. The narrow fix permits only the canonical
+HTTPS Azure version selector on server-resolved owner bindings; credentials,
+fragments, other queries, private transports and budgets remain unchanged.
+No failed binding created a connection or copied a key. Focused 187 PASS; full
+regression passed 3925/44; exact-bundle and corrected-code activation are required before actual Azure/Court.
 
 ## Authority and flags
 
@@ -160,18 +188,22 @@ cannot replace, trim or reseed real Local data.
   gateway, SQLite); **28 delivery** and **18 explicit-role/projection** tests PASS.
   Single claimed delivery jobs recover saved results through the existing
   worker/inbox; no repeat provider call or budget charge.
-- Active 34deb827 scoped full rerun: **3906 passed, 44 skipped**, 770.01 s.
+- Historical 34deb827 scoped full rerun: **3906 passed, 44 skipped**, 770.01 s.
   Legacy **13/13 suites**, Python compile, **23 JS files**, root-level secret/
   Markdown/CSP scans, context validator and **533-file bundle** gates PASS.
   Forty-four skipped scenarios are not represented as generic Windows PASS.
 - Final corrective full rerun: **3914 passed, 44 skipped**, 759.73 s, XML
   `.artifacts/verification-20260905/full-regression-final-domain-ui-v2.xml`.
   Focused UI/domain **218 PASS**; legacy **13/13**, Python compile, **23 JS**,
-  root scan and context validator rerun PASS. Exact staged bundle and new-SHA
-  CI remain required before the corrective closeout. The first new UI test
+  root scan and context validator rerun PASS. Staged and clean runtime 533-file
+  bundles PASS; ef4006eb CI 33956017912 passed all three jobs. The first new UI test
   used an incorrect fixture shape and failed (217 passed/1 failed); the fixture
   was corrected to the real top-level DTO. An early concurrent full run was
   interrupted and is not evidence; the final complete run above supersedes it.
+- Native Azure binding follow-up: **3925 passed, 44 skipped**, 759.35 s,
+  XML `.artifacts/verification-20260905/full-regression-azure-native-binding.xml`,
+  plus **187 focused PASS**. Python/root/diff PASS; exact-bundle/new-SHA/activation
+  remain separate gates.
 - Actual isolated PostgreSQL rerun: **41 passed**, 122.71 s, zero skipped;
   migrations 1–22, app/admin roles non-superuser and NOBYPASSRLS, TLS.
 - Forty-one of the 44 generic Windows skips are the separately executed PG
@@ -181,8 +213,10 @@ cannot replace, trim or reseed real Local data.
   [integrated change record](../changelog/2026-09-05-agent-world-integrated-local.md)
   and delegated scoped records. Fixture provider tests are not live model tests.
 - Exact 34deb827 [CI run 33951941036](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33951941036)
-  passed Windows, Ubuntu and static jobs. This does not certify the later delta;
-  its exact commit/CI remains a separate gate. Stacked draft PR dependencies
+  passed Windows, Ubuntu and static jobs. Active ef4006eb
+  [CI 33956017912](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33956017912)
+  also passed all three jobs. Neither certifies the new Azure delta yet.
+  Stacked draft PR dependencies
   remain unmerged; main-target mandatory release checks are not inferred.
 - Ordinary test registration `aw_model_review_0905` reached final Terms on
   localhost:8765, separate from the owner's 127.0.0.1 cookies. No account has

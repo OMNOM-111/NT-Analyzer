@@ -3,23 +3,24 @@
 - Context Pack document: 13_TEST_AND_ACCEPTANCE_MATRIX.md
 - Last verified UTC: 2026-09-05T04:22:06Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 34deb827e4ed0e6a29d5693650b575e86e0f33d6 (clean beta.96 runtime; rating/rejected-response follow-up under verification)
-- Active Local 8765: clean `34deb827e4ed0e6a29d5693650b575e86e0f33d6`, build `dev-0.10.0-beta.96-34deb827e4ed`, original owner data, Preview=false
+- Local source verified SHA: ef4006ebbdd95764636931d70fa7a742ceab756c (clean beta.96 runtime; native Azure binding compatibility under verification)
+- Active Local 8765: clean `ef4006ebbdd95764636931d70fa7a742ceab756c`, build `dev-0.10.0-beta.96-ef4006ebbdd9`, original owner data, Preview=false
 - Scope: Canonical test layers, release gates, acceptance and rollback expectations
 - Status: IN DEVELOPMENT
 
 ## Latest scoped checkpoint verification
 
-Active 34deb827: 3906 passed, 44 skipped (770.01 s); legacy 13/13;
-Python/23-JS/root/context/533-file bundle PASS. Dispatched exact-SHA
-[CI 33951941036](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33951941036)
-passed all three jobs. Final corrective follow-up: **3914 passed / 44 skipped**,
-759.73 s, including calendar/version fixes; 218 focused UI/domain also PASS.
+Active ef4006eb: **3914 passed / 44 skipped**, 759.73 s, 218 focused, legacy
+13/13, Python/23-JS/root/context/staged and runtime 533-file bundles PASS.
+Exact-SHA [CI 33956017912](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33956017912)
+passed all three jobs. Narrow Azure owner-binding follow-up: **3925 passed /
+44 skipped**, 759.35 s, plus **187 focused**; exact-bundle/activation are separate.
 The 44 skips remain explicit; 41 have separate actual isolated PG evidence.
 Three real comparisons passed, n=3/OBSERVED/low confidence, no routing effect.
 Actual NT/chat/restart, project version, private Memory promotion, manual routine/
-calendar and System checks passed; actual PNG, Court/shared Memory/Social,
-own-key and final corrected-SHA/owner acceptance remain open.
+calendar and System checks passed. Actual PNG, saved failure recovery and corrected
+ratings/calendar also passed on ef4006eb. Azure/Court, shared Memory/Social,
+own-key and final owner acceptance remain open.
 
 ## Main gates
 
@@ -63,17 +64,18 @@ transport, contract assertion or HTTP 200 is actual provider/browser acceptance.
 
 | Current delta check | Result | Limit |
 | --- | --- | --- |
-| Active 34deb827 checkpoint | **3906 passed, 44 skipped**, 770.01 s; exact-SHA CI three jobs PASS | Active Local, not a Canary/Production release |
-| Final corrective follow-up | **3914 passed, 44 skipped**, 759.73 s; **218 focused PASS** | Includes calendar/version fixes; earlier counts and interrupted run are retained in the changelog |
+| Historical 34deb827 | **3906 passed, 44 skipped**, 770.01 s; exact-SHA CI 3/3 PASS | Superseded by ef4006eb; not a release |
+| Active ef4006eb | **3914 passed, 44 skipped**, 759.73 s; **218 focused PASS**, staged/runtime bundles and CI 3/3 PASS | Earlier counts and interrupted run remain historical |
+| Azure owner binding | **3925 passed, 44 skipped**, 759.35 s; **187 focused PASS** | Exact-bundle/activation and real provider checks remain separate |
 | Rejected-result delivery and rating | **134 and 147 focused PASS** | Includes wrong plan/wrapper/trading-action rejection, claimed-worker recovery with one provider call and retired/suspended/ambiguous active model cases |
 | Actual isolated PostgreSQL 17.10 | **41 passed, zero skipped**, 122.71 s | TLS, non-superuser/NOBYPASSRLS roles, existing migrations 1–22 only; not an Agent World PostgreSQL adapter |
 | Agent World domain/storage/social | **348 passed** | Disposable-data service/contract scope; no live model/publication claim |
 | Session authority/history | **17 passed** | Disposable auth/device stores; final browser recheck remains separate |
-| SF Chat delivery recovery | **NT RESULT / RESTART PASS; REJECTION CONTRACT PASS** | Five original backtest messages survived restart; sealed Gemini rejection must be rechecked after corrected activation, without another provider call |
+| SF Chat delivery recovery | **NT RESULT / RESTART / SEALED REJECTION PASS** | Five backtest messages preserved; Gemini failure delivered once without a new provider call or evaluation change |
 | Live ordinary-user provider | **PENDING OWNER REGISTRATION / KEY** | Final Terms waiting on localhost; then own confirmed workspace and OpenRouter wizard; no copied owner credentials |
 | Actual owner providers / NT | **PARTIAL** | DeepSeek + Gemini CONNECTION_OK and three comparisons PASS; SF Chat/model/NT original report PASS, Z.AI unavailable and Gemini's noncanonical chart plan rejected |
-| Initial domain/browser acceptance | **PARTIAL** | Project version, private Memory promotion, manual routine/calendar acceptance, System flags and NT/chat restart PASS. Local-time/rating corrections await activation; actual PNG, Court/shared Memory/Social remain pending |
-| Corrective static/context/bundle/CI | **PENDING FINAL CLOSEOUT** | Python/23-JS/root scans/legacy rerun PASS; exact final index/source checks remain required, 34deb827 CI cannot certify new code |
+| Domain/browser acceptance | **PARTIAL** | Project version, private Memory promotion, routines/calendar, System, restart, corrected ratings/local times and real Desktop PNG PASS; Azure/Court/shared Memory/Social remain pending |
+| Static/context/bundle/CI | **ef4006eb PASS; AZURE CLOSEOUT PENDING** | ef4006eb legacy/Python/23-JS/root/context/staged/runtime bundles and exact-SHA CI PASS; Azure requires its own final source checks |
 
 The 41 generic PostgreSQL skips are covered by the separate real isolated DB run.
 Two shell checks and one POSIX permissions check remain unavailable on Windows;
@@ -81,14 +83,16 @@ those three are not Windows PASS. No Production DB or secrets are test fixtures.
 Agent World domain storage itself is Development SQLite only and fails closed
 outside Development; no new numbered migration or production repository is claimed.
 
-Initial switch, clean `ca505d83` and then `34deb827` beta.96 activation passed
-preserved owner-data/copy/integrity checks. The corrective follow-up is not active yet. The manual NinjaTrader proof
+Initial switch, clean ca505d83, 34deb827 and ef4006eb activations passed owner-data/
+copy/integrity checks. Only the new Azure compatibility delta is not active yet. The manual NinjaTrader proof
 `ui_20260905T003301149Z` contains 1,273 bars and 64 trades and remains excluded
 from Agent World statistics. Fresh SF Chat/model job 62182839 passed with original
 NT report and survived restart without duplicate messages. Three actual model
-comparisons and initial domain actions passed. Gemini's chart plan failed the
-strict independent contract before Desktop dispatch; actual PNG and remaining
-Court/shared Memory/Social/private-key checks are still required. See
+comparisons and initial domain actions passed. The first Gemini chart plan failed
+strict verification, then a subsequent cold chart timed out. Another explicit
+command produced the real PNG: 140/800 historical bars, same-chat report, OFFLINE.
+Failures were not overwritten. Remaining Azure/Court/shared Memory/Social/private-key
+checks are separate. See
 [ADR-0012](../adr/0012-agent-world-integrated-local.md).
 
 ## Historical pre-model evidence

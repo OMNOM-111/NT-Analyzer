@@ -289,15 +289,21 @@ def test_actual_response_tamper_requires_review_not_cached_rating(setup):
         service.task_detail(context=ctx, task_id=pending["id"])
 
 
-def test_owner_binding_never_copies_or_deletes_global_secret(setup):
+@pytest.mark.parametrize("provider,model_key,endpoint", [
+    ("deepseek", "deepseek-v4-flash", "https://api.deepseek.com"),
+    ("azure_foundry", "gpt-5-mini", "https://fixture.openai.azure.com/openai/responses?api-version=2025-04-01-preview"),
+    ("azure_foundry", "gpt-5-mini", "https://fixture.openai.azure.com/openai/responses?api-version=2024-10-21"),
+])
+def test_owner_binding_never_copies_or_deletes_global_secret(setup, provider, model_key, endpoint):
     service, ctx, payload, _, _, _, secrets = setup
     assert not secrets.values
     def resolve(context, registry_id):
         assert registry_id == "AGT-approved"
-        return {"id": registry_id, "name": "Approved binding", "provider": "deepseek", "model": "deepseek-v4-flash", "base_url": "https://api.deepseek.com"}
+        return {"id": registry_id, "name": "Approved binding", "provider": provider, "model": model_key, "base_url": endpoint}
     bound = service.bind_existing_model(context=ctx, payload={"registry_id": "AGT-approved", "persona_id": payload["persona_id"]},
         idempotency_key="binding-approved", resolve_binding=resolve)
     assert bound["credential_source"] == "owner_registry_binding" and not secrets.values
+    assert bound["base_url"] == endpoint
     service.disconnect(context=ctx, model_id=bound["id"])
     assert not secrets.values
     def reject(*_):
@@ -305,6 +311,27 @@ def test_owner_binding_never_copies_or_deletes_global_secret(setup):
     with pytest.raises(ContractError, match="binding_denied"):
         service.bind_existing_model(context=ctx, payload={"registry_id": "guessed", "persona_id": payload["persona_id"]},
             idempotency_key="binding-guessed", resolve_binding=reject)
+
+
+@pytest.mark.parametrize("provider,endpoint", [
+    ("deepseek", "https://api.deepseek.com?api-version=2025-04-01-preview"),
+    ("azure_foundry", "https://fixture.openai.azure.com?api-key=never-a-query-secret"),
+    ("azure_foundry", "https://fixture.openai.azure.com?api-version=2025-04-01-preview&api-key=secret"),
+    ("azure_foundry", "https://fixture.openai.azure.com?api-version=2025-04-01-preview&api-version=2024-10-21"),
+    ("azure_foundry", "https://fixture.openai.azure.com?api-version=not-a-version"),
+    ("azure_foundry", "https://fixture.openai.azure.com?api-version=2025-04-01-preview#secret"),
+    ("azure_foundry", "https://user:secret@fixture.openai.azure.com?api-version=2025-04-01-preview"),
+    ("azure_foundry", "http://fixture.openai.azure.com?api-version=2025-04-01-preview"),
+])
+def test_owner_binding_azure_version_does_not_admit_query_credentials(setup, provider, endpoint):
+    service, ctx, payload, calls, queued, _, secrets = setup
+    with pytest.raises(ContractError, match="model_endpoint_invalid"):
+        service.bind_existing_model(context=ctx, payload={"registry_id": "AGT-approved", "persona_id": payload["persona_id"]},
+            idempotency_key="invalid-owner-endpoint", resolve_binding=lambda *_: {
+                "id": "AGT-approved", "name": "Approved fixture", "provider": provider,
+                "model": "fixture-model", "base_url": endpoint})
+    assert not calls and not queued and not secrets.values
+    assert not service.models(context=ctx)["items"]
 
 
 def test_judge_packet_isolated_and_schema_score_not_reputation(setup):
@@ -620,10 +647,14 @@ def test_existing_provider_formats_extract_only_final_response(monkeypatch, kind
     assert value == expected and usage["actual_model"] == "configured-model"
 
 
-def test_owner_binding_call_uses_original_identity_and_bounded_retry_policy(setup, monkeypatch):
+@pytest.mark.parametrize("provider,model_key,endpoint", [
+    ("deepseek", "deepseek-v4-flash", "https://api.deepseek.com/chat/completions"),
+    ("azure_foundry", "gpt-5-mini", "https://fixture.openai.azure.com/openai/responses?api-version=2025-04-01-preview"),
+])
+def test_owner_binding_call_uses_original_identity_and_bounded_retry_policy(setup, monkeypatch, provider, model_key, endpoint):
     service, ctx, payload, *_ = setup
-    configured = {"id": "AGT-authorized", "name": "Approved owner connection", "provider": "deepseek", "model": "deepseek-v4-flash",
-                  "base_url": "https://api.deepseek.com/chat/completions", "pricing_status": "configured"}
+    configured = {"id": "AGT-authorized", "name": "Approved owner connection", "provider": provider, "model": model_key,
+                  "base_url": endpoint, "pricing_status": "configured"}
     bound = service.bind_existing_model(context=ctx, payload={"registry_id": configured["id"], "persona_id": payload["persona_id"]},
         idempotency_key="owner-policy-binding", resolve_binding=lambda *a: configured)
     model = service._get(ctx, EntityKind.MODEL, bound["id"])

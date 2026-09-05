@@ -14,6 +14,9 @@ Claimed delivery/explicit roles/private-container checkpoint
 `34deb827e4ed0e6a29d5693650b575e86e0f33d6` is committed, pushed and active on Local.
 Its [CI run 33951941036](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33951941036)
 passed Windows, Ubuntu and static jobs. Subsequent scoped fixes are tracked below.
+Rejection/rating/calendar fixes `ef4006ebbdd95764636931d70fa7a742ceab756c` are
+committed, pushed and active on Local after another isolated-copy and 533-file
+runtime bundle PASS. Original owner identity/data/NT remain unchanged.
 PR #280/#281 are dependencies, not merged here.
 Verification result: PENDING; owner acceptance not yet ready for the full delta.
 
@@ -142,10 +145,43 @@ Final corrective full run: **3914 passed, 44 skipped**, 759.73 s, XML
 `.artifacts/verification-20260905/full-regression-final-domain-ui-v2.xml`.
 Legacy **13/13**, Python compile, **23 JS**, root scan and context validator
 reruns passed. Exact staged bundle and new-SHA CI are recorded at closeout.
-Desktop showed real historical candles but its renderer later timed out; one
+Desktop initially showed real historical candles but its renderer later timed out; one
 reload did not recover it. Lightweight AI Center checks continued on another
-tab. Actual chart PNG acceptance remains pending, not replaced with headless
-or generated imagery. Ordinary signup consent and separate key remain pending.
+tab. After Local restart it recovered and the old failed Gemini evaluation was
+delivered once into its original SF Chat. A fresh correct plan initially hit a
+no-bars timeout (`c5442d2e-bd79-5270-9476-87d4ed3392a5`); after real bars loaded,
+another explicit command completed task `c691534b-0670-5313-af39-491b46564248`.
+Actual Gemini response 724 ms → Desktop `cc_b739f32e686c4c33982c927c87901e46`
+→ PNG `42edb20c-eeea-54cd-87cd-6ef9f51d2e4a` → original chat
+`C-9D163439293C` (13 messages across three attempts). SHA256
+`45ba864f7ccb06c9fba8655a4839378e1e9fd049d0d5f3d350567ae3081e9c40`;
+140 visible / 800 actual historical bars, MNQ 09-26 5m, view preserved,
+OFFLINE and price_marker_live=false. PNG rendered in chat, not headless/generated.
+The initial failures remain failures. Local calendar displays 00:00–00:30 at
+unchanged revision 2; active-model rating shows Ivan n=3/100%, retired binding
+retained. Ordinary signup consent and separate key remain pending.
+
+### Native Azure owner-binding compatibility
+
+Creating Anna's independent review binding reproduced a mismatch: the approved
+native Azure endpoint contains api-version, but the new generic binding guard
+rejected every query. Only a canonical HTTPS api-version selector on an already
+server-resolved Azure owner binding is now accepted. Query credentials, arbitrary/
+duplicate parameters, fragments, userinfo and other-provider queries remain
+rejected. Existing registry identity, native adapter, no-hidden-retry policy and
+budget authority are unchanged; no key is copied or private transport enabled.
+Failed binding attempts created no connection. Anna's active Persona remains
+`66d0522d-5d81-56f5-8c23-443ddc9cf220`, review-only with no application role.
+
+Focused model/gateway tests: **187 PASS**. Full final regression:
+**3925 passed, 44 skipped**, 759.35 s, XML
+`.artifacts/verification-20260905/full-regression-azure-native-binding.xml`.
+Active ef4006eb CI 33956017912 passed Linux, Windows and static jobs.
+Python compile, root scan, context validator, diff check and legacy 13/13 PASS.
+Exact staged 533-file bundle PASS (static scan, runtime reads, Python and JS).
+New-SHA CI/activation remain separate; actual Azure/Court is not claimed from fixtures.
+Browser project version 2 at revision 3 shows its actual local creation time,
+02:35 on September 5; original version 1 remains undated, never backdated.
 
 ## Release impact and rollback
 

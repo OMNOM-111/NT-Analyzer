@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 import threading
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -318,7 +319,12 @@ class ModelService:
         c.require_text(model_key, limit=120)
         endpoint = str(binding.get("base_url") or "")
         parsed = urlsplit(endpoint)
-        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        # Only this server-resolved native owner binding may retain Azure's
+        # API-version selector. Private endpoints and arbitrary query secrets
+        # remain rejected; execution still uses the original registry adapter.
+        azure_version = (provider == "azure_foundry" and parsed.scheme == "https" and bool(parsed.hostname)
+                         and re.fullmatch(r"api-version=\d{4}-\d{2}-\d{2}(?:-preview)?", parsed.query))
+        if parsed.username or parsed.password or parsed.fragment or (parsed.query and not azure_version):
             raise ContractError("model_endpoint_invalid")
         model_id, account_id = _id(context, "model:" + key), _id(context, "provider:" + key)
         profile = {"schema_version": 1, "source": "private_model_connection", "label": label,

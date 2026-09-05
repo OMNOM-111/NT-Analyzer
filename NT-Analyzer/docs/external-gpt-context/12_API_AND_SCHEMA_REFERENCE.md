@@ -3,17 +3,18 @@
 - Context Pack document: 12_API_AND_SCHEMA_REFERENCE.md
 - Last verified UTC: 2026-09-05T04:04:22Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 34deb827e4ed0e6a29d5693650b575e86e0f33d6 (clean beta.96 runtime; rating/rejected-response follow-up under verification)
-- Active scope: claimed delivery, explicit Persona roles, workflow projection and personal workspace at 34deb827; sealed-rejection delivery, active-binding rating and local-time display follow-up under verification
+- Local source verified SHA: ef4006ebbdd95764636931d70fa7a742ceab756c (clean beta.96 runtime; native Azure binding compatibility under verification)
+- Active scope: roles/private containers/claimed delivery plus rejection/rating/calendar fixes at ef4006eb; native Azure owner-binding compatibility fully regression-tested, activation pending
 - Unified Local base: beta.96, PR #280; separate owner-review slice above foundation PR #281; no merge or Canary/Production promotion
 - Scope: Compact index of important endpoint families, entities and capability names
 - Status: IN DEVELOPMENT
 
-Local `8765` currently serves the clean `34deb827` beta.96 build with original
+Local `8765` currently serves the clean `ef4006eb` beta.96 build with original
 owner data/settings. Integrated domain/model/social endpoints are active; scoped
-claimed-delivery/explicit-role/private-container changes are active. The pending
-follow-up changes sealed rejection delivery and projections, not API authority
-or numbered storage migrations.
+claimed-delivery/explicit-role/private-container changes and sealed rejection/
+rating/calendar corrections are active. Pending native Azure binding compatibility
+allows only its canonical HTTPS api-version selector for server-resolved owner
+connections; it changes neither API authority nor numbered storage migrations.
 `fc78677` is the historical adapter snapshot. The deployed anchor
 `8f42158661e8247832c90bea8fc4d9f0071e647b` remains unchanged; Production was not
 rechecked in this task.

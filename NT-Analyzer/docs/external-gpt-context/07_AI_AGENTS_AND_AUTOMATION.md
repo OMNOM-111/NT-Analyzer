@@ -3,8 +3,8 @@
 - Context Pack document: 07_AI_AGENTS_AND_AUTOMATION.md
 - Last verified UTC: 2026-09-05T04:04:22Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 34deb827e4ed0e6a29d5693650b575e86e0f33d6 (clean beta.96 runtime; rating/rejected-response follow-up under verification)
-- Active scope: claimed delivery, explicit Persona roles, workflow projection and personal workspace at 34deb827; sealed-rejection delivery, active-binding rating and local-time display follow-up under verification
+- Local source verified SHA: ef4006ebbdd95764636931d70fa7a742ceab756c (clean beta.96 runtime; native Azure binding compatibility under verification)
+- Active scope: roles/private containers/claimed delivery plus rejection/rating/calendar fixes at ef4006eb; native Azure owner-binding compatibility fully regression-tested, activation pending
 - Scope: Agent hierarchy, AI Lab, queues, workspace boundaries and model-usage rules
 - Status: IN DEVELOPMENT
 
@@ -68,12 +68,13 @@ above Vitek.
 ## Agent World current contract
 
 The current live Local `8765` is clean beta.96 at
-`34deb827e4ed0e6a29d5693650b575e86e0f33d6`, using the original owner data/settings
+`ef4006ebbdd95764636931d70fa7a742ceab756c`, using the original owner data/settings
 from a clean runtime worktree. Model/domain implementation below is active;
-claimed-delivery/explicit-role/private-container changes are active. Follow-up
-verification covers sealed rejected-response delivery without another provider
-call and Persona ratings from the single active binding, preserving retired history.
-Real SF Chat → model → NT report and restart passed. Remaining provider/browser/owner
+claimed-delivery/explicit-role/private-container changes are active. Sealed
+rejection delivery and active-binding ratings passed in the actual browser;
+retired history is preserved. Real SF Chat → model → NT report and actual
+Desktop PNG (140/800 historical bars, not LIVE) passed. Native Azure binding
+compatibility is separately regression-tested and awaits activation. Remaining provider/browser/owner
 acceptance, final Git/CI closeout and stages 0–13 remain open.
 `fc78677dfa258fb56042866a6764e8c8a45c42e6` is the earlier adapter snapshot. The
 shared deployment anchor `8f42158661e8247832c90bea8fc4d9f0071e647b` is unchanged;

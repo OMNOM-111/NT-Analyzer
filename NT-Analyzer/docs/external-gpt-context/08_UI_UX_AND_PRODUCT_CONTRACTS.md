@@ -3,15 +3,16 @@
 - Context Pack document: 08_UI_UX_AND_PRODUCT_CONTRACTS.md
 - Last verified UTC: 2026-09-05T04:22:06Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 34deb827e4ed0e6a29d5693650b575e86e0f33d6 (clean beta.96 runtime; rating/rejected-response follow-up under verification)
-- Active Local 8765: clean `34deb827e4ed0e6a29d5693650b575e86e0f33d6`, build `dev-0.10.0-beta.96-34deb827e4ed`, original owner data, Preview=false
+- Local source verified SHA: ef4006ebbdd95764636931d70fa7a742ceab756c (clean beta.96 runtime; native Azure binding compatibility under verification)
+- Active Local 8765: clean `ef4006ebbdd95764636931d70fa7a742ceab756c`, build `dev-0.10.0-beta.96-ef4006ebbdd9`, original owner data, Preview=false
 - Unified Local accepted base: beta.96, open PR #280; no Canary/Production promotion
 - Scope: Major UI areas, visibility rules and important UX contracts
 - Status: IN DEVELOPMENT
 
 The Agent World rows below describe the integrated Development delta, not a
-completed live browser acceptance. The initial Local switch is complete, while
-the newer UI/model/domain code still requires clean activation and owner review.
+completed program acceptance. Clean ef4006eb is active; actual backtest, Desktop
+PNG, ratings, initial domain actions and local-time display passed. Native Azure
+binding compatibility and remaining Court/shared/Social/own-key/owner review are separate.
 The shared deployment anchor above is unchanged; Production was not rechecked.
 
 ## Major product areas
