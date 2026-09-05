@@ -1,11 +1,11 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-04T22:37:13Z
+- Last verified UTC: 2026-09-05T01:43:39Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 3afb75c5c2d02aa07703eadf274a1c1006ae8ada
+- Local source verified SHA: fc78677dfa258fb56042866a6764e8c8a45c42e6
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
-- Active branch: `codex/agent-world-owner-preview`, separate PR above foundation PR #281 and integration PR #280; both dependencies remain open
+- Active branch: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; both dependencies remain open
 - Version: `0.10.0-beta.96`, `pre_release`, not deployed
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World bounded owner-review implementation and accepted Unified Local baseline; deployment facts are inherited evidence
@@ -50,6 +50,11 @@ against the owner data root or assume the supervisor preserves an overridden
 root: its ordinary development profile resets the root to its code checkout.
 See [ADR-0011](../adr/0011-agent-world-real-local-jobs.md) and canonical status
 for the safe handoff and remaining acceptance gates.
+
+Local verification of code `fc78677df`: **3369 passed, 44 skipped**, legacy
+**13/13** suites, **517-file** bundle/static/runtime reads/Python/JS PASS.
+Synthetic browser task/profile/rating/chart-to-SF-Chat and Exit checks passed.
+The 44 skips and real chat/NT/Desktop acceptance are explicitly not PASS.
 
 ## Accepted Unified Local — beta.96
 

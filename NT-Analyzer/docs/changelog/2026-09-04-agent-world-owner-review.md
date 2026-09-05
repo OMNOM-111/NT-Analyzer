@@ -20,10 +20,11 @@ does not claim the broader Agent World program or owner visual review is closed.
 - Version: `0.10.0-beta.96`, unchanged Development; not a release.
 - Accepted source: `4ae766ea0c3258a8bb049644ac2afbba6cb89330` (PR #280).
 - Foundation: `d5d07ac6817cd10f57d916dab0ce655347a8cbde` (PR #281).
-- Branch: `codex/agent-world-owner-preview`; source SHA / separate PR pending
-  integration closeout. Neither dependency PR is modified or merged.
-- Current HEAD: `c62c5547ef6f82c561bb12b474ee6f3aa21d7c28` plus dirty
-  integration changes. This is a checkpoint reference, not the final source SHA.
+- Branch: `codex/agent-world-owner-preview`; draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282),
+  targeting `codex/agent-world-foundation`. Neither dependency PR is modified or merged.
+- Implementation commit: `fc78677dfa258fb56042866a6764e8c8a45c42e6`.
+  The following documentation-only closeout records verification of that code.
+  Earlier integrated HEAD `c62c5547ef6f82c561bb12b474ee6f3aa21d7c28` is historical.
 - Code: additive ai_control_center modules; small server/permission/shared
   transport/nav/chief/Preview lifecycle integration; new UI, tests/docs.
 - Real composition: `live_gateway.py`, `live_http_api.py`, `live_backtests.py`
@@ -113,8 +114,9 @@ checks must not be relabeled as real browser acceptance.
 
 ## Verification
 
-**IN PROGRESS** — final combined results must be recorded after the current live
-integration stabilizes. No earlier run is the final result for this dirty diff.
+**LOCAL AUTOMATED VERIFICATION: PASS** — final full repeat: **3369 passed,
+44 skipped**, 428.67 s. Real chat/NT/Desktop end-to-end and owner visual acceptance
+remain PENDING and are not included in this automated PASS.
 
 - Historical initial full run: 3 failed, 3059 passed, 44 skipped (common cache
   marker contracts and Preview promo fixture environment leak). Scoped fixes
@@ -131,12 +133,13 @@ integration stabilizes. No earlier run is the final result for this dirty diff.
   replay omitted conversation work-state repair, and first-title metadata could
   schedule a Telegram topic update. The integration owner fixed both; assertions
   remain strict and pass. These focused results do not replace full regression.
-- Current full/static/context/bundle gates, real chat/NT/Desktop pipeline and
-  owner visual acceptance are pending final integration evidence.
+- Real chat/NT/Desktop pipeline and owner visual acceptance remain pending;
+  current local automated/static/context/bundle gates passed as recorded below.
 - Latest integrated full run: **1 failed, 3368 passed, 44 skipped**, 428.64 s.
   The sole failure was the old Desktop script cache marker assertion. The marker
   now matches the additive receipt build; all original backend/live-freshness
-  assertions remain. Aurora/receipt repeat: **90 passed**. Full repeat running.
+  assertions remain. Aurora/receipt repeat: **90 passed**. Final full repeat:
+  **3369 passed, 44 skipped**, 428.67 s, zero failures.
 - HTTP/UI/Desktop targeted run: **156 passed** (36 actual Handler HTTP, 91 UI,
   29 Desktop). Live backtest/chart contracts: **113 passed** (57 + 56).
 - Legacy runner: **13/13 suites passed**. Exact staged bundle: **517 files**, all
@@ -159,9 +162,9 @@ integration stabilizes. No earlier run is the final result for this dirty diff.
 Inherited baseline/foundation results remain historical evidence, not new runs.
 
 No paid-provider, real PostgreSQL or remote release acceptance is implied.
-Previously reported Windows full-suite skips: 41 PostgreSQL acceptance tests
-without explicit test DSNs; 2 shell and 1 POSIX permissions case. The latest run
-must list its actual skips again. Skipped is not PASS.
+The final Windows run's inspected 44 skips are 41 PostgreSQL acceptance tests
+without explicit test DSNs (12 storage, 12 workers, 9 SF Chat, 8 Stage 8), 2 shell
+and 1 POSIX permissions case. Skipped is not PASS.
 
 ## Release impact and rollback
 
@@ -171,8 +174,11 @@ canonical changelog; owner/developer docs remain accepted non-shipped exclusions
 current status, ADRs, archives and External GPT Context Pack. Repository URLs below
 deliberately resolve those documents outside the restricted bundle composition.
 
-`IMPLEMENTATION COMPLETE`: pending final bounded integration verification.
-`GIT CLOSEOUT COMPLETE`: pending clean commit, separate stacked PR and CI.
+`IMPLEMENTATION COMPLETE`: YES for the bounded synthetic owner-review checkpoint;
+real adapters are implemented/automated-tested with real end-to-end acceptance PENDING.
+`GIT CLOSEOUT COMPLETE`: code committed/pushed, draft PR #282 created; final
+documentation push and separate CI record pending. Main-target checks remain
+absent for the stacked base and are not described as green.
 `STAGE CLOSED`: NO for the overall stages 0–13; owner visual acceptance pending.
 
 Owner design acceptance, general program gaps, dependency merges, main-target CI

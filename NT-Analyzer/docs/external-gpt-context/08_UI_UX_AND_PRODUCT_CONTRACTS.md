@@ -1,9 +1,9 @@
 # 08. UI, UX and Product Contracts
 
 - Context Pack document: 08_UI_UX_AND_PRODUCT_CONTRACTS.md
-- Last verified UTC: 2026-09-04T21:50:16Z
+- Last verified UTC: 2026-09-05T01:43:39Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 4ae766ea0c3258a8bb049644ac2afbba6cb89330
+- Local source verified SHA: fc78677dfa258fb56042866a6764e8c8a45c42e6
 - Unified Local accepted base: beta.96, open PR #280; not deployed
 - Scope: Major UI areas, visibility rules and important UX contracts
 - Status: DONE

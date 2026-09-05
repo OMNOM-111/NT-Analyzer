@@ -1,8 +1,9 @@
 # 13. Test and Acceptance Matrix
 
 - Context Pack document: 13_TEST_AND_ACCEPTANCE_MATRIX.md
-- Last verified UTC: 2026-08-23T02:27:02Z
+- Last verified UTC: 2026-09-05T01:43:39Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
+- Local source verified SHA: fc78677dfa258fb56042866a6764e8c8a45c42e6
 - Scope: Canonical test layers, release gates, acceptance and rollback expectations
 - Status: DONE
 
@@ -16,7 +17,7 @@
 | Full pytest | functional regression across repo | `python -m pytest -q` | canonical full automated suite |
 | Python compile check | syntax-level regression | `python -m compileall -q app tests` | required in CI |
 | JS syntax check | Aurora assets syntax | CI `node --check` over `app/static/aurora/assets/**/*.js` | required in CI |
-| Operational release closeout | accepted deployment/build/browser/readiness evidence | current beta.29 Canary+Production: [2026-08-22](../changelog/2026-08-22-market-data-responsive-release-beta29.md) | required to answer “what is live now” per environment |
+| Operational release closeout | accepted deployment/build/browser/readiness evidence | historical beta.29 example: [2026-08-22](../changelog/2026-08-22-market-data-responsive-release-beta29.md); last recorded identity in [current system state](02_CURRENT_SYSTEM_STATE.md) | required to answer “what is live now” per environment |
 
 Historical beta.29 closeout result (not current Agent World evidence): targeted market/chart/Operations/responsive
 `251 passed`; full pytest `1924 passed, 32 skipped, 0 failed`;
@@ -42,6 +43,13 @@ These disposable-data tests do not certify the live HTTP-to-NinjaTrader-to-chat
 pipeline. The manual actual NT proof is separate; new live chat-created job and
 Desktop canvas browser acceptance remain pending the approved Local switch.
 Forty-one credentialed PostgreSQL tests and Windows shell/POSIX skips are not PASS.
+
+Code `fc78677dfa258fb56042866a6764e8c8a45c42e6`: final Windows full run
+**3369 passed, 44 skipped** in 428.67 s; legacy **13/13** suites; exact bundle
+**517 files**, static/runtime reads/Python/JavaScript PASS. Root-configured
+repository scan and context validator PASS. Synthetic browser checks observed
+12 completed tasks, n=3/low-confidence per persona, rendered PNG in SF Chat and
+Exit restoring the unchanged owner Local. No real Agent World E2E or release claim.
 
 ## Targeted acceptance areas
 

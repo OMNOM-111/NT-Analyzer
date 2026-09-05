@@ -1,9 +1,9 @@
 # 05. Auth, Users and Security
 
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
-- Last verified UTC: 2026-09-04T21:50:16Z
+- Last verified UTC: 2026-09-05T01:43:39Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 4ae766ea0c3258a8bb049644ac2afbba6cb89330
+- Local source verified SHA: fc78677dfa258fb56042866a6764e8c8a45c42e6
 - Unified Local accepted base: `0.10.0-beta.96`, PR #280, not deployed
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: PARTIAL

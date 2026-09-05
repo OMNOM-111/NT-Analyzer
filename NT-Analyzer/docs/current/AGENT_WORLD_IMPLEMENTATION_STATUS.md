@@ -3,8 +3,8 @@
 Canonical program status: `IN DEVELOPMENT`. This is the single current handoff.
 The checkpoint contains separate **synthetic Preview** and **explicit real Local
 owner** integration paths. It is not completion of all stages 0–13 and not a
-Canary/Production release. Final integration verification and owner visual
-acceptance remain open.
+Canary/Production release. Local automated verification and synthetic browser
+checks passed; real chat/NT/Desktop end-to-end and owner visual acceptance remain open.
 
 ## Source, runtime and dependencies
 
@@ -13,7 +13,7 @@ acceptance remain open.
 | Accepted Unified Local | `4ae766ea0c3258a8bb049644ac2afbba6cb89330`, beta.96; open [PR #280](https://github.com/OMNOM-111/NT-Analyzer/pull/280) |
 | Foundation dependency | `d5d07ac6817cd10f57d916dab0ce655347a8cbde`; open [PR #281](https://github.com/OMNOM-111/NT-Analyzer/pull/281) |
 | Current branch / worktree | `codex/agent-world-owner-preview` / `StratForge-worktrees/agent-world-owner-preview` |
-| Implementation source | HEAD `c62c5547ef6f82c561bb12b474ee6f3aa21d7c28` plus dirty integration changes; this HEAD is not the final implementation SHA; final commit and separate PR pending |
+| Implementation source | Code commit `fc78677dfa258fb56042866a6764e8c8a45c42e6`; subsequent documentation-only closeout records the checks; draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282), base `codex/agent-world-foundation` |
 | Local version | `0.10.0-beta.96`, unchanged; no release version assigned |
 | Existing owner runtime | Read-only observation: port 8765 serves beta.93, SHA `7062f749ee92299356c774d01dc0c7b59cdcbba3`, dirty Development, authenticated owner |
 | Synthetic review runtime | Separate loopback Preview child from this checkout; synthetic data root, cookies and external-effect guard; does not replace port 8765 |
@@ -169,7 +169,8 @@ unless authenticated infrastructure supplies it.
 
 ## Verification and closeout
 
-Current integration verification is **IN PROGRESS**, not a final PASS claim.
+Local automated integration verification is **PASS**, with 44 explicit skips.
+Real chat/NT/Desktop and owner visual acceptance are not included in that PASS.
 The [main change record](../changelog/2026-09-04-agent-world-owner-review.md)
 retains earlier debugging evidence rather than treating an older green subset
 as verification of the latest live integration. Scoped gateway checks passed
@@ -185,7 +186,8 @@ results, not the final combined regression.
 | Real Desktop command → browser PNG receipt → SF Chat/drawer | PENDING; contract tests do not replace the live browser pipeline |
 | Synthetic browser checkpoint | PASS: three explicit fixture runs, 12 completed tasks, four personas with n=3/low-confidence synthetic checks; profile/task drawer, rendered PNG in SF Chat and all three main tabs inspected |
 | Exit Preview → existing owner Local | PASS in browser: returned to unchanged beta.93 / 8765, owner account and balance, online NinjaTrader state and original reports; no synthetic data substituted |
-| Latest full/static/context/bundle regression | IN PROGRESS; final exact results added by root after current diff stabilizes |
+| Full regression | `3369 passed, 44 skipped`, 428.67 s; legacy runner `13/13` suites PASS |
+| Static/context/bundle | Python app/tools/tests compilation, repository-root-configured secrets/platform-values/Markdown, context validation and diff checks PASS; exact 517-file bundle passes static/runtime-read/Python/JavaScript gates |
 | Owner visual/design acceptance | PENDING |
 
 Inherited (not re-run claims): accepted Preview focused 173/full 2680 + 44 skipped;
@@ -193,13 +195,14 @@ foundation focused 654/full 2901 + 44 skipped, legacy 13/13, bundle 496.
 See [Preview closeout](../changelog/2026-09-04-beta96-visual-audit-and-first-device.md)
 and the archived foundation checkpoint.
 
-`IMPLEMENTATION COMPLETE`: pending current real/Preview integration verification.
-`GIT CLOSEOUT COMPLETE`: pending integration commit, push, separate stacked PR and CI record.
+`IMPLEMENTATION COMPLETE`: YES for the bounded synthetic owner-review checkpoint;
+real adapters are implemented and automated-tested, but real end-to-end acceptance remains PENDING.
+`GIT CLOSEOUT COMPLETE`: code committed/pushed, draft PR #282 created; final documentation push and separate CI record pending. Main-target checks are absent on this stacked base, not PASS.
 `STAGE CLOSED`: NO for the overall program; owner visual acceptance remains open.
 
-The inherited 44 full-suite skips are not PASS: 41 credentialed PostgreSQL cases
+The latest 44 full-suite skips are not PASS: 41 credentialed PostgreSQL cases
 without separate test DSNs, 2 shell cases and 1 POSIX permissions case on Windows.
-The final run must report its actual skip count and reasons again. No Production
+The actual skip summary was inspected after the final run. No Production
 database is used to satisfy tests. Paid-model/quality, remote Connector/exchange
 and trading acceptance are not established by a local historical report.
 
@@ -225,8 +228,8 @@ shared schema migration is added. Any code rollback is a reviewed commit or
 launcher operation, never a destructive reset of user work; preserve synthetic
 evidence unless the owner explicitly resets that Preview.
 
-Next safe step: finish code/tests/static/context/bundle checks, record a clean
-commit and separate PR/CI checkpoint. Only after explicit owner approval switch
+Next safe step: finish the separate PR/CI record for the verified code checkpoint.
+Only after explicit owner approval switch
 Local, run a fresh real SF Chat backtest and Desktop capture, then obtain visual
 acceptance of the populated three-tab UI. Dependency merge, broader stages,
 Canary and Production remain separately authorized gates.
