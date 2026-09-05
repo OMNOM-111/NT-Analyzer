@@ -18,8 +18,11 @@ Rejection/rating/calendar fixes `ef4006ebbdd95764636931d70fa7a742ceab756c` are
 committed, pushed and were activated on Local after another isolated-copy and 533-file
 runtime bundle PASS. Original owner identity/data/NT remain unchanged.
 PR #280/#281 are dependencies, not merged here.
-Verification result: PASS for the automated result/Consensus corrective delta;
-actual new-SHA activation/browser/CI and owner acceptance are separate gates.
+Source SHA: `aa54c2940150e540d8b594dbf1d6254e172adbfd` (active Local code).
+Verification result: PASS for this corrective slice, including actual Local
+activation, result/Consensus/three-model Court browser acceptance and exact-code
+CI 3/3. Full program and owner-dependent scenarios remain IN DEVELOPMENT;
+this is Local visual-review readiness, not a Canary/Production release.
 
 Historical 34deb827 automated verification: PASS — 3906 passed, 44 skipped, 770.01 s;
 legacy 13/13, Python compile, 23 JS checks, root secret/Markdown/CSP checks,
@@ -260,6 +263,67 @@ Legacy 13/13, Python/JS, root CSP/secrets/Markdown, context/diff and exact stage
 533-file bundle PASS. The 44 skips remain explicit; the separate 41-test actual
 PostgreSQL run covers existing relational contracts, not a new Agent World PG
 adapter. New-SHA CI and Local browser activation are recorded separately.
+
+## aa54c294 actual Local acceptance — 2026-09-05
+
+Code `aa54c2940150e540d8b594dbf1d6254e172adbfd` is committed and pushed.
+Clean runtime 8765 serves that exact code and original owner data; Preview=false,
+live orders=false. Isolated-copy startup and actual 533-file runtime bundle PASS.
+Copy before/after counts describe the frozen rehearsal, not today's owner totals.
+Operational documentation may advance the task branch beyond the active code SHA;
+that is not another runtime activation.
+
+[Exact-code CI 33965039490](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33965039490)
+completed successfully: Windows 3977 passed / 44 skipped (815.61 s), Ubuntu
+3980 passed / 41 skipped (255.41 s), static; 3/3 jobs. Local final full suite:
+3977 passed / 44 skipped, 954.04 s; final focused 319 PASS, presentation focused
+610 PASS; legacy 13/13 suites, root/static/context/diff and staged/runtime bundle
+PASS. The separate 41-case PG evidence and three Windows-unavailable scenarios
+remain distinct. Main-target mandatory checks are not inferred from this workflow.
+Context validation passes with the existing uniform historical pack-anchor
+warning; the changed documents separately identify verified active Local aa54c294.
+No unrelated pack-wide date/SHA rewrite or Production re-verification is claimed.
+
+Actual browser checks after activation:
+
+- Tolik's Inspector shows the stored verified application Outcome. SF Chat opens
+  the exact original NT report without rerunning it: 64 trades, net -969.70,
+  after-commission PF 0.725188 (modal rounds to 0.73), charts and trade table.
+  Summary JSON is a file link, not a broken image. The pre-existing backtest
+  list uses gross PF; its redesign is outside this correction. The source modal
+  and new Agent World/Social projection explicitly use the net basis.
+- Ivan's Inspector and original SF Chat render the same genuine historical PNG,
+  140/800 bars, unchanged SHA256 45ba864f… and 13 messages. Tolik retains five
+  messages. No new backtest or chart/model retry was needed for these read checks.
+  Earlier failed attempts remain visible.
+- Agents: three Personas, Tolik/Ivan n=3 and 100% for the explicitly named
+  arithmetic rubric, low confidence; Anna NEW/n=0. A connection or Court vote
+  does not manufacture a quality rating.
+- Consensus `cf1464ab-e423-5903-8848-f0e49ece6027`, proposed revision 1:
+  input group `69a4d7af`, [101,-24,38,7,12,-8], sum 126; accepted contributions
+  `5c41f39f-69cb-52a3-a9d7-658d53e2ef3d` and
+  `9e4eede3-fb28-56fa-ae0b-33a162f30d09`. Assembly created no calls, votes or work.
+- Fresh Court `ae0e5e45-83fb-5938-b0c5-37c67afc6abf`, decided/approve revision 6;
+  decision `6fb853a7-cdfd-5739-8623-b1c2c352b2c8` approved revision 4.
+  Three real isolated model tasks succeeded: DeepSeek
+  `50ad602d-b885-5e87-bc87-2d4a3c0e50e9`, Gemini
+  `571af8ab-55ea-51f2-866c-349bbbc76bac`, Azure
+  `26883752-0800-5c80-8166-5b54e136747b`.
+  Votes `505e0871-c45d-5ed5-9632-d087f96bafae`,
+  `e57be5b1-e888-50ab-a125-4cd1b9bcbb88`,
+  `5e81c13b-6f52-5c19-b72a-bc72c61a8af3` all approve, confidence 92/90/92
+  (not vote weights), unchanged evidence packet SHA256 b5c19b04….
+  Old 86a650ab stays voting/revision 3 with one vote and its invalid Gemini
+  response preserved. Reporting approval is not profitability or trading authority.
+- SF Social read-only snapshot SHA256
+  `e4853566df3b4091b276f21503c64956b02a4502087e47a8af6362db6507eaee`:
+  outcome 7d5bbecf… revision 2, net -969.7 and PF 0.7252 after commission,
+  64 trades. Visibility stayed private, permanent confirmation unchecked,
+  no post created.
+- Screenshots remain local non-shipped evidence in
+  `.artifacts/verification-20260905/`: source-report-aa54c294.png,
+  sf-chat-desktop-aa54c294.png, court-aa54c294.png and
+  social-preview-aa54c294.png. No provider secret is included.
 
 ## Release impact and rollback
 

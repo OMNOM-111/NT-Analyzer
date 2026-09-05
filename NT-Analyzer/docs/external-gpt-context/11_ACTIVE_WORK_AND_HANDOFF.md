@@ -1,47 +1,50 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-05T04:22:06Z
+- Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 93bb1298f86f71ad950e2f7d737e6fe4bd421e3e (clean beta.96 runtime; Azure and single-dispatch recovery verified; result presentation/format follow-up under verification)
+- Local source verified SHA: aa54c2940150e540d8b594dbf1d6254e172adbfd (clean beta.96 runtime; integrated browser/provider checks and exact-code CI PASS; full owner acceptance remains separate)
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Active branch: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; both dependencies remain open
-- Version: `0.10.0-beta.96`, `pre_release`; clean `93bb1298` is active on Local 8765, no Canary/Production promotion
-- Integration state: scoped model/domain/Chat/NT/Desktop work, Azure and Court single-dispatch correction active; result presentation/format follow-up under verification
+- Version: `0.10.0-beta.96`, `pre_release`; clean `aa54c294` active on Local 8765, no Canary/Production promotion
+- Integration state: scoped model/domain/Chat/NT/Desktop, result presentation/Consensus and three-model Court active and verified; owner-dependent and full-program work remain
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 
-## Current Local checkpoint — 93bb1298
+## Current Local checkpoint — aa54c294
 
-Azure compatibility bd239e76 is preserved in the current clean Local 93bb1298.
-Full **3925 passed / 44 skipped**, 187 focused, legacy 13/13 and staged/runtime
-533-file bundles passed. Exact-SHA
-[CI 33958551325](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33958551325)
-passed Linux, Windows and static jobs. Anna's original owner Azure binding
-returned CONNECTION_OK (2,235 ms; recorded cost $0.00005025); no key was copied.
-Backtest/chat (5 messages) and genuine chart/chat (13 messages) survived restart.
+Clean Local 8765 runs `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96,
+build `dev-0.10.0-beta.96-aa54c2940150`, original owner data, Preview=false,
+live orders=false. The code is committed/pushed to draft PR #282; #280/#281
+remain unmerged. Operational documentation may be newer than active runtime code.
 
-The former synchronous/worker collision is fixed: original DeepSeek task
-8d256003 resumed from its immutable receipt, without another provider call, and
-case 86a650ab has one vote. Gemini task 484a0ad9 returned fenced JSON and failed
-strict verification; its failed evidence is retained and no verdict is claimed.
-Active 93bb1298 passed 3936 tests / 44 skips, 274 focused, legacy 13/13,
-staged/runtime 533-file bundles and exact-SHA CI 33960694698 (3/3).
-New result presentation/format work is under verification: stored Outcome DTO,
-safe Inspector/SF Chat report links, MIME-aware files, legacy read-only rendering,
-and explicit net/PF commission basis. New Court requests seal their plain-JSON
-format instruction; old request identities/receipts and validators are unchanged.
-The actual SF Social snapshot was reviewed without creating a post. Ordinary
-registration/key and permanent publication remain owner actions. API, SQL,
-permissions, budgets, Router and Execution V2 remain unchanged.
-Presentation checkpoint: 610 focused and 3972 full PASS / 44 skips. A subsequent
-manual Consensus check exposed incorrect candidate filtering; no proposal was
-created from rejected tasks. The corrected owned/successful/same-input grouping
-passed 319 focused tests; final full regression 3977 PASS / 44 skips, 954.04 s.
-Static/context and exact 533-file staged bundle PASS; activation/browser and
-new-SHA CI remain separate. Original rejection and source history are preserved.
-See [canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
+Final full **3977 passed / 44 skipped**, 954.04 s; final focused **319 PASS**,
+presentation focused **610 PASS**, legacy **13/13 suites**, root/static/context/
+diff and exact staged/runtime **533-file bundles PASS**.
+[Exact-code CI 33965039490](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33965039490)
+passed Windows, Ubuntu and static, 3/3. No main-target or release PASS is inferred.
+
+Actual browser acceptance on this SHA: stored application Outcome and original
+report links in Inspector/SF Chat; same 64-trade NT report; genuine Desktop PNG
+140/800 historical bars; preserved chats (5/13 messages); three Personas and
+n=3 arithmetic observations for Tolik/Ivan, NEW for Anna. Consensus proposal
+cf1464ab uses two accepted same-input contributions. Fresh Court ae0e5e45
+received three real valid isolated votes (DeepSeek/Gemini/Azure) and approve;
+old case 86a650ab retains its one vote and invalid Gemini response. No validator
+was weakened and a verdict does not execute actions.
+SF Social read-only preview e4853566… has net -969.7 and PF 0.7252 explicitly
+after commission; no post or permanent confirmation was created.
+
+`LOCAL VISUAL REVIEW AVAILABLE: YES`; the full program stays IN DEVELOPMENT.
+Ordinary registration/device/key, real multi-user sharing/revocation, permanent
+Social publication and owner design acceptance remain separate. New Router,
+Execution V2, autonomous routines and an Agent World PG adapter are not implemented.
+All ten flags default OFF; exact admitted Local workspace has eight paths ON,
+Router/Execution V2 OFF. Preview has separate synthetic flags, no real side effects.
+The earlier 93bb1298/other-SHA test and provider history is preserved in the
+[canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
+[integrated changelog](../changelog/2026-09-05-agent-world-integrated-local.md).
 
 ## Current implementation checkpoint
 
@@ -49,9 +52,12 @@ See [canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 is the canonical current program handoff. It records base/current checkpoint,
 file ownership, flag state, tests and skips, rollback and the next safe step.
 The task worktree is isolated from the clean active runtime and does not modify
-PR #280. Its new delta is not yet committed. The owner authorized completing
-integrated Local functionality, not stopping at two isolated E2E demonstrations.
-`OWNER ACCEPTANCE READY: NO`; stages 0–13 and final program closure remain open.
+PR #280. Code aa54c294 is committed/pushed with exact-code CI PASS and a separate
+operational documentation closeout. The integrated page is ready for visual review,
+not only two isolated demonstrations. `LOCAL VISUAL REVIEW AVAILABLE: YES`;
+full `OWNER ACCEPTANCE READY: NO`, because the ordinary-user own-key,
+real multi-user sharing/revocation and permanent Social scenarios are still open.
+Stages 0–13 and final program/release closure are not claimed.
 
 [ADR-0012](../adr/0012-agent-world-integrated-local.md) now defines the integrated
 scope: Personas, private user-owned model connections and guarded owner bindings,
@@ -87,8 +93,8 @@ The original Local at 8765 served dirty beta.93 / `7062f749` because its schedul
 task still pointed at that checkout. This is historical, not the current runtime.
 After owner authorization, copy/cold backups, SQLite integrity and isolated-copy
 startup checks, only the matched Local process/task chain was replaced. Clean
-detached `agent-world-local-runtime` at `93bb1298f86f71ad950e2f7d737e6fe4bd421e3e`
-now serves beta.96, build `dev-0.10.0-beta.96-93bb1298f86f`, with the original
+detached `agent-world-local-runtime` at `aa54c2940150e540d8b594dbf1d6254e172adbfd`
+now serves beta.96, build `dev-0.10.0-beta.96-aa54c2940150`, with the original
 owner data, account, workspace, history and NT heartbeat. No active job was lost.
 Delivery, roles, private containers, sealed-rejection recovery, active-model
 ratings, local calendar and new-version timestamps are active. Azure compatibility
@@ -102,7 +108,8 @@ passed on ca505d83: 64 trades, net -969.70, PF 0.725188, original report and has
 Three real DeepSeek/Gemini comparisons passed, n=3/OBSERVED/low confidence. The
 verified backtest and five messages survived restart without duplication. Real
 project versioning, private Memory promotion, manual routine/calendar acceptance
-and System flags were exercised; Court/shared Memory/Social remain pending.
+and System flags were exercised. Fresh three-model Court and read-only Social
+preview now pass; shared Memory/permanent Social remain pending.
 A Gemini Desktop plan was rejected for a noncanonical JSON wrapper, without
 dispatch. Its saved failure reached the original chat once on ef4006eb without another
 provider call. After an initial no-bars timeout, a new explicit command completed
@@ -124,7 +131,8 @@ passed **41 tests, zero skips**, 122.71 s, on existing migrations 1–22 with TL
 and non-superuser/NOBYPASSRLS roles. The remaining two shell and one POSIX
 permissions tests are unavailable on Windows. There is no Agent World PG adapter:
 its domain repository remains Development SQLite only, fail-closed elsewhere.
-Final provider/browser/CI acceptance remains pending. See the
+Exact-code CI and the documented aa54c294 provider/browser scenarios pass;
+owner-dependent scenarios and full program acceptance remain open. See the
 [integrated change record](../changelog/2026-09-05-agent-world-integrated-local.md).
 
 The earlier code `fc78677df` full **3369 passed, 44 skipped**, legacy **13/13**,

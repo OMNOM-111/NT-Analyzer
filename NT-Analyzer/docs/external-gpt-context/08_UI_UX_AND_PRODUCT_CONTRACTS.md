@@ -1,37 +1,54 @@
 # 08. UI, UX and Product Contracts
 
 - Context Pack document: 08_UI_UX_AND_PRODUCT_CONTRACTS.md
-- Last verified UTC: 2026-09-05T04:22:06Z
+- Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 93bb1298f86f71ad950e2f7d737e6fe4bd421e3e (clean beta.96 runtime; Azure and single-dispatch recovery verified; result presentation/format follow-up under verification)
-- Active Local 8765: clean `93bb1298f86f71ad950e2f7d737e6fe4bd421e3e`, build `dev-0.10.0-beta.96-93bb1298f86f`, original owner data, Preview=false
+- Local source verified SHA: aa54c2940150e540d8b594dbf1d6254e172adbfd (clean beta.96 runtime; integrated browser/provider checks and exact-code CI PASS; full owner acceptance remains separate)
+- Active Local 8765: clean `aa54c2940150e540d8b594dbf1d6254e172adbfd`, build `dev-0.10.0-beta.96-aa54c2940150`, original owner data, Preview=false
 - Unified Local accepted base: beta.96, open PR #280; no Canary/Production promotion
 - Scope: Major UI areas, visibility rules and important UX contracts
 - Status: IN DEVELOPMENT
 
 The Agent World rows below describe the integrated Development delta, not a
-completed program acceptance. Clean 93bb1298 is active; actual backtest, Desktop
-PNG, ratings, initial domain actions, local-time display and native Azure passed.
-Result presentation/format, remaining Court/shared/Social/own-key/owner review are separate.
-The shared deployment anchor above is unchanged; Production was not rechecked.
+completed program acceptance. Clean aa54c294 is active and available for owner
+click-through: NT/PNG, ratings, Inspector/SF Chat, Consensus and three-model Court
+passed. Real multi-user sharing, permanent Social and own-key/owner acceptance
+remain separate. The pack-wide deployment anchor is unchanged; Production was
+not rechecked. Local verification uses the explicit source SHA above.
 
-## Current scoped follow-up
+## Current scoped follow-up — aa54c294
 
-Local is clean at 93bb1298, with Azure CONNECTION_OK and actual single-dispatch
-recovery of the original DeepSeek Court receipt (no repeated call). Full 3936/44,
-274 focused, legacy 13/13, staged/runtime bundles and CI 33960694698 3/3 PASS.
-The old Court case retains one vote; Gemini's fenced JSON failed strict schema,
-so no verdict is claimed. New versioned format instructions and verified-result
-presentation are under verification. Report links/MIME and explicit commission
-basis labels reuse existing data/SF stores; no historical receipt or post is rewritten.
-Presentation checkpoint: 610 focused and 3972 full PASS / 44 skips. The subsequent
-Consensus picker correction passed 319 focused tests and final full regression
-3977 PASS / 44 skips (954.04 s); static/context and 533-file bundle PASS.
-Commit/activation and browser acceptance remain separate. Candidates are owned successful non-Court contributions grouped
-by sealed input, not a deduplicated list of Outcome files. Write-side validation
-and all stored source states remain unchanged.
-No new API, migration, permission, budget, Router or execution authority.
-Exact evidence and limits: [canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
+Clean Local 8765 runs `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96,
+build `dev-0.10.0-beta.96-aa54c2940150`, original owner data, Preview=false,
+live orders=false. The code is committed/pushed to draft PR #282; #280/#281
+remain unmerged. Operational documentation may be newer than active runtime code.
+
+Final full **3977 passed / 44 skipped**, 954.04 s; final focused **319 PASS**,
+presentation focused **610 PASS**, legacy **13/13 suites**, root/static/context/
+diff and exact staged/runtime **533-file bundles PASS**.
+[Exact-code CI 33965039490](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33965039490)
+passed Windows, Ubuntu and static, 3/3. No main-target or release PASS is inferred.
+
+Actual browser acceptance on this SHA: stored application Outcome and original
+report links in Inspector/SF Chat; same 64-trade NT report; genuine Desktop PNG
+140/800 historical bars; preserved chats (5/13 messages); three Personas and
+n=3 arithmetic observations for Tolik/Ivan, NEW for Anna. Consensus proposal
+cf1464ab uses two accepted same-input contributions. Fresh Court ae0e5e45
+received three real valid isolated votes (DeepSeek/Gemini/Azure) and approve;
+old case 86a650ab retains its one vote and invalid Gemini response. No validator
+was weakened and a verdict does not execute actions.
+SF Social read-only preview e4853566… has net -969.7 and PF 0.7252 explicitly
+after commission; no post or permanent confirmation was created.
+
+`LOCAL VISUAL REVIEW AVAILABLE: YES`; the full program stays IN DEVELOPMENT.
+Ordinary registration/device/key, real multi-user sharing/revocation, permanent
+Social publication and owner design acceptance remain separate. New Router,
+Execution V2, autonomous routines and an Agent World PG adapter are not implemented.
+All ten flags default OFF; exact admitted Local workspace has eight paths ON,
+Router/Execution V2 OFF. Preview has separate synthetic flags, no real side effects.
+The earlier 93bb1298/other-SHA test and provider history is preserved in the
+[canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
+[integrated changelog](../changelog/2026-09-05-agent-world-integrated-local.md).
 
 ## Major product areas
 

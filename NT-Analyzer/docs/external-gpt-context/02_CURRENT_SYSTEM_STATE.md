@@ -1,49 +1,52 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
-- Last verified UTC: 2026-09-05T04:22:06Z
+- Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 93bb1298f86f71ad950e2f7d737e6fe4bd421e3e (clean beta.96 runtime; Azure and single-dispatch recovery verified; result presentation/format follow-up under verification)
+- Local source verified SHA: aa54c2940150e540d8b594dbf1d6254e172adbfd (clean beta.96 runtime; integrated browser/provider checks and exact-code CI PASS; full owner acceptance remains separate)
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`; not released to Canary/Production
-- Active Local 8765: clean `93bb1298f86f71ad950e2f7d737e6fe4bd421e3e`, build `dev-0.10.0-beta.96-93bb1298f86f`, original owner data, Preview=false
-- Agent World branch: `codex/agent-world-owner-preview`, stacked draft PR #282 above open #281/#280; clean 93bb1298 is active on Local; result presentation/format follow-up is under verification
+- Active Local 8765: clean `aa54c2940150e540d8b594dbf1d6254e172adbfd`, build `dev-0.10.0-beta.96-aa54c2940150`, original owner data, Preview=false
+- Agent World branch: `codex/agent-world-owner-preview`, stacked draft PR #282 above open #281/#280; clean aa54c294 active and browser/CI verified, not a release
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
-## Current Local checkpoint — 93bb1298
+## Current Local checkpoint — aa54c294
 
-Azure compatibility bd239e76 is preserved in the current clean Local 93bb1298.
-Full **3925 passed / 44 skipped**, 187 focused, legacy 13/13 and staged/runtime
-533-file bundles passed. Exact-SHA
-[CI 33958551325](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33958551325)
-passed Linux, Windows and static jobs. Anna's original owner Azure binding
-returned CONNECTION_OK (2,235 ms; recorded cost $0.00005025); no key was copied.
-Backtest/chat (5 messages) and genuine chart/chat (13 messages) survived restart.
+Clean Local 8765 runs `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96,
+build `dev-0.10.0-beta.96-aa54c2940150`, original owner data, Preview=false,
+live orders=false. The code is committed/pushed to draft PR #282; #280/#281
+remain unmerged. Operational documentation may be newer than active runtime code.
 
-The former synchronous/worker collision is fixed: original DeepSeek task
-8d256003 resumed from its immutable receipt, without another provider call, and
-case 86a650ab has one vote. Gemini task 484a0ad9 returned fenced JSON and failed
-strict verification; its failed evidence is retained and no verdict is claimed.
-Active 93bb1298 passed 3936 tests / 44 skips, 274 focused, legacy 13/13,
-staged/runtime 533-file bundles and exact-SHA CI 33960694698 (3/3).
-New result presentation/format work is under verification: stored Outcome DTO,
-safe Inspector/SF Chat report links, MIME-aware files, legacy read-only rendering,
-and explicit net/PF commission basis. New Court requests seal their plain-JSON
-format instruction; old request identities/receipts and validators are unchanged.
-The actual SF Social snapshot was reviewed without creating a post. Ordinary
-registration/key and permanent publication remain owner actions. API, SQL,
-permissions, budgets, Router and Execution V2 remain unchanged.
-Presentation checkpoint: 610 focused and 3972 full PASS / 44 skips. A subsequent
-manual Consensus check exposed incorrect candidate filtering; no proposal was
-created from rejected tasks. The corrected owned/successful/same-input grouping
-passed 319 focused tests; final full regression 3977 PASS / 44 skips, 954.04 s.
-Static/context and exact 533-file staged bundle PASS; activation/browser and
-new-SHA CI remain separate. Original rejection and source history are preserved.
-See [canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
+Final full **3977 passed / 44 skipped**, 954.04 s; final focused **319 PASS**,
+presentation focused **610 PASS**, legacy **13/13 suites**, root/static/context/
+diff and exact staged/runtime **533-file bundles PASS**.
+[Exact-code CI 33965039490](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33965039490)
+passed Windows, Ubuntu and static, 3/3. No main-target or release PASS is inferred.
+
+Actual browser acceptance on this SHA: stored application Outcome and original
+report links in Inspector/SF Chat; same 64-trade NT report; genuine Desktop PNG
+140/800 historical bars; preserved chats (5/13 messages); three Personas and
+n=3 arithmetic observations for Tolik/Ivan, NEW for Anna. Consensus proposal
+cf1464ab uses two accepted same-input contributions. Fresh Court ae0e5e45
+received three real valid isolated votes (DeepSeek/Gemini/Azure) and approve;
+old case 86a650ab retains its one vote and invalid Gemini response. No validator
+was weakened and a verdict does not execute actions.
+SF Social read-only preview e4853566… has net -969.7 and PF 0.7252 explicitly
+after commission; no post or permanent confirmation was created.
+
+`LOCAL VISUAL REVIEW AVAILABLE: YES`; the full program stays IN DEVELOPMENT.
+Ordinary registration/device/key, real multi-user sharing/revocation, permanent
+Social publication and owner design acceptance remain separate. New Router,
+Execution V2, autonomous routines and an Agent World PG adapter are not implemented.
+All ten flags default OFF; exact admitted Local workspace has eight paths ON,
+Router/Execution V2 OFF. Preview has separate synthetic flags, no real side effects.
+The earlier 93bb1298/other-SHA test and provider history is preserved in the
+[canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
+[integrated changelog](../changelog/2026-09-05-agent-world-integrated-local.md).
 
 ## Earlier scoped checkpoint verification
 
@@ -92,7 +95,7 @@ on ef4006eb; actual historical bars are not labelled LIVE.
 - The old owner process served dirty beta.93 / `7062f749` because its scheduled
   task still targeted the old checkout. After explicit owner approval, isolated
   copy checks, coherent/cold backups and exact process retirement, Local 8765
-  initially ran clean `486db834`, then `ca505d83`, `34deb827`, `ef4006eb` and `bd239e76`; now `93bb1298` beta.96
+  initially ran clean `486db834`, then `ca505d83`, `34deb827`, `ef4006eb`, `bd239e76` and `93bb1298`; now `aa54c294` beta.96
   against the same original owner data root. The original verified backtest
   and its five chat messages survived restart without duplication. The narrow
   Azure owner binding is active and verified; no second worker may share
@@ -124,13 +127,13 @@ on ef4006eb; actual historical bars are not labelled LIVE.
 
 | Subsystem | Status | Current fact | Remaining limit |
 | --- | --- | --- | --- |
-| Agent World | `IN DEVELOPMENT` | Three tabs plus drawers, clean 93bb1298 active; real NT report, Desktop PNG, Azure, saved-receipt recovery, ratings and calendar verified | Result presentation/format follow-up, final Court/shared Memory, Social publication, own-key test and owner acceptance pending. No Agent World PG adapter, Router/Execution V2 replacement or autonomous routine scheduler |
+| Agent World | `IN DEVELOPMENT` | Three tabs plus drawers, clean aa54c294 active; real NT/PNG, original report links, Consensus, three-model Court, ratings and read-only Social snapshot verified | Multi-user Memory, permanent Social publication, ordinary own-key and owner acceptance pending. New Agent World PG adapter, Router/Execution V2 and autonomous routine scheduler not implemented |
 | Auth / owner identity | `BETA` in Unified Local | `0.10.0-beta.96` has one three-step registration contract for Telegram, Google and e-mail, a stable StratForge handle shared by profile/SF Social/SF Chat, final clickwrap consent and the existing shared environment-routed provider architecture. Owner Preview uses the same state transitions with sandbox-only synthetic credentials | Not present in the deployed beta.87 artifact; live real-provider acceptance and immutable Canary/Production promotion remain separate gates |
 | Device confirmation / trusted access | `BETA` in Unified Local | Every new unknown human browser/app access starts as a two-minute pending session. The first freshly authenticated device can choose permanent trust or current-session-only without a redundant second OTP; later unknown clients still use confirmed Telegram or verified e-mail. Machine → Client → Session grouping remains proof-based | Integrated and browser-verified in Local beta.96, but not present in deployed beta.87; real-provider acceptance and release promotion remain separate gates |
 | Legacy UI / Telegram Mini App | `DEPRECATED` | Merged main serves Aurora only; legacy UI, Mini App, remote-access and tunnel routes fail with HTTP 410. Classic assets are available only in a separate localhost read-only Legacy Viewer. Telegram `/start` uses a normal URL button | beta.87 is live in Canary and Production; historical snapshots remain until owner review |
 | User entry and trial access | `BETA` in Unified Local | Anonymous product access is removed. Every verified account receives the same full product with a default five-hour active-use starting grant; idle time is not charged. Profile/security remain available after exhaustion | Not present in deployed beta.87; product access does not grant third-party market-data redistribution rights |
 | Admin / Release Center | `BETA` | A versioned release/change record is visible with title, summary, PRs, SHA, build/artifact, stage, checks, duration and environment identity. Production approval/promotion fails closed without title, summary, source SHA and verification PASS | beta.87 acceptance is recorded; any application change starts a new artifact cycle |
-| Test isolation | `AVAILABLE` | Active 93bb1298 full 3936/44, 274 focused and CI 3/3 PASS; isolated PostgreSQL separately passed 41 existing relational tests | New presentation delta has separate gates. Two shell tests and one POSIX check remain unverified on Windows; fixtures do not certify live provider/browser acceptance |
+| Test isolation | `AVAILABLE` | Active aa54c294 full 3977/44, 319 final focused, 610 presentation focused, legacy 13/13 and exact-code CI 3/3 PASS; isolated PostgreSQL separately passed 41 existing relational tests | Two shell tests and one POSIX check are not Windows PASS; fixtures do not certify live provider/browser acceptance |
 | Market data / TopstepX | `BETA` | TopstepX remains the primary independent read-only history/realtime chart source; the accepted gateway/SignalR/cache/failover/rendering baseline was not changed by PR #254/#255 or the beta.86 release-record work | cross-user owner-feed redistribution remains `EXTERNAL BLOCKED` without written authority |
 | Charts / fan-out | `BETA` | Browser clients consume same-origin StratForge market-data WebSockets; provider credentials are not delivered to browsers and consumers do not create their own TopstepX loginKey/SignalR sessions | broader design acceptance is separate from this Connector closeout |
 | NinjaTrader / Connector | `BETA` | Production Connector on VMNINJA is `0.4.2-dev.20`; SERVER BACKTEST, cancel state machine, device catalog, account snapshot and Connector LIVE/GRACE/OFFLINE presentation are accepted | public installer distribution remains `EXTERNAL BLOCKED` on authorized Authenticode material |

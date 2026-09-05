@@ -1,43 +1,46 @@
 # 13. Test and Acceptance Matrix
 
 - Context Pack document: 13_TEST_AND_ACCEPTANCE_MATRIX.md
-- Last verified UTC: 2026-09-05T04:22:06Z
+- Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 93bb1298f86f71ad950e2f7d737e6fe4bd421e3e (clean beta.96 runtime; Azure and single-dispatch recovery verified; result presentation/format follow-up under verification)
-- Active Local 8765: clean `93bb1298f86f71ad950e2f7d737e6fe4bd421e3e`, build `dev-0.10.0-beta.96-93bb1298f86f`, original owner data, Preview=false
+- Local source verified SHA: aa54c2940150e540d8b594dbf1d6254e172adbfd (clean beta.96 runtime; integrated browser/provider checks and exact-code CI PASS; full owner acceptance remains separate)
+- Active Local 8765: clean `aa54c2940150e540d8b594dbf1d6254e172adbfd`, build `dev-0.10.0-beta.96-aa54c2940150`, original owner data, Preview=false
 - Scope: Canonical test layers, release gates, acceptance and rollback expectations
 - Status: IN DEVELOPMENT
 
-## Current Local checkpoint — 93bb1298
+## Current Local checkpoint — aa54c294
 
-Azure compatibility bd239e76 is preserved in the current clean Local 93bb1298.
-Full **3925 passed / 44 skipped**, 187 focused, legacy 13/13 and staged/runtime
-533-file bundles passed. Exact-SHA
-[CI 33958551325](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33958551325)
-passed Linux, Windows and static jobs. Anna's original owner Azure binding
-returned CONNECTION_OK (2,235 ms; recorded cost $0.00005025); no key was copied.
-Backtest/chat (5 messages) and genuine chart/chat (13 messages) survived restart.
+Clean Local 8765 runs `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96,
+build `dev-0.10.0-beta.96-aa54c2940150`, original owner data, Preview=false,
+live orders=false. The code is committed/pushed to draft PR #282; #280/#281
+remain unmerged. Operational documentation may be newer than active runtime code.
 
-The former synchronous/worker collision is fixed: original DeepSeek task
-8d256003 resumed from its immutable receipt, without another provider call, and
-case 86a650ab has one vote. Gemini task 484a0ad9 returned fenced JSON and failed
-strict verification; its failed evidence is retained and no verdict is claimed.
-Active 93bb1298 passed 3936 tests / 44 skips, 274 focused, legacy 13/13,
-staged/runtime 533-file bundles and exact-SHA CI 33960694698 (3/3).
-New result presentation/format work is under verification: stored Outcome DTO,
-safe Inspector/SF Chat report links, MIME-aware files, legacy read-only rendering,
-and explicit net/PF commission basis. New Court requests seal their plain-JSON
-format instruction; old request identities/receipts and validators are unchanged.
-The actual SF Social snapshot was reviewed without creating a post. Ordinary
-registration/key and permanent publication remain owner actions. API, SQL,
-permissions, budgets, Router and Execution V2 remain unchanged.
-Presentation checkpoint: 610 focused and 3972 full PASS / 44 skips. A subsequent
-manual Consensus check exposed incorrect candidate filtering; no proposal was
-created from rejected tasks. The corrected owned/successful/same-input grouping
-passed 319 focused tests; final full regression 3977 PASS / 44 skips, 954.04 s.
-Static/context and exact 533-file staged bundle PASS; activation/browser and
-new-SHA CI remain separate. Original rejection and source history are preserved.
-See [canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
+Final full **3977 passed / 44 skipped**, 954.04 s; final focused **319 PASS**,
+presentation focused **610 PASS**, legacy **13/13 suites**, root/static/context/
+diff and exact staged/runtime **533-file bundles PASS**.
+[Exact-code CI 33965039490](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33965039490)
+passed Windows, Ubuntu and static, 3/3. No main-target or release PASS is inferred.
+
+Actual browser acceptance on this SHA: stored application Outcome and original
+report links in Inspector/SF Chat; same 64-trade NT report; genuine Desktop PNG
+140/800 historical bars; preserved chats (5/13 messages); three Personas and
+n=3 arithmetic observations for Tolik/Ivan, NEW for Anna. Consensus proposal
+cf1464ab uses two accepted same-input contributions. Fresh Court ae0e5e45
+received three real valid isolated votes (DeepSeek/Gemini/Azure) and approve;
+old case 86a650ab retains its one vote and invalid Gemini response. No validator
+was weakened and a verdict does not execute actions.
+SF Social read-only preview e4853566… has net -969.7 and PF 0.7252 explicitly
+after commission; no post or permanent confirmation was created.
+
+`LOCAL VISUAL REVIEW AVAILABLE: YES`; the full program stays IN DEVELOPMENT.
+Ordinary registration/device/key, real multi-user sharing/revocation, permanent
+Social publication and owner design acceptance remain separate. New Router,
+Execution V2, autonomous routines and an Agent World PG adapter are not implemented.
+All ten flags default OFF; exact admitted Local workspace has eight paths ON,
+Router/Execution V2 OFF. Preview has separate synthetic flags, no real side effects.
+The earlier 93bb1298/other-SHA test and provider history is preserved in the
+[canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
+[integrated changelog](../changelog/2026-09-05-agent-world-integrated-local.md).
 
 ## Earlier scoped checkpoint verification
 
@@ -106,8 +109,8 @@ transport, contract assertion or HTTP 200 is actual provider/browser acceptance.
 | SF Chat delivery recovery | **NT RESULT / RESTART / SEALED REJECTION PASS** | Five backtest messages preserved; Gemini failure delivered once without a new provider call or evaluation change |
 | Live ordinary-user provider | **PENDING OWNER REGISTRATION / KEY** | Final Terms waiting on localhost; then own confirmed workspace and OpenRouter wizard; no copied owner credentials |
 | Actual owner providers / NT | **PARTIAL** | DeepSeek + Gemini CONNECTION_OK and three comparisons PASS; SF Chat/model/NT original report PASS, Z.AI unavailable and Gemini's noncanonical chart plan rejected |
-| Domain/browser acceptance | **PARTIAL** | Projects, private Memory, routines/calendar, System, restart, ratings/local times, real Desktop PNG and Azure PASS; fresh Court/shared Memory/permanent Social remain pending |
-| Static/context/bundle/CI | **93bb1298 PASS; FOLLOW-UP PENDING** | Historical ef4006eb/bd239e76 and active 93bb1298 exact-SHA gates PASS; result presentation/format delta has separate checks |
+| Domain/browser acceptance | **PARTIAL** | Projects/private Memory/manual routines/calendar/System, restart, NT/PNG, ratings, Azure, same-input Consensus, three-model Court and read-only Social preview PASS; real multi-user Memory/permanent Social/own-key/owner acceptance pending |
+| Static/context/bundle/CI | **aa54c294 PASS** | Full 3977/44, 319 final focused, 610 presentation focused, legacy 13/13 suites, root/static/context/diff, staged/runtime 533-file bundles and exact-SHA CI 33965039490 3/3 PASS |
 
 The 41 generic PostgreSQL skips are covered by the separate real isolated DB run.
 Two shell checks and one POSIX permissions check remain unavailable on Windows;
@@ -115,16 +118,17 @@ those three are not Windows PASS. No Production DB or secrets are test fixtures.
 Agent World domain storage itself is Development SQLite only and fails closed
 outside Development; no new numbered migration or production repository is claimed.
 
-Initial switch and clean ca505d83/34deb827/ef4006eb/bd239e76/93bb1298 activations passed
-owner-data/copy/integrity checks. Presentation/format delta is not active yet. The manual NinjaTrader proof
+Initial switch and clean ca505d83/34deb827/ef4006eb/bd239e76/93bb1298/aa54c294
+activations passed owner-data/copy/integrity checks. Presentation/format and
+Consensus corrections are active and browser-verified on aa54c294. The manual NinjaTrader proof
 `ui_20260905T003301149Z` contains 1,273 bars and 64 trades and remains excluded
 from Agent World statistics. Fresh SF Chat/model job 62182839 passed with original
 NT report and survived restart without duplicate messages. Three actual model
 comparisons and initial domain actions passed. The first Gemini chart plan failed
 strict verification, then a subsequent cold chart timed out. Another explicit
 command produced the real PNG: 140/800 historical bars, same-chat report, OFFLINE.
-Failures were not overwritten. Remaining Court/shared Memory/Social/private-key
-checks are separate. See
+Failures were not overwritten. Fresh Court and read-only Social preview PASS;
+real multi-user Memory, permanent Social and private-key checks remain separate. See
 [ADR-0012](../adr/0012-agent-world-integrated-local.md).
 
 ## Historical pre-model evidence
