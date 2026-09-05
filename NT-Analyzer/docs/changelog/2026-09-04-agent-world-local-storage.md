@@ -79,3 +79,23 @@ Verification: reproduction order plus new regression **3 passed**; full Preview
 sandbox module **23 passed**; root owner-preview gateway module followed by the
 fresh-runtime identity test **17 passed** with the same fixture fix applied
 in-memory through a pytest hook (root files remained read-only).
+
+## Windows retry-test isolation follow-up
+
+An intermittent full-suite failure prompted a focused review of
+`test_subscription_store_retries_transient_windows_replace`. The unmodified
+test passed alone. A controlled unrelated `os.replace` call reproduced its
+counter failure (`4` instead of `3`): patching `subscriptions.os.replace`
+modifies the shared standard-library module for every background writer in
+the same process. The original full-suite failure output was unavailable, so
+this is a verified test-isolation defect, not proof of that run's exact timing.
+
+The test now substitutes a module-local OS proxy in `subscriptions` instead
+of replacing the global function. An unrelated replace is checked to leave
+the injected-failure counter unchanged. The exact three retry calls and one
+pending payment assertions remain intact. Application code and user data are
+unchanged; no subscription persistence defect was reproduced.
+
+Verification: complete subscription test module **23 passed**, five independent
+focused pytest processes **5/5 passed**, Python compilation and diff check
+**PASS**. Integrated full regression remains the parent task's gate.
