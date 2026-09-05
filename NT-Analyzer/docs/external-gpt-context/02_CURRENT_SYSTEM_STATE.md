@@ -3,20 +3,20 @@
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
 - Last verified UTC: 2026-09-05T04:22:06Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: bd239e76e548db818439bb77389f47c8aa9755f4 (clean beta.96 runtime; Azure PASS, Court dispatch correction under verification)
+- Local source verified SHA: 93bb1298f86f71ad950e2f7d737e6fe4bd421e3e (clean beta.96 runtime; Azure and single-dispatch recovery verified; result presentation/format follow-up under verification)
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`; not released to Canary/Production
-- Active Local 8765: clean `bd239e76e548db818439bb77389f47c8aa9755f4`, build `dev-0.10.0-beta.96-bd239e76e548`, original owner data, Preview=false
-- Agent World branch: `codex/agent-world-owner-preview`, stacked draft PR #282 above open #281/#280; clean bd239e76 is active on Local; Court dispatch correction is under verification
+- Active Local 8765: clean `93bb1298f86f71ad950e2f7d737e6fe4bd421e3e`, build `dev-0.10.0-beta.96-93bb1298f86f`, original owner data, Preview=false
+- Agent World branch: `codex/agent-world-owner-preview`, stacked draft PR #282 above open #281/#280; clean 93bb1298 is active on Local; result presentation/format follow-up is under verification
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
-## Actual Local continuation — bd239e76
+## Current Local checkpoint — 93bb1298
 
-The Azure compatibility commit is clean, pushed and active on Local only.
+Azure compatibility bd239e76 is preserved in the current clean Local 93bb1298.
 Full **3925 passed / 44 skipped**, 187 focused, legacy 13/13 and staged/runtime
 533-file bundles passed. Exact-SHA
 [CI 33958551325](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33958551325)
@@ -24,25 +24,35 @@ passed Linux, Windows and static jobs. Anna's original owner Azure binding
 returned CONNECTION_OK (2,235 ms; recorded cost $0.00005025); no key was copied.
 Backtest/chat (5 messages) and genuine chart/chat (13 messages) survived restart.
 
-Actual Court exposed a dual-dispatch collision: the synchronous judge also
-enqueued a separate worker job. DeepSeek returned a valid sealed response, but
-task 8d256003 remained blocked and case 86a650ab has no accepted vote. No verdict
-or execution is claimed. The narrow correction removes the duplicate Court queue
-submission and permits explicit, freshly admitted completion from that original
-immutable receipt only. Missing/wrong evidence and revoked authority fail closed;
-there is no automatic paid retry. New regression/activation and actual same-case
-continuation remain required. API, SQL migrations, native adapters, permissions,
-budgets, Router and Execution V2 are unchanged.
+The former synchronous/worker collision is fixed: original DeepSeek task
+8d256003 resumed from its immutable receipt, without another provider call, and
+case 86a650ab has one vote. Gemini task 484a0ad9 returned fenced JSON and failed
+strict verification; its failed evidence is retained and no verdict is claimed.
+Active 93bb1298 passed 3936 tests / 44 skips, 274 focused, legacy 13/13,
+staged/runtime 533-file bundles and exact-SHA CI 33960694698 (3/3).
+New result presentation/format work is under verification: stored Outcome DTO,
+safe Inspector/SF Chat report links, MIME-aware files, legacy read-only rendering,
+and explicit net/PF commission basis. New Court requests seal their plain-JSON
+format instruction; old request identities/receipts and validators are unchanged.
+The actual SF Social snapshot was reviewed without creating a post. Ordinary
+registration/key and permanent publication remain owner actions. API, SQL,
+permissions, budgets, Router and Execution V2 remain unchanged.
+Presentation checkpoint: 610 focused and 3972 full PASS / 44 skips. A subsequent
+manual Consensus check exposed incorrect candidate filtering; no proposal was
+created from rejected tasks. The corrected owned/successful/same-input grouping
+passed 319 focused tests; final full regression 3977 PASS / 44 skips, 954.04 s.
+Static/context and exact 533-file staged bundle PASS; activation/browser and
+new-SHA CI remain separate. Original rejection and source history are preserved.
 See [canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 
-## Latest scoped checkpoint verification
+## Earlier scoped checkpoint verification
 
-Active ef4006eb: **3914 passed / 44 skipped**, 759.73 s, 218 focused PASS,
+Historical ef4006eb: **3914 passed / 44 skipped**, 759.73 s, 218 focused PASS,
 legacy 13/13, Python/23-JS/root/context and staged/runtime 533-file bundles PASS.
 Exact-SHA [CI 33956017912](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33956017912)
 passed all three jobs; absent main-target checks are not counted as green.
 Narrow Azure owner-binding follow-up: **3925 passed / 44 skipped**, 759.35 s,
-plus 187 focused PASS; its exact-bundle/commit/activation remain separate.
+plus 187 focused PASS; its exact-bundle/commit/activation subsequently passed on bd239e76.
 The 44 skips remain explicit; 41 have separate actual isolated PG evidence.
 Three real DeepSeek/Gemini comparisons passed: n=3, OBSERVED, low confidence,
 no routing effect. Project versioning, private Memory promotion, manual routine,
@@ -82,10 +92,10 @@ on ef4006eb; actual historical bars are not labelled LIVE.
 - The old owner process served dirty beta.93 / `7062f749` because its scheduled
   task still targeted the old checkout. After explicit owner approval, isolated
   copy checks, coherent/cold backups and exact process retirement, Local 8765
-  initially ran clean `486db834`, then `ca505d83` and `34deb827`; now `ef4006eb` beta.96
+  initially ran clean `486db834`, then `ca505d83`, `34deb827`, `ef4006eb` and `bd239e76`; now `93bb1298` beta.96
   against the same original owner data root. The original verified backtest
   and its five chat messages survived restart without duplication. The narrow
-  Azure owner-binding compatibility follow-up remains under verification; no second worker may share
+  Azure owner binding is active and verified; no second worker may share
   the owner data root.
 - Live ca505d83 SF Chat → DeepSeek → NinjaTrader → original report passed:
   model task `62182839-1c4c-563d-8186-bcef081ec599`, 64 historical trades,
@@ -114,13 +124,13 @@ on ef4006eb; actual historical bars are not labelled LIVE.
 
 | Subsystem | Status | Current fact | Remaining limit |
 | --- | --- | --- | --- |
-| Agent World | `IN DEVELOPMENT` | Three primary tabs plus drawers, clean ef4006eb active; real NT report, Desktop PNG, restart/failure recovery, ratings and calendar verified | Azure activation, Court/shared Memory/Social, own-key test and final Git/CI/design acceptance pending. No Agent World PG adapter, Router/Execution V2 replacement or autonomous routine scheduler |
+| Agent World | `IN DEVELOPMENT` | Three tabs plus drawers, clean 93bb1298 active; real NT report, Desktop PNG, Azure, saved-receipt recovery, ratings and calendar verified | Result presentation/format follow-up, final Court/shared Memory, Social publication, own-key test and owner acceptance pending. No Agent World PG adapter, Router/Execution V2 replacement or autonomous routine scheduler |
 | Auth / owner identity | `BETA` in Unified Local | `0.10.0-beta.96` has one three-step registration contract for Telegram, Google and e-mail, a stable StratForge handle shared by profile/SF Social/SF Chat, final clickwrap consent and the existing shared environment-routed provider architecture. Owner Preview uses the same state transitions with sandbox-only synthetic credentials | Not present in the deployed beta.87 artifact; live real-provider acceptance and immutable Canary/Production promotion remain separate gates |
 | Device confirmation / trusted access | `BETA` in Unified Local | Every new unknown human browser/app access starts as a two-minute pending session. The first freshly authenticated device can choose permanent trust or current-session-only without a redundant second OTP; later unknown clients still use confirmed Telegram or verified e-mail. Machine → Client → Session grouping remains proof-based | Integrated and browser-verified in Local beta.96, but not present in deployed beta.87; real-provider acceptance and release promotion remain separate gates |
 | Legacy UI / Telegram Mini App | `DEPRECATED` | Merged main serves Aurora only; legacy UI, Mini App, remote-access and tunnel routes fail with HTTP 410. Classic assets are available only in a separate localhost read-only Legacy Viewer. Telegram `/start` uses a normal URL button | beta.87 is live in Canary and Production; historical snapshots remain until owner review |
 | User entry and trial access | `BETA` in Unified Local | Anonymous product access is removed. Every verified account receives the same full product with a default five-hour active-use starting grant; idle time is not charged. Profile/security remain available after exhaustion | Not present in deployed beta.87; product access does not grant third-party market-data redistribution rights |
 | Admin / Release Center | `BETA` | A versioned release/change record is visible with title, summary, PRs, SHA, build/artifact, stage, checks, duration and environment identity. Production approval/promotion fails closed without title, summary, source SHA and verification PASS | beta.87 acceptance is recorded; any application change starts a new artifact cycle |
-| Test isolation | `AVAILABLE` | Active ef4006eb full 3914/44 and CI 3/3 PASS; Azure follow-up 3925/44 and 187 focused PASS; actual isolated PostgreSQL separately passed 41 existing relational tests | New-SHA CI and activation remain separate. Two shell tests and one POSIX check remain unverified on Windows; fixtures do not certify live provider/browser acceptance |
+| Test isolation | `AVAILABLE` | Active 93bb1298 full 3936/44, 274 focused and CI 3/3 PASS; isolated PostgreSQL separately passed 41 existing relational tests | New presentation delta has separate gates. Two shell tests and one POSIX check remain unverified on Windows; fixtures do not certify live provider/browser acceptance |
 | Market data / TopstepX | `BETA` | TopstepX remains the primary independent read-only history/realtime chart source; the accepted gateway/SignalR/cache/failover/rendering baseline was not changed by PR #254/#255 or the beta.86 release-record work | cross-user owner-feed redistribution remains `EXTERNAL BLOCKED` without written authority |
 | Charts / fan-out | `BETA` | Browser clients consume same-origin StratForge market-data WebSockets; provider credentials are not delivered to browsers and consumers do not create their own TopstepX loginKey/SignalR sessions | broader design acceptance is separate from this Connector closeout |
 | NinjaTrader / Connector | `BETA` | Production Connector on VMNINJA is `0.4.2-dev.20`; SERVER BACKTEST, cancel state machine, device catalog, account snapshot and Connector LIVE/GRACE/OFFLINE presentation are accepted | public installer distribution remains `EXTERNAL BLOCKED` on authorized Authenticode material |

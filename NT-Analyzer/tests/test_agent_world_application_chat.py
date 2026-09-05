@@ -10,6 +10,7 @@ import pytest
 from app import durable, jobqueue, local_worker, market_data
 from app.ai_lab import chief_agent
 from app.ai_control_center import application_chat as app_chat, domain_gateway, live_gateway, live_charts
+from app.ai_control_center import model_chat
 from app.ai_control_center.states import ContractError, EntityKind
 
 from tests.test_agent_world_models import setup as model_setup, connected, response
@@ -113,6 +114,11 @@ def test_chart_full_chain_queue_canvas_receipt_model_result_and_retry(model_setu
     image = next(row for row in detail["artifacts"] if row["mime_type"] == "image/png")
     assert image["sha256"] == hashlib.sha256(_png()).hexdigest()
     assert "40 из 200" in detail["result_text"]
+    assert detail["source_kind"] == "real_model_response"  # authority is unchanged
+    assert detail["outcomes"][0]["id"] == detail["application_result"]["outcome_id"]
+    envelope = model_chat.envelope(authorized, detail, request_id="view-chart-result")
+    attachment = next(row for row in envelope["attachments"] if row["mime_type"] == "image/png")
+    assert attachment["type"] == "image" and attachment["sha256"] == image["sha256"]
     count = len(chief_agent.agent_world_live_messages(scope=authorized["chat_scope"]))
     app_chat.reconcile(authorized, service)
     assert len(chief_agent.agent_world_live_messages(scope=authorized["chat_scope"])) == count
@@ -139,6 +145,25 @@ def test_backtest_full_chain_uses_original_queue_report_hash_not_generated_resul
     assert proof["source_sha256"] == original_hash and proof["representation"] == "verified_existing_report_summary"
     assert detail["application_result"]["evaluation"]["self_scored"] is False
     assert "-53.8" in detail["result_text"]  # actual fixture's after-commission value
+    assert detail["source_kind"] == "real_model_response"
+    assert detail["outcomes"][0]["id"] == detail["application_result"]["outcome_id"]
+    assert detail["outcomes"][0]["detail"] == detail["result_text"]
+    assert detail["outcomes"][0]["status"] == "verified"
+    envelope = model_chat.envelope(authorized, detail, request_id="view-backtest-result")
+    assert envelope["attachments"] and all(row["type"] == "artifact" for row in envelope["attachments"])
+    assert envelope["source_kind"] == "real_model_response" and envelope["report_url"] == detail["report_url"]
+    assert hashlib.sha256((folder / "result.json").read_bytes()).hexdigest() == original_hash
+
+
+def test_pending_application_never_projects_plan_as_completed_application(model_setup, authorized):
+    service, ctx, *_ = model_setup
+    _, plan = _plan(model_setup, authorized)
+    detail = service.task_detail(context=ctx, task_id=plan["id"])
+    assert detail["status"] == "waiting" and not detail["artifacts"]
+    assert detail["outcomes"][0]["title"] == "Проверка ответа модели"
+    assert detail["outcomes"][0]["id"] == detail["outcome_id"]
+    assert detail["outcomes"][0].get("source_kind") is None
+    assert not model_chat.envelope(authorized, detail, request_id="pending-view")["verification"]["passed"]
 
 
 def test_dispatch_source_then_checkpoint_failure_repairs_without_second_command(model_setup, authorized, monkeypatch):

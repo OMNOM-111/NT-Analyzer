@@ -300,7 +300,8 @@ def test_optional_existing_backtest_loader_must_attest_real_scoped_files(social)
         prepare(social)
 
 
-def test_model_linked_backtest_outcome_publishes_frozen_allowlisted_metrics_not_source_files(social):
+@pytest.mark.parametrize("after_commission", [False, True])
+def test_model_linked_backtest_outcome_publishes_frozen_allowlisted_metrics_not_source_files(social, after_commission):
     from tests.test_agent_world_live_backtests import _spec
     models, ctx, spec = social.models, social.env.ctx, _spec()
     planned = models.plan_application(context=ctx, model_id=social.model_ids[0], spec=spec, kind="backtest",
@@ -314,9 +315,12 @@ def test_model_linked_backtest_outcome_publishes_frozen_allowlisted_metrics_not_
     checkpoint["application_dispatch"] = {"source_id": source_id, "source_task_id": "ninja-task-fixture"}
     models._change(ctx, task, checkpoint=models._put(ctx, checkpoint))
     checksums = {name: hashlib.sha256(name.encode()).hexdigest() for name in ("result.json", "trades.json", "bars.json", "job.json")}
+    metrics = {"net_profit": -123, "trade_count": 64, "profit_factor": .7541}
+    if after_commission:
+        metrics.update(net_profit_after_commission=-969.7, profit_factor_after_commission=.725188)
     summary = {"representation": "verified_existing_report_summary", "source_kind": "ninjatrader_report", "source_id": source_id,
         "synthetic": False, "model_task_id": planned["id"], "request_sha256": planned["application_request"]["request_sha256"],
-        "source_checksums": checksums, "result": {"metrics": {"net_profit": -123, "trade_count": 64}, "trades": "PRIVATE-TRADE-ROWS"}}
+        "source_checksums": checksums, "result": {"metrics": metrics, "trades": "PRIVATE-TRADE-ROWS"}}
     artifact = models._put(ctx, summary)
     proof = {"verified": True, "synthetic": False, "source_kind": "ninjatrader_report", "source_id": source_id,
         "sha256": artifact.sha256, "source_sha256": checksums["result.json"], "source_checksums": checksums,
@@ -325,7 +329,10 @@ def test_model_linked_backtest_outcome_publishes_frozen_allowlisted_metrics_not_
                                                verification=proof, artifact_refs=(artifact,))
     social.source_id = result["outcome_id"]
     prepared = prepare(social)
-    assert prepared["snapshot"]["metrics"]["Net P&L"] == -123
+    basis = "after commission" if after_commission else "before commission"
+    assert prepared["snapshot"]["metrics"][f"Net P&L ({basis})"] == (-969.7 if after_commission else -123)
+    assert prepared["snapshot"]["metrics"][f"Profit factor ({basis})"] == (.7252 if after_commission else .7541)
     assert prepared["snapshot"]["metrics"]["Trades"] == 64
+    assert social.models._json(ctx, artifact) == summary
     assert "PRIVATE-TRADE-ROWS" not in json.dumps(prepared)
     assert publish(social, prepared)["ok"]

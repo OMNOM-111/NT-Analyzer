@@ -11,16 +11,17 @@ Branch: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OM
 Starting SHA: `486db834850d465006a3983d2d83ee809202df60`; integrated source
 `ca505d83a25356df5de2fb468f5bc20666a436d5` was the initial model/domain checkpoint.
 Claimed delivery/explicit roles/private-container checkpoint
-`34deb827e4ed0e6a29d5693650b575e86e0f33d6` is committed, pushed and active on Local.
+`34deb827e4ed0e6a29d5693650b575e86e0f33d6` was committed, pushed and activated on Local.
 Its [CI run 33951941036](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33951941036)
 passed Windows, Ubuntu and static jobs. Subsequent scoped fixes are tracked below.
 Rejection/rating/calendar fixes `ef4006ebbdd95764636931d70fa7a742ceab756c` are
-committed, pushed and active on Local after another isolated-copy and 533-file
+committed, pushed and were activated on Local after another isolated-copy and 533-file
 runtime bundle PASS. Original owner identity/data/NT remain unchanged.
 PR #280/#281 are dependencies, not merged here.
-Verification result: PENDING; owner acceptance not yet ready for the full delta.
+Verification result: PASS for the automated result/Consensus corrective delta;
+actual new-SHA activation/browser/CI and owner acceptance are separate gates.
 
-Active 34deb827 automated verification: PASS — 3906 passed, 44 skipped, 770.01 s;
+Historical 34deb827 automated verification: PASS — 3906 passed, 44 skipped, 770.01 s;
 legacy 13/13, Python compile, 23 JS checks, root secret/Markdown/CSP checks,
 context validation, 533-file actual bundle all passed. Skips and remaining live
 acceptance/CI gates below are not counted as PASS for the complete program.
@@ -44,7 +45,7 @@ acceptance/CI gates below are not counted as PASS for the complete program.
   Development, real owner/data root, Preview=false, live orders=false.
 - Later ca505d83 and 34deb827 activations repeated exact-PID/active-work checks,
   isolated-copy rehearsal and a 533-file exact runtime bundle PASS. Current
-  measured build is `dev-0.10.0-beta.96-34deb827e4ed`; five backtest SF Chat
+  measured build at that checkpoint was `dev-0.10.0-beta.96-34deb827e4ed`; five backtest SF Chat
   messages and actual owner account/workspace survived restart unchanged.
 
 ## Implementation
@@ -176,7 +177,7 @@ Failed binding attempts created no connection. Anna's active Persona remains
 Focused model/gateway tests: **187 PASS**. Full final regression:
 **3925 passed, 44 skipped**, 759.35 s, XML
 `.artifacts/verification-20260905/full-regression-azure-native-binding.xml`.
-Active ef4006eb CI 33956017912 passed Linux, Windows and static jobs.
+Historical ef4006eb CI 33956017912 passed Linux, Windows and static jobs.
 Python compile, root scan, context validator, diff check and legacy 13/13 PASS.
 Exact staged 533-file bundle PASS (static scan, runtime reads, Python and JS).
 New-SHA CI/activation remain separate; actual Azure/Court is not claimed from fixtures.
@@ -186,7 +187,7 @@ Browser project version 2 at revision 3 shows its actual local creation time,
 ### Court single-dispatch and saved-receipt recovery
 
 Azure commit `bd239e76e548db818439bb77389f47c8aa9755f4` is committed, pushed,
-active on Local only and passed exact-SHA CI 33958551325 (Linux/Windows/static).
+was activated on Local only and passed exact-SHA CI 33958551325 (Linux/Windows/static).
 Actual Anna connection d916ccc4 returned CONNECTION_OK, 2,235 ms and recorded
 cost $0.00005025. Existing key and budget are unchanged.
 
@@ -204,12 +205,61 @@ native clients remain authoritative. Fault injection at five recovery writes
 checks interruption safety and no additional calls. Eleven targeted cases PASS.
 Final focused **274 passed**, 253.84 s. Full **3936 passed, 44 skipped**,
 1035.64 s, XML `.artifacts/verification-20260905/full-regression-court-single-dispatch.xml`.
-Legacy 13/13, Python/root/context/diff PASS; exact-index/CI/activation are separate.
+Legacy 13/13, Python/root/context/diff and exact staged/runtime 533-file bundle PASS.
+Commit `93bb1298f86f71ad950e2f7d737e6fe4bd421e3e` was activated as clean Local,
+with exact-SHA CI 33960694698 PASS (Linux/Windows/static).
 No numbered migration, alternate worker engine or public API is added.
 
-The actual report drawer/chat check also exposed an empty Outcome projection and
-a JSON artifact incorrectly normalized as an image. This is a separate pending
-presentation correction, not a failed NT report or permission to rewrite history.
+Actual admitted replay attached the original DeepSeek vote without a new provider
+call or changed receipt/cost. The case then received a fenced Gemini response
+and correctly rejected it; one vote is not a verdict, and Anna was not called in
+that case. The failed response/evaluation is retained, never reinterpreted.
+
+### Result presentation, commission basis and Consensus selection
+
+The actual report drawer/chat check exposed an empty Outcome projection and
+a JSON artifact incorrectly normalized as an image. The scoped correction now
+projects stored Outcomes, adds canonical original-report links in the same Task
+Inspector/SF Chat, and preserves Desktop images. New JSON attachments are files;
+old report messages receive read-time rendering compatibility without history
+rewrites or another paid task. Links are same-origin, exact-source and gated by
+verified completed non-synthetic evidence. All 14 Aurora shell pages receive the
+same shared UI cache version; no adjacent page redesign is included.
+
+Only new sealed Court requests receive a versioned plain-JSON/no-wrapper format
+instruction. Legacy request identity and prompt format are retained on replay,
+including rejected fenced answers. The strict validator is unchanged.
+
+Read-only SF Social preparation showed gross PF 0.7541 beside after-commission
+Net P&L -969.7. The existing finite-number metric sanitizer now prefers available
+valid after-commission PF; Agent World explicitly labels the basis for both
+metrics. The original report/source remains unchanged: PF 0.725188, rounded
+public projection 0.7252. Existing permanent publications are not rewritten and
+no Social post was created during this check.
+
+Presentation/format checkpoint: **610 focused PASS**, 442.96 s; full **3972 passed,
+44 skipped**, 1064.11 s, XML
+`.artifacts/verification-20260905/full-regression-result-presentation.xml`.
+Legacy 13/13, Python/JS/root/context/diff PASS. These results precede the next
+small candidate-list correction; final focused/full/bundle gates are repeated.
+
+Manual Consensus selection reproduced a separate projection defect: global
+artifact deduplication hid successful contributions behind their Outcome files,
+leaving two rejected tasks as choices. The server correctly refused them; no
+proposal or vote was created. A route-level regression failed on the old list.
+Consensus now reads existing owned accepted contributions directly, requires a
+successful real-model path, excludes Court/failed/synthetic paths, and groups
+independent models by the sealed input hash. Human-readable task/model labels
+and an input-group marker guide the 2–3 choices. Final write-side authority and
+same-input validation are unchanged; this adds no jobs, schema or provider calls.
+
+Final candidate/result checkpoint: **319 focused PASS**, 101.21 s; full
+**3977 passed, 44 skipped**, 954.04 s, XML
+`.artifacts/verification-20260905/full-regression-consensus-result-final.xml`.
+Legacy 13/13, Python/JS, root CSP/secrets/Markdown, context/diff and exact staged
+533-file bundle PASS. The 44 skips remain explicit; the separate 41-test actual
+PostgreSQL run covers existing relational contracts, not a new Agent World PG
+adapter. New-SHA CI and Local browser activation are recorded separately.
 
 ## Release impact and rollback
 

@@ -45,7 +45,9 @@ def envelope(authorized, detail, *, request_id, pending=False):
                              "plan_evaluation_id": task.get("evaluation_id"), "checks": evaluation.get("checks", []),
                              "application": application.get("evaluation")},
             **{field: task.get(field) for field in ("intent_id", "model_id", "contribution_id", "execution_id", "outcome_id", "evaluation_id", "correlation_id")},
-            "attachments": detail.get("artifacts") or [],
+            "attachments": [{**artifact, "type": "image" if artifact.get("mime_type") in
+                {"image/png", "image/jpeg", "image/webp", "image/svg+xml"} else "artifact",
+                "caption": artifact.get("title") or "Артефакт задачи"} for artifact in detail.get("artifacts") or []],
             "source_job_id": task.get("source_job_id"), "command_id": task.get("command_id"), "report_url": task.get("report_url"),
             "plan_evaluation_id": task.get("evaluation_id"), "application_evaluation_id": task.get("application_evaluation_id"),
             "application_execution_id": application.get("execution_id"), "application_outcome_id": application.get("outcome_id"),

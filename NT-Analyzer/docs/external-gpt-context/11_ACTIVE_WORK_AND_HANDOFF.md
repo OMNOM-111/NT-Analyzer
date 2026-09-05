@@ -3,18 +3,18 @@
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-05T04:22:06Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: bd239e76e548db818439bb77389f47c8aa9755f4 (clean beta.96 runtime; Azure PASS, Court dispatch correction under verification)
+- Local source verified SHA: 93bb1298f86f71ad950e2f7d737e6fe4bd421e3e (clean beta.96 runtime; Azure and single-dispatch recovery verified; result presentation/format follow-up under verification)
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Active branch: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; both dependencies remain open
-- Version: `0.10.0-beta.96`, `pre_release`; clean `bd239e76` is active on Local 8765, no Canary/Production promotion
-- Integration state: ef4006eb includes delivery, roles, private containers and rejection/rating/calendar corrections; narrow Azure compatibility is under verification
+- Version: `0.10.0-beta.96`, `pre_release`; clean `93bb1298` is active on Local 8765, no Canary/Production promotion
+- Integration state: scoped model/domain/Chat/NT/Desktop work, Azure and Court single-dispatch correction active; result presentation/format follow-up under verification
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 
-## Actual Local continuation — bd239e76
+## Current Local checkpoint — 93bb1298
 
-The Azure compatibility commit is clean, pushed and active on Local only.
+Azure compatibility bd239e76 is preserved in the current clean Local 93bb1298.
 Full **3925 passed / 44 skipped**, 187 focused, legacy 13/13 and staged/runtime
 533-file bundles passed. Exact-SHA
 [CI 33958551325](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33958551325)
@@ -22,15 +22,25 @@ passed Linux, Windows and static jobs. Anna's original owner Azure binding
 returned CONNECTION_OK (2,235 ms; recorded cost $0.00005025); no key was copied.
 Backtest/chat (5 messages) and genuine chart/chat (13 messages) survived restart.
 
-Actual Court exposed a dual-dispatch collision: the synchronous judge also
-enqueued a separate worker job. DeepSeek returned a valid sealed response, but
-task 8d256003 remained blocked and case 86a650ab has no accepted vote. No verdict
-or execution is claimed. The narrow correction removes the duplicate Court queue
-submission and permits explicit, freshly admitted completion from that original
-immutable receipt only. Missing/wrong evidence and revoked authority fail closed;
-there is no automatic paid retry. New regression/activation and actual same-case
-continuation remain required. API, SQL migrations, native adapters, permissions,
-budgets, Router and Execution V2 are unchanged.
+The former synchronous/worker collision is fixed: original DeepSeek task
+8d256003 resumed from its immutable receipt, without another provider call, and
+case 86a650ab has one vote. Gemini task 484a0ad9 returned fenced JSON and failed
+strict verification; its failed evidence is retained and no verdict is claimed.
+Active 93bb1298 passed 3936 tests / 44 skips, 274 focused, legacy 13/13,
+staged/runtime 533-file bundles and exact-SHA CI 33960694698 (3/3).
+New result presentation/format work is under verification: stored Outcome DTO,
+safe Inspector/SF Chat report links, MIME-aware files, legacy read-only rendering,
+and explicit net/PF commission basis. New Court requests seal their plain-JSON
+format instruction; old request identities/receipts and validators are unchanged.
+The actual SF Social snapshot was reviewed without creating a post. Ordinary
+registration/key and permanent publication remain owner actions. API, SQL,
+permissions, budgets, Router and Execution V2 remain unchanged.
+Presentation checkpoint: 610 focused and 3972 full PASS / 44 skips. A subsequent
+manual Consensus check exposed incorrect candidate filtering; no proposal was
+created from rejected tasks. The corrected owned/successful/same-input grouping
+passed 319 focused tests; final full regression 3977 PASS / 44 skips, 954.04 s.
+Static/context and exact 533-file staged bundle PASS; activation/browser and
+new-SHA CI remain separate. Original rejection and source history are preserved.
 See [canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 
 ## Current implementation checkpoint
@@ -77,12 +87,12 @@ The original Local at 8765 served dirty beta.93 / `7062f749` because its schedul
 task still pointed at that checkout. This is historical, not the current runtime.
 After owner authorization, copy/cold backups, SQLite integrity and isolated-copy
 startup checks, only the matched Local process/task chain was replaced. Clean
-detached `agent-world-local-runtime` at `ef4006ebbdd95764636931d70fa7a742ceab756c`
-now serves beta.96, build `dev-0.10.0-beta.96-ef4006ebbdd9`, with the original
+detached `agent-world-local-runtime` at `93bb1298f86f71ad950e2f7d737e6fe4bd421e3e`
+now serves beta.96, build `dev-0.10.0-beta.96-93bb1298f86f`, with the original
 owner data, account, workspace, history and NT heartbeat. No active job was lost.
 Delivery, roles, private containers, sealed-rejection recovery, active-model
-ratings, local calendar and new-version timestamps are active. The current
-follow-up accepts only canonical api-version on resolved Azure owner bindings;
+ratings, local calendar and new-version timestamps are active. Azure compatibility
+accepts only canonical api-version on resolved Azure owner bindings;
 private transport, secrets, native adapter and existing budgets do not change.
 
 The manual NinjaTrader proof `ui_20260905T003301149Z` has 1,273 actual bars and
@@ -104,11 +114,11 @@ wrapper reapplies the original data root after profile load. Original task XML,
 backups and manifests remain outside Git. Code rollback and data rollback are
 separate; preserve new owner writes before restoring a cold snapshot.
 
-Historical 34deb827 passed 3906/44. Active ef4006eb passed **3914 tests,
+Historical 34deb827 passed 3906/44. Historical ef4006eb passed **3914 tests,
 44 skipped**, 759.73 s, **218 focused**, legacy/static/context/staged and runtime
 533-file bundles, plus exact-SHA CI 3/3. The narrow Azure follow-up passed
-**3925 tests, 44 skipped**, 759.35 s, plus **187 focused**; exact-bundle and
-activation gates remain separate. Saved completion uses one claimed existing
+**3925 tests, 44 skipped**, 759.35 s, plus **187 focused**; exact-bundle,
+activation and actual Azure checks subsequently passed. Saved completion uses one claimed existing
 worker, not another provider call. Actual isolated PostgreSQL 17.10 separately
 passed **41 tests, zero skips**, 122.71 s, on existing migrations 1–22 with TLS
 and non-superuser/NOBYPASSRLS roles. The remaining two shell and one POSIX
@@ -163,9 +173,9 @@ green. No workflow or branch-protection changes are part of this slice.
 [Branch run 33937601902](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33937601902)
 historically passed **3/3** on `b05ee124caf652c77689fd749cd9eadc8265d564` (documentation after
 code `fc78677df`): Linux **3372 passed/41 skipped**, Windows **3369 passed/44 skipped**,
-static PASS. Later 34deb827 run 33951941036 passed three jobs. Active ef4006eb
+static PASS. Later 34deb827 run 33951941036 passed three jobs. Historical ef4006eb
 [run 33956017912](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33956017912)
-also passed all three jobs. The Azure follow-up needs exact-SHA checks. PR #282 stays
+also passed all three jobs. Azure CI 33958551325 and Court CI 33960694698 passed 3/3. PR #282 stays
 draft for owner review; program stages remain open.
 
 ## Historical deployment identity
@@ -202,8 +212,8 @@ They no longer define the current Local baseline.
 - DeepSeek and Gemini connections and three actual comparisons passed; fresh
   model/chat/NT report passed on ca505d83 and survived 34deb827 restart. Z.AI
   unavailability and initial chart failures are not PASS. New actual PNG, saved
-  failure recovery and corrected ratings/calendar passed on ef4006eb. Azure/Court,
-  shared Memory/Social and own-key acceptance remain.
+  failure recovery and corrected ratings/calendar passed on ef4006eb; Azure passed
+  on bd239e76. Court format/result presentation, shared Memory/Social and own-key acceptance remain.
 - Agent World is `IN DEVELOPMENT`: domain mechanisms are implemented, but the
   full local owner acceptance, Git/CI closeout and stages 0–13 are not closed.
 - Ordinary test signup `aw_model_review_0905` reached final Terms on localhost;
@@ -219,22 +229,22 @@ They no longer define the current Local baseline.
 - Version assignment, merge, signed artifact, Canary and Production are separate
   owner-controlled stages. Local/CI completion never implies release approval.
 
-## Latest scoped checkpoint verification
+## Earlier scoped checkpoint verification
 
-Active ef4006eb: full 3914/44 (759.73 s), 218 focused, legacy 13/13,
+Historical ef4006eb: full 3914/44 (759.73 s), 218 focused, legacy 13/13,
 Python/23-JS/root/context/staged and runtime 533-file bundles PASS; exact-SHA
 CI 33956017912 all three jobs PASS. Azure follow-up: 3925/44 (759.35 s),
 187 focused PASS. The 44 skips stay explicit; 41 have separate isolated PG proof.
 Three real comparisons, NT/chat/restart, actual Desktop PNG, failure recovery,
-ratings/calendar and initial domain actions passed. Azure/Court, shared
+ratings/calendar, Azure and initial domain actions passed. Full Court, shared
 Memory/Social, own-key and final owner acceptance remain open.
 
 ## Next safe step
 
-Finish exact-index bundle checks and commit the tested Azure compatibility delta,
-then activate only Local after exact-PID/no-active-work checks. Bind Anna to the
-approved Azure connection without copying its key; exercise bounded provider/Court
-and remaining shared Memory/Social scenarios. Ordinary registration consent,
+Finish the result presentation/format regression, exact-index bundle and scoped
+commit; activate only Local after exact-PID/no-active-work checks. Verify original
+NT report links/JSON file rendering, commission labels and a fresh independent
+Court case without changing the failed old case. Ordinary registration consent,
 device trust and a separate private-provider key stay with the owner. Preserve
 original owner data and rollback evidence. Record exact-SHA CI and owner visual
 acceptance separately. Do not mark completion from a mock transport, historical report or successful HTTP

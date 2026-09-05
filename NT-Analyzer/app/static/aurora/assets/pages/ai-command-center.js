@@ -67,7 +67,7 @@
     }
     if (domain === 'experiments' && action === 'create') return [field('title', 'Название сравнения', 'text', { required: true, max: 80 }), field('model_ids', 'Модели (выберите 2–3)', 'models', { required: true, minItems: 2, maxItems: 3 }), rubricField(), field('input_text', 'Одинаковые входные данные', 'textarea', { max: 4000, hint: 'Соединение: пусто. Арифметика: JSON-массив целых чисел. Факты: строки key=value. Один вход будет отправлен всем выбранным моделям.' })];
     if (domain === 'decisions') {
-      if (action === 'propose_consensus') return domainFormFields(domain, 'create').filter(spec => spec.key !== 'evidence_ids').concat(field('contribution_ids', 'Принятые вклады моделей (минимум два)', 'records', { required: true, minItems: 2, maxItems: 20, source: 'contribution_candidates', hint: 'Сервер проверит, что это собственные принятые вклады по одному заданию и входу. Выбор не создаёт голосов.' }));
+      if (action === 'propose_consensus') return domainFormFields(domain, 'create').filter(spec => spec.key !== 'evidence_ids').concat(field('contribution_ids', 'Принятые вклады моделей (минимум два)', 'records', { required: true, minItems: 2, maxItems: 3, source: 'contribution_candidates', hint: 'Выберите 2–3 разные модели с одинаковой меткой входа. Сервер повторно проверит источники. Выбор не создаёт голосов.' }));
       if (action === 'review') return [field('model_ids', 'Три независимых проверяющих', 'models', { required: true, minItems: 3, maxItems: 3, hint: 'Результат сформирует backend по фактическим ответам. Браузер не передаёт голоса.' })];
       if (action === 'create') return [field('title', 'Название решения', 'text', { required: true, max: 160 }), field('proposal', 'Предложение', 'textarea', { required: true, max: 12000 }), field('evidence_ids', 'Доказательства', 'evidence', { required: true, minItems: 1, maxItems: 20, hint: 'Только собственные JSON-артефакты. Выберите сохранённый источник либо укажите известный UUID.' }), field('risk', 'Уровень риска', 'select', { required: true, options: [['low', 'Низкий'], ['moderate', 'Умеренный'], ['high', 'Высокий'], ['critical', 'Критический']] }), field('trigger', 'Причина проверки', 'select', { required: true, options: [['requested_review', 'Запрошена проверка'], ['high_risk', 'Высокий риск'], ['conflict', 'Конфликт'], ['low_confidence', 'Низкая уверенность'], ['budget_exceeded', 'Превышение бюджета']] })];
     }
@@ -160,10 +160,16 @@
   function sourceMeta(value) {
     // Scope does not prove data provenance. Only an explicit server classification does.
     if (value?.synthetic === true) return { label: 'SYNTHETIC · тестовые данные', kind: 'synthetic', reportUrl: '' };
-    const kind = value?.synthetic === false ? String(value?.source_kind || '') : '';
+    const application = value?.application_result;
+    const verifiedApplication = value?.synthetic === false && value?.source_kind === 'real_model_response'
+      && value?.status === 'succeeded' && application?.verified === true
+      && ['ninjatrader_report', 'desktop_chart'].includes(application?.source_kind);
+    // This is presentation of the verified application result, not a change
+    // to the model task's authority or its original source classification.
+    const kind = verifiedApplication ? application.source_kind : value?.synthetic === false ? String(value?.source_kind || '') : '';
     const labels = { ninjatrader_report: 'NinjaTrader · исходный отчёт', desktop_chart: 'Рабочий стол · снимок графика', runtime_observation: 'Local · наблюдение runtime', real_model_response: 'Модель · фактический ответ' };
     const known = Object.prototype.hasOwnProperty.call(labels, kind);
-    const job = String(value?.source_job_id || '');
+    const job = String(verifiedApplication ? application.source_id || '' : value?.source_job_id || '');
     const reportUrl = kind === 'ninjatrader_report' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(job) ? '/ui/backtesting.html?job=' + encodeURIComponent(job) : '';
     return { label: known ? labels[kind] : 'Источник не подтверждён', kind: known ? kind : 'unknown', reportUrl };
   }
@@ -173,6 +179,7 @@
     return rows(data?.tasks).filter(task => ['succeeded', 'completed', 'verified'].includes(task.status)).slice(0, 3).map(task => ({
       title: task.title, summary: task.summary || '', task_id: taskId(task), status: task.status,
       synthetic: task.synthetic, source_kind: task.source_kind, source_job_id: task.source_job_id,
+      application_result: task.application_result,
       created_at: task.updated_at || task.created_at,
     }));
   }
@@ -606,7 +613,7 @@
     }
     function drawTask() {
       const task = detail.task || detail, art = rows(detail.artifacts);
-      const sourceKind = sourceMeta(task).kind;
+      const source = sourceMeta(task), sourceKind = source.kind;
       const labels = { summary: 'Обзор', activity: 'Активность', evidence: 'Evidence', agents: 'Агенты', evaluations: 'Оценка', artifacts: 'Артефакты', decisions: 'Решения', errors: 'Ошибки' };
       const svg = art.find(value => safeArtifactUrl(value.url) && (value.media_type || value.mime_type) === 'image/svg+xml');
       let body;
@@ -621,7 +628,7 @@
       if (detailTab === 'summary' && detail.result_text) body = `<div class="aw-context"><span class="aw-context-mark">РЕЗУЛЬТАТ</span><span>${esc(detail.result_text)}</span></div><div class="aw-detail-section">${body}</div>`;
       if (detailTab === 'summary' && task.source_kind === 'real_model_response') body += `<section class="aw-detail-section"><h3>Исполнитель и происхождение результата</h3><dl class="aw-detail-grid"><div><dt>Запрошенная модель</dt><dd>${esc(task.model || 'Не предоставлена')}</dd></div><div><dt>Model ID от провайдера</dt><dd>${esc(detail.actual_model || 'Не предоставлен')}</dd></div><div><dt>Провайдер</dt><dd>${esc(task.provider || 'Не предоставлен')}</dd></div></dl>${['intent_id', 'execution_id', 'contribution_id', 'outcome_id', 'evaluation_id', 'conversation_id', 'message_id'].filter(key => task[key]).map(key => `<div class="aw-hash">${esc(key.toUpperCase())} ${esc(task[key])}</div>`).join('')}</section>`;
       const taskActions = rows(task.allowed_actions).filter(action => ['cancel', 'retry'].includes(action)).map(action => `<button class="btn${action === 'cancel' ? ' aw-danger-action' : ''}" data-aw-task-action="${action}">${esc(actionLabel(action))}</button>`).join('');
-      const controls = `<div class="aw-actions"><button class="btn" data-aw-task-chat="${esc(taskId(task))}">Открыть в SF Chat</button>${svg ? `<button class="btn primary" data-aw-chart-chat="${esc(taskId(task))}">Снимок графика → SF Chat</button>` : ''}${taskActions}</div>`;
+      const controls = `<div class="aw-actions"><button class="btn" data-aw-task-chat="${esc(taskId(task))}">Открыть в SF Chat</button>${source.reportUrl ? `<a class="btn" href="${esc(source.reportUrl)}">Открыть исходный отчёт</a>` : ''}${svg ? `<button class="btn primary" data-aw-chart-chat="${esc(taskId(task))}">Снимок графика → SF Chat</button>` : ''}${taskActions}</div>`;
       const tabs = `<nav class="aw-tabs" role="tablist" aria-label="Разделы задачи">${Object.entries(labels).map(([key, label]) => `<button role="tab" aria-selected="${detailTab === key}" tabindex="${detailTab === key ? 0 : -1}" data-aw-detail-tab="${key}">${label}</button>`).join('')}</nav>`;
       openDrawer('Задача · ' + (task.title || 'AI Центр'), `${controls}${tabs}<div role="tabpanel">${body}</div><div class="aw-hash">TASK ${esc(taskId(task))}${task.correlation_id ? `<br>CORRELATION ${esc(task.correlation_id)}` : ''}</div>`);
     }

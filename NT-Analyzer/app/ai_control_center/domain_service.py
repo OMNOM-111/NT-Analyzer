@@ -675,6 +675,37 @@ class DomainService:
         self._guard(context, admit)
         return {"items": result, "read_limit": limit}
 
+    def consensus_candidates(self, *, context, admit, limit=50):
+        """Project contributions, not deduplicated files from the evidence picker."""
+        self._guard(context, admit)
+        c.require_revision(limit)
+        if limit > 100:
+            raise ContractError("invalid_page_limit")
+        groups = {}
+        page = self.repository.list(context=context, kind=EntityKind.CONTRIBUTION, page=PageRequest(limit=100))
+        for contribution in page.items:
+            if contribution.header.owner_user_uuid != context.user_uuid or contribution.status != "accepted":
+                continue
+            try:
+                task = self._owned(context, EntityKind.TASK, contribution.task.entity_id)
+                if task.status != "succeeded" or not task.checkpoint:
+                    continue
+                checkpoint = self._json(context, task.checkpoint)
+                spec = checkpoint.get("spec") or {}
+                if (checkpoint.get("source") != "real_model_task" or checkpoint.get("synthetic") is not False
+                        or spec.get("rubric_key") == "court_vote"):
+                    continue
+                model = self._owned(context, EntityKind.MODEL, checkpoint.get("model_id"))
+            except ContractError:
+                continue
+            group = _hash(spec)
+            groups.setdefault(group, []).append({"id": str(contribution.header.entity_id),
+                "title": f"{checkpoint.get('persona_name', model.model_key)} · {spec.get('rubric_key')} · {model.model_key} · вход {group[:8]}",
+                "input_group": group, "model_id": str(model.header.entity_id)})
+        result = [row for rows in groups.values() if len({row["model_id"] for row in rows}) >= 2 for row in rows]
+        self._guard(context, admit)
+        return result[:limit]
+
     def _consensus_sources(self, context, identities):
         if type(identities) is not list or not 2 <= len(identities) <= 3:
             raise ContractError("consensus_independent_contributions_required")

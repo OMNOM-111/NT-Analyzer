@@ -14,7 +14,7 @@ from app.ai_control_center import contracts as c
 from app.ai_control_center import model_evaluation as evaluation
 from app.ai_control_center import model_transport as transport
 from app.ai_control_center.model_execution import ModelExecutor, PrivateRegistry
-from app.ai_control_center.model_service import ModelService, _id
+from app.ai_control_center.model_service import ModelService, _id, _key
 from app.ai_control_center.sqlite_repository import SQLiteAgentWorldRepository
 from app.ai_control_center.states import ContractError, EntityKind
 from app.ai_lab import agent_registry, universal_llm
@@ -349,6 +349,9 @@ def test_judge_packet_isolated_and_schema_score_not_reputation(setup):
     vote = service.judge(request)
     assert isinstance(vote, JudgeResult) and vote.verdict == "abstain" and vote.contribution_id
     assert "Other judges and chat history are unavailable" in captured[0]["prompt"]
+    assert "No Markdown or code fences" in captured[0]["prompt"]
+    saved = service._get(ctx, EntityKind.TASK, captured[0]["request_id"])
+    assert service._json(ctx, saved.checkpoint)["spec"]["response_format_version"] == "plain-json-v1"
     assert service.evaluations(context=ctx, model_id=model["id"], rubric_key="court_vote")["sample_size"] == 0
 
 
@@ -373,6 +376,39 @@ def test_inline_court_has_one_dispatch_owner_not_a_second_worker_job(setup):
     with pytest.raises(ContractError, match="model_rubric_not_supported"):
         service.start_task(context=ctx, model_id=request.model_id,
             payload={"rubric_key": "court_vote"}, idempotency_key="untrusted-court-rubric")
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_old_court_format_receipt_replay_preserves_identity_and_rejection(setup, wrapped):
+    service, ctx, _, calls, queued, *_ = setup
+    request = judge_request(setup, "old-court-format")
+    spec = {"rubric_key": "court_vote", "version": evaluation.VERSION, "input": json.loads(request.packet_json),
+            "session_id": str(request.session_id), "case_id": str(request.case_id),
+            "packet_sha256": request.packet_sha256, "policy_version": request.policy_version,
+            "prompt_version": request.prompt_version}
+    pending = service.start_task(context=ctx, model_id=request.model_id, payload={},
+        idempotency_key="judge." + _key(request.run_key), _sealed_spec=spec)
+    answer = '{"verdict":"abstain","confidence":20,"rationale":"Insufficient evidence"}'
+    if wrapped:
+        answer = "```json\n" + answer + "\n```"
+    def execute(**kwargs):
+        calls.append(kwargs)
+        return response(answer)
+    service.executor = execute
+    service.execute(context=ctx, task_id=pending["id"])
+    saved = service._get(ctx, EntityKind.TASK, pending["id"])
+    original = service._json(ctx, saved.checkpoint)
+    assert "No Markdown or code fences" not in calls[0]["prompt"]
+    if wrapped:
+        with pytest.raises(ContractError, match="model_judge_response_invalid"):
+            service.judge(request)
+    else:
+        assert service.judge(request).verdict == "abstain"
+    after = service.task_detail(context=ctx, task_id=pending["id"])
+    assert after["result_text"] == answer
+    assert after["status"] == ("review" if wrapped else "succeeded")
+    assert len(calls) == 1 and not queued
+    assert service._json(ctx, service._get(ctx, EntityKind.TASK, pending["id"]).checkpoint) == original
 
 
 @pytest.mark.parametrize("mode", ["valid", "invalid_vote", "missing_receipt", "wrong_request", "revoked",

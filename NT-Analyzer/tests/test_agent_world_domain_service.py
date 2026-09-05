@@ -535,6 +535,7 @@ def test_real_model_service_adapter_contract_integrates_court_receipts_without_n
     items = env.service.list(context=env.ctx, admit=env.admit, domain="decisions")["items"]
     assert {item["decision_type"] for item in items} == {"advisory_proposal", "explicit_task_authorization"}
     assert all(item["actions"] == [] for item in items if item["decision_type"] == "explicit_task_authorization")
+    assert env.service.consensus_candidates(context=env.ctx, admit=env.admit) == []  # Court cannot vote into its own proposal
     assert act(env, item, "decisions", "review", {"model_ids": ids}, key="actual-adapter-review-001")["replayed"]
     assert len(calls) == 3
 
@@ -561,6 +562,39 @@ def test_consensus_uses_independent_same_input_contributions_then_separate_court
     candidates = env.service.evidence_candidates(context=env.ctx, admit=env.admit)["items"]
     assert candidates and all(item["source_kind"] in {"outcome", "contribution"} for item in candidates)
     assert env.service.evidence_candidates(context=context(user=2), admit=env.admit)["items"] == []
+    choices = env.service.consensus_candidates(context=env.ctx, admit=env.admit)
+    assert {row["id"] for row in choices} == set(contribution_ids)
+    assert len({row["input_group"] for row in choices}) == 1
+    assert env.service.consensus_candidates(context=context(user=2), admit=env.admit) == []
+    env.state.allowed = False
+    with pytest.raises(ContractError, match="test_access_revoked"):
+        env.service.consensus_candidates(context=env.ctx, admit=env.admit)
+
+
+@pytest.mark.parametrize("change", ["review", "failed", "synthetic", "different_input"])
+def test_consensus_picker_excludes_unverified_and_unmatched_paths(env, monkeypatch, change):
+    model_service, ids, calls = model_service_fixture(env)
+    for index, model_id in enumerate(ids[:2]):
+        task = model_service.start_task(context=env.ctx, model_id=model_id,
+            payload={"rubric_key": "json_arithmetic"}, idempotency_key=f"picker-filter-{index}")
+        result = model_service.execute(context=env.ctx, task_id=task["id"])
+        assert result["status"] == "succeeded"
+    record = env.repo.get(context=env.ctx, kind=EntityKind.TASK, entity_id=UUID(task["id"]))
+    if change in {"review", "failed"}:
+        changed = env.service._change(record, status=change)
+    else:
+        checkpoint = env.service._json(env.ctx, record.checkpoint)
+        if change == "synthetic":
+            checkpoint["synthetic"] = True
+        else:
+            checkpoint["spec"]["input"] = [1, 2, 3]
+        changed = env.service._change(record, checkpoint=env.service._put(env.ctx, env.admit, checkpoint))
+    # Fault-inject the read boundary; never force an invalid terminal transition.
+    original_get = env.repo.get
+    monkeypatch.setattr(env.repo, "get", lambda **kwargs:
+        changed if kwargs["kind"] == EntityKind.TASK and kwargs["entity_id"] == record.header.entity_id else original_get(**kwargs))
+    assert env.service.consensus_candidates(context=env.ctx, admit=env.admit) == []
+    assert len(calls) == 2
 
 
 def test_verified_lesson_retrieval_stops_when_source_outcome_is_disputed(env):

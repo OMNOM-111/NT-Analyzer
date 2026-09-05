@@ -180,8 +180,18 @@ class SocialPublicationService:
                         or any(not _HEX.fullmatch(str(value)) for value in checksums.values())
                         or verification.get("source_sha256") != checksums.get("result.json")):
                     raise ContractError("social_application_evidence_invalid")
+                raw_metrics = (source.get("result") or {}).get("metrics") or {}
                 metrics.update(community.attested_result_snapshot(proof["source_id"], {
-                    "status": "done", "metrics": (source.get("result") or {}).get("metrics")}, origin={"type": "backtest"})["metrics"])
+                    "status": "done", "metrics": raw_metrics}, origin={"type": "backtest"})["metrics"])
+                # Reuse the same sanitizer/rounding, and name each basis. Old
+                # immutable publications are never rewritten by this projection.
+                after_commission = community.attested_result_snapshot(proof["source_id"], {
+                    "status": "done", "metrics": {key: raw_metrics.get(key) for key in
+                        ("net_profit_after_commission", "profit_factor_after_commission")}}, origin={"type": "backtest"})["metrics"]
+                for label in ("Net P&L", "Profit factor"):
+                    if label in metrics:
+                        basis = "after commission" if label in after_commission else "before commission"
+                        metrics[f"{label} ({basis})"] = metrics.pop(label)
             source_kind, title = expected_kind, "Agent World · " + ("NinjaTrader result" if request["kind"] == "backtest" else "Desktop chart receipt")
             summary = "Existing application evidence verified; private source bytes are not published."
             metrics["Evidence files"] = len(expected_ids)

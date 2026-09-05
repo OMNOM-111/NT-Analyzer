@@ -711,6 +711,12 @@ class ModelService:
         task_dto["model_plan_verified"] = bool(checkpoint.get("application_request") and evidence and evidence["passed"])
         result_text = receipt.get("response")
         artifacts = []
+        outcomes = []
+        if evaluation is not None:
+            outcome = self._get(context, EntityKind.OUTCOME, evaluation.outcome.entity_id)
+            outcomes.append({"id": str(outcome.header.entity_id), "status": outcome.status,
+                "title": "Проверка ответа модели", "detail": result_text,
+                "created_at": outcome.header.created_at.isoformat()})
         if checkpoint.get("application_request") and task_dto["model_plan_verified"] and task.status not in {"failed", "cancelled"}:
             from .application_evidence import application_result
             result = application_result(self, context, task)
@@ -728,6 +734,11 @@ class ModelService:
                 task_dto["command_id"] = result["source_id"] if result["source_kind"] == "desktop_chart" else None
                 task_dto["report_url"] = result.get("report_url")
                 task_dto["application_evaluation_id"] = str(_id(context, f"application-evaluation:{task.header.entity_id}"))
+                outcome = self._get(context, EntityKind.OUTCOME, result["outcome_id"])
+                outcomes = [{"id": str(outcome.header.entity_id), "status": outcome.status,
+                    "title": "Проверенный результат приложения", "detail": result_text,
+                    "created_at": outcome.header.created_at.isoformat(), "source_kind": result["source_kind"],
+                    "source_job_id": task_dto["source_job_id"], "synthetic": False}]
                 for artifact_id in result["artifact_ids"]:
                     found = self.repository.get_artifact_by_id(context=context, artifact_id=_uuid(artifact_id))
                     if found:
@@ -744,7 +755,7 @@ class ModelService:
             "evaluations": [evidence] if evidence else [], "artifacts": artifacts,
             "fields": {"model": model.model_key, "provider": model.provider_key, "intent_id": str(task.intent.entity_id),
                        "latency_ms": receipt.get("latency_ms"), "cost_usd": receipt.get("cost_usd")},
-            "activity": [], "contributions": [], "decisions": [], "outcomes": [],
+            "activity": [], "contributions": [], "decisions": [], "outcomes": outcomes,
             "limitations": ["Bounded text capability evidence; no real trading or calibrated routing influence."]}
 
     def tasks(self, *, context):
@@ -836,10 +847,21 @@ class ModelService:
                 "session_id": str(request.session_id), "case_id": str(request.case_id),
                 "packet_sha256": request.packet_sha256, "policy_version": request.policy_version,
                 "prompt_version": request.prompt_version}
+        key = "judge." + _key(request.run_key)
+        previous = self.repository.get(context=request.context, kind=EntityKind.TASK,
+            entity_id=_id(request.context, "model-task:" + _key(key)))
+        # A new format instruction is sealed into new requests only. Replaying
+        # an old receipt must retain its original identity and failed evidence.
+        format_version = (self._json(request.context, previous.checkpoint).get("spec", {}).get("response_format_version")
+                          if previous is not None else "plain-json-v1")
+        if format_version is not None:
+            if format_version != "plain-json-v1":
+                raise ContractError("model_judge_format_unsupported")
+            spec["response_format_version"] = format_version
         if len(json_bytes(spec)) > 12000:
             raise ContractError("model_judge_packet_too_large")
         task = self.start_task(context=request.context, model_id=request.model_id, payload={},
-            idempotency_key="judge." + _key(request.run_key), _sealed_spec=spec)
+            idempotency_key=key, _sealed_spec=spec)
         result = self.execute(context=request.context, task_id=task["id"])
         if result["status"] != "succeeded":
             raise ContractError(result.get("error_code") or "model_judge_response_invalid")

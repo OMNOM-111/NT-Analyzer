@@ -9815,6 +9815,32 @@
     blocked: ['Нужно внимание', 'blocked'], error: ['Ошибка', 'blocked'],
     completed: ['', 'done'], confirmed_connected: ['', 'done'],
   };
+  function orchAgentWorldReportUrl(row) {
+    if (row?.source !== 'agent_world_local' || row?.role !== 'assistant') return '';
+    for (const action of Array.isArray(row.actions) ? row.actions : []) {
+      if (action?.synthetic !== false || action?.status !== 'completed' || action?.verification?.passed !== true
+        || !['ninjatrader_report', 'real_model_response'].includes(action?.source_kind)) continue;
+      const job = String(action.source_job_id || '');
+      if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(job) || /[\r\n]/.test(job)) continue;
+      const url = '/ui/backtesting.html?job=' + encodeURIComponent(job);
+      if (action.report_url === url) return url;
+    }
+    return '';
+  }
+  function orchAttachmentsHtml(row) {
+    const reportUrl = orchAgentWorldReportUrl(row);
+    return (Array.isArray(row.attachments) ? row.attachments : []).filter(a => a && a.url).map(a => {
+      const scopedArtifact = /^\/api\/ai-control-center\/artifacts\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(a.url) && !/[\r\n]/.test(a.url);
+      // Older model envelopes omitted type, and Chief defaulted JSON to image.
+      // Read-time compatibility keeps the immutable conversation untouched.
+      const legacyReport = reportUrl && scopedArtifact && a.type === 'image';
+      if (scopedArtifact && row.source === 'agent_world_local' && (a.type === 'artifact' || legacyReport)) {
+        return `<a class="btn sm orch-msg-artifact" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${esc(a.caption || 'Артефакт отчёта')} ↗</a>`;
+      }
+      if (a.type !== 'image') return '';
+      return `<a class="orch-msg-shot" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.caption || 'Снимок графика')}"><img loading="lazy" src="${esc(a.url)}" alt="${esc(a.caption || 'Снимок графика')}"></a>`;
+    }).join('');
+  }
   function orchActionsHtml(row, isUser) {
     if (isUser || !Array.isArray(row.actions) || !row.actions.length) return '';
     // Progress rows stay informative while unfinished; terminal «Выполнено»
@@ -9827,7 +9853,9 @@
       const stateText = state[0] ? `<span class="orch-action-state">${esc(state[0])}</span>` : '';
       return `<div class="orch-action ${esc(state[1])}"><span class="orch-action-mark" aria-hidden="true"></span><span class="orch-action-label">${esc(label)}</span>${stateText}</div>`;
     }).join('');
-    return items ? `<div class="orch-actions" aria-label="Ход выполнения">${items}</div>` : '';
+    const reportUrl = orchAgentWorldReportUrl(row);
+    const report = reportUrl ? `<a class="btn sm" href="${esc(reportUrl)}">Открыть исходный отчёт</a>` : '';
+    return items ? `<div class="orch-actions" aria-label="Ход выполнения">${items}${report}</div>` : '';
   }
   function orchChainHtml(row) {
     const chain = Array.isArray(row.participation_chain)
@@ -9945,10 +9973,7 @@
     const footer = isUser
       ? (meta ? `<div class="orch-msg-meta">${meta}</div>` : '')
       : orchFooterHtml(row, isUser);
-    const attachments = Array.isArray(row.attachments) ? row.attachments.filter(a => a && a.type === 'image' && a.url) : [];
-    const media = attachments.map(a =>
-      `<a class="orch-msg-shot" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.caption || 'Снимок графика')}"><img loading="lazy" src="${esc(a.url)}" alt="${esc(a.caption || 'Снимок графика')}"></a>`
-    ).join('');
+    const media = orchAttachmentsHtml(row);
     const face = isUser ? '' : agentAvatarHtml(agentRef, {
       label: agentLabel, cls: 'orch-msg-face', messageId: row.message_id || '',
     });

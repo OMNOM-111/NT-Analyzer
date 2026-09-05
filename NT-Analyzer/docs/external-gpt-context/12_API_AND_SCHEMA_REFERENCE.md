@@ -3,16 +3,16 @@
 - Context Pack document: 12_API_AND_SCHEMA_REFERENCE.md
 - Last verified UTC: 2026-09-05T04:04:22Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: bd239e76e548db818439bb77389f47c8aa9755f4 (clean beta.96 runtime; Azure PASS, Court dispatch correction under verification)
-- Active scope: roles/private containers/claimed delivery plus rejection/rating/calendar fixes at ef4006eb; native Azure owner-binding compatibility fully regression-tested, activation pending
+- Local source verified SHA: 93bb1298f86f71ad950e2f7d737e6fe4bd421e3e (clean beta.96 runtime; Azure and single-dispatch recovery verified; result presentation/format follow-up under verification)
+- Active scope: scoped integrated Local plus Azure/single-dispatch corrections; result presentation and sealed-format follow-up under verification
 - Unified Local base: beta.96, PR #280; separate owner-review slice above foundation PR #281; no merge or Canary/Production promotion
 - Scope: Compact index of important endpoint families, entities and capability names
 - Status: IN DEVELOPMENT
 
-Local `8765` currently serves the clean `ef4006eb` beta.96 build with original
+Local `8765` currently serves the clean `93bb1298` beta.96 build with original
 owner data/settings. Integrated domain/model/social endpoints are active; scoped
 claimed-delivery/explicit-role/private-container changes and sealed rejection/
-rating/calendar corrections are active. Pending native Azure binding compatibility
+rating/calendar corrections are active. Verified native Azure binding compatibility
 allows only its canonical HTTPS api-version selector for server-resolved owner
 connections; it changes neither API authority nor numbered storage migrations.
 `fc78677` is the historical adapter snapshot. The deployed anchor
@@ -21,10 +21,20 @@ rechecked in this task.
 
 ## Current scoped follow-up
 
-Azure owner binding is active and actually verified on clean bd239e76 (CI 3/3).
-Court's actual synchronous/worker collision is under correction; no accepted vote
-is claimed from its blocked task. Only single-dispatch and immutable-receipt
-recovery change; API, SQL, authority, budgets and UI composition do not.
+Local is clean at 93bb1298, with Azure CONNECTION_OK and actual single-dispatch
+recovery of the original DeepSeek Court receipt (no repeated call). Full 3936/44,
+274 focused, legacy 13/13, staged/runtime bundles and CI 33960694698 3/3 PASS.
+The old Court case retains one vote; Gemini's fenced JSON failed strict schema,
+so no verdict is claimed. New versioned format instructions and verified-result
+presentation are under verification. Report links/MIME and explicit commission
+basis labels reuse existing data/SF stores; no historical receipt or post is rewritten.
+Presentation checkpoint: 610 focused and 3972 full PASS / 44 skips. The subsequent
+Consensus picker correction passed 319 focused tests and final full regression
+3977 PASS / 44 skips (954.04 s); static/context and 533-file bundle PASS.
+Commit/activation and browser acceptance remain separate. Candidates are owned successful non-Court contributions grouped
+by sealed input, not a deduplicated list of Outcome files. Write-side validation
+and all stored source states remain unchanged.
+No new API, migration, permission, budget, Router or execution authority.
 Exact evidence and limits: [canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 
 ## Key endpoint families

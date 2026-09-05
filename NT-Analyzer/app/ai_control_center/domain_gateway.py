@@ -404,10 +404,12 @@ def list_domain(authorized, domain, *, identity=None, limit=50, cursor=None):
     if domain in {"decisions", "routines"}:
         result["evidence_candidates"] = service.evidence_candidates(context=context, admit=admit)
         result["actions"] += ["propose_consensus" if domain == "decisions" else "suggest_routine"]
-        kinds = {"contribution_candidates": ("contribution", "accepted"), "outcome_candidates": ("outcome", "verified")}
+        kinds = {"outcome_candidates": ("outcome", "verified")}
         for field, (kind, status) in kinds.items():
             result[field] = list({row["source_id"]: {"id": row["source_id"], "title": row["title"]}
                 for row in result["evidence_candidates"]["items"] if row["source_kind"] == kind and row["source_status"] == status}.values())
+        if domain == "decisions":
+            result["contribution_candidates"] = service.consensus_candidates(context=context, admit=admit)
     return result
 
 
@@ -513,6 +515,7 @@ def enrich_overview(authorized, base=None):
             "compatibility_history": {"label": "История исходного Local-исполнителя; не оценка модели", "source": legacy} if legacy else None})
     model_outcomes = [{"task_id": row["id"], "title": row["title"], "summary": row.get("result_text") or row.get("summary"),
                        "status": row["status"], "source_kind": "real_model_response", "synthetic": False,
+                       "application_result": row.get("application_result"), "source_job_id": row.get("source_job_id"),
                        "created_at": row["updated_at"]} for row in model_rows if row["status"] in {"succeeded", "failed", "review", "blocked", "cancelled"}]
     costs = [row["cost_usd"] for row in model_rows if isinstance(row.get("cost_usd"), (int, float))]
     completed = sum(row["status"] == "succeeded" for row in tasks)

@@ -179,6 +179,27 @@ def test_ordinary_personal_workspace_uses_fresh_scope_not_caller_permissions(ord
     assert ordinary.calls["budget"] == []  # reading is not a paid request
 
 
+def test_consensus_choices_include_verified_contributions_shared_with_outcomes(models):
+    second = models.service.connect(context=models.context,
+        payload={**models.payload, "label": "Second fixture", "model": "fixture-independent-model"},
+        idempotency_key="consensus-second-fixture")
+    contributions = []
+    for index, model in enumerate((models.model, second)):
+        task = models.service.start_task(context=models.context, model_id=model["id"],
+            payload={"rubric_key": "json_arithmetic"}, idempotency_key=f"consensus-choice-{index}")
+        result = models.service.execute(context=models.context, task_id=task["id"])
+        assert result["status"] == "succeeded"
+        contributions.append(result["contribution_id"])
+    call_count = len(models.executions)
+    handler = http_get(models.account, "domains/decisions")
+    assert handler.status == 200
+    choices = handler.result["contribution_candidates"]
+    assert {row["id"] for row in choices} == set(contributions)
+    assert len({row["input_group"] for row in choices}) == 1
+    assert all("json_arithmetic" in row["title"] and "вход" in row["title"] for row in choices)
+    assert len(models.executions) == call_count  # listing never calls a provider
+
+
 @pytest.mark.parametrize("change", [
     {"owner_user_id": USER_ID + 1}, {"membership": {"role": "admin"}},
     {"membership": {"role": "viewer"}}, {"status": "archived"},

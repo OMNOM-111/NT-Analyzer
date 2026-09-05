@@ -3,24 +3,34 @@
 - Context Pack document: 08_UI_UX_AND_PRODUCT_CONTRACTS.md
 - Last verified UTC: 2026-09-05T04:22:06Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: bd239e76e548db818439bb77389f47c8aa9755f4 (clean beta.96 runtime; Azure PASS, Court dispatch correction under verification)
-- Active Local 8765: clean `bd239e76e548db818439bb77389f47c8aa9755f4`, build `dev-0.10.0-beta.96-bd239e76e548`, original owner data, Preview=false
+- Local source verified SHA: 93bb1298f86f71ad950e2f7d737e6fe4bd421e3e (clean beta.96 runtime; Azure and single-dispatch recovery verified; result presentation/format follow-up under verification)
+- Active Local 8765: clean `93bb1298f86f71ad950e2f7d737e6fe4bd421e3e`, build `dev-0.10.0-beta.96-93bb1298f86f`, original owner data, Preview=false
 - Unified Local accepted base: beta.96, open PR #280; no Canary/Production promotion
 - Scope: Major UI areas, visibility rules and important UX contracts
 - Status: IN DEVELOPMENT
 
 The Agent World rows below describe the integrated Development delta, not a
-completed program acceptance. Clean ef4006eb is active; actual backtest, Desktop
-PNG, ratings, initial domain actions and local-time display passed. Native Azure
-binding compatibility and remaining Court/shared/Social/own-key/owner review are separate.
+completed program acceptance. Clean 93bb1298 is active; actual backtest, Desktop
+PNG, ratings, initial domain actions, local-time display and native Azure passed.
+Result presentation/format, remaining Court/shared/Social/own-key/owner review are separate.
 The shared deployment anchor above is unchanged; Production was not rechecked.
 
 ## Current scoped follow-up
 
-Azure owner binding is active and actually verified on clean bd239e76 (CI 3/3).
-Court's actual synchronous/worker collision is under correction; no accepted vote
-is claimed from its blocked task. Only single-dispatch and immutable-receipt
-recovery change; API, SQL, authority, budgets and UI composition do not.
+Local is clean at 93bb1298, with Azure CONNECTION_OK and actual single-dispatch
+recovery of the original DeepSeek Court receipt (no repeated call). Full 3936/44,
+274 focused, legacy 13/13, staged/runtime bundles and CI 33960694698 3/3 PASS.
+The old Court case retains one vote; Gemini's fenced JSON failed strict schema,
+so no verdict is claimed. New versioned format instructions and verified-result
+presentation are under verification. Report links/MIME and explicit commission
+basis labels reuse existing data/SF stores; no historical receipt or post is rewritten.
+Presentation checkpoint: 610 focused and 3972 full PASS / 44 skips. The subsequent
+Consensus picker correction passed 319 focused tests and final full regression
+3977 PASS / 44 skips (954.04 s); static/context and 533-file bundle PASS.
+Commit/activation and browser acceptance remain separate. Candidates are owned successful non-Court contributions grouped
+by sealed input, not a deduplicated list of Outcome files. Write-side validation
+and all stored source states remain unchanged.
+No new API, migration, permission, budget, Router or execution authority.
 Exact evidence and limits: [canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 
 ## Major product areas

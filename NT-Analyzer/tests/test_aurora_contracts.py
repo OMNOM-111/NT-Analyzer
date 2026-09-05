@@ -40,6 +40,18 @@ def _domain_eval(expression: str):
     return json.loads(proc.stdout.strip())
 
 
+@pytest.mark.parametrize("after,expected", [(0.725188, 0.7252), (0, 0), (None, 0.7541), (True, 0.7541), ("invalid", 0.7541)])
+def test_public_report_factor_uses_same_commission_basis_as_net_when_available(after, expected):
+    from app import community
+    metrics = {"net_profit": -898.4, "net_profit_after_commission": -969.7,
+               "profit_factor": .7541, "profit_factor_after_commission": after, "trade_count": 64}
+    original = dict(metrics)
+    snapshot = community.attested_result_snapshot("awnt_report", {"status": "done", "metrics": metrics})
+    assert snapshot["metrics"]["Net P&L"] == -969.7
+    assert snapshot["metrics"]["Profit factor"] == expected
+    assert metrics == original
+
+
 def test_job_detail_adapter_uses_nested_result_and_real_trade_fields():
     fixture = {
         "job_id": "job-1",
@@ -280,7 +292,7 @@ def test_every_aurora_page_uses_current_ui_cache_version():
             continue
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
     assert versions
-    assert set(versions.values()) == {"20260904-agent-world4"}, versions
+    assert set(versions.values()) == {"20260905-agent-world6"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():

@@ -3,18 +3,28 @@
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
 - Last verified UTC: 2026-09-05T04:04:22Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: bd239e76e548db818439bb77389f47c8aa9755f4 (clean beta.96 runtime; Azure PASS, Court dispatch correction under verification)
-- Active scope: roles/private containers/claimed delivery plus rejection/rating/calendar fixes at ef4006eb; native Azure owner-binding compatibility fully regression-tested, activation pending
+- Local source verified SHA: 93bb1298f86f71ad950e2f7d737e6fe4bd421e3e (clean beta.96 runtime; Azure and single-dispatch recovery verified; result presentation/format follow-up under verification)
+- Active scope: scoped integrated Local plus Azure/single-dispatch corrections; result presentation and sealed-format follow-up under verification
 - Unified Local base: `0.10.0-beta.96`, PR #280; no Canary/Production promotion
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: PARTIAL
 
 ## Current scoped follow-up
 
-Azure owner binding is active and actually verified on clean bd239e76 (CI 3/3).
-Court's actual synchronous/worker collision is under correction; no accepted vote
-is claimed from its blocked task. Only single-dispatch and immutable-receipt
-recovery change; API, SQL, authority, budgets and UI composition do not.
+Local is clean at 93bb1298, with Azure CONNECTION_OK and actual single-dispatch
+recovery of the original DeepSeek Court receipt (no repeated call). Full 3936/44,
+274 focused, legacy 13/13, staged/runtime bundles and CI 33960694698 3/3 PASS.
+The old Court case retains one vote; Gemini's fenced JSON failed strict schema,
+so no verdict is claimed. New versioned format instructions and verified-result
+presentation are under verification. Report links/MIME and explicit commission
+basis labels reuse existing data/SF stores; no historical receipt or post is rewritten.
+Presentation checkpoint: 610 focused and 3972 full PASS / 44 skips. The subsequent
+Consensus picker correction passed 319 focused tests and final full regression
+3977 PASS / 44 skips (954.04 s); static/context and 533-file bundle PASS.
+Commit/activation and browser acceptance remain separate. Candidates are owned successful non-Court contributions grouped
+by sealed input, not a deduplicated list of Outcome files. Write-side validation
+and all stored source states remain unchanged.
+No new API, migration, permission, budget, Router or execution authority.
 Exact evidence and limits: [canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 
 ## Identity model
@@ -123,7 +133,7 @@ Key admin capability names already in the contract: `admin.view`,
 The following Production/Canary facts are historical deployment evidence, not a
 fresh environment check. The shared deployed anchor
 `8f42158661e8247832c90bea8fc4d9f0071e647b` is unchanged. Local `8765` now serves
-the clean `ef4006eb` beta.96 runtime with original owner data/settings and the
+the clean `93bb1298` beta.96 runtime with original owner data/settings and the
 scoped delivery/role/private-container changes active. Earlier `fc78677`
 owner-review notes remain history. Remaining real-provider/browser acceptance is pending.
 Native Azure binding compatibility permits only the canonical HTTPS api-version
