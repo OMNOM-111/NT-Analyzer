@@ -4,7 +4,7 @@
 - Last verified UTC: 2026-09-04T22:37:13Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Local source verified SHA: 3afb75c5c2d02aa07703eadf274a1c1006ae8ada
-- Unified Local accepted base: beta.96, PR #280; separate Agent World stages 0–1 slice; not deployed
+- Unified Local accepted base: beta.96, PR #280; separate owner-review slice above foundation PR #281; not deployed
 - Scope: Compact index of important endpoint families, entities and capability names
 - Status: DONE
 
@@ -19,6 +19,9 @@
 | Connector protocol | `/api/connector/v1/*` | enroll, challenge, hello, heartbeat, market-data, commands poll/result |
 | Runtime ops | `/api/ops/runtime/*` | accounts, positions, orders, executions, bars, strategy runtime surfaces |
 | Market-data browser edge | `/api/ops/runtime/bars`, `/api/ops/runtime/bars/batch`, `/ws/market-data` | same-origin history/health and deduplicated browser realtime; no provider credentials |
+| Agent World read model | `/api/ai-control-center/overview`, `/api/ai-control-center/tasks`, `/api/ai-control-center/tasks/{UUID}`, `/api/ai-control-center/tasks/{UUID}/chat` | separate admitted Preview and explicit Local-owner adapters; existing auth/device/capability/role/CSRF plus exact scoped flags; no new permissions |
+| Agent World Preview | `/api/ai-control-center/demo-runs`, `/api/ai-control-center/artifacts/{UUID}` | isolated synthetic calculations and owned immutable evidence; forbidden in real Local |
+| Agent World Local backtest | `/api/ai-control-center/backtests` | exact explicit spec + idempotency_key + conversation_id; only opted-in real Local owner; canonical existing jobqueue, not a new engine |
 | AI Lab / Orchestrator | `/api/ai-lab/*`, `/api/vitek/*` | orchestration, domain agents, TTS, experiments, summaries |
 | Community v2 | `/api/community/v2/*` | profiles/privacy, feed/search, follows, interactions, blocks, moderation and server-attested result publications |
 | SF Chat | `/api/sf-chat/*` | one human conversation/message/attachment/unread/read contract; global UI also projects existing AI conversations |
@@ -47,12 +50,35 @@
 
 ## Capability names worth recognizing
 
-Agent World stages 0–1 add only Python contracts/protocols and pure projections
-under `app/ai_control_center/`. No `/api/ai/*` route or SQL migration is added.
-The existing sequence ends at `0022_community_post_private_visibility.sql`.
-Future repository implementations require explicit tenant/user scope and atomic
-entity/event/idempotency commit; see [ADR-0009](../adr/0009-agent-world-foundation.md).
-New flag definitions are default OFF and do not create capabilities.
+Agent World adds a Development-only SQLite repository with atomic revision,
+event, history and idempotency commit plus immutable private artifacts.
+No global migration is added: sequence still ends at
+`0022_community_post_private_visibility.sql`. PostgreSQL/RLS remains a gap.
+
+Both facades accept no client-selected workspace, actor, role, provider or model.
+GET overview includes personas and shadow metrics; GET tasks/{UUID} exposes owned
+task/result/evaluation/evidence; GET artifacts/{UUID} enforces private scope.
+POST demo-runs takes only idempotency_key; POST tasks/{UUID}/chat optionally takes
+a bounded PNG data URL. Only independently checked completed results publish.
+No agent endpoint creates real credentials or calls an external provider.
+
+The Local adapter projects only server-stamped owner jobs. Historical strategies
+must be catalog-registered with explicit instrument/timeframe/UTC period and safe
+research execution settings. Completion requires actual NinjaTrader job/result
+context, complete bars/trades and matching fingerprint; incomplete evidence is
+review, not succeeded. Read windows are bounded and are not all-time statistics.
+The existing `/api/ops/runtime/chart-snapshot` accepts an additive
+`agent_world=true`, `command_id`, `capture`, bounded PNG and explicit
+`mirror_to_telegram=false`. Server checks command ownership and matching context,
+persists its receipt before idempotent SF Chat publication, and echoes command_id.
+Client ACK cannot overwrite that verified receipt. Existing snapshots stay at
+their canonical authenticated `/api/ops/runtime/snapshots/cs_*.png` URLs.
+
+All flags default OFF: four scoped flags for controlled Preview; three read/UI/
+tasks flags for explicitly opted-in Local owner, no real evaluation flag.
+Existing ai_lab/backtesting capabilities remain authoritative. See
+[ADR-0010](../adr/0010-agent-world-owner-review.md) and
+[ADR-0011](../adr/0011-agent-world-real-local-jobs.md).
 
 | Capability | Meaning |
 | --- | --- |

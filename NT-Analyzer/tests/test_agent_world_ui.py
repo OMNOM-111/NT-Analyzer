@@ -20,6 +20,7 @@ PAGE = AURORA / "ai-command-center.html"
 SCRIPT = AURORA / "assets" / "pages" / "ai-command-center.js"
 CSS = AURORA / "assets" / "pages" / "ai-command-center.css"
 ARTIFACT = "/api/ai-control-center/artifacts/12345678-1234-1234-1234-123456789abc"
+DESKTOP_ARTIFACT = "/api/ops/runtime/snapshots/cs_" + "a" * 32 + ".jpg"
 
 
 def evaluate(expression: str):
@@ -69,26 +70,29 @@ def test_page_keeps_existing_aurora_shell_and_scoped_assets():
     assert "base-uri 'none'" in csp
 
 
-def test_all_eight_tabs_are_keyboard_addressable_and_admin_tabs_start_hidden():
+def test_exactly_three_main_views_keep_inspectors_on_the_same_page():
     parser = Tags()
     parser.feed(PAGE.read_text(encoding="utf-8"))
     tabs = [attrs for tag, attrs in parser.tags if tag == "button" and attrs.get("role") == "tab"]
     assert [tab["data-aw-tab"] for tab in tabs] == [
-        "overview", "work", "agents", "decisions", "memory", "experiments", "models", "system",
+        "overview", "work", "agents",
     ]
     assert all(tab["aria-controls"] == "aw-content" for tab in tabs)
-    assert [tab["tabindex"] for tab in tabs] == ["0"] + ["-1"] * 7
-    assert all("hidden" in tab for tab in tabs[-2:])
+    assert [tab["tabindex"] for tab in tabs] == ["0", "-1", "-1"]
+    assert all("hidden" not in tab for tab in tabs)
     script = SCRIPT.read_text(encoding="utf-8")
     assert "['ArrowLeft', 'ArrowRight', 'Home', 'End']" in script
     assert "event.key === 'Tab'" in script
     assert "event.key === 'Escape'" in script
     assert "aria-modal" in script
+    assert "const TABS = ['overview', 'work', 'agents']" in script
+    assert "currentDrawer = UI.drawer(" in script
+    assert "root.location.href" not in script
 
 
 def test_page_uses_existing_transport_and_does_not_create_auth_or_chat_store():
     script = SCRIPT.read_text(encoding="utf-8")
-    for name in ["Overview", "Tasks", "Task", "Section", "DemoRun", "TaskChat"]:
+    for name in ["Overview", "Tasks", "Task", "DemoRun", "TaskChat"]:
         assert f"API.aiControlCenter{name}(" in script
     assert "API = root.API.http" in script
     assert "fetch(" not in script
@@ -99,17 +103,168 @@ def test_page_uses_existing_transport_and_does_not_create_auth_or_chat_store():
     assert "idempotency_key: demoKey" in script
 
 
-def test_advanced_sections_are_lazy_and_capability_gated():
+def test_inactive_sections_are_one_compact_card_and_do_not_load_sensitive_data():
     script = SCRIPT.read_text(encoding="utf-8")
-    assert "qs('#aw-tab-models').hidden = !capability('can_view_models')" in script
-    assert "qs('#aw-tab-system').hidden = !capability('can_view_system')" in script
-    assert "sections.has(section)" in script
-    assert "API.aiControlCenterSection(section, { limit: 50 }, { signal })" in script
-    assert "if (request !== generation || disposed) return;\n          sections.set(section, sectionData)" in script
+    assert "function foundationCard()" in script
+    assert "Решения · Память · Эксперименты" in script
+    assert "capability('can_view_system') ? flagRows(overview.flags) : []" in script
+    assert "API.aiControlCenterSection(" not in script
+    assert "renderSection" not in script
     assert "request !== overviewGeneration" in script
     assert "IN DEVELOPMENT" in script
     assert "href=\"ai-lab.html\"" in script
     assert "href=\"ai-agents.html\"" in script
+
+
+def test_overview_places_work_results_team_and_rating_together_without_sample_values():
+    script = SCRIPT.read_text(encoding="utf-8")
+    overview = script.split("function renderOverview()", 1)[1].split("function taskTable", 1)[0]
+    assert 'aw-column-work' in overview
+    assert 'aw-column-results' in overview
+    assert 'aw-column-team' in overview
+    assert 'Команда и рейтинг' in overview
+    assert 'Результаты и исходные данные' in overview
+    assert 'overviewOutcomes(overview)' in overview
+    assert 'stats.active_tasks' in overview
+    assert 'stats.completed_tasks' in overview
+    assert 'attentionKnown && number(stats.attention) === 0' in overview
+    assert 'Отсутствие данных не означает' in overview
+    assert 'n = ${count(evaluation.sample)}' in script
+
+
+@pytest.mark.parametrize("value", [
+    {}, {"synthetic": False}, {"source_kind": "ninjatrader_report", "source_job_id": "job-123"},
+    {"synthetic": "false", "source_kind": "desktop_chart"},
+    {"synthetic": False, "source_kind": "unverified_external_source"},
+    {"synthetic": False, "source_kind": "__proto__"},
+    {"synthetic": False, "source_kind": "constructor"},
+])
+def test_real_source_labels_require_explicit_supported_server_provenance(value):
+    source = evaluate(f"ui.sourceMeta({json.dumps(value)})")
+    assert source == {"label": "Источник не подтверждён", "kind": "unknown", "reportUrl": ""}
+
+
+@pytest.mark.parametrize("job", ["../secret", "//example.com", "<img>", "x?admin=1", "job/another", "job%2Fprivate", "job\n", "x" * 161])
+def test_existing_report_link_rejects_paths_queries_and_markup(job):
+    value = {"synthetic": False, "source_kind": "ninjatrader_report", "source_job_id": job}
+    assert evaluate(f"ui.sourceMeta({json.dumps(value)}).reportUrl") == ""
+
+
+def test_real_report_uses_existing_backtesting_route_and_synthetic_cannot_claim_it():
+    source = {"synthetic": False, "source_kind": "ninjatrader_report", "source_job_id": "nt:job_123.v1"}
+    result = evaluate(f"ui.sourceMeta({json.dumps(source)})")
+    assert result["reportUrl"] == "/ui/backtesting.html?job=nt%3Ajob_123.v1"
+    assert result["label"] == "NinjaTrader · исходный отчёт"
+    source["synthetic"] = True
+    result = evaluate(f"ui.sourceMeta({json.dumps(source)})")
+    assert result["kind"] == "synthetic"
+    assert result["reportUrl"] == ""
+
+
+def test_overview_outcomes_keep_explicit_empty_and_source_classification():
+    assert evaluate("ui.overviewOutcomes({outcomes:[],tasks:[{id:'one',status:'completed',summary:'stored'}]})") == []
+    assert evaluate("ui.overviewOutcomes({tasks:[{id:'one',status:'running'}]})") == []
+    result = evaluate("ui.overviewOutcomes({tasks:[{id:'one',status:'completed',summary:'Stored result',synthetic:true},{id:'two',status:'completed',synthetic:false,source_kind:'ninjatrader_report',source_job_id:'nt-job'}]})")
+    assert result[0]["summary"] == "Stored result"
+    assert result[0]["synthetic"] is True
+    assert "artifact" not in result[0]
+    assert result[1]["synthetic"] is False
+    assert result[1]["source_job_id"] == "nt-job"
+
+
+@pytest.mark.parametrize("data", [None, {}, {"enabled": True}, {"enabled": True, "scope": {"synthetic": True}}, {"enabled": True, "scope": {"synthetic": "false"}}, {"enabled": False, "scope": {"synthetic": False}}])
+def test_real_chat_hints_require_explicit_non_synthetic_workspace(data):
+    assert evaluate(f"ui.realChatCommands({json.dumps(data)})") == []
+
+
+def test_real_chat_hints_reuse_existing_chat_not_a_backtest_composer():
+    commands = evaluate("ui.realChatCommands({enabled:true,scope:{synthetic:false}})")
+    assert len(commands) == 2
+    assert commands[0]["text"] == "Толик, запусти бэктест SampleMACrossOver на MNQ 09-26, 5m, с 2026-08-24 по 2026-08-29, Fast=10, Slow=25"
+    assert commands[1]["text"] == "Иван, сделай снимок рабочего стола MNQ 09-26, 5m"
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "target.hasAttribute('data-aw-real-chat')) UI.openSFChat({ conversationType: 'ai' })" in source
+    assert "Даты бэктеста — UTC; конечная дата не включается" in source
+    assert "API.submit" not in source
+    assert "API.backtest" not in source
+
+
+def test_canonical_ready_tasks_remain_visible_as_queued_in_active_and_waiting_views():
+    result = evaluate("({label:ui.statusMeta('ready'),active:ui.taskMatches({status:'ready'},'active',''),waiting:ui.taskMatches({status:'ready'},'waiting',''),completed:ui.taskMatches({status:'ready'},'completed','')})")
+    assert result == {"label": ["В очереди", "neutral"], "active": True, "waiting": True, "completed": False}
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "['running', 'working', 'active', 'ready', 'queued', 'review', 'blocked', 'planned']" in source
+
+
+def test_working_runtime_agent_alias_has_running_style_and_active_filter():
+    result = evaluate("({alias:ui.statusMeta('working'),running:ui.statusMeta('running'),active:ui.taskMatches({status:'working'},'active',''),waiting:ui.taskMatches({status:'working'},'waiting','')})")
+    assert result["alias"] == result["running"] == ["В работе", "good"]
+    assert result["active"] is True and result["waiting"] is False
+
+
+def test_compact_overview_boots_without_hidden_tab_nodes_or_extra_api_requests():
+    result = evaluate("""(async () => {
+      const fs = require('node:fs'), vm = require('node:vm');
+      let started, requests = 0;
+      const nodes = new Map();
+      const tabs = ['overview','work','agents'].map(key => ({dataset:{awTab:key},setAttribute(){}}));
+      const node = key => {
+        if (!nodes.has(key)) nodes.set(key,{innerHTML:'',textContent:'',hidden:false,
+          setAttribute(){},addEventListener(){},classList:{toggle(){}},
+          querySelectorAll(){return tabs;}});
+        return nodes.get(key);
+      };
+      const document = {querySelector:node,addEventListener(){},removeEventListener(){}};
+      const data = {enabled:true,scope:{synthetic:false},capabilities:{can_run_demo:false},
+        stats:{active_tasks:0,completed_tasks:1,agents:1,attention:0},attention:[],
+        agents:[{id:'persona-1',display_name:'<Agent>',status:'idle',evaluation:{sample_size:1,score_pct:100}}],
+        tasks:[{id:'task-1',title:'Stored task',status:'completed',synthetic:true}],
+        outcomes:[{title:'<script>unsafe()</script>',summary:'Recorded NT result',task_id:'task-2',synthetic:false,source_kind:'ninjatrader_report',source_job_id:'nt-2',status:'verified'},
+          {title:'Actual Desktop capture',task_id:'task-3',synthetic:false,source_kind:'desktop_chart',artifact:{url:'/api/ops/runtime/snapshots/cs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg',title:'Recorded image',media_type:'image/jpeg'}}]};
+      const window = {UI:{ready(fn){started=fn();},signal(){},onLeave(){},wireAgentFaces(){}},
+        API:{http:{async aiControlCenterOverview(){requests++;return data;}}},
+        location:{hash:'',search:''}};
+      const source = fs.readFileSync(require.resolve(PATH_TO_SCRIPT),'utf8');
+      vm.runInNewContext(source,{window,document,URLSearchParams,Date});
+      await started;
+      return {requests,html:node('#aw-content').innerHTML,pulse:node('#aw-pulse').innerHTML};
+    })()""".replace("PATH_TO_SCRIPT", json.dumps(str(SCRIPT))))
+    assert result["requests"] == 1
+    assert all(name in result["html"] for name in ["aw-column-work", "aw-column-results", "aw-column-team"])
+    assert "NEW" in result["html"]
+    assert "n = 1" in result["html"]
+    assert "<script>unsafe()" not in result["html"]
+    assert "&lt;script&gt;unsafe()&lt;/script&gt;" in result["html"]
+    assert "/ui/backtesting.html?job=nt-2" in result["html"]
+    assert "Recorded NT result" in result["html"]
+    assert "IN DEVELOPMENT" in result["html"]
+    assert '<img src="' + DESKTOP_ARTIFACT + '"' in result["html"]
+
+
+@pytest.mark.parametrize("suffix", ["jpg", "png", "webp"])
+def test_confirmed_desktop_artifact_uses_existing_authenticated_snapshot_route(suffix):
+    path = DESKTOP_ARTIFACT.rsplit(".", 1)[0] + "." + suffix
+    assert evaluate(f"ui.safeArtifactUrl({json.dumps(path)}, 'desktop_chart')") == path
+    assert evaluate(f"ui.safeArtifactUrl({json.dumps(path)})") == ""
+
+
+@pytest.mark.parametrize("source", [
+    {}, {"synthetic": True, "source_kind": "desktop_chart"},
+    {"synthetic": False, "source_kind": "ninjatrader_report"},
+    {"source_kind": "desktop_chart"},
+])
+def test_unconfirmed_and_synthetic_data_cannot_embed_legacy_desktop_snapshot(source):
+    assert evaluate(f"ui.safeArtifactUrl({json.dumps(DESKTOP_ARTIFACT)}, ui.sourceMeta({json.dumps(source)}).kind)") == ""
+
+
+@pytest.mark.parametrize("path", [
+    DESKTOP_ARTIFACT + "?download=1", DESKTOP_ARTIFACT + "#image", DESKTOP_ARTIFACT + "/../private",
+    "https://example.com" + DESKTOP_ARTIFACT, "/api/ops/runtime/snapshots/../private.jpg",
+    "/api/ops/runtime/snapshots/cs_invalid.jpg", DESKTOP_ARTIFACT.replace(".jpg", ".svg"),
+    DESKTOP_ARTIFACT.replace(".jpg", ".jpg.html"), DESKTOP_ARTIFACT.replace("cs_", "CS_"),
+])
+def test_desktop_snapshot_urls_reject_unapproved_paths_queries_and_formats(path):
+    assert evaluate(f"ui.safeArtifactUrl({json.dumps(path)}, 'desktop_chart')") == ""
 
 
 @pytest.mark.parametrize("payload", [

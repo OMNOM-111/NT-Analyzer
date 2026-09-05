@@ -20,6 +20,7 @@ import shutil
 import socket
 import tempfile
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
@@ -67,6 +68,7 @@ SCENARIOS: Dict[str, Dict[str, str]] = {
 }
 
 _LOCK = threading.RLock()
+_DATA_LIFECYCLE_LOCK = threading.RLock()
 _ENTRY_CONSUMED = False
 _NETWORK_GUARD_INSTALLED = False
 _RUNTIME_CLOCK: Optional[threading.Thread] = None
@@ -1493,15 +1495,28 @@ def enter(entry_token: Any, *, device_credential: str) -> Dict[str, Any]:
     return activate_scenario(scenario, device_credential=device_credential)
 
 
+@contextmanager
+def data_operation():
+    """Keep a bounded Preview data operation from overlapping disposable reset.
+
+    This is only process-local lifecycle coordination, never a job lease or an
+    authority grant. Ordinary Local storage is not part of this lock.
+    """
+    require_enabled()
+    with _DATA_LIFECYCLE_LOCK:
+        yield
+
+
 def reset(scenario: Any, *, device_credential: str) -> Dict[str, Any]:
     require_enabled()
     selected = normalize_scenario(scenario)
-    with _LOCK:
-        generation = int(_STATE.get("generation") or 0) + 1
-    _wipe_isolated_root()
-    with _LOCK:
-        _STATE["generation"] = generation
-    return activate_scenario(selected, device_credential=device_credential)
+    with data_operation():
+        with _LOCK:
+            generation = int(_STATE.get("generation") or 0) + 1
+        _wipe_isolated_root()
+        with _LOCK:
+            _STATE["generation"] = generation
+        return activate_scenario(selected, device_credential=device_credential)
 
 
 def new_user(*, device_credential: str) -> Dict[str, Any]:

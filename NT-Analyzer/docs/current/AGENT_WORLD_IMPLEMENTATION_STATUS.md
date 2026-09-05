@@ -1,156 +1,235 @@
 # Agent World — implementation status
 
-Canonical program status: `IN DEVELOPMENT`. This document is the current handoff
-for stages 0–1; the broader Agent World product is not available yet.
+Canonical program status: `IN DEVELOPMENT`. This is the single current handoff.
+The checkpoint contains separate **synthetic Preview** and **explicit real Local
+owner** integration paths. It is not completion of all stages 0–13 and not a
+Canary/Production release. Final integration verification and owner visual
+acceptance remain open.
 
-## Checkpoint and scope
+## Source, runtime and dependencies
 
-| Field | Current value |
+| Field | Fact |
 | --- | --- |
-| Local/Git checkpoint UTC | 2026-09-04T22:37:13Z |
-| Accepted base / rollback source | `4ae766ea0c3258a8bb049644ac2afbba6cb89330` |
-| Base branch / dependency | `integration/stratforge-unified-local`, open [PR #280](https://github.com/OMNOM-111/NT-Analyzer/pull/280) |
-| Base comparison | exact match; clean tracked/untracked state; no rollback or reset |
-| Task branch | `codex/agent-world-foundation` |
-| Worktree | `StratForge-worktrees/agent-world-foundation` (separate checkout) |
-| Version / environment | `0.10.0-beta.96`, `pre_release`, Development; no version bump |
-| Implementation checkpoint | `3afb75c5c2d02aa07703eadf274a1c1006ae8ada`; later checkpoint commits update documentation only |
-| Task PR | [PR #281](https://github.com/OMNOM-111/NT-Analyzer/pull/281), stacked on `integration/stratforge-unified-local`; #280 remains open |
-| Active workstream | Foundation: contracts, pure adapters, feature-flag definitions, tests, documentation |
-| Storage migrations | none; current last migration is `0022`, next number deliberately unassigned |
-| Runtime connections | none; no new route, worker, scheduler, router selection or UI |
-| Feature flags | all ten flags OFF by default; no configuration installed |
-| Stage 0 | baseline, isolation and documentation reconciliation complete |
-| Stage 1 | local implementation verified; contract review required before stage 2 |
-| Release status | not a Canary or Production release; deployment identity below is historical evidence |
+| Accepted Unified Local | `4ae766ea0c3258a8bb049644ac2afbba6cb89330`, beta.96; open [PR #280](https://github.com/OMNOM-111/NT-Analyzer/pull/280) |
+| Foundation dependency | `d5d07ac6817cd10f57d916dab0ce655347a8cbde`; open [PR #281](https://github.com/OMNOM-111/NT-Analyzer/pull/281) |
+| Current branch / worktree | `codex/agent-world-owner-preview` / `StratForge-worktrees/agent-world-owner-preview` |
+| Implementation source | HEAD `c62c5547ef6f82c561bb12b474ee6f3aa21d7c28` plus dirty integration changes; this HEAD is not the final implementation SHA; final commit and separate PR pending |
+| Local version | `0.10.0-beta.96`, unchanged; no release version assigned |
+| Existing owner runtime | Read-only observation: port 8765 serves beta.93, SHA `7062f749ee92299356c774d01dc0c7b59cdcbba3`, dirty Development, authenticated owner |
+| Synthetic review runtime | Separate loopback Preview child from this checkout; synthetic data root, cookies and external-effect guard; does not replace port 8765 |
+| Real Local runtime handoff | New checkout path implemented but not switched onto 8765; owner answer permitting that switch is pending |
+| Repository migrations | No new numbered migration; sequence still ends at `0022` |
+| Release | No merge, signing, Canary/Production access, deployment or secrets/DB changes |
 
-Source documents supplied by the owner remain unchanged on the Desktop. Their
-`c9b2883` snapshot describes unfinished Preview work before this baseline.
-[Archived pre-foundation context](../archive/AGENT_WORLD_PRE_FOUNDATION_CONTEXT_2026-09-04.md)
-preserves that history and the old isolated-branch handoff. This file and the
-actual Git checkout supersede those current-state claims.
+The running owner server is **not** the beta.96 accepted checkout. It was not
+restarted or silently upgraded. Exit Preview returns to that unchanged full
+owner Local. Its observed identity must not be reported as beta.96 acceptance.
 
-## Accepted Local baseline
+The owner authorized a clickable checkpoint and then explicitly requested real
+historical NinjaTrader tasks and a Desktop chart snapshot through the existing
+chat. [ADR-0010](../adr/0010-agent-world-owner-review.md) remains the decision
+record for the isolated synthetic slice. The additive
+[ADR-0011](../adr/0011-agent-world-real-local-jobs.md) defines the real-owner path;
+it does not relax Preview isolation or approve a Local process switch, broader
+production contracts or migration rollout. Work does not enter PR #280 or #281;
+neither dependency is merged by this task.
 
-Auth, registration, Device Confirmation, SF Social, SF Chat and Owner Preview
-are `BETA` in Unified Local. Registration uses the shared human identity and
-handle. Starting access is five hours of active use. Device Confirmation uses a
-two-minute pending window, `permanent/session` trust and the narrow single-use
-fresh login proof for a first device. External-provider availability is separate
-from synthetic Preview acceptance.
+Desktop source plans/images are unchanged. Their `c9b2883` snapshot is
+historical. See the [pre-foundation archive](../archive/AGENT_WORLD_PRE_FOUNDATION_CONTEXT_2026-09-04.md)
+and [completed foundation checkpoint](../archive/AGENT_WORLD_FOUNDATION_CHECKPOINT_2026-09-04.md).
+Neither archive is a second current status.
 
-Preview implementation `42a99a85f164f69c6ddd0edf46859ef005e787e2` and closeout
-`4ae766ea0c3258a8bb049644ac2afbba6cb89330` passed focused `173` tests and full
-`2680 passed, 44 skipped`. The existing record contains manual Telegram, Google,
-email/OTP, QR, final registration, Device Confirmation, both trust modes and
-Exit Preview restoring the original owner Local. Python/JS/static/context/bundle
-gates passed; PR #280 had five successful CI checks. This is inherited baseline
-evidence, not a claim that these runs were repeated for the new slice.
+## Current product contract
 
-The 44 baseline skips are unverified credential/platform scenarios, not PASS.
-New slice evidence and skip reasons will be recorded separately below.
+The implemented AI Center has exactly three tabs: **Overview / Work / Agents**
+(«Обзор / Работа / Агенты») and a task-detail drawer. Decisions, Memory,
+Experiments, Models and System are not additional active tabs in this checkpoint.
+One conditional rail entry replaces AI Lab / AI Agents only after admission to
+one of the two paths below. Existing research links and legacy URLs remain;
+there is no new research UI or general natural-language coordinator.
 
-Canonical evidence: [beta.96 Preview closeout](../changelog/2026-09-04-beta96-visual-audit-and-first-device.md).
-The last recorded deployed identity is beta.87; this task does not inspect or
-change Canary/Production, their DB, secrets or signed artifacts.
+### Real Local owner path — IN DEVELOPMENT
 
-## Baselines preserved
+- An explicitly enabled Development owner workspace can submit a registered
+  historical backtest through SF Chat or the narrow AI Center API. Tolik is its
+  visible persona; **NinjaTrader Strategy Analyzer is the executor**, not an LLM.
+- `live_backtests.py` calls the existing `jobqueue` authority. Stable task UUIDs
+  project the original job IDs/statuses; no second job engine or live-task SQLite
+  ledger is introduced. Only server-marked Agent World jobs belonging to the
+  exact workspace, numeric compatibility user ID and fresh owner UUID are shown.
+- The strategy, instrument, timeframe, date interval and parameters must be
+  explicit and valid against existing catalogs/validators. Negative parameters
+  and loss-making results are preserved. Queue admission is not success.
+- The existing Chief monitor rechecks admission, verifies completed canonical
+  reports and sends a replay-safe update into the originating SF Chat transcript.
+  Missing, mismatched or changed evidence requires review; no synthetic fallback.
+- Ivan can request a snapshot through the existing Desktop command queue. The
+  real Desktop must be open, have bars and return a bounded PNG receipt for that
+  command/conversation. The current chart view is preserved; there is no
+  headless substitute or alternate market-data source.
+- PNG structure, hash, scope, command correlation and bounded capture metadata
+  are validated. This is an **authenticated Desktop canvas receipt**, not an
+  independent visual attestation, proof of live quote freshness or LLM quality.
+- Real task/report counts and evidence can be displayed. Model quality remains
+  **NEW / unassessed**, with no invented score: `AI_EVALUATION_SHADOW` is OFF.
+  Result verification is not strategy profitability certification or a rating.
 
-SHA256 of critical files at the accepted base (checkout bytes):
+This path is implemented in the new checkout but has not completed its real
+chat/browser end-to-end acceptance. The running 8765 owner is still beta.93;
+its existing manual reports must not be relabeled as Agent World activity.
 
-| File | SHA256 |
+### Synthetic Preview path — IN DEVELOPMENT
+
+Three distinct fixed fixtures each execute four deterministic tasks: Marina
+reconciles financial values, Tolik computes OHLC statistics, Nikita checks event
+ordering and Ivan constructs an SVG from checked bars. Foundation
+Intent/Task/Contribution/Outcome records, immutable artifacts, replay/resume and
+independent deterministic checks are stored only in the disposable SQLite root.
+Three distinct inputs yield n=3, low-confidence per-class shadow scores; replay
+does not add samples. These scores never mix with real Local report counts or
+become LLM rankings, market performance or Router weights.
+
+Verified results and explicit browser-rendered chart PNGs can project into the
+existing scoped AI conversation. The benchmark remains finite and synchronous;
+it is not an autonomous workforce. Synthetic identity and external-effect
+blocking remain intact, including Reset and Exit to full owner Local.
+
+Both paths reuse existing zero-cost budget admission; neither implements paid
+reservation/settlement or invokes a model provider. Neither sends Telegram or
+publishes social posts. SF Social remains the user-visible social label, SF Chat
+the messenger; compatible `community*` APIs and existing human/AI conversation
+authorities are preserved.
+
+## Stage coverage and remaining implementation gaps
+
+| Plan area | Current implementation / limit |
 | --- | --- |
-| `app/market_data.py` | `c96e0025b46501f21e6fe346f627c049cfbe3509e4634698c1f69f587a8a6fb0` |
-| `app/static/aurora/assets/chart-engine.js` | `74b5777f11bbad36bcbd759baa364d0767e41a980be598078d92314e98f90519` |
-| `app/static/aurora/assets/pages/desktop.js` | `bf18102c5f13ba6a7c0dba9898524954b8c7dabf46ee76007d7c10116a9a336a` |
-| `app/connector_protocol.py` | `9dc177b7673fe729d88b23c7623673a8843640ca0afb0c84587b223011fa0139` |
-| `app/jobqueue.py` | `bfaa4140776803560d813eb5ea1af96b281247e8b9536eae7f59ae4dea511e66` |
+| 0–1 baseline/contracts | Foundation preserved; Persona, Role, Provider Account and Model stay distinct; explicit legacy projections |
+| 2 persistence | Preview SQLite CAS/history/events/idempotency/outbox and private hash-checked artifacts; real Local reuses original jobs, Desktop receipts and SF Chat; PostgreSQL/RLS/migrations and outbox delivery worker remain gaps |
+| 3 server facade | Separate Preview and exact-opt-in real Local owner composition over existing auth/device/permission/CSRF/budget gates; not general multi-user API rollout |
+| 4 navigation/UI | Exactly Overview/Work/Agents plus task drawer; legacy links retained; owner design acceptance pending |
+| 5 task graph | Bounded fixture state machines and projections of explicit real backtest/desktop requests; no general natural-language coordinator |
+| 6 routing | Existing Router unchanged; new Router flag OFF |
+| 7 personas | Four fixture personas; Tolik/NinjaTrader and Ivan/Desktop in real Local; no custom editor or provider-identity conflation |
+| 8 evaluation | Synthetic-only n/low-confidence shadow scores; real execution evidence with quality NEW/unassessed, evaluation flag OFF; no production learning |
+| 9 consensus/Court | OFF; no invented decisions/verdicts |
+| 10 execution | `AI_EXECUTION_V2` OFF; existing historical NT jobs and Desktop command queue reused by explicit owner request; no trades, terminal execution, Connector refactor or new engine |
+| 11 memory/routines/calendar | OFF/unimplemented; task evidence is not promoted to shared memory |
+| 12 integrations | Real/synthetic result and PNG projections remain separate in existing SF Chat; real end-to-end acceptance pending, social publishing OFF |
+| 13 cutover/release | Not closed; owner review, broader implementation, Git/CI and release gates remain distinct |
 
-The slice adds `app/ai_control_center/`, its contract tests and documentation.
-All existing application files, UI and migrations retain their base contents.
-The social-page rename to SF Social belongs to the later navigation stage;
-`community*` names and current labels remain compatible in this slice.
+Backtesting page/engine redesign remains a separate workstream. The real Local
+slice integrates its existing historical job/report pipeline; it does not claim
+to finish that redesign. The overall program stages 0–13 are **NOT CLOSED**.
 
-## Ownership and handoff
+## Isolation, flags and shared ownership
 
-| Files / boundary | Active owner |
+All ten flags default OFF in the single `flags.py` registry. Trusted server
+composition creates audited environment **and exact workspace** snapshots;
+browser/localStorage/query values do not grant flags or authority.
+
+| Flag group | Ordinary Local / remote | Admitted real Local owner | Controlled synthetic Preview |
+| --- | --- | --- | --- |
+| Read model, AI Center UI, task graph | OFF | ON | ON |
+| Evaluation shadow | OFF | OFF | ON |
+| Router shadow, consensus, Court, execution V2, memory, social publishing | OFF | OFF | OFF |
+
+Real Local requires the explicit server environment setting
+`STRATFORGE_AGENT_WORLD_LOCAL_WORKSPACES` with exact `ws_*` identifiers. Empty,
+malformed or wildcard configuration fails closed. It applies only to Development
+and is rejected inside Preview. Each action uses the existing authenticated
+owner context, confirmed browser device or established trusted `source=local`
+entry, current active owner UUID, active owner workspace and owner membership,
+existing `ai_lab`/`backtesting` capabilities, permissions and budget admission.
+Longer operations and monitor delivery recheck these authorities; no master code,
+new login or second permissions/budget system is added.
+
+Preview separately requires its owner-issued control cookie, confirmed current
+synthetic session, active membership, professional ai_lab access, role, trial and
+zero-cost budget. Private artifacts/projections are scoped to environment,
+workspace and user. Reset holds the existing child lifecycle lock until SQLite
+operations close and then clears only synthetic data. Exit never replaces or
+reduces the owner runtime. Uncontrolled Preview, non-owner Local, Canary and
+Production cannot use either new action path.
+
+| Shared files / area | Writer / handoff |
 | --- | --- |
-| `app/ai_control_center/`, new foundation tests, ADR-0009, this status and scoped docs | current Foundation workstream in `codex/agent-world-foundation`; AI-assisted change under owner instruction |
-| `server.py`, `permissions.py`, `api.js`, `ui.js`, `theme.css` | no Agent World writer in stages 0–1; reserve one owner when the integration stage starts |
-| migration sequence, storage router, jobs, budgets, commands | no writer in this slice; stage-2 owner assigned after contract review |
-| Auth, devices, Social, Chat, Preview | accepted PR #280 baseline; regression contract |
-| market data, Charts, Connector, trading | out of scope |
+| `server.py`, `permissions.py`, `api.js`, `ui.js`, `chief_agent.py`, `preview_sandbox.py`, live/Preview gateway/facade and integration tests | Root integration workstream, single writer |
+| This status, main owner-review changelog, ADR-0011 and ADR index | Delegated documentation handoff writer for this bounded update; root resumes after handoff; External GPT Context Pack remains root-owned |
+| SQLite repository / codec / storage contracts | Storage workstream; integrated commit `7d2400b9`; reviewed by root |
+| AI Center HTML/CSS/JS / presentation contracts | UI workstream; integrated commit `289675b7`; root owns integration follow-ups |
+| Local benchmark / evaluation / real-backtest adapters and workflow tests | Workflows workstream; initial integrated commit `06c711ec`; bounded live follow-ups reviewed by root |
+| Auth/devices/Social/Chat/Preview | Accepted beta.96 behavior remains regression contract; changes only at named integration boundaries |
+| Market-data engine, chart engine, Connector, jobqueue, trading | No refactor; verify unchanged against accepted base |
+| `assets/pages/desktop.js` | Explicit additive exception: PNG capture metadata/receipt and ACK integration only; baseline hash changes, rendering/provider/view behavior is not redesigned |
+| PostgreSQL migrations, permissions catalogs, paid budget ledger and job engine | No new implementation or numbering in this checkpoint |
 
-Every successor records branch/base/current SHA, owned files, contract changes,
-flags, test evidence, remaining gates and one next safe step here. Git supplies
-the commit containing a checkpoint; a file cannot embed its own future hash.
-No actor/model identity is inferred from a previous document or persona name.
+Do not use a persona name as model provenance. Runtime/model identity is omitted
+unless authenticated infrastructure supplies it.
 
 ## Verification and closeout
 
-`IMPLEMENTATION COMPLETE`: YES for the bounded stages 0–1 code slice only.
-`GIT CLOSEOUT COMPLETE`: branch committed, pushed and separate PR #281 created;
-source `3afb75c5c2d02aa07703eadf274a1c1006ae8ada` was clean and synchronized.
-This document's later checkpoint commit does not change code or test contents.
-CI is a separate per-commit result, not inferred from these local counts.
-`STAGE CLOSED`: NO for stage 1; ADR-0009 review and the dependency/merge gates
-remain open. Stage 0's baseline/documentation checkpoint is complete.
+Current integration verification is **IN PROGRESS**, not a final PASS claim.
+The [main change record](../changelog/2026-09-04-agent-world-owner-review.md)
+retains earlier debugging evidence rather than treating an older green subset
+as verification of the latest live integration. Scoped gateway checks passed
+77 tests; with live backtests/Preview identity/subscription retry, 136 passed;
+with existing Chief/Router/SF Chat, 205 passed. These are intermediate focused
+results, not the final combined regression.
 
-| Check | Current-slice evidence |
+| Evidence | Observed result / limit |
 | --- | --- |
-| New contract/characterization tests | 221 passed, included in both runs below; no new skips |
-| Focused regression | 654 passed, 0 skipped, 69.22 s; new contracts plus auth/onboarding, Preview, first-device/device confirmation, Community permanence, SF Chat, AI agents/personas/chief/routing/lab, permissions, NT queue, workers and docs governance |
-| Full `python -m pytest -q -ra` | 2901 passed, 44 skipped, 335.66 s; no failures |
-| Legacy `python -m tests` | 13/13 suites passed |
-| Python `compileall -q app tools tests` | PASS |
-| Root repository secrets/platform-secret values/Markdown | PASS; scan root explicitly includes files above `NT-Analyzer/` |
-| Root tracked Markdown hidden amendment scan | PASS, 299 Markdown files |
-| Application CSP/secrets/Markdown | PASS |
-| External GPT Context validator | PASS; shared historical deployment-SHA warning is explained in Context Pack 11, not suppressed |
-| `tools/pre_release_check.py` | PASS, 496 bundle files: static scan, runtime reads, Python compilation and shipped JavaScript syntax; no signing/archive/upload |
-| `git diff --check` / cached check | PASS |
-| Behavior/wiring isolation | no existing application/UI/migration file changed; no runtime importer of `ai_control_center`; all five critical hashes above match |
+| Existing owner manual historical job `ui_20260905T003301149Z` | Actual NinjaTrader result, 1273 bars and 64 trades; service-level verification passed with `reasons=[]` |
+| Agent World ownership of that job | Not an Agent World origin; deliberately excluded from new task/agent statistics; no metadata backfill to make a demo look live |
+| Fresh SF Chat → Agent World → NinjaTrader → same SF Chat | PENDING; requires a new chat-created, scoped real job after approved Local handoff |
+| Real Desktop command → browser PNG receipt → SF Chat/drawer | PENDING; contract tests do not replace the live browser pipeline |
+| Synthetic browser checkpoint | PASS: three explicit fixture runs, 12 completed tasks, four personas with n=3/low-confidence synthetic checks; profile/task drawer, rendered PNG in SF Chat and all three main tabs inspected |
+| Exit Preview → existing owner Local | PASS in browser: returned to unchanged beta.93 / 8765, owner account and balance, online NinjaTrader state and original reports; no synthetic data substituted |
+| Latest full/static/context/bundle regression | IN PROGRESS; final exact results added by root after current diff stabilizes |
+| Owner visual/design acceptance | PENDING |
 
-The first bundle run found three dangling relative changelog links to
-repository-only documents. They now use repository URLs and the changelog
-lists accepted exclusions. The normal bundle selection was not broadened.
+Inherited (not re-run claims): accepted Preview focused 173/full 2680 + 44 skipped;
+foundation focused 654/full 2901 + 44 skipped, legacy 13/13, bundle 496.
+See [Preview closeout](../changelog/2026-09-04-beta96-visual-audit-and-first-device.md)
+and the archived foundation checkpoint.
 
-Skipped full-suite scenarios (unverified, not PASS):
+`IMPLEMENTATION COMPLETE`: pending current real/Preview integration verification.
+`GIT CLOSEOUT COMPLETE`: pending integration commit, push, separate stacked PR and CI record.
+`STAGE CLOSED`: NO for the overall program; owner visual acceptance remains open.
 
-- 12 production storage + 12 production worker + 9 SF Chat relational + 8
-  Stage 8 PostgreSQL tests: separate test PostgreSQL DSNs were not provided.
-  No Production DB or credentials were used to satisfy this gate.
-- 2 bash/shell tests and 1 POSIX permission-bit test: unavailable in this
-  Windows toolchain. The dispatched Linux CI is a separate platform result.
-- Browser walkthrough, real providers and market-data/Connector hardware
-  acceptance were not repeated: no relevant runtime/UI changes in this slice.
-  Inherited Preview manual acceptance is identified above, not counted again.
-- No new PostgreSQL RLS/atomicity, migrations or outbox delivery can be
-  certified by these pure DTO/protocol tests. Those are stage-2 implementation
-  and real test-database gates, after contract review.
+The inherited 44 full-suite skips are not PASS: 41 credentialed PostgreSQL cases
+without separate test DSNs, 2 shell cases and 1 POSIX permissions case on Windows.
+The final run must report its actual skip count and reasons again. No Production
+database is used to satisfy tests. Paid-model/quality, remote Connector/exchange
+and trading acceptance are not established by a local historical report.
 
-The existing [Next Architecture CI branch runs](https://github.com/OMNOM-111/NT-Analyzer/actions/workflows/next-architecture-ci.yml?query=branch%3Acodex%2Fagent-world-foundation)
-are the authority for dispatched Linux/Windows/static results on the PR head.
-The separate main-only `ci` Python and bridge gates cannot run on this stacked
-base and have no manual dispatch. They are deferred, not green; after #280 is
-owner-approved and integrated, retarget the stack and rerun applicable checks.
-No workflow/branch protection changes, merge or deployment are authorized here.
+## Rollback and next safe step
 
-Ignored local outputs are Python/pytest caches and generated local AI registry
-scaffolding in this isolated worktree. They are not staged or shipped as data.
-No owner Local data, runtime logs, keys, rollback bundle or signed artifact is
-part of this diff.
+Until an approved switch, 8765 continues serving the old owner checkout. Exit the
+disposable Preview and leave Local opt-in absent to retain current behavior.
+Preserve existing owner data, reports, secrets and settings in place; never use
+the Preview launcher/root as a substitute for owner Local.
 
-Rollback is to keep every Agent World flag disabled and continue the unchanged
-legacy runtime at the accepted base. There are no schema/data changes to undo.
-Any eventual code revert is a separate reviewed commit, never a reset of user
-work or deletion of the Unified Local checkout.
+A future approved handoff must independently bind the new code root and existing
+owner data root, retire only the exact old Local supervisor/backend/worker, avoid
+a second writer and retain the original launcher for rollback. The standard
+supervisor `--development-profile` currently derives data from the code checkout;
+merely exporting an older root before that command does not preserve it. No
+ready one-command rollback or backward-data migration is claimed here. Returning
+to beta.93 code after beta.96 writes is a separate compatibility check, not proof
+that restoring a process also restores data.
 
-## Next safe step
+The accepted code rollback references remain `4ae766ea` and foundation
+`d5d07ac6`; the running-owner reference is separately `7062f749`. No numbered
+shared schema migration is added. Any code rollback is a reviewed commit or
+launcher operation, never a destructive reset of user work; preserve synthetic
+evidence unless the owner explicitly resets that Preview.
 
-Review the concrete contracts, explicit legacy projections, repository protocols
-and server-side scoped flag registry in [ADR-0009](../adr/0009-agent-world-foundation.md).
-Read the exact-head CI result on PR #281 without merging #280. After review,
-stage 2 introduces SQLite/PostgreSQL implementations
-and migrations only after that review. Court, new execution, Router switching
-and UI remain outside this checkpoint.
+Next safe step: finish code/tests/static/context/bundle checks, record a clean
+commit and separate PR/CI checkpoint. Only after explicit owner approval switch
+Local, run a fresh real SF Chat backtest and Desktop capture, then obtain visual
+acceptance of the populated three-tab UI. Dependency merge, broader stages,
+Canary and Production remain separately authorized gates.
+
+Canonical verification/change record:
+[Agent World owner review](../changelog/2026-09-04-agent-world-owner-review.md).

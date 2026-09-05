@@ -155,6 +155,28 @@ Key admin capability names already in the contract: `admin.view`,
   scoped flags do not grant capabilities, bypass pending-device access or
   authorize provider/command use. No auth/security code changes in stages 0–1.
 
+## Agent World integration boundary
+
+The Preview owner-review facade reuses existing session, permanent/session device,
+membership, role, ai_lab capability, trial, CSRF and zero-cost budget checks;
+synthetic identity does not receive owner privileges. New routes additionally
+require trusted Preview control and scoped default-off flags. Mutation checkpoints
+refresh access rather than trusting stale UI capabilities. Reset is serialized
+with the new SQLite operations before it wipes only synthetic state.
+See [ADR-0010](../adr/0010-agent-world-owner-review.md). Auth/provider registration
+logic, real credentials and the ordinary Local owner runtime are not replaced.
+
+The real Local adapter is independent: Development only, Preview forbidden,
+`STRATFORGE_AGENT_WORLD_LOCAL_WORKSPACES` is an exact server-owned allowlist
+(default empty; wildcard/invalid entries deny). Existing authenticated Local
+owner entry or confirmed owner browser session is required; active owner identity,
+UUID, owner workspace/membership and existing permissions/budget are rechecked.
+Only read/UI/tasks flags activate; evaluation remains OFF. No synthetic identity,
+master code, client-supplied owner/scope grant or new permissions catalog exists.
+The durable chat worker uses its server-issued scope and fresh actor/membership
+admission; this is not a claim that a persisted job carries a live browser cookie.
+Neither pending devices nor other users/Canary/Production gain this access.
+
 ## Canonical evidence
 
 - [Current Agent World baseline](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md)

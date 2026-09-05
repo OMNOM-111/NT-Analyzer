@@ -5,10 +5,10 @@
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Local source verified SHA: 3afb75c5c2d02aa07703eadf274a1c1006ae8ada
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
-- Active branch: `codex/agent-world-foundation`, PR #281 stacked on `integration/stratforge-unified-local` (open PR #280)
+- Active branch: `codex/agent-world-owner-preview`, separate PR above foundation PR #281 and integration PR #280; both dependencies remain open
 - Version: `0.10.0-beta.96`, `pre_release`, not deployed
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
-- Scope: Agent World stages 0–1 and the accepted Unified Local baseline; deployment facts are inherited evidence
+- Scope: Agent World bounded owner-review implementation and accepted Unified Local baseline; deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 
 ## Current implementation checkpoint
@@ -18,19 +18,38 @@ is the canonical current program handoff. It records base/current checkpoint,
 file ownership, flag state, tests and skips, rollback and the next safe step.
 The new slice uses a separate clean worktree and does not modify PR #280.
 
-Stage 0 verified an exact match to the accepted base. Stage 1 adds contracts,
-state machines, pure legacy projections, repository interfaces and scoped
-server-side flags. [ADR-0009](../adr/0009-agent-world-foundation.md) is proposed
-for review before stage-2 persistence. No new API, storage migration, Court,
-execution engine, Router selection or UI is activated. All ten flags default
-OFF; no enabled configuration is installed.
+The owner authorized continuing to a clickable review checkpoint. Local SQLite
+persistence, Preview-only server facade, a single AI Center, deterministic task
+fixtures, independent shadow evaluation and verified result/PNG projection to SF
+Chat are implemented. [ADR-0010](../adr/0010-agent-world-owner-review.md) defines
+this limited scope, not a production acceptance of every foundation contract.
 
-Local slice implementation is complete: 221 new contract/characterization
-tests, focused regression 654 passed, full pytest 2901 passed / 44 skipped,
-legacy runner 13/13 and Python/JS/static/context/496-file bundle gates PASS.
-The 44 skips are 41 PostgreSQL acceptance scenarios without test DSNs and
-three shell/POSIX scenarios; no skipped scenario is certified. The canonical
-status separates local implementation, Git/CI closeout and stage review.
+All flags default OFF. Four can activate in a controlled synthetic workspace.
+After the owner's request for real data, the separate Local adapter adds only
+read/UI/tasks opt-in for exact owner Development workspaces. SF Chat can submit
+registered NinjaTrader historical jobs and receive actual verified reports via
+the existing chief monitor. Desktop snapshots require real canvas bars, a bounded
+PNG and saved command receipt; never a headless substitute. Evaluation stays OFF
+for real tasks. The UI is one page with exactly Overview/Work/Agents and drawers.
+No Court, Router switch, trading execution, automatic memory/routines or social
+publisher. No new queue, permissions catalog, paid-budget ledger or numbered SQL
+migration. Source and final checks are tracked in the canonical status and
+[owner-review change record](../changelog/2026-09-04-agent-world-owner-review.md).
+
+The running owner Local at port 8765 was observed as beta.93 / `7062f749` / dirty,
+not the accepted beta.96 checkout. It is unchanged. Owner review starts a separate
+beta.96 Preview child with isolated data and normal external-effect blocking.
+Exit returns to the unchanged owner Local, not to a silently upgraded server.
+
+Read-only validation of the manually requested NinjaTrader proof job
+`ui_20260905T003301149Z` confirms an actual report, 1,273 bars and 64 trades;
+it is unmarked/manual and is excluded from Agent World statistics. The new
+chat-created real job and Desktop-to-SF-Chat browser flow remain pending an
+approved switch of Local to this beta.96 checkout. Do not start a second worker
+against the owner data root or assume the supervisor preserves an overridden
+root: its ordinary development profile resets the root to its code checkout.
+See [ADR-0011](../adr/0011-agent-world-real-local-jobs.md) and canonical status
+for the safe handoff and remaining acceptance gates.
 
 ## Accepted Unified Local — beta.96
 
@@ -52,13 +71,13 @@ status separates local implementation, Git/CI closeout and stage review.
 - SF Social owns profiles, feed, privacy, moderation and approved result posts.
   SF Chat owns human conversations; the AI conversation authority is projected
   through the same shell. Strategy/Chart/Live publishing adapters remain
-  `IN DEVELOPMENT`. The user-visible SF Social rename belongs to the later
-  navigation stage; compatible `community*` APIs remain.
+  `IN DEVELOPMENT`. The navigation-stage SF Social label is now applied;
+  compatible `community*` APIs remain.
 
 ## Dependency, review and CI
 
-The Agent World PR targets the open integration branch so its review contains
-only this slice. PR #280 must follow its own owner-approved merge process.
+The owner-review PR targets the foundation branch so its diff contains only
+this slice. PR #281 and PR #280 follow their own owner-approved merge process.
 After that, retarget/rebase the stack as appropriate and rerun applicable
 checks; do not infer that baseline CI certifies later commits.
 
@@ -95,11 +114,13 @@ They no longer define the current Local baseline.
 
 ## Remaining boundaries
 
-- Stage-2 SQL/SQLite implementation and migrations wait for contract review.
+- Local SQLite is implemented for review. PostgreSQL/RLS, delivery workers and
+  numbered migrations still require review and their own acceptance evidence.
 - Credentialed PostgreSQL, external-provider delivery, runtime restart/lease
   acceptance and visual acceptance must be proved when those paths change;
   pure contract tests do not certify them.
-- New AI features are `IN DEVELOPMENT`, not a usable Agent World product.
+- Agent World is `IN DEVELOPMENT`: a usable bounded owner-review surface is
+  present, not a completed general autonomous-agent product.
 - Shared owner-feed distribution remains `EXTERNAL BLOCKED` without authority.
 - Public Connector installer remains `EXTERNAL BLOCKED` on authorized signing.
 - Preserve market data, Charts, Connector, trading, Auth, devices and SF stores.
@@ -108,10 +129,10 @@ They no longer define the current Local baseline.
 
 ## Next safe step
 
-Review the verified foundation checkpoint and ADR-0009. After review,
-stage 2 implements scoped repositories and transactional events using the
-existing PostgreSQL/SQLite, idempotency, audit and worker foundations. Assign
-one writer to shared files and migration numbering in the canonical status.
+Finish final local/Git/CI checks, then have the owner inspect the populated Preview
+and task/score/chart/chat results. Record design acceptance and feedback before a
+general rollout. Choose the next bounded production contract implementation only
+after that review; preserve the shared-file ownership table in canonical status.
 
 ## Canonical evidence
 

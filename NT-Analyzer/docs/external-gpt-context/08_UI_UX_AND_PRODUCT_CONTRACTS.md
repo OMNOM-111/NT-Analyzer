@@ -19,7 +19,7 @@
 | Strategies | ordinary user + owner | `PARTIAL` | profiles, lifecycle, cleanup, archive, portfolio cells |
 | AI Lab | ordinary user + owner | `PARTIAL` | orchestration, runs, cloud-agent settings, compile/backtest loop |
 | AI Agents / API Keys | owner | `BETA` in Local | current owner-only provider registry; using premium models does not grant access to provider settings |
-| AI Center | future permitted workspace members | `IN DEVELOPMENT` | stages 0–1 foundation only; UI flag OFF and no new page/nav in this slice |
+| AI Center | controlled Preview or explicit Local-owner workspace | `IN DEVELOPMENT` | One page, exactly three sections: Overview/Work/Agents; inline task/profile drawers; results, attention, team and evaluation side by side; inactive future features occupy one compact card |
 | SF Social / SF Chat | permitted users + owner | `BETA` in Unified Local | social network and human/AI messenger are integrated; technical `community*` compatibility remains |
 | News | ordinary user + owner | `DONE` | calendar events, live headlines, provider status |
 | Telegram / auth entry | ordinary user + owner | `PARTIAL` | login, profile, pairing, notifications, session revoke |
@@ -36,10 +36,18 @@
 - Owner/developer/admin surfaces still require server-side capability checks.
 - Production does not rely on mock data.
 - Documents UI must preserve public/internal metadata separation.
-- The existing social page still carries SF Chat labels in some places. The
-  intended product name is SF Social; the messenger is SF Chat. Label/nav changes
-  belong to the later AI Center navigation stage, not the foundation slice.
-- No UI assets or accepted visual compositions change in Agent World stages 0–1.
+- Social rail/header now says SF Social; messenger remains SF Chat. Technical
+  community routes and stores are unchanged.
+- AI Center uses the existing Aurora shell and supplied Agent World composition.
+  Its source labels distinguish Preview synthetic benchmarks from actual
+  NinjaTrader reports and Desktop snapshots. Real tasks show queued/running/
+  verified or failure/review states; execution success does not mean profit.
+  A small real Desktop image and canonical report link appear beside the task.
+  NEW is honest insufficient model-quality evidence, not a generated rating.
+  The owner's collage remains the composition reference. No extra pages or
+  empty top-level tabs are introduced; existing Desktop and Backtesting remain
+  canonical destinations for their respective full artifacts.
+  Owner visual acceptance is pending; no general feature cutover is claimed.
 
 ## Important UX rules
 

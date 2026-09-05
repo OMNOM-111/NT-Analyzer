@@ -25,7 +25,7 @@ above Vitek.
 
 | Surface | Status | Current fact |
 | --- | --- | --- |
-| Agent World | `IN DEVELOPMENT` | stages 0–1 contracts/flags/projections only, no runtime consumer; all new paths disabled |
+| Agent World | `IN DEVELOPMENT` | Three-section center; separate synthetic Preview benchmarks and explicit Local-owner real NinjaTrader/Desktop adapters into existing SF Chat; global defaults OFF, real E2E acceptance pending |
 | Vitek / default assistant | `DONE` | default owner-facing operator, incidents, tasks, plans and summaries |
 | Management tiers | `DONE` | manager / deputy / secretary tiers exist with different execution posture |
 | Specialist personas | `DONE` | Marina, Tolik, Nikita and Ivan are stable named personas with scoped domains |
@@ -64,22 +64,38 @@ above Vitek.
 3. AI output does not bypass product permissions or release gates.
 4. Plans and dialogue are not equivalent to execution approval.
 
-## Agent World foundation contract
+## Agent World current contract
 
-Persona, Agent Role, Provider Account and Model have separate identities.
-The current AI Agents registry is a provider/model/account registry; its keys
-do not become personas or permissions. Pure projections require explicit scope
-and retain source IDs/statuses; unknown legacy states require review.
-Intent/Task/Contribution/Decision/Execution/Outcome/Memory are typed contracts,
-not running services. Existing workers, commands, budgets and permissions stay
-authoritative. There is no new Court, execution engine, router switch or UI.
+Persona, Agent Role, Provider Account and Model retain separate identities.
+Legacy provider/account keys do not become personas or permissions. Source IDs
+and statuses remain explicit; unknown legacy states require review.
 
-The server-side flag registry uses a false-by-default environment gate plus an
-exact workspace opt-in; no owner bypass or cross-environment inheritance.
-No configuration is installed. Future paid/background steps must recheck access
-and budgets; five-hour active-use access is not always-on automation authority.
-Review [ADR-0009](../adr/0009-agent-world-foundation.md) before stage-2 storage.
-Current checkpoint: [Agent World status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
+In a controlled synthetic Preview workspace,
+four deterministic handlers perform finance reconciliation, OHLC statistics,
+event-order checks and SVG chart creation through persisted task/outcome states.
+Three distinct fixtures produce n=3 low-confidence shadow scores per task class;
+replay does not inflate samples. This does not measure external LLM quality or
+change Router selection. Maximum 20 benchmark runs per user/workspace bound this
+review surface; existing-key replay remains supported.
+
+Existing workers, commands, budgets and permissions remain authoritative.
+No Court, general Execution Engine, automatic memory, routine/calendar scheduler
+or social publisher is activated. Four flags may be ON for admitted Preview.
+The real Local-owner opt-in activates read/UI/tasks only; evaluation remains OFF
+and real agents stay NEW, without invented model-quality or profitability scores.
+
+Explicit verified-result/PNG publication goes to the existing AI conversation
+store and appears through SF Chat. Explicit Local backtest commands require a
+registered class, instrument, timeframe and UTC period (maximum 31 days); no
+silent strategy generator or paid model fallback. Existing NinjaTrader execution
+and reports are authoritative. The existing chief monitor appends a verified
+terminal result once per source revision. A Desktop command waits for actual
+bars/canvas capture and an authenticated saved-image receipt; it never invokes
+the headless renderer or Telegram. Other natural-language delegation uses the
+legacy path. These adapters are not a general Router/Execution replacement.
+See [ADR-0010](../adr/0010-agent-world-owner-review.md),
+[ADR-0011](../adr/0011-agent-world-real-local-jobs.md) and
+[Agent World status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 
 ## What external GPT should not over-assume
 

@@ -597,7 +597,7 @@
       UI.toast(wasCorrection
         ? 'Исправление опубликовано; прежняя запись осталась на месте'
         : (composerVisibility() === 'network'
-          ? 'Опубликовано на вашей стене и в SF Chat'
+          ? 'Опубликовано на вашей стене и в SF Social'
           : 'Опубликовано только на вашей стене'));
     } catch (error) { UI.reportError(error); }
     finally { if (submit) submit.disabled = false; }

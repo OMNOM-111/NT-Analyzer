@@ -1,11 +1,10 @@
 /* Agent World presentation. All authority, scope, execution and data stay server-side. */
 (function (root) {
   'use strict';
-  const TABS = ['overview', 'work', 'agents', 'decisions', 'memory', 'experiments', 'models', 'system'];
-  const LABELS = { overview: 'Обзор', work: 'Работа', agents: 'Агенты', decisions: 'Решения', memory: 'Память', experiments: 'Эксперименты', models: 'Модели', system: 'Система' };
+  const TABS = ['overview', 'work', 'agents'];
   const STATUS = {
-    running: ['В работе', 'good'], active: ['Активен', 'good'], healthy: ['Работает', 'good'], succeeded: ['Завершено', 'good'], completed: ['Завершено', 'good'], verified: ['Проверено', 'good'], passed: ['Проверено', 'good'], accepted: ['Вклад принят', 'good'], submitted: ['Вклад записан', 'info'],
-    planned: ['Запланировано', 'neutral'], queued: ['В очереди', 'neutral'], waiting: ['Ожидает', 'neutral'], pending: ['Ожидает', 'neutral'], free: ['Свободен', 'neutral'], available: ['Свободен', 'neutral'], idle: ['Свободен', 'neutral'],
+    running: ['В работе', 'good'], working: ['В работе', 'good'], active: ['Активен', 'good'], healthy: ['Работает', 'good'], succeeded: ['Завершено', 'good'], completed: ['Завершено', 'good'], verified: ['Проверено', 'good'], passed: ['Проверено', 'good'], accepted: ['Вклад принят', 'good'], submitted: ['Вклад записан', 'info'],
+    planned: ['Запланировано', 'neutral'], ready: ['В очереди', 'neutral'], queued: ['В очереди', 'neutral'], waiting: ['Ожидает', 'neutral'], pending: ['Ожидает', 'neutral'], free: ['Свободен', 'neutral'], available: ['Свободен', 'neutral'], idle: ['Свободен', 'neutral'],
     review: ['Нужна проверка', 'review'], awaiting_owner: ['Решение владельца', 'review'], approval_required: ['Нужно подтверждение', 'review'], court: ['Разбор Court', 'review'],
     blocked: ['Заблокировано', 'warning'], paused: ['На паузе', 'warning'], warning: ['Внимание', 'warning'],
     failed: ['Ошибка', 'error'], rejected: ['Отклонено', 'error'], error: ['Ошибка', 'error'], cancelled: ['Отменено', 'neutral'],
@@ -36,13 +35,40 @@
     const confidence = { insufficient: 'недостаточно данных', low: 'низкая', medium: 'средняя', high: 'высокая' }[evaluation.confidence] || 'не оценена';
     return { sample, score: insufficient ? null : number(evaluation.score_pct), label: insufficient ? 'NEW' : pct(evaluation.score_pct), confidence, insufficient, observed: number(evaluation.observed_score_pct), mode: String(evaluation.mode || evaluation.scope || '') };
   }
-  function safeArtifactUrl(value) {
+  function safeArtifactUrl(value, sourceKind) {
     const path = String(value || '');
-    // Only the authenticated facade's opaque artifact route; no origin, query or traversal input.
-    return /^\/api\/ai-control-center\/artifacts\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path) ? path : '';
+    // Authenticated opaque routes only; legacy Desktop snapshots also require proven source kind.
+    if (/^\/api\/ai-control-center\/artifacts\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(path)) return path;
+    return sourceKind === 'desktop_chart' && /^\/api\/ops\/runtime\/snapshots\/cs_[0-9a-f]{32}\.(?:jpg|png|webp)$/.test(path) ? path : '';
+  }
+  function sourceMeta(value) {
+    // Scope does not prove data provenance. Only an explicit server classification does.
+    if (value?.synthetic === true) return { label: 'SYNTHETIC · тестовые данные', kind: 'synthetic', reportUrl: '' };
+    const kind = value?.synthetic === false ? String(value?.source_kind || '') : '';
+    const labels = { ninjatrader_report: 'NinjaTrader · исходный отчёт', desktop_chart: 'Рабочий стол · снимок графика', runtime_observation: 'Local · наблюдение runtime' };
+    const known = Object.prototype.hasOwnProperty.call(labels, kind);
+    const job = String(value?.source_job_id || '');
+    const reportUrl = kind === 'ninjatrader_report' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(job) ? '/ui/backtesting.html?job=' + encodeURIComponent(job) : '';
+    return { label: known ? labels[kind] : 'Источник не подтверждён', kind: known ? kind : 'unknown', reportUrl };
+  }
+  function overviewOutcomes(data) {
+    if (Array.isArray(data?.outcomes)) return data.outcomes;
+    // A completed task summary is real stored evidence, not an invented chart or score.
+    return rows(data?.tasks).filter(task => ['succeeded', 'completed', 'verified'].includes(task.status)).slice(0, 3).map(task => ({
+      title: task.title, summary: task.summary || '', task_id: taskId(task), status: task.status,
+      synthetic: task.synthetic, source_kind: task.source_kind, source_job_id: task.source_job_id,
+      created_at: task.updated_at || task.created_at,
+    }));
+  }
+  function realChatCommands(data) {
+    if (data?.enabled !== true || data?.scope?.synthetic !== false) return [];
+    return [
+      { title: 'Бэктест в NinjaTrader', text: 'Толик, запусти бэктест SampleMACrossOver на MNQ 09-26, 5m, с 2026-08-24 по 2026-08-29, Fast=10, Slow=25' },
+      { title: 'Снимок существующего графика', text: 'Иван, сделай снимок рабочего стола MNQ 09-26, 5m' },
+    ];
   }
   function taskMatches(task, filter, query) {
-    const groups = { active: ['running', 'active'], waiting: ['planned', 'queued', 'waiting', 'pending', 'paused'], review: ['review', 'awaiting_owner', 'approval_required', 'court', 'blocked'], completed: ['succeeded', 'completed'], failed: ['failed', 'rejected', 'cancelled'] };
+    const groups = { active: ['running', 'working', 'active', 'ready', 'queued'], waiting: ['planned', 'ready', 'queued', 'waiting', 'pending', 'paused'], review: ['review', 'awaiting_owner', 'approval_required', 'court', 'blocked'], completed: ['succeeded', 'completed'], failed: ['failed', 'rejected', 'cancelled'] };
     if (filter && filter !== 'all' && !(groups[filter] || [filter]).includes(String(task.status || ''))) return false;
     const needle = String(query || '').trim().toLocaleLowerCase('ru-RU');
     return !needle || [task.title, task.summary, task.stage, name(task.lead), task.task_class].join(' ').toLocaleLowerCase('ru-RU').includes(needle);
@@ -71,11 +97,11 @@
     if (!context) throw new Error('Браузер не поддерживает снимок графика.');
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     const result = canvas.toDataURL('image/png');
-    if (!result.startsWith('data:image/png;base64,') || result.length > 2000000) throw new Error('Снимок превышает допустимый размер.');
+    if (!result.startsWith('data:image/png;base64,') || result.length > 350000) throw new Error('Снимок превышает допустимый размер (256 KiB).');
     return result;
   }
   // Pure presentation functions are executable in Node contract tests, without DOM or HTTP.
-  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, rows, items, taskMatches, evaluationMeta, safeArtifactUrl, canRunDemo, flagRows, captureChart }; return; }
+  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, rows, items, taskMatches, evaluationMeta, safeArtifactUrl, sourceMeta, overviewOutcomes, realChatCommands, canRunDemo, flagRows, captureChart }; return; }
 
   root.UI.ready(async function () {
     const UI = root.UI, API = root.API.http;
@@ -86,7 +112,6 @@
     let overview = null, tab = 'overview', filter = 'all', query = '', workRows = [], nextCursor = null;
     let detail = null, detailTab = 'summary', detailKind = '', profile = null, currentDrawer = null, returnFocus = null;
     let generation = 0, overviewGeneration = 0, detailGeneration = 0, debounceTimer = null, disposed = false, demoBusy = false, demoKey = null;
-    const sections = new Map();
     const signal = UI.signal();
     const capability = key => overview?.enabled === true && overview?.capabilities?.[key] === true;
     const actor = value => typeof value === 'object' && value ? value : { display_name: String(value || 'Не назначен') };
@@ -112,24 +137,41 @@
       return `<button class="aw-task-card" data-aw-task="${esc(taskId(task))}"><span class="aw-task-card-top">${avatar(task.lead, 'sm')}<span class="aw-task-main"><span class="aw-task-title">${esc(task.title || 'Задача')}</span><span class="aw-task-stage">${esc(stageName(task.stage) || task.summary || 'Ожидает исполнения')}</span></span></span><span class="aw-task-meta"><span>Координатор: ${esc(name(task.lead))}</span><span>${esc(date(task.updated_at || task.created_at, true))}</span></span><span class="aw-task-foot">${badge(task.status)}${progress(task)}</span></button>`;
     }
     function agentMini(agent) {
-      return `<button class="aw-agent-mini" data-aw-agent="${esc(agentId(agent))}"><span class="aw-agent-mini-top">${avatar(agent)}<span><span class="aw-agent-name">${esc(name(agent))}</span><span class="aw-agent-role">${esc(role(agent))}</span></span></span>${badge(agent.status || 'free')}<span class="aw-agent-assignment">${esc(agent.current_task?.title || agent.current_task_title || 'Нет активной задачи')}</span></button>`;
+      const evaluation = evaluationMeta(agent);
+      return `<button class="aw-agent-mini" data-aw-agent="${esc(agentId(agent))}" title="${esc(name(agent))}: ${esc(evaluation.label)}, выборка ${count(evaluation.sample)}, уверенность ${esc(evaluation.confidence)}"><span class="aw-agent-mini-top">${avatar(agent)}<span class="aw-agent-identity"><span class="aw-agent-name">${esc(name(agent))}</span><span class="aw-agent-role">${esc(role(agent))}</span></span><span class="aw-rating-mini"><strong>${esc(evaluation.label)}</strong><small>n = ${count(evaluation.sample)}</small></span></span><span class="aw-agent-mini-foot">${badge(agent.status || 'free')}<span>${esc(agent.current_task?.title || agent.current_task_title || 'Нет активной задачи')}</span></span></button>`;
     }
     function timeline(events, full) {
       if (!events.length) return smallEmpty('Пока нет событий. Здесь появится история фактических действий, проверок и результатов.');
       const time = event => event.timestamp || event.created_at || event.at || event.time;
       return `<ol class="aw-timeline">${events.map(event => `<li><time datetime="${esc(time(event) || '')}" title="${esc(date(time(event)))}">${esc(date(time(event), !full))}</time><div><span>${esc(event.summary || event.title || event.event_type || event.type || 'Событие')}</span>${event.detail ? `<p>${esc(event.detail)}</p>` : ''}${event.task_id ? `<div>${taskLink(event.task_id)}</div>` : ''}</div></li>`).join('')}</ol>`;
     }
+    function outcomeCard(outcome, index) {
+      const source = sourceMeta(outcome), artifact = outcome.artifact || {}, url = safeArtifactUrl(artifact.url, source.kind);
+      const image = (index === 0 || source.kind === 'desktop_chart') && url && ['image/svg+xml', 'image/png', 'image/jpeg', 'image/webp'].includes(artifact.media_type || artifact.mime_type);
+      return `<article class="aw-outcome"><div class="aw-outcome-meta"><span class="aw-source aw-source-${esc(source.kind)}">${esc(source.label)}</span>${outcome.status ? badge(outcome.status) : ''}</div><h3>${esc(outcome.title || 'Результат задачи')}</h3>${outcome.summary ? `<p>${esc(outcome.summary)}</p>` : ''}${image ? `<a class="aw-outcome-image" href="${esc(url)}" target="_blank" rel="noopener noreferrer"><img src="${esc(url)}" alt="${esc(artifact.title || outcome.title || 'Артефакт результата')}" loading="lazy" referrerpolicy="same-origin"></a>` : ''}<div class="aw-outcome-foot"><div class="aw-actions">${taskLink(outcome.task_id, 'Результат и действия')}${source.reportUrl ? `<a class="aw-link-button" href="${esc(source.reportUrl)}">Открыть исходный отчёт ↗</a>` : ''}</div><time datetime="${esc(outcome.created_at || '')}">${esc(date(outcome.created_at, true))}</time></div></article>`;
+    }
+    function foundationCard() {
+      const limitations = rows(overview.limitations).map(value => typeof value === 'string' ? value : value.summary || value.message || value.description).filter(Boolean);
+      const flags = capability('can_view_system') ? flagRows(overview.flags) : [];
+      const more = limitations.length || flags.length ? `<details class="aw-foundation-details"><summary>Ограничения и доступность</summary>${limitations.length ? `<ul>${limitations.map(value => `<li>${esc(value)}</li>`).join('')}</ul>` : ''}${flags.length ? `<div class="aw-flag-list">${flags.map(flag => `<div class="aw-flag"><code>${esc(flag.name)}</code>${badge(flag.enabled ? 'active' : 'disabled')}</div>`).join('')}</div>` : ''}</details>` : '';
+      return panel('Следующие возможности', `<div class="aw-foundation"><span class="aw-status aw-neutral">IN DEVELOPMENT</span><p><strong>Решения · Память · Эксперименты</strong></p><p>Court, новая память и автономное исполнение не активированы. Текущие результаты и проверки доступны здесь, без перехода на пустые страницы.</p><div class="aw-actions"><a class="aw-link-button" href="ai-lab.html">Существующие исследования ↗</a>${capability('can_view_models') ? '<a class="aw-link-button" href="ai-agents.html">Модели и подключения ↗</a>' : ''}</div>${more}</div>`);
+    }
+    function realWorkHint() {
+      const commands = realChatCommands(overview);
+      if (!commands.length) return '';
+      return panel('Реальные задачи через SF Chat', `<div class="aw-chat-hint"><p>Отправьте команду в существующий чат. Примеры: замените стратегию, инструмент и период на нужные.</p>${commands.map(command => `<div class="aw-command-example"><strong>${esc(command.title)}</strong><code>${esc(command.text)}</code></div>`).join('')}<p>Даты бэктеста — UTC; конечная дата не включается. Это исследование, не торговое исполнение. Снимок сохраняет текущий вид рабочего стола.</p></div>`, '<button class="aw-link-button" data-aw-real-chat>Открыть чат →</button>');
+    }
     function renderOverview() {
       const tasks = rows(overview.tasks), agents = rows(overview.agents), stats = overview.stats || {};
-      const active = tasks.filter(task => ['running', 'active', 'queued', 'review', 'blocked', 'planned'].includes(task.status));
-      const shown = (active.length ? active : tasks).slice(0, 4);
-      const alerts = rows(overview.attention).filter(item => !['info', 'healthy'].includes(item.severity || item.status));
-      const alertsBody = alerts.length ? `<div class="aw-stack">${alerts.slice(0, 4).map(item => `<div class="aw-alert"><div>${badge(item.severity || item.status || 'warning')}</div><div><strong>${esc(item.title || item.summary)}</strong>${item.detail ? `<p>${esc(item.detail)}</p>` : ''}${taskLink(item.task_id)}</div></div>`).join('')}</div>` : `<div class="aw-clean"><div class="aw-clean-mark" aria-hidden="true">✓</div><strong>Подтверждений не требуется</strong><p>По данным текущего рабочего пространства нет задач, требующих вмешательства.</p></div>`;
+      const active = tasks.filter(task => ['running', 'working', 'active', 'ready', 'queued', 'review', 'blocked', 'planned'].includes(task.status));
+      const shown = (active.length ? active : tasks).slice(0, 3), outcomes = overviewOutcomes(overview).slice(0, 3);
+      const attentionKnown = Array.isArray(overview.attention), alerts = rows(overview.attention).filter(item => !['info', 'healthy'].includes(item.severity || item.status));
+      const alertsBody = alerts.length ? `<div class="aw-stack">${alerts.slice(0, 3).map(item => `<div class="aw-alert"><div>${badge(item.severity || item.status || 'warning')}</div><div><strong>${esc(item.title || item.summary)}</strong>${item.detail ? `<p>${esc(item.detail)}</p>` : ''}${taskLink(item.task_id)}</div></div>`).join('')}</div>` : attentionKnown && number(stats.attention) === 0 ? `<div class="aw-attention-clear">${badge('healthy')}<span>Сервер не сообщает об ошибках или ожидающих подтверждениях.</span></div>` : smallEmpty('Сводка подтверждений пока не опубликована. Отсутствие данных не означает, что все проверки пройдены.');
       const metrics = [
-        ['В работе', stats.active_tasks, 'Фактические активные задачи'], ['Завершено', stats.completed_tasks, 'Проверяемые результаты'],
-        ['Команда', stats.agents ?? agents.length, 'Persona, не модели'], ['Ожидают внимания', stats.attention ?? alerts.length, 'Ошибки и подтверждения'],
+        ['В работе', stats.active_tasks, 'Активные задачи'], ['Завершено', stats.completed_tasks, 'Сохранённые результаты'],
+        ['Команда', stats.agents ?? agents.length, 'Persona, не модели'], ['Требуют внимания', stats.attention, 'Ошибки и подтверждения'],
       ].map(([label, value, caption]) => `<div class="aw-metric"><div class="aw-metric-label">${esc(label)}</div><div class="aw-metric-value">${count(value)}</div><div class="aw-metric-note">${esc(caption)}</div></div>`).join('');
-      content.innerHTML = `<div class="aw-overview"><div class="aw-column">${panel(active.length ? 'Сейчас в работе' : 'Последняя работа', shown.length ? `<div class="aw-stack">${shown.map(taskCard).join('')}</div>` : smallEmpty('Задач ещё нет. Запустите разрешённый локальный сценарий или откройте SF Chat.'), '<button class="aw-link-button" data-aw-tab="work">Все задачи →</button>')}</div><div class="aw-column">${panel('Команда', agents.length ? `<div class="aw-team">${agents.slice(0, 6).map(agentMini).join('')}</div>` : smallEmpty('В этом рабочем пространстве пока нет агентов.'), `<span class="aw-count">${count(agents.length)} PERSONA</span>`)}</div><div class="aw-column aw-column-attention">${panel('Требует внимания', alertsBody)}<div class="aw-metrics">${metrics}</div></div><div class="aw-activity-wide">${panel('Последние события', timeline(rows(overview.activity).slice(0, 6), false), '<span class="aw-count">НАБЛЮДАЕМЫЕ ДЕЙСТВИЯ</span>')}</div></div>`;
+      content.innerHTML = `<div class="aw-rollup" aria-label="Сводка текущего рабочего пространства">${metrics}</div><div class="aw-overview"><div class="aw-column aw-column-work">${panel(active.length ? 'Сейчас в работе' : 'Последняя работа', shown.length ? `<div class="aw-stack">${shown.map(taskCard).join('')}</div>` : smallEmpty('Задач ещё нет. Откройте SF Chat или запустите разрешённую проверку.'), '<button class="aw-link-button" data-aw-tab="work">Все задачи →</button>')}${realWorkHint()}${panel('Требует внимания', alertsBody)}</div><div class="aw-column aw-column-results">${panel('Результаты и исходные данные', outcomes.length ? `<div class="aw-outcomes">${outcomes.map(outcomeCard).join('')}</div>` : smallEmpty('Пока нет сохранённых результатов. Здесь появятся отчёты, снимки и выполненные задачи с указанным источником.'))}${panel('Последние действия', timeline(rows(overview.activity).slice(0, 4), false))}</div><div class="aw-column aw-column-team">${panel('Команда и рейтинг', agents.length ? `<div class="aw-team">${agents.slice(0, 6).map(agentMini).join('')}</div><p class="aw-rating-note">n — размер выборки. NEW — данных недостаточно. Оценки относятся к классу задач; synthetic-проверка не оценивает качество LLM.</p>` : smallEmpty('В этом рабочем пространстве пока нет агентов.'), '<button class="aw-link-button" data-aw-tab="agents">Вся команда →</button>')}${foundationCard()}</div></div>`;
     }
     function taskTable(tasks) {
       if (!tasks.length) return empty('Задач по этому фильтру нет', 'Измените фильтр или запустите проверочный сценарий. Новые задачи появятся после записи на сервере.');
@@ -141,48 +183,17 @@
     }
     function agentCard(agent) {
       const evaluation = evaluationMeta(agent);
-      return `<article class="aw-agent-card"><div class="aw-agent-card-top">${avatar(agent)}<div><div class="aw-agent-name">${esc(name(agent))}</div><div class="aw-agent-role">${esc(role(agent))}</div></div></div>${badge(agent.status || 'free')}<div class="aw-agent-score"><small>Результат проверок · ${agent.synthetic ? 'SYNTHETIC' : 'SHADOW'}</small><strong>${esc(evaluation.label)}</strong><small>${evaluation.insufficient ? 'Недостаточно сопоставимых наблюдений' : 'Проверенные критерии, не качество LLM'}</small><div class="aw-agent-meta"><span>Выборка: ${count(evaluation.sample)}</span><span>Уверенность: ${esc(evaluation.confidence)}</span></div></div><div class="aw-agent-assignment">${esc(agent.current_task?.title || agent.current_task_title || 'Нет активной задачи')}</div><div class="aw-actions"><button class="aw-link-button" data-aw-agent="${esc(agentId(agent))}">Профиль и рейтинг →</button></div></article>`;
+      return `<article class="aw-agent-card"><div class="aw-agent-card-top">${avatar(agent)}<div><div class="aw-agent-name">${esc(name(agent))}</div><div class="aw-agent-role">${esc(role(agent))}</div></div></div>${badge(agent.status || 'free')}<div class="aw-agent-score"><small>Результат проверок${agent.synthetic === true ? ' · SYNTHETIC' : ''}</small><strong>${esc(evaluation.label)}</strong><small>${evaluation.insufficient ? 'Недостаточно сопоставимых наблюдений' : 'Проверенные критерии, не качество LLM'}</small><div class="aw-agent-meta"><span>Выборка: ${count(evaluation.sample)}</span><span>Уверенность: ${esc(evaluation.confidence)}</span></div></div><div class="aw-agent-assignment">${esc(agent.current_task?.title || agent.current_task_title || 'Нет активной задачи')}</div><div class="aw-actions"><button class="aw-link-button" data-aw-agent="${esc(agentId(agent))}">Профиль и рейтинг →</button></div></article>`;
     }
     function renderAgents() {
       const agents = rows(overview.agents);
       content.innerHTML = `<div class="aw-section-heading"><div><h2>Ваша команда</h2><p>Persona — имя, лицо и голос. Роль определяет обязанности; модель выбирается отдельно и не меняет личность агента.</p></div>${capability('can_view_models') ? '<a class="btn" href="ai-agents.html">Голоса и подключения</a>' : ''}</div>${agents.length ? `<div class="aw-agent-grid">${agents.map(agentCard).join('')}</div>` : empty('Команда пока пуста', 'Агенты появятся здесь, когда будут назначены текущему рабочему пространству.')}<div class="aw-note">Проверочный рейтинг — результат измеренных критериев конкретного класса задач. Сравнивайте только одинаковые классы и окна наблюдения. SYNTHETIC не оценивает качество внешней модели и не влияет на рабочую маршрутизацию.</div>${panel('Проверочный рейтинг', agents.length ? `<div class="aw-table-wrap"><table class="aw-table"><thead><tr><th>Агент / роль</th><th>Класс задачи</th><th>Наблюдения</th><th>Результат</th><th>Уверенность</th></tr></thead><tbody>${agents.map(agent => { const evaluation = evaluationMeta(agent); return `<tr><td><button class="aw-table-title" data-aw-agent="${esc(agentId(agent))}">${esc(name(agent))}</button><div class="aw-table-sub">${esc(role(agent))}</div></td><td>${esc(agent.evaluation?.task_class || '—')}</td><td>n = ${count(evaluation.sample)}</td><td>${esc(evaluation.label)}</td><td>${esc(evaluation.confidence)}</td></tr>`; }).join('')}</tbody></table></div>` : smallEmpty('Оценки не выставлены. Нулевая выборка не означает нулевое качество.'))}`;
-    }
-    const sectionIntro = {
-      decisions: ['Решения и разборы', 'Проверяемые решения отделены от действий. Court и торговое исполнение в этом локальном этапе не активированы.'],
-      memory: ['Память с происхождением', 'Только записи текущего рабочего пространства: источник, проверка, область видимости и срок хранения.'],
-      experiments: ['Эксперименты', 'Гипотеза → проверка → evidence → результат. Торговые результаты подтверждаются NinjaTrader, а не демонстрационным графиком.'],
-      models: ['Модели и маршрутизация', 'Provider Account, модель и Persona — разные сущности. Новая модель без наблюдений получает NEW, а не 0% качества.'],
-      system: ['Система', 'Server-side flags и фактическое состояние локального контура. Видимость этой страницы не выдаёт дополнительных прав.'],
-    };
-    function renderSection(section, data) {
-      const [title, subtitle] = sectionIntro[section];
-      let body = '';
-      const records = items(data), enabled = data?.enabled === true;
-      if (section === 'system') {
-        const flags = flagRows(data?.flags || overview.flags);
-        body = panel('Флаги рабочего пространства', flags.length ? `<div class="aw-flag-list">${flags.map(flag => `<div class="aw-flag"><code>${esc(flag.name)}</code>${badge(flag.enabled ? 'active' : 'disabled')}</div>`).join('')}</div>` : smallEmpty('Реестр флагов не доступен.'));
-        body += `<div class="aw-detail-grid"><div><dt>Окружение</dt><dd>${esc(overview.scope?.environment || '—')}</dd></div><div><dt>Рабочее пространство</dt><dd>${esc(overview.scope?.workspace_id || '—')}</dd></div></div>`;
-        body += note('Высокорисковые действия, новый Router и Production-публикация не включаются кнопками этого интерфейса.');
-      } else if (records.length) {
-        const columns = section === 'memory' ? ['Запись', 'Область', 'Источник / проверка', 'Обновлено'] : section === 'models' ? ['Модель / провайдер', 'Профиль', 'Наблюдения / статус', 'Примечание'] : ['Название / гипотеза', 'Связанная задача', 'Статус', 'Результат'];
-        body = `<div class="aw-table-wrap"><table class="aw-table"><thead><tr>${columns.map(label => `<th>${esc(label)}</th>`).join('')}</tr></thead><tbody>${records.map(record => {
-          if (section === 'memory') return `<tr><td>${esc(record.summary || record.title)}</td><td>${esc(record.memory_class || record.scope_label || record.visibility || '—')}</td><td>${esc(record.source || record.provenance_summary || '—')}<div>${badge(record.verification_status || record.status)}</div></td><td>${esc(date(record.updated_at || record.created_at))}</td></tr>`;
-          if (section === 'models') return `<tr><td>${esc(record.display_name || record.model || record.name)}<div class="aw-table-sub">${esc(record.provider || '')}</div></td><td>${esc(record.profile || record.specialization || '—')}</td><td>${count(record.sample_size)} наблюдений<div>${badge(number(record.sample_size) > 0 ? record.status : 'new')}</div></td><td>${esc(record.summary || record.routing_reason || 'Качество модели не оценено')}</td></tr>`;
-          return `<tr><td>${esc(record.title || record.hypothesis || record.summary || record.id)}</td><td>${taskLink(record.task_id) || '—'}</td><td>${badge(record.status)}</td><td>${esc(record.result || record.result_summary || '—')}</td></tr>`;
-        }).join('')}</tbody></table></div>`;
-      } else {
-        const compatibility = section === 'experiments' ? '<a class="btn" href="ai-lab.html">Открыть существующие исследования</a>' : section === 'models' ? '<a class="btn" href="ai-agents.html">Подключения, квоты и модели</a>' : '';
-        body = `<div class="aw-empty">${enabled ? '' : '<span class="aw-status aw-neutral">IN DEVELOPMENT</span>'}<strong>${enabled ? 'Записей пока нет' : 'Раздел пока не активирован'}</strong><p>${esc(data?.message || data?.limitation || (section === 'decisions' ? 'Проверочный сценарий не имитирует Court, согласие владельца или торговые решения. Здесь появятся только настоящие записи разрешённого процесса.' : section === 'memory' ? 'Автоматическая запись authoritative memory пока выключена. Результаты локальных проверок доступны в задачах и артефактах.' : 'Существующие механизмы сохранены. Переключение на новый путь требует отдельной проверки и включения server-side gate.'))}</p>${compatibility ? `<div class="aw-actions">${compatibility}</div>` : ''}</div>`;
-      }
-      content.innerHTML = `<div class="aw-section-heading"><div><h2>${esc(title)}</h2><p>${esc(subtitle)}</p></div></div>${body}${rows(data?.limitations).map(value => note(typeof value === 'string' ? value : value.summary || value.message)).join('')}`;
     }
     function renderHeader() {
       const stats = overview?.stats || {}, scope = overview?.scope || {};
       qs('#aw-run-demo').hidden = !canRunDemo(overview);
       qs('#aw-run-demo').disabled = demoBusy;
       qs('#aw-run-demo').textContent = demoBusy ? 'Выполняем проверки…' : 'Запустить проверочные задачи';
-      qs('#aw-tab-models').hidden = !capability('can_view_models');
-      qs('#aw-tab-system').hidden = !capability('can_view_system');
       qs('#aw-pulse').innerHTML = `${badge(overview?.enabled ? 'active' : 'disabled')}<span>${count(stats.agents ?? rows(overview?.agents).length)} агентов</span><span>${count(stats.active_tasks)} в работе</span><span>${count(stats.attention)} требуют внимания</span>`;
       const context = qs('#aw-context');
       context.hidden = !overview?.enabled;
@@ -191,7 +202,6 @@
     }
     function selectTab(next, updateLocation) {
       if (!TABS.includes(next)) next = 'overview';
-      if ((next === 'models' && !capability('can_view_models')) || (next === 'system' && !capability('can_view_system'))) next = 'overview';
       tab = next;
       qsa('.aw-tabs [data-aw-tab]', shell).forEach(button => { const active = button.dataset.awTab === tab; button.setAttribute('aria-selected', String(active)); button.tabIndex = active ? 0 : -1; });
       content.setAttribute('aria-labelledby', 'aw-tab-' + tab);
@@ -219,12 +229,6 @@
           workRows = append ? workRows.concat(items(result)) : items(result);
           nextCursor = result?.next_cursor || null;
           renderWork();
-        } else {
-          const section = tab;
-          const sectionData = sections.has(section) ? sections.get(section) : await API.aiControlCenterSection(section, { limit: 50 }, { signal });
-          if (request !== generation || disposed) return;
-          sections.set(section, sectionData);
-          renderSection(section, sections.get(section));
         }
         refreshFaces();
       } catch (error) {
@@ -243,12 +247,11 @@
           if (currentDrawer?.querySelector('.aw-inspector')) UI.closeDrawer();
         }
         overview = result;
-        sections.clear();
         renderHeader();
         await selectTab(tab, false);
       } catch (error) {
         if (error?.name !== 'AbortError' && !disposed && request === overviewGeneration) {
-          ++detailGeneration; overview = null; detail = null; profile = null; workRows = []; sections.clear();
+          ++detailGeneration; overview = null; detail = null; profile = null; workRows = [];
           if (currentDrawer?.querySelector('.aw-inspector')) UI.closeDrawer();
           renderHeader(); content.innerHTML = readError(error); content.setAttribute('aria-busy', 'false');
         }
@@ -258,11 +261,11 @@
       if (!values.length) return smallEmpty(fallback);
       return values.map(value => `<div class="aw-detail-row"><strong>${esc(value.title || value.summary || value.result_summary || value.result || value.id || 'Запись')}</strong>${value.status ? `<div>${badge(value.status)}</div>` : ''}${value.detail || value.reason ? `<p>${esc(value.detail || value.reason)}</p>` : ''}${value.created_at ? `<p>${esc(date(value.created_at))}</p>` : ''}</div>`).join('');
     }
-    function artifacts(values) {
+    function artifacts(values, sourceKind) {
       if (!values.length) return smallEmpty('Артефакты появятся после фактического выполнения и проверки задачи.');
       return values.map(artifact => {
-        const url = safeArtifactUrl(artifact.url), media = artifact.media_type || artifact.mime_type || '';
-        const image = url && ['image/svg+xml', 'image/png', 'image/jpeg'].includes(media);
+        const url = safeArtifactUrl(artifact.url, sourceKind), media = artifact.media_type || artifact.mime_type || '';
+        const image = url && ['image/svg+xml', 'image/png', 'image/jpeg', 'image/webp'].includes(media);
         return `<article class="aw-artifact">${image ? `<img src="${esc(url)}" alt="${esc(artifact.title || 'Артефакт задачи')}" loading="lazy" referrerpolicy="same-origin">` : ''}<div class="aw-artifact-body"><h3>${esc(artifact.title || 'Артефакт')}</h3><div class="aw-inline">${artifact.synthetic ? '<span class="aw-status aw-info">SYNTHETIC</span>' : ''}<span class="aw-muted">${esc(media)}</span></div>${artifact.summary ? `<p class="aw-text">${esc(artifact.summary)}</p>` : ''}<div class="aw-hash">SHA256 ${esc(artifact.sha256 || 'не указан')}</div>${url ? `<a class="btn sm" href="${esc(url)}" target="_blank" rel="noopener noreferrer">Открыть артефакт ↗</a>` : '<span class="aw-status aw-warning">Ссылка не разрешена</span>'}</div></article>`;
       }).join('');
     }
@@ -281,15 +284,16 @@
     }
     function drawTask() {
       const task = detail.task || detail, art = rows(detail.artifacts);
+      const sourceKind = sourceMeta(task).kind;
       const labels = { summary: 'Обзор', activity: 'Активность', evidence: 'Evidence', agents: 'Агенты', evaluations: 'Оценка', artifacts: 'Артефакты', decisions: 'Решения', errors: 'Ошибки' };
       const svg = art.find(value => safeArtifactUrl(value.url) && (value.media_type || value.mime_type) === 'image/svg+xml');
       let body;
-      if (detailTab === 'summary') body = `<div class="aw-inspector-summary"><h2 class="aw-inspector-title">${esc(task.title || 'Задача')}</h2><div class="aw-inline">${badge(task.status)}${task.synthetic ? '<span class="aw-status aw-info">SYNTHETIC · локальный обработчик</span>' : ''}</div><dl class="aw-detail-grid"><div><dt>Текущий этап</dt><dd>${esc(task.stage || '—')}</dd></div><div><dt>Координатор</dt><dd>${esc(name(task.lead))}</dd></div><div><dt>Класс задачи</dt><dd>${esc(task.task_class || '—')}</dd></div><div><dt>Измеренная стоимость</dt><dd>${esc(cost(task.cost_usd))}</dd></div><div><dt>Создана</dt><dd>${esc(date(task.created_at))}</dd></div><div><dt>Обновлена</dt><dd>${esc(date(task.updated_at))}</dd></div></dl>${progress(task)}${task.summary ? `<p class="aw-text">${esc(task.summary)}</p>` : ''}</div><section class="aw-detail-section"><h3>Проверяемый результат</h3>${detailRows(rows(detail.outcomes), 'Результат ещё не зафиксирован.')}</section>${art.length ? `<section class="aw-detail-section"><h3>Последний артефакт</h3>${artifacts(art.slice(-1))}</section>` : ''}<p class="aw-note">Здесь отображаются наблюдаемые действия и результаты. Скрытая цепочка рассуждений модели не публикуется.</p>`;
+      if (detailTab === 'summary') body = `<div class="aw-inspector-summary"><h2 class="aw-inspector-title">${esc(task.title || 'Задача')}</h2><div class="aw-inline">${badge(task.status)}${task.synthetic ? '<span class="aw-status aw-info">SYNTHETIC · локальный обработчик</span>' : ''}</div><dl class="aw-detail-grid"><div><dt>Текущий этап</dt><dd>${esc(task.stage || '—')}</dd></div><div><dt>Координатор</dt><dd>${esc(name(task.lead))}</dd></div><div><dt>Класс задачи</dt><dd>${esc(task.task_class || '—')}</dd></div><div><dt>Измеренная стоимость</dt><dd>${esc(cost(task.cost_usd))}</dd></div><div><dt>Создана</dt><dd>${esc(date(task.created_at))}</dd></div><div><dt>Обновлена</dt><dd>${esc(date(task.updated_at))}</dd></div></dl>${progress(task)}${task.summary ? `<p class="aw-text">${esc(task.summary)}</p>` : ''}</div><section class="aw-detail-section"><h3>Проверяемый результат</h3>${detailRows(rows(detail.outcomes), 'Результат ещё не зафиксирован.')}</section>${art.length ? `<section class="aw-detail-section"><h3>Последний артефакт</h3>${artifacts(art.slice(-1), sourceKind)}</section>` : ''}<p class="aw-note">Здесь отображаются наблюдаемые действия и результаты. Скрытая цепочка рассуждений модели не публикуется.</p>`;
       else if (detailTab === 'activity') body = timeline(rows(detail.activity), true);
-      else if (detailTab === 'evidence') body = detailRows(rows(detail.contributions), 'Проверяемые вклады ещё не записаны.') + artifacts(art);
+      else if (detailTab === 'evidence') body = detailRows(rows(detail.contributions), 'Проверяемые вклады ещё не записаны.') + artifacts(art, sourceKind);
       else if (detailTab === 'agents') body = `<div class="aw-stack">${rows(task.participants).map(person => `<div class="aw-detail-row"><div class="aw-people">${avatar(person)}<div><strong>${esc(name(person))}</strong><p>${esc(role(person))}</p></div></div>${agentId(person) ? `<button class="aw-link-button" data-aw-agent="${esc(agentId(person))}">Профиль →</button>` : ''}</div>`).join('') || smallEmpty('Участники ещё не назначены.')}</div>`;
       else if (detailTab === 'evaluations') body = evaluations(rows(detail.evaluations));
-      else if (detailTab === 'artifacts') body = artifacts(art);
+      else if (detailTab === 'artifacts') body = artifacts(art, sourceKind);
       else if (detailTab === 'decisions') body = detailRows(rows(detail.decisions), 'У этой задачи нет записанных решений. Проверочный сценарий не имитирует разрешение владельца или Court.');
       else body = detailRows(rows(detail.errors), task.status === 'failed' ? 'Подробности ошибки не опубликованы.' : 'Зарегистрированных ошибок нет.');
       if (detailTab === 'summary' && detail.result_text) body = `<div class="aw-context"><span class="aw-context-mark">РЕЗУЛЬТАТ</span><span>${esc(detail.result_text)}</span></div><div class="aw-detail-section">${body}</div>`;
@@ -333,7 +337,7 @@
         const result = await API.aiControlCenterTaskChat(id, body);
         if (!result?.conversation_id) throw new Error('Диалог SF Chat не создан.');
         UI.closeDrawer();
-        UI.openSFChat({ conversationId: result.conversation_id, conversationType: 'ai' });
+        await UI.openSFChat({ conversationId: result.conversation_id, conversationType: 'ai' });
         announce(screenshot ? 'Настоящий PNG-снимок графика сохранён и отправлен в SF Chat.' : 'Проверяемый результат задачи открыт в SF Chat.');
       } catch (error) { announce(error?.message || 'Не удалось открыть результат в SF Chat.', true); }
       finally { button.disabled = false; }
@@ -364,6 +368,7 @@
       else if (target.dataset.awProfileTab) { openProfile(agentId(profile), target.dataset.awProfileTab); qs('[data-aw-profile-tab][aria-selected="true"]', currentDrawer)?.focus(); }
       else if (target.dataset.awTaskChat) taskChat(target.dataset.awTaskChat, false, target);
       else if (target.dataset.awChartChat) taskChat(target.dataset.awChartChat, true, target);
+      else if (target.hasAttribute('data-aw-real-chat')) UI.openSFChat({ conversationType: 'ai' });
       else if (target.dataset.awFilter) { filter = target.dataset.awFilter; loadTab(); }
       else if (target.hasAttribute('data-aw-retry')) refresh();
       else if (target.id === 'aw-load-more') loadTab(true);

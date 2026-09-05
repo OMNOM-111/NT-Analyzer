@@ -18,11 +18,30 @@
 | JS syntax check | Aurora assets syntax | CI `node --check` over `app/static/aurora/assets/**/*.js` | required in CI |
 | Operational release closeout | accepted deployment/build/browser/readiness evidence | current beta.29 Canary+Production: [2026-08-22](../changelog/2026-08-22-market-data-responsive-release-beta29.md) | required to answer “what is live now” per environment |
 
-Current beta.29 closeout result: targeted market/chart/Operations/responsive
+Historical beta.29 closeout result (not current Agent World evidence): targeted market/chart/Operations/responsive
 `251 passed`; full pytest `1924 passed, 32 skipped, 0 failed`;
 static/context/compile/32-JS/CSP/secret/Markdown/link/diff gates PASS. PR #142
 passed all five mandatory jobs. Expected skips: 31 real-PostgreSQL checks
 without their explicit test DSNs and one Windows bash-syntax check.
+
+## Agent World owner-review verification
+
+Current slice results, explicit skips, browser evidence and source/PR identity
+are maintained in [the canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md)
+and [change record](../changelog/2026-09-04-agent-world-owner-review.md).
+They supersede neither historical release evidence nor the owner's design review.
+Tests include SQLite isolation/CAS/replay, independent fixture checks, bounded
+per-owner reads/runs, real Handler/CSRF/control admission, static page routing,
+private artifacts, SF Chat replay recovery and Reset coordination.
+Real-adapter tests additionally cover catalog/spec validation, actual report
+schema/hash/count checks, foreign/manual job exclusion, actor/flag revocation,
+queued-versus-terminal chat updates and no Telegram side effects. Desktop tests
+cover current-view PNG capture, source/scope/command matching, parallel retry,
+persist-before-publish recovery, missing artifacts and failed/expired states.
+These disposable-data tests do not certify the live HTTP-to-NinjaTrader-to-chat
+pipeline. The manual actual NT proof is separate; new live chat-created job and
+Desktop canvas browser acceptance remain pending the approved Local switch.
+Forty-one credentialed PostgreSQL tests and Windows shell/POSIX skips are not PASS.
 
 ## Targeted acceptance areas
 

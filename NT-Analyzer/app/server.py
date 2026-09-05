@@ -3641,6 +3641,11 @@ class Handler(BaseHTTPRequestHandler):
     def _augment_permissions(self, context: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
         """Attach the central authorization view (subscription-driven nav +
         capabilities + Free Preview state) to an auth payload."""
+        from .ai_control_center import gateway, live_gateway
+        payload["agent_world"] = (
+            gateway.navigation(context, control_authorized=self._preview_control_authorized())
+            if preview_sandbox.enabled() else live_gateway.navigation(self)
+        )
         user = payload.get("user") or {}
         is_owner = bool(payload.get("is_owner"))
         subscription: Dict[str, Any] = {}
@@ -6421,6 +6426,14 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/") and not self._authorize_api(path):
             return
 
+        if path.startswith("/api/ai-control-center/"):
+            if preview_sandbox.enabled():
+                from .ai_control_center.http_api import handle_get
+            else:
+                from .ai_control_center.live_http_api import handle_get
+            handle_get(self, path, qs)
+            return
+
         if path == "/api/account/card":
             # The Cabinet's own view. Deliberately takes no subject parameter:
             # an account can only ask for its own card, so there is no id for a
@@ -6812,7 +6825,7 @@ class Handler(BaseHTTPRequestHandler):
             # New Aurora UI is primary: its pages + assets are served from app/static/aurora/.
             _new_pages = {
                 "/", "/index.html", "/backtesting.html", "/trading.html",
-                "/performance.html", "/strategies.html", "/ai-lab.html", "/ai-agents.html", "/documents.html",
+                "/performance.html", "/strategies.html", "/ai-lab.html", "/ai-agents.html", "/ai-command-center.html", "/documents.html",
                 "/news.html", "/topstep.html", "/desktop.html", "/practice-trading.html", "/community.html",
                 "/mode-entry.html",
             }
@@ -10093,6 +10106,17 @@ class Handler(BaseHTTPRequestHandler):
             except market_data.MarketDataError as exc:
                 self._err(HTTPStatus.BAD_REQUEST, str(exc)); return
         if path == "/api/ops/runtime/chart-commands/ack":
+            if str(body.get("id") or "").startswith("cc_"):
+                from .ai_control_center import live_charts, live_gateway
+                with market_data._LOCK:
+                    marked = any(row.get("id") == body.get("id") and (row.get("payload") or {}).get("agent_world")
+                                 for row in market_data._load_commands_doc().get("commands", []) if isinstance(row, dict))
+                if marked:
+                    try:
+                        self._json(HTTPStatus.OK, live_charts.acknowledge(body, live_gateway.from_handler(self)))
+                    except (live_charts.ContractError, account_auth.AccountAuthError, workspaces.WorkspaceError, permissions.PermissionError):
+                        self._err(HTTPStatus.FORBIDDEN, "Снимок Agent World не подтверждён или чужой scope.")
+                    return
             out = market_data.ack_chart_command(
                 str(body.get("id") or ""),
                 status=str(body.get("status") or "done"),
@@ -10111,6 +10135,13 @@ class Handler(BaseHTTPRequestHandler):
             keep_favorites = bool(body.get("keep_favorites", True))
             self._json(HTTPStatus.OK, market_data.clear_snapshots(keep_favorites=keep_favorites)); return
         if path == "/api/ops/runtime/chart-snapshot":
+            if body.get("agent_world") is True:
+                from .ai_control_center import live_charts, live_gateway
+                try:
+                    self._json(HTTPStatus.OK, live_charts.complete(body, live_gateway.from_handler(self)))
+                except (live_charts.ContractError, account_auth.AccountAuthError, workspaces.WorkspaceError, permissions.PermissionError):
+                    self._err(HTTPStatus.FORBIDDEN, "Снимок Agent World не подтверждён или чужой scope.")
+                return
             saved = None
             if str(body.get("image") or "").strip():
                 try:
@@ -10600,6 +10631,14 @@ class Handler(BaseHTTPRequestHandler):
             "/api/account/identities/unlink",
         }:
             self._account_nt_security_post(path)
+            return
+
+        if path.startswith("/api/ai-control-center/"):
+            if preview_sandbox.enabled():
+                from .ai_control_center.http_api import handle_post
+            else:
+                from .ai_control_center.live_http_api import handle_post
+            handle_post(self, path)
             return
 
         if path.startswith("/api/account/"):

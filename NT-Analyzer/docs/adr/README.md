@@ -1,7 +1,14 @@
 # Архитектурные решения следующего этапа
 
 
-ADR 0001–0008: `Принято`. Основание — поручения owner по следующей архитектуре и изоляции окружений. ADR 0009 — `Proposed`, конкретный контракт Agent World для review перед storage-этапом. Изменение принятого решения требует нового ADR, а не молчаливой правки реализации.
+ADR 0001–0008: `Принято`. Основание — поручения owner по следующей архитектуре
+и изоляции окружений. ADR 0009 — `Proposed`, foundation-контракты Agent World.
+ADR 0010 сохраняет решение об изолированном synthetic owner-review; ADR 0011
+отдельно фиксирует добавленный real Local owner путь через существующие
+NinjaTrader jobs и Desktop receipts. Реализация ограниченных путей не означает
+принятия всех production-контрактов, закрытия этапов 0–13 или owner visual
+acceptance. Изменение принятого решения требует нового ADR, а не молчаливой
+правки реализации.
 
 | ADR | Решение |
 |---|---|
@@ -14,5 +21,7 @@ ADR 0001–0008: `Принято`. Основание — поручения own
 | [0007](0007-document-governance.md) | Документы, области изменения и история поправок |
 | [0008](0008-environment-cookie-and-storage-isolation.md) | Изоляция cookies и browser storage по окружениям |
 | [0009](0009-agent-world-foundation.md) | Agent World: сущности, статусы, scope, events, repositories и default-off flags (`Proposed`) |
+| [0010](0010-agent-world-owner-review.md) | Agent World: изолированный owner-review с SQLite, проверочными задачами, UI и SF Chat; production/design acceptance отдельно |
+| [0011](0011-agent-world-real-local-jobs.md) | Agent World: explicit default-OFF Local owner, реальные исторические NT jobs, Desktop PNG receipts и существующий SF Chat; Local switch и real E2E/visual acceptance ещё не приняты |
 
 Главный аудит и поэтапный план: [STRATFORGE_NEXT_ARCHITECTURE_AUDIT_AND_IMPLEMENTATION_PLAN_2026-08-01.md](../current/STRATFORGE_NEXT_ARCHITECTURE_AUDIT_AND_IMPLEMENTATION_PLAN_2026-08-01.md).

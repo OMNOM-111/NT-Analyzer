@@ -6,7 +6,7 @@
 - Local source verified SHA: 3afb75c5c2d02aa07703eadf274a1c1006ae8ada
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`, not deployed
-- Agent World branch: `codex/agent-world-foundation`, separate stages 0–1 slice, PR #281 stacked on #280
+- Agent World branch: `codex/agent-world-owner-preview`, separate owner-review slice stacked above open PR #281 / #280; not deployed
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production
@@ -28,13 +28,19 @@
 - Accepted Preview closeout is `4ae766ea0c3258a8bb049644ac2afbba6cb89330`,
   clean and synchronized, PR #280 CI five checks successful. The 44 skipped
   tests are unverified scenarios; this evidence belongs to the baseline.
-- Agent World stages 0–1 are tracked in
-  [the canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
-  Definitions/adapters/flags are implemented without connecting runtime paths;
-  all flags default OFF. Current-slice local verification: focused 654 passed,
-  full 2901 passed / 44 skipped, legacy runner 13/13; static/context/bundle PASS.
-  Skips and Git/CI status are separate in the canonical checkpoint. Contract
-  review still gates stage-2 persistence; this is not a release.
+- Agent World has a bounded owner-review UI, local SQLite repository, actual
+  deterministic fixture tasks, shadow evaluations and verified result/chart
+  projection into SF Chat. [Canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md)
+  records current tests, flags, remaining stage gaps and the separate PR.
+  Global flags default OFF. Controlled Preview activates four scoped flags;
+  an explicit server-side Local-owner workspace opt-in activates only read/UI/tasks.
+  Real NinjaTrader jobs and Desktop canvas receipts use existing queues and SF
+  Chat; no LLM quality score is invented. New live chat-to-result acceptance is
+  pending the approved Local checkout switch. This is not a release.
+- Existing owner runtime was observed read-only at port 8765 as beta.93,
+  SHA `7062f749ee92299356c774d01dc0c7b59cdcbba3`, dirty Development.
+  The beta.96 review child is separate; the owner process was not upgraded.
+
 - Operational evidence: Release Center closeout, server symlinks and read-only
   Production audit/acceptance evidence in the current handoff.
 - Canonical live release snapshot:
@@ -44,7 +50,7 @@
 
 | Subsystem | Status | Current fact | Remaining limit |
 | --- | --- | --- | --- |
-| Agent World | `IN DEVELOPMENT` | Separate foundation branch: ADR, entities, state contracts, pure projections, repository interfaces and scoped default-off flags | Implementation gap: no persistence, new API, workers, UI, Court or execution; stage-2 storage waits for contract review |
+| Agent World | `IN DEVELOPMENT` | One center with three sections and inline inspectors; isolated Preview benchmarks plus explicit Local-owner adapters for existing NinjaTrader jobs/reports and real Desktop PNG receipts in SF Chat | Full real chat-to-result browser acceptance and owner design review pending; PostgreSQL/RLS, general Router, Court, Execution V2, memory/routines and social publication remain gaps/OFF |
 | Auth / owner identity | `BETA` in Unified Local | `0.10.0-beta.96` has one three-step registration contract for Telegram, Google and e-mail, a stable StratForge handle shared by profile/SF Social/SF Chat, final clickwrap consent and the existing shared environment-routed provider architecture. Owner Preview uses the same state transitions with sandbox-only synthetic credentials | Not present in the deployed beta.87 artifact; live real-provider acceptance and immutable Canary/Production promotion remain separate gates |
 | Device confirmation / trusted access | `BETA` in Unified Local | Every new unknown human browser/app access starts as a two-minute pending session. The first freshly authenticated device can choose permanent trust or current-session-only without a redundant second OTP; later unknown clients still use confirmed Telegram or verified e-mail. Machine → Client → Session grouping remains proof-based | Integrated and browser-verified in Local beta.96, but not present in deployed beta.87; real-provider acceptance and release promotion remain separate gates |
 | Legacy UI / Telegram Mini App | `DEPRECATED` | Merged main serves Aurora only; legacy UI, Mini App, remote-access and tunnel routes fail with HTTP 410. Classic assets are available only in a separate localhost read-only Legacy Viewer. Telegram `/start` uses a normal URL button | beta.87 is live in Canary and Production; historical snapshots remain until owner review |

@@ -146,7 +146,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260901-community-chat1"}, versions
+    assert set(versions.values()) == {"20260904-agent-world1"}, versions
 
 
 def test_every_aurora_page_uses_current_theme_cache_version():
@@ -280,7 +280,7 @@ def test_every_aurora_page_uses_current_ui_cache_version():
             continue
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
     assert versions
-    assert set(versions.values()) == {"20260902-permanent-record"}, versions
+    assert set(versions.values()) == {"20260904-agent-world1"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():
@@ -1141,7 +1141,7 @@ def test_desktop_preserves_backend_freshness_across_http_poll():
     assert "price_marker_live: !!(res && res.price_marker_live)" in js
     assert "const liveTransportFresh = topstepSource && marketDataWsOk && marketFeedFresh" in js
     assert "Date.now() - Number(rec.liveBarAt || 0) <= 15000 || liveTransportFresh" in js
-    assert "desktop.js?v=20260813-live-marker-freshness1" in html
+    assert "desktop.js?v=20260904-agent-world-receipt1" in html
 
 
 def test_command_language_covers_every_desktop_instrument():

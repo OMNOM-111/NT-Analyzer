@@ -104,6 +104,7 @@ DEMO_UNLOCK_MESSAGE = (
 # owner is always allowed. Any path not listed here is allowed for every
 # authenticated user (self-service, auth, cabinet, read-only observation).
 ROUTE_CAPABILITY = (
+    ("/api/ai-control-center/", "ai_lab"),
     ("/api/ai-lab/", "ai_lab"),
     ("/api/ai-agents", "ai_lab"),
     ("/api/ops/runtime/bars", "charts_realtime"),
@@ -190,6 +191,7 @@ def admin_route_alternatives(path: str) -> Tuple[str, ...]:
 BEGINNER_NAV_ALLOWED = frozenset({"practice", "community"})
 BEGINNER_CAPS_ALLOWED = frozenset({"practice_trading", "community"})
 BEGINNER_DENIED_PREFIXES = (
+    "/api/ai-control-center/",
     "/api/ai-lab/",
     "/api/ai-agents",
     "/api/demo-backtests",

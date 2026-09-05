@@ -4,7 +4,7 @@
 - Last verified UTC: 2026-09-04T22:37:13Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Local source verified SHA: 3afb75c5c2d02aa07703eadf274a1c1006ae8ada
-- Unified Local accepted base: beta.96, open PR #280; Agent World foundation is a separate branch
+- Unified Local accepted base: beta.96, open PR #280; owner-review branch is stacked above foundation PR #281
 - Scope: Current components, trust boundaries, entities and key flows
 - Status: DONE
 
@@ -114,17 +114,36 @@ flowchart LR
 - Governance laws are not stored in workspace docs; they live in the dedicated
   governance store and rendered docs pipeline.
 
-## Agent World stages 0–1
+## Agent World owner-review vertical slice
 
-The separate `app/ai_control_center/` foundation defines Persona, Agent Role,
-Provider Account, Model, Intent, Task, Contribution, Decision, Execution,
-Outcome and Memory contracts. It contains no persistence or application route.
-Explicit scope, immutable references, lifecycle validation and pure legacy
-projections prepare the next slice without changing legacy writes or statuses.
-Repository protocols reuse existing PostgreSQL/SQLite, jobs, commands, budgets,
-idempotency and audit. Stage 2 selects concrete storage after contract review.
-All Agent World flags default OFF and require environment plus workspace opt-in.
-See [ADR-0009](../adr/0009-agent-world-foundation.md) and
+Foundation contracts distinguish Persona, Role, Provider Account, Model, Intent,
+Task, Contribution, Decision, Execution, Outcome and Memory. Explicit scope and
+pure legacy projections remain; legacy statuses are not mass-rewritten.
+
+The local SQLite adapter now implements CAS/history/events/idempotency/outbox and
+private immutable artifacts. The narrow Preview-only facade reuses existing
+auth, device, role, capability, CSRF and zero-cost budget admission. Four scoped
+flags enable UI/read model/task graph/shadow evaluation only for a controlled
+synthetic workspace. No new permissions catalog, queue or paid-budget ledger.
+
+Three fixed fixtures run four actual offline calculations each. Checked task
+results and explicit browser PNGs project into the existing AI conversation
+authority in SF Chat. No second conversation store or external delivery. Reset
+coordinates child-local database operations before deleting synthetic state.
+
+The separate Local-owner adapter projects existing `jobqueue` records, not a
+second Task/job database. Exact opted-in Development owner workspaces may submit
+registered historical strategies through SF Chat. The existing chief monitor
+verifies report/job identity, actual bars/trades/hash and publishes an idempotent
+result. Manual/unmarked and Preview jobs are excluded from these statistics.
+Desktop uses its existing command queue; server-validated command/scope, a bounded
+real canvas PNG and a receipt are projected into the existing AI chat history.
+There is no alternate chart renderer, market-data source or Connector refactor.
+
+PostgreSQL/RLS migration, outbox delivery, general coordinator, new Router, Court,
+Execution V2, memory and social publication remain unimplemented/OFF.
+See [ADR-0010](../adr/0010-agent-world-owner-review.md),
+[ADR-0011](../adr/0011-agent-world-real-local-jobs.md) and
 [the implementation status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 
 ## Key data flows

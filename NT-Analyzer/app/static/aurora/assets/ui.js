@@ -478,7 +478,7 @@
     { id: 'ai', label: 'AI Lab', href: 'ai-lab.html', icon: 'ai' },
     { id: 'agents', label: 'AI Agents', href: 'ai-agents.html', icon: 'plug' },
     { id: 'news', label: 'Новости', href: 'news.html', icon: 'news' },
-    { id: 'community', label: 'SF Chat', href: 'community.html', icon: 'docs' },
+    { id: 'community', label: 'SF Social', href: 'community.html', icon: 'docs' },
     { id: 'topstep', label: 'TopStep', href: 'topstep.html', icon: 'trophy' },
     { id: 'docs', label: 'Документы', href: 'documents.html', icon: 'docs' },
   ];
@@ -1960,6 +1960,16 @@
   // Beginner UX: hide pro sections entirely (not lock-blur).
   function applyNavAccess(auth) {
     auth = auth || {};
+    // A server-confirmed, workspace-scoped opt-in replaces only the rail entry.
+    // Legacy routes remain reachable from the center until parity is accepted.
+    const worldEnabled = !!(auth.agent_world && auth.agent_world.enabled);
+    const worldNav = qs('.rail-item[data-nav="ai"]');
+    if (worldNav) {
+      worldNav.href = worldEnabled ? 'ai-command-center.html' : 'ai-lab.html';
+      worldNav.title = worldEnabled ? 'AI Центр' : 'AI Lab';
+      const label = qs('.lb', worldNav);
+      if (label) label.textContent = worldNav.title;
+    }
     const isOwner = !!auth.is_owner;
     const user = auth.user || {};
     const uxMode = String(auth.ux_mode || user.ux_mode || (isOwner ? 'professional' : '')).toLowerCase();
@@ -1987,7 +1997,7 @@
         return;
       }
       // A professional must not see a student-only terminal in their rail.
-      item.hidden = id === 'practice';
+      item.hidden = id === 'practice' || (worldEnabled && id === 'agents');
       if (id === 'overview') { item.classList.remove('rail-locked'); return; }
       let isLocked = hasLockList ? locked.has(id) : (!isOwner && features && features[id] === false);
       item.classList.toggle('rail-locked', !!isLocked);
