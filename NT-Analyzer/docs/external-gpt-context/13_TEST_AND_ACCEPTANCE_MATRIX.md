@@ -1,7 +1,7 @@
 # 13. Test and Acceptance Matrix
 
 - Context Pack document: 13_TEST_AND_ACCEPTANCE_MATRIX.md
-- Last verified UTC: 2026-09-05T01:43:39Z
+- Last verified UTC: 2026-09-05T02:03:44Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Local source verified SHA: fc78677dfa258fb56042866a6764e8c8a45c42e6
 - Scope: Canonical test layers, release gates, acceptance and rollback expectations
@@ -50,6 +50,11 @@ Code `fc78677dfa258fb56042866a6764e8c8a45c42e6`: final Windows full run
 repository scan and context validator PASS. Synthetic browser checks observed
 12 completed tasks, n=3/low-confidence per persona, rendered PNG in SF Chat and
 Exit restoring the unchanged owner Local. No real Agent World E2E or release claim.
+
+Dispatched [branch CI 33937601902](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33937601902)
+is **3/3 PASS** at exact SHA `b05ee124caf652c77689fd749cd9eadc8265d564`:
+Linux **3372 passed, 41 skipped**, Windows **3369 passed, 44 skipped**, static PASS.
+Main-target workflow checks are absent on this stacked PR and are not green.
 
 ## Targeted acceptance areas
 

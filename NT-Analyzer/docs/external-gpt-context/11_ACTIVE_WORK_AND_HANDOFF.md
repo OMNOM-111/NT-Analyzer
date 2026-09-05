@@ -1,7 +1,7 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-05T01:43:39Z
+- Last verified UTC: 2026-09-05T02:03:44Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Local source verified SHA: fc78677dfa258fb56042866a6764e8c8a45c42e6
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
@@ -90,6 +90,12 @@ The existing Next Architecture CI supports manual dispatch on the task branch.
 The separate `ci` workflow runs only for main-targeting PRs. Record dispatched
 checks and merge-required checks separately; never describe absent checks as
 green. No workflow or branch-protection changes are part of this slice.
+
+[Branch run 33937601902](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33937601902)
+passed **3/3** on `b05ee124caf652c77689fd749cd9eadc8265d564` (documentation after
+code `fc78677df`): Linux **3372 passed/41 skipped**, Windows **3369 passed/44 skipped**,
+static PASS. The final documentation-only evidence follow-up is separate from
+that tested SHA. PR #282 stays draft for owner review; program stages remain open.
 
 ## Historical deployment identity
 

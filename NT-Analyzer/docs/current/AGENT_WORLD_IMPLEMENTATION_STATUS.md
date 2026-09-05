@@ -155,7 +155,7 @@ Production cannot use either new action path.
 | Shared files / area | Writer / handoff |
 | --- | --- |
 | `server.py`, `permissions.py`, `api.js`, `ui.js`, `chief_agent.py`, `preview_sandbox.py`, live/Preview gateway/facade and integration tests | Root integration workstream, single writer |
-| This status, main owner-review changelog, ADR-0011 and ADR index | Delegated documentation handoff writer for this bounded update; root resumes after handoff; External GPT Context Pack remains root-owned |
+| This status, main owner-review changelog, ADR-0011 and ADR index | All delegated handoffs received; root owns integration/final evidence and External GPT Context Pack |
 | SQLite repository / codec / storage contracts | Storage workstream; integrated commit `7d2400b9`; reviewed by root |
 | AI Center HTML/CSS/JS / presentation contracts | UI workstream; integrated commit `289675b7`; root owns integration follow-ups |
 | Local benchmark / evaluation / real-backtest adapters and workflow tests | Workflows workstream; initial integrated commit `06c711ec`; bounded live follow-ups reviewed by root |
@@ -188,6 +188,8 @@ results, not the final combined regression.
 | Exit Preview → existing owner Local | PASS in browser: returned to unchanged beta.93 / 8765, owner account and balance, online NinjaTrader state and original reports; no synthetic data substituted |
 | Full regression | `3369 passed, 44 skipped`, 428.67 s; legacy runner `13/13` suites PASS |
 | Static/context/bundle | Python app/tools/tests compilation, repository-root-configured secrets/platform-values/Markdown, context validation and diff checks PASS; exact 517-file bundle passes static/runtime-read/Python/JavaScript gates |
+| Dispatched branch CI | [Run 33937601902](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33937601902), tested SHA `b05ee124caf652c77689fd749cd9eadc8265d564`: 3/3 PASS; Linux 3372 passed/41 skipped, Windows 3369 passed/44 skipped; static gates PASS |
+| Independent bounded final review | No actionable findings in Local gateway/facade and server/Chief authority boundaries; read-only, no runtime changes |
 | Owner visual/design acceptance | PENDING |
 
 Inherited (not re-run claims): accepted Preview focused 173/full 2680 + 44 skipped;
@@ -197,7 +199,10 @@ and the archived foundation checkpoint.
 
 `IMPLEMENTATION COMPLETE`: YES for the bounded synthetic owner-review checkpoint;
 real adapters are implemented and automated-tested, but real end-to-end acceptance remains PENDING.
-`GIT CLOSEOUT COMPLETE`: code committed/pushed, draft PR #282 created; final documentation push and separate CI record pending. Main-target checks are absent on this stacked base, not PASS.
+`GIT CLOSEOUT COMPLETE`: YES for this draft review checkpoint: code committed and
+pushed, PR #282, branch CI 3/3 PASS on `b05ee124`, clean worktree verified. This
+documentation-only evidence follow-up is not misrepresented as the CI-tested SHA.
+Main-target checks are absent on this stacked base, not PASS; no merge approval.
 `STAGE CLOSED`: NO for the overall program; owner visual acceptance remains open.
 
 The latest 44 full-suite skips are not PASS: 41 credentialed PostgreSQL cases
@@ -228,8 +233,7 @@ shared schema migration is added. Any code rollback is a reviewed commit or
 launcher operation, never a destructive reset of user work; preserve synthetic
 evidence unless the owner explicitly resets that Preview.
 
-Next safe step: finish the separate PR/CI record for the verified code checkpoint.
-Only after explicit owner approval switch
+Next safe step: only after explicit owner approval switch
 Local, run a fresh real SF Chat backtest and Desktop capture, then obtain visual
 acceptance of the populated three-tab UI. Dependency merge, broader stages,
 Canary and Production remain separately authorized gates.

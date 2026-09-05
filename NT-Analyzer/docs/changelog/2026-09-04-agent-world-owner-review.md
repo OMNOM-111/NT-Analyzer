@@ -159,6 +159,14 @@ remain PENDING and are not included in this automated PASS.
   and `test_documents_single_section.py` passed **38 tests**. This is not the
   final artifact gate or acceptance of the separately maintained Context Pack.
 
+Final branch CI: [run 33937601902](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33937601902)
+tested SHA `b05ee124caf652c77689fd749cd9eadc8265d564`, **3/3 PASS**.
+Linux: **3372 passed, 41 skipped**, 164.47 s; Windows: **3369 passed, 44 skipped**,
+407.73 s; static gates PASS. Linux exercised the three Windows-only skips;
+the 41 credentialed PostgreSQL cases remain unverified on both runners. The
+subsequent documentation-only evidence commit is not the tested CI SHA.
+Final bounded read-only gateway/facade/server/Chief review: no actionable findings.
+
 Inherited baseline/foundation results remain historical evidence, not new runs.
 
 No paid-provider, real PostgreSQL or remote release acceptance is implied.
@@ -176,8 +184,10 @@ deliberately resolve those documents outside the restricted bundle composition.
 
 `IMPLEMENTATION COMPLETE`: YES for the bounded synthetic owner-review checkpoint;
 real adapters are implemented/automated-tested with real end-to-end acceptance PENDING.
-`GIT CLOSEOUT COMPLETE`: code committed/pushed, draft PR #282 created; final
-documentation push and separate CI record pending. Main-target checks remain
+`GIT CLOSEOUT COMPLETE`: YES for the draft review checkpoint: committed/pushed
+code, PR #282, branch CI 3/3 PASS at the exact SHA above, clean worktree verified.
+This documentation-only evidence follow-up has local context/Markdown/bundle
+checks; it is not represented as the CI-tested SHA. Main-target checks remain
 absent for the stacked base and are not described as green.
 `STAGE CLOSED`: NO for the overall stages 0–13; owner visual acceptance pending.
 
