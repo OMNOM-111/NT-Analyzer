@@ -3,16 +3,26 @@
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
 - Last verified UTC: 2026-09-05T04:22:06Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 486db834850d465006a3983d2d83ee809202df60
+- Local source verified SHA: ca505d83a25356df5de2fb468f5bc20666a436d5 (clean beta.96 runtime; scoped follow-up under verification)
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`; not released to Canary/Production
-- Active Local 8765: clean detached `agent-world-local-runtime` at `486db834850d465006a3983d2d83ee809202df60`, build `dev-0.10.0-beta.96-486db834850d`, original owner data root, Preview=false
-- Agent World branch: `codex/agent-world-owner-preview`, stacked above open PR #281 / #280; integrated model/domain/social delta is dirty, uncommitted and not yet active on 8765
+- Active Local 8765: clean `ca505d83a25356df5de2fb468f5bc20666a436d5`, build `dev-0.10.0-beta.96-ca505d83a253`, original owner data, Preview=false
+- Agent World branch: `codex/agent-world-owner-preview`, stacked draft PR #282 above open #281/#280; integrated ca505d83 is active on Local; scoped follow-up remains under verification
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
+
+## Latest scoped checkpoint verification
+
+3906 passed, 44 skipped (770.01 s); legacy 13/13; Python compile, 23 JS files,
+root secret/Markdown/CSP scans, context validator and 533-file bundle PASS.
+The 44 skips remain explicit; 41 have separate actual isolated PG evidence.
+Three real DeepSeek/Gemini comparisons (six outputs, three distinct arithmetic
+inputs per model) passed: n=3, OBSERVED, low confidence, no routing effect.
+This supersedes pending automated/comparison notes in earlier checkpoints;
+remaining Desktop/domain/own-key/final-SHA CI and owner acceptance stay open.
 
 ## Evidence modes
 
@@ -45,16 +55,19 @@
 - The old owner process served dirty beta.93 / `7062f749` because its scheduled
   task still targeted the old checkout. After explicit owner approval, isolated
   copy checks, coherent/cold backups and exact process retirement, Local 8765
-  now runs clean `486db834` beta.96 against the original real owner data root.
-  This completed Local switch is distinct from activating the newer dirty delta.
-  New model/chat/NT/Desktop browser acceptance remains pending that delta's
-  tested clean commit and controlled Local activation; no second worker may
-  share the owner data root.
-- The pre-delivery-repair full delta run passed `3803 passed, 44 skipped`
-  in 578.02 s after stale cache-token expectations were corrected. Later focused
-  domain gateway checks passed 96 tests. A discovered final-message delivery gap
-  is being repaired using the existing worker/inbox without a second provider
-  call; final regression after that repair is still pending. Separate actual isolated
+  initially ran clean `486db834`, then clean integrated `ca505d83` beta.96
+  against the same original owner data root. The new scoped follow-up remains
+  under verification; no second worker may share the owner data root.
+- Live ca505d83 SF Chat → DeepSeek → NinjaTrader → original report passed:
+  model task `62182839-1c4c-563d-8186-bcef081ec599`, 64 historical trades,
+  net -969.70, PF 0.725188. Independent source verification is not profitability.
+  DeepSeek connection test passed; Z.AI endpoint was unavailable. Ordinary-user
+  signup awaits owner Terms confirmation and separate OpenRouter key, not copied credentials.
+- Broad checkpoint passed `3852 passed, 44 skipped`, 622.61 s. The scoped
+  claimed-delivery/explicit-role/private-workspace follow-up has focused PASS
+  (270 scope, 28 delivery, 18 role/projection tests); its full run is pending.
+  Saved results use the existing claimed worker/inbox, not another provider call.
+  Separate actual isolated
   PostgreSQL 17.10 regression passed `41 passed, 0 skipped` against existing
   migrations 1–22, TLS and non-superuser/NOBYPASSRLS roles. This does not provide
   a new Agent World PostgreSQL adapter: domain storage is Development SQLite
@@ -70,13 +83,13 @@
 
 | Subsystem | Status | Current fact | Remaining limit |
 | --- | --- | --- | --- |
-| Agent World | `IN DEVELOPMENT` | Three primary tabs plus domain drawers; dirty integration implements scoped model/application evidence, evaluations, Consensus/Court, Memory, projects, manual follow-ups and two-step SF Social snapshots; clean `486db834` is the older active Local checkpoint | New delta activation, live provider/model/chat/NT/Desktop/domain/restart acceptance, final full regression and owner design review pending. No Agent World PostgreSQL adapter, general Router/Execution V2 replacement or autonomous routine scheduler |
+| Agent World | `IN DEVELOPMENT` | Three primary tabs plus domain drawers, clean ca505d83 active; real model/chat/NT report verified; scoped follow-up adds claimed delivery, explicit Persona roles and nonduplicated workflows | Follow-up activation, Desktop/domain/rating/restart checks, own-key test and final Git/CI/design acceptance pending. No Agent World PG adapter, Router/Execution V2 replacement or autonomous routine scheduler |
 | Auth / owner identity | `BETA` in Unified Local | `0.10.0-beta.96` has one three-step registration contract for Telegram, Google and e-mail, a stable StratForge handle shared by profile/SF Social/SF Chat, final clickwrap consent and the existing shared environment-routed provider architecture. Owner Preview uses the same state transitions with sandbox-only synthetic credentials | Not present in the deployed beta.87 artifact; live real-provider acceptance and immutable Canary/Production promotion remain separate gates |
 | Device confirmation / trusted access | `BETA` in Unified Local | Every new unknown human browser/app access starts as a two-minute pending session. The first freshly authenticated device can choose permanent trust or current-session-only without a redundant second OTP; later unknown clients still use confirmed Telegram or verified e-mail. Machine → Client → Session grouping remains proof-based | Integrated and browser-verified in Local beta.96, but not present in deployed beta.87; real-provider acceptance and release promotion remain separate gates |
 | Legacy UI / Telegram Mini App | `DEPRECATED` | Merged main serves Aurora only; legacy UI, Mini App, remote-access and tunnel routes fail with HTTP 410. Classic assets are available only in a separate localhost read-only Legacy Viewer. Telegram `/start` uses a normal URL button | beta.87 is live in Canary and Production; historical snapshots remain until owner review |
 | User entry and trial access | `BETA` in Unified Local | Anonymous product access is removed. Every verified account receives the same full product with a default five-hour active-use starting grant; idle time is not charged. Profile/security remain available after exhaustion | Not present in deployed beta.87; product access does not grant third-party market-data redistribution rights |
 | Admin / Release Center | `BETA` | A versioned release/change record is visible with title, summary, PRs, SHA, build/artifact, stage, checks, duration and environment identity. Production approval/promotion fails closed without title, summary, source SHA and verification PASS | beta.87 acceptance is recorded; any application change starts a new artifact cycle |
-| Test isolation | `AVAILABLE` | Pre-delivery-repair delta full run passed `3803 passed, 44 skipped`; actual isolated PostgreSQL 17.10 regression separately covers 41 existing relational tests with zero skips and no owner/Production data | Final regression after delivery repair remains pending. Two shell tests and one POSIX permissions test remain unverified on Windows; fixture tests do not certify live browser/provider acceptance |
+| Test isolation | `AVAILABLE` | Broad checkpoint 3852 passed, 44 skipped; actual isolated PostgreSQL 17.10 separately passed 41 existing relational tests, zero skips, no owner/Production data | Final scoped-follow-up regression pending. Two shell tests and one POSIX check remain unverified on Windows; fixtures do not certify live provider/browser acceptance |
 | Market data / TopstepX | `BETA` | TopstepX remains the primary independent read-only history/realtime chart source; the accepted gateway/SignalR/cache/failover/rendering baseline was not changed by PR #254/#255 or the beta.86 release-record work | cross-user owner-feed redistribution remains `EXTERNAL BLOCKED` without written authority |
 | Charts / fan-out | `BETA` | Browser clients consume same-origin StratForge market-data WebSockets; provider credentials are not delivered to browsers and consumers do not create their own TopstepX loginKey/SignalR sessions | broader design acceptance is separate from this Connector closeout |
 | NinjaTrader / Connector | `BETA` | Production Connector on VMNINJA is `0.4.2-dev.20`; SERVER BACKTEST, cancel state machine, device catalog, account snapshot and Connector LIVE/GRACE/OFFLINE presentation are accepted | public installer distribution remains `EXTERNAL BLOCKED` on authorized Authenticode material |

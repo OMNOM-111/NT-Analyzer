@@ -3,11 +3,11 @@
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-05T04:22:06Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 486db834850d465006a3983d2d83ee809202df60
+- Local source verified SHA: ca505d83a25356df5de2fb468f5bc20666a436d5 (clean beta.96 runtime; scoped follow-up under verification)
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Active branch: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; both dependencies remain open
-- Version: `0.10.0-beta.96`, `pre_release`; clean `486db834` is active on Local 8765, no Canary/Production promotion
-- Integration state: new model/domain/social delta is dirty and uncommitted in the task worktree, not yet active on 8765
+- Version: `0.10.0-beta.96`, `pre_release`; clean `ca505d83` is active on Local 8765, no Canary/Production promotion
+- Integration state: ca505d83 model/domain/social code is active on 8765; scoped follow-up is under verification in the task worktree
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
@@ -56,28 +56,28 @@ The original Local at 8765 served dirty beta.93 / `7062f749` because its schedul
 task still pointed at that checkout. This is historical, not the current runtime.
 After owner authorization, copy/cold backups, SQLite integrity and isolated-copy
 startup checks, only the matched Local process/task chain was replaced. Clean
-detached `agent-world-local-runtime` at `486db834850d465006a3983d2d83ee809202df60`
-now serves beta.96, build `dev-0.10.0-beta.96-486db834850d`, with the original
+detached `agent-world-local-runtime` at `ca505d83a25356df5de2fb468f5bc20666a436d5`
+now serves beta.96, build `dev-0.10.0-beta.96-ca505d83a253`, with the original
 owner data, account, workspace, history and NT heartbeat. No active job was lost.
-The newer dirty integration delta has not yet been activated there.
+The integrated source is active; newer claimed-delivery/role/private-container
+follow-up has not yet been activated there.
 
 The manual NinjaTrader proof `ui_20260905T003301149Z` has 1,273 actual bars and
 64 trades, but is not Agent World-originated and remains excluded from statistics.
-Fresh model/chat-created backtest, Desktop-to-SF-Chat capture, real model ratings,
-domain actions and restart acceptance are still required after clean delta
-activation. No second worker may share the owner data root. The ordinary
+Fresh SF Chat/model-created backtest `62182839-1c4c-563d-8186-bcef081ec599`
+passed on ca505d83: 64 trades, net -969.70, PF 0.725188, original report and hashes.
+Desktop-to-SF-Chat capture, real model ratings, domain actions and restart
+acceptance remain required. No second worker may share the owner data root. The ordinary
 development profile resets data root to the code checkout; the verified Local
 wrapper reapplies the original data root after profile load. Original task XML,
 backups and manifests remain outside Git. Code rollback and data rollback are
 separate; preserve new owner writes before restoring a cold snapshot.
 
-The pre-delivery-repair delta full run passed **3803 passed, 44 skipped**,
-578.02 s, after correcting the two stale cache-token expectations from the earlier
-3763/44/2 run. Later focused domain gateway checks passed **96 tests**. A gap in
-retrying a persisted final model result after failed SF Chat publication is now
-being repaired through the existing worker/inbox, without a second provider call.
-Final regression after that repair remains pending; 3803 PASS is not final-delta
-acceptance. Actual isolated PostgreSQL 17.10 regression separately
+The broad checkpoint before final claim/role/workspace changes passed **3852
+passed, 44 skipped**, 622.61 s. Scoped follow-up passed 270 domain/application/
+workspace/storage tests, 28 delivery tests and 18 role/projection tests. Saved
+completion uses one claimed existing-worker path, not competing direct writers.
+Final full follow-up regression remains pending. Actual isolated PostgreSQL 17.10 separately
 passed **41 tests, zero skips**, 122.71 s, on existing migrations 1–22 with TLS
 and non-superuser/NOBYPASSRLS roles. The remaining two shell and one POSIX
 permissions tests are unavailable on Windows. There is no Agent World PG adapter:
@@ -166,13 +166,14 @@ They no longer define the current Local baseline.
 - Development SQLite implements the Agent World repository; non-Development
   use fails closed. Actual PostgreSQL 41/41 covers existing relational/RLS
   migrations 1–22, not a missing Agent World PostgreSQL adapter.
-- Actual model/provider delivery, application receipts, runtime restart/lease
-  and visual acceptance remain pending for the integrated delta; contract tests
-  and the already completed initial Local switch do not certify those paths.
+- DeepSeek and Gemini connection tests passed; fresh model/chat/NT original
+  report passed on ca505d83. Z.AI endpoint unavailable is not PASS. Remaining
+  Desktop/domain/rating/restart and final follow-up acceptance are still required.
 - Agent World is `IN DEVELOPMENT`: domain mechanisms are implemented, but the
   full local owner acceptance, Git/CI closeout and stages 0–13 are not closed.
-- Ordinary users require their own compatible connection/allowance. Prepare the
-  ordinary-test-account wizard while the owner supplies a separate Gemini key;
+- Ordinary test signup `aw_model_review_0905` reached final Terms on localhost;
+  owner confirmation and separate OpenRouter key (`openrouter/free`) are pending.
+  The new personal-container CTA grants no NT/key/budget/flag permissions;
   actual private-provider acceptance is `PENDING OWNER KEY`, not a reason to stop
   other acceptance work or copy owner keys into a test account.
 - General Router/Execution V2 replacement and autonomous routine scheduling are
@@ -183,10 +184,20 @@ They no longer define the current Local baseline.
 - Version assignment, merge, signed artifact, Canary and Production are separate
   owner-controlled stages. Local/CI completion never implies release approval.
 
+## Latest scoped checkpoint verification
+
+3906 passed, 44 skipped (770.01 s); legacy 13/13; Python compile, 23 JS files,
+root secret/Markdown/CSP scans, context validator and 533-file bundle PASS.
+The 44 skips remain explicit; 41 have separate actual isolated PG evidence.
+Three real DeepSeek/Gemini comparisons (six outputs, three distinct arithmetic
+inputs per model) passed: n=3, OBSERVED, low confidence, no routing effect.
+This supersedes pending automated/comparison notes in earlier checkpoints;
+remaining Desktop/domain/own-key/final-SHA CI and owner acceptance stay open.
+
 ## Next safe step
 
-Finish delivery-only recovery, its regression rerun, static/context/exact-bundle
-checks and a clean scoped commit. Prepare the ordinary-user wizard without
+Finish the claimed-delivery/explicit-role/private-container regression rerun,
+static/context/exact-bundle checks and a clean scoped commit. Prepare the ordinary-user wizard without
 inventing credentials; exercise its real provider path when the owner enters
 the separate key.
 Activate that tested commit on Local only after another exact-PID/no-active-work

@@ -8,9 +8,16 @@ Version remains `0.10.0-beta.96`; no next version or release assigned.
 
 Business requester: project owner. Technical attribution: AI-assisted change.
 Branch: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282).
-Starting SHA: `486db834850d465006a3983d2d83ee809202df60`; new delta commit and
-final verification are pending. PR #280/#281 are dependencies, not merged here.
+Starting SHA: `486db834850d465006a3983d2d83ee809202df60`; integrated source
+`ca505d83a25356df5de2fb468f5bc20666a436d5` is committed and active on Local.
+Claimed delivery/explicit roles/private-container follow-up is being verified.
+PR #280/#281 are dependencies, not merged here.
 Verification result: PENDING; owner acceptance not yet ready for the full delta.
+
+Scoped automated verification result: PASS — 3906 passed, 44 skipped, 770.01 s;
+legacy 13/13, Python compile, 23 JS checks, root secret/Markdown/CSP checks,
+context validation, 533-file actual bundle all passed. Skips and remaining live
+acceptance/CI gates below are not counted as PASS for the complete program.
 
 ## Local switch evidence
 
@@ -53,17 +60,51 @@ Scoped implementation evidence:
 
 | Check | Result and limit |
 | --- | --- |
-| Broad pre-final pytest | 3803 passed, 44 skipped; 578.02 s. Stale cache contracts fixed. Pre-delivery-recovery checkpoint; later fixes require rerun |
+| Broad pre-final pytest | Historical 3803/44, then 3852 passed, 44 skipped; 622.61 s. Later claim/role/workspace changes require rerun |
+| Follow-up contracts | 270 scoped tests, 28 delivery tests and 18 role/projection tests PASS; full follow-up run pending |
 | Rating class-label regression | 96 passed; each observed model score names its specific rubric |
 | Repeated actual PostgreSQL | 41 passed, zero skips, 122.71 s; isolated loopback TLS DB, non-superuser/NOBYPASSRLS roles; existing migrations 1–22 |
 | Migration set | `d3bc149957d7c9eb68a4b476d3958a5bb790b0ac995cc73dc76ca9031fd53601`, no pending/applied-now migrations on repeat |
 | Session authority/history | 17 passed; real disposable auth/device stores, permanent/session, revoke/expiry/foreign scope, no-write lease checks |
-| Live provider/browser/application | Pending new clean delta activation; old manual report and mock transport do not count |
+| Live provider/browser/application | On ca505d83: DeepSeek CONNECTION_OK, fresh SF Chat → DeepSeek → NT → same-chat original report PASS; Z.AI endpoint unavailable, not PASS. Other scenarios remain separate |
 | Final static/context/bundle/CI | Pending final source; historical CI on b05ee124 not reused as current proof |
 
 Forty-one generic Windows skips are covered by the separate actual PG run.
 Two shell tests and one POSIX permissions test require Linux; skipped is not PASS.
 No Production database or credentials are used to satisfy fixture acceptance.
+
+Fresh historical backtest: model task `62182839-1c4c-563d-8186-bcef081ec599`,
+SF Chat `C-1322EA65B646`, NT job `awnt_7ed6b329cead8eac1391f5c8a0f3b59ad6d2d073baca9a6f`.
+SampleMACrossOver / MNQ 09-26 / 5m / 2026-08-24 to 2026-08-29 / Fast10 Slow25.
+64 trades, net -969.70, PF 0.725188; actual deepseek-v4-flash response at 1256 ms,
+USD 0.00006776. Original result SHA256
+`202e31d6775e7e08cb3e4300110cc7ec3878f2023ead080944e119db2251bc6f`;
+verified summary SHA256 `7c9e8d550e1f161a81ac59f8139a041f400ccd62f3f4435954be708f839c51be`.
+This is not the excluded old manual job, synthetic data or a profit claim.
+
+Follow-up changes: one claimed saved-result delivery path with bounded recovery;
+explicit Persona application-role assignment independent of names and rights;
+one overview workflow per exact linked source execution; fresh-auth navigation
+and asset cache update; isolated ordinary-human personal-container endpoint and
+cabinet CTA without NT pairing or owner credential copying. Existing NT gates,
+budgets and owner registry remain unchanged. All added routes stay Local-only.
+The intermediate full run had 3902 PASS / 44 skipped / 3 failures: two old
+Persona payload assertions and a reproduced concurrent explicit-round Preview
+creation race. The Preview fix preserves the first stored deadline and checks
+budget/fixture equality before execution; a synchronized distinct-clock test
+reproduces the race deterministically. No registration consent is automated.
+The final rerun above passed; the intermediate run is preserved, not relabelled.
+Ordinary test signup reached final Terms; owner confirmation and separate
+OpenRouter key entry are pending. No clickwrap consent or key was supplied for
+the owner. The private wizard does not support native Gemini transport.
+
+Actual Gemini connection test `b7114186-079b-58be-98dc-e38c552c65d2` returned
+CONNECTION_OK (611 ms). DeepSeek/Gemini comparisons `fe17dc14-2944-51c6-b125-7ea3065d7852`,
+`c55cf8c8-e31d-5862-a12d-038df10414fe`, `5d749d7b-e4fa-564d-8f69-7626d0cd4333`
+each used the same arithmetic input for both models, with three distinct input
+arrays overall. Six actual outputs passed independent checks; both models have
+n=3, OBSERVED, low confidence, no routing effect. Z.AI endpoint failure is
+retained; only the newly created failing binding was retired, not the owner key.
 
 ## Release impact and rollback
 

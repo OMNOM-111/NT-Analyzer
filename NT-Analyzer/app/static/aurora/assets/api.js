@@ -408,6 +408,7 @@
     bridgeSetup: (o) => getJSON('/api/bridge/setup', o),
     workspaces: (o) => getJSON('/api/workspaces', o),
     workspacePersonal: (body) => send('/api/workspaces/personal', 'POST', body || {}),
+    accountPersonalWorkspace: (body) => send('/api/account/workspace/personal', 'POST', body || {}),
     workspaceSelect: (workspaceId) => send('/api/workspaces/select', 'POST', { workspace_id: workspaceId }),
     bridgeConnections: (o) => getJSON('/api/bridge/connections', o),
     bridgePairStart: (body) => send('/api/bridge/pair/start', 'POST', body || {}),

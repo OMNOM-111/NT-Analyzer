@@ -236,6 +236,16 @@ live model/browser acceptance не заявлена. Canary/Production в это
 
 ## Safety
 
+- Local кабинет → «Личное рабочее пространство»: `POST /api/account/workspace/personal`
+  с optional `display_name`; `GET /api/auth/me` → `personal_workspace_available`.
+  Только текущая подтверждённая human-сессия, без Preview/impersonation/NT pairing.
+  Создаётся свой контейнер, не доступ к owner runtime/ключам/budget. Старые NT API
+  сохраняют dual-auth. AI opt-in проверяет server-side точный workspace.
+- Persona drawer принимает явный `application_role` (пусто / backtest_researcher /
+  chart_researcher); имя не является маршрутом. Overview объединяет работу модели
+  с источником только по точным task/job-or-command/conversation IDs, сохраняя
+  исходный execution и отдельно маркируя историю legacy-исполнителя.
+
 - Runtime-команды остаются paper/demo/playback-only. Backend отклоняет live и
   неизвестные счета; strategy enable/disable требует operator approval, а
   reconnect paper/demo/playback ограничен безопасным infrastructure self-heal.

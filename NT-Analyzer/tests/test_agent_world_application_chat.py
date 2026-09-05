@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from uuid import UUID
 
 import pytest
 
-from app import jobqueue, market_data
+from app import durable, jobqueue, local_worker, market_data
 from app.ai_lab import chief_agent
 from app.ai_control_center import application_chat as app_chat, domain_gateway, live_gateway, live_charts
 from app.ai_control_center.states import ContractError, EntityKind
@@ -32,14 +33,18 @@ def authorized(model_setup, monkeypatch, tmp_path):
              "is_owner": True, "uses_owner_runtime": True, "membership_role": "owner", "workspace_kind": "owner"}
     auth = {"context": ctx, "chat_scope": scope, "source_scope": {"user_id": 123, "workspace_id": ctx.scope.workspace_id,
             "allow_legacy": False}, "admit": lambda: None}
-    def access(value):
+    def access(value, *, read_only=False):
         if any(value.get(key) != scope[key] for key in ("user_id", "user_uuid", "workspace_id", "is_owner", "uses_owner_runtime")):
             raise ContractError("application_test_scope_denied")
-        return auth
+        return {**auth, "read_only": read_only}
     monkeypatch.setattr(domain_gateway, "access", access)
     monkeypatch.setattr(live_gateway, "access", access)
     monkeypatch.setattr(live_gateway, "configured", lambda value="": value == ctx.scope.workspace_id)
     monkeypatch.setattr(domain_gateway, "models", lambda *_: service)
+    monkeypatch.setenv("NT_ANALYZER_ROOT", str(tmp_path))
+    monkeypatch.setattr(domain_gateway, "repository", lambda auth: service.repository)
+    monkeypatch.setattr(domain_gateway, "history_models", lambda auth: service)
+    service.enqueue = lambda **kwargs: domain_gateway.enqueue_model(auth, **kwargs)
     registry = tmp_path / "chat-registry"
     registry.mkdir()
     runtime = tmp_path / "chart-runtime"
@@ -57,7 +62,8 @@ def authorized(model_setup, monkeypatch, tmp_path):
 def _model(model_setup, name="Иван", key="connect-one"):
     service, ctx, payload, *_ = model_setup
     persona = service._get(ctx, EntityKind.PERSONA, payload["persona_id"])
-    service._change(ctx, persona, display_name=name)
+    profile = {**service._json(ctx, persona.profile), "application_role": "chart_researcher" if name == "Иван" else "backtest_researcher"}
+    service._change(ctx, persona, display_name=name, profile=service._put(ctx, profile))
     return connected(model_setup, key=key)
 
 
@@ -71,6 +77,11 @@ def _plan(model_setup, authorized, *, kind="chart", request="owner-app-request")
     task_id = reply["actions"][0]["task_id"]
     service.executor = lambda **kw: response(kw["prompt"].split("Specification: ", 1)[1])
     result = service.execute(context=ctx, task_id=task_id)
+    # This fixture executes the model synchronously; complete its real queue
+    # receipt so only the separately claimed delivery phase can append finals.
+    claimed = durable.claim_worker_job(None, worker_id="fixture-source")
+    assert claimed["worker_job_id"] == "wj_aw_model_" + UUID(task_id).hex
+    durable.finish_worker_job(None, claimed["worker_job_id"], {"task_id": task_id}, worker_id="fixture-source")
     assert result["model_plan_verified"]
     return reply, result
 
@@ -306,12 +317,20 @@ def test_final_chat_write_failure_repaired_and_inbox_ends_republication(model_se
     _, plan = _plan(model_setup, authorized)
     dispatch = app_chat.finish_dispatch(authorized, service, plan)
     live_charts.complete(_body({"command_id": dispatch["source_id"]}), authorized)
-    original = app_chat.model_chat.publish
-    monkeypatch.setattr(app_chat.model_chat, "publish", lambda *_: {"published": False})
-    assert app_chat.reconcile(authorized, service)["errors"][0]["code"] == "application_publication_unconfirmed"
-    assert service.task_detail(context=ctx, task_id=plan["id"])["status"] == "succeeded"
-    monkeypatch.setattr(app_chat.model_chat, "publish", original)
+    original = chief_agent.report_agent_world_live_update
+    def unavailable(value, **kwargs):
+        if kwargs.get("history_delivery"):
+            raise OSError("temporary chat outage")
+        return original(value, **kwargs)
+    monkeypatch.setattr(chief_agent, "report_agent_world_live_update", unavailable)
+    before = len(chief_agent.agent_world_live_messages(scope=authorized["chat_scope"]))
     assert not app_chat.reconcile(authorized, service)["errors"]
+    assert service.task_detail(context=ctx, task_id=plan["id"])["status"] == "succeeded"
+    assert len(chief_agent.agent_world_live_messages(scope=authorized["chat_scope"])) == before
+    assert local_worker.run_once(worker_id="first-delivery")["status"] == "queued"
+    monkeypatch.setattr(chief_agent, "report_agent_world_live_update", original)
+    assert not app_chat.reconcile(authorized, service)["errors"]
+    assert local_worker.run_once(worker_id="restarted-delivery")["status"] == "succeeded"
     monkeypatch.setattr(app_chat.model_chat, "publish", lambda *_: pytest.fail("already acknowledged"))
     assert app_chat.reconcile(authorized, service)["examined"] == 0
 

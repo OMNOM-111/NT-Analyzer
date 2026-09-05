@@ -3,8 +3,8 @@
 - Context Pack document: 03_ARCHITECTURE_AND_DATA_MODEL.md
 - Last verified UTC: 2026-09-05T04:04:22Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 486db834850d465006a3983d2d83ee809202df60 (clean beta.96 runtime baseline)
-- New integrated domain/model/social source: dirty worktree above 486db834; final commit and runtime acceptance pending
+- Local source verified SHA: ca505d83a25356df5de2fb468f5bc20666a436d5 (clean beta.96 runtime; scoped follow-up under verification)
+- Scoped follow-up: delivery-only recovery, explicit Persona application roles, workflow projection and ordinary-user private workspace; final clean commit/activation acceptance pending
 - Unified Local base: beta.96, open PR #280; owner-review branch is stacked above foundation PR #281; no merge or Canary/Production promotion
 - Scope: Current components, trust boundaries, entities and key flows
 - Status: IN DEVELOPMENT
@@ -119,11 +119,11 @@ flowchart LR
 ## Agent World integrated Local delta
 
 Runtime and implementation are different checkpoints. Local `8765` now serves
-clean `486db834850d465006a3983d2d83ee809202df60`, beta.96, from a separate clean
-runtime worktree with the original owner data/settings. The new domain/model/
-social implementation below is still an uncommitted integration delta and is
-not yet that live build. Its real-provider, browser and owner acceptance remain
-pending. The previous `fc78677dfa258fb56042866a6764e8c8a45c42e6` snapshot described
+clean `ca505d83a25356df5de2fb468f5bc20666a436d5`, beta.96, from a separate clean
+runtime worktree with the original owner data/settings. Integrated model/domain/
+social code is active; follow-up delivery/role/private-container changes await
+clean activation. Real SF Chat/model/NT report passed; remaining provider,
+browser and owner acceptance is pending. The previous `fc78677dfa258fb56042866a6764e8c8a45c42e6` snapshot described
 the earlier owner-review adapters; it is history, not the current implementation
 claim. The deployed anchor `8f42158661e8247832c90bea8fc4d9f0071e647b` is unchanged;
 Production was not inspected or modified in this work.
@@ -131,6 +131,14 @@ Production was not inspected or modified in this work.
 Foundation contracts distinguish Persona, Role, Provider Account, Model, Intent,
 Task, Contribution, Decision, Execution, Outcome and Memory. Explicit scope and
 pure legacy projections remain; legacy statuses are not mass-rewritten.
+
+Application roles are explicit immutable Persona profile associations to the
+existing NT/Desktop adapters, never inferred from display names or treated as
+permission grants. The existing SQLite transaction enforces one active/suspended
+assignment per user/workspace/role. Exact source task/job/conversation links fold
+one model/application workflow in the read model; original evidence is retained.
+Legacy ratings remain separately labelled history. Delivery-only jobs use the
+existing worker's live lease/attempt and inbox; no second final publisher/queue.
 
 The local SQLite adapter implements CAS/history/events/idempotency/outbox and
 private immutable artifacts. Read-only construction never creates an absent DB,

@@ -213,6 +213,38 @@ def test_run_limit_rejects_new_keys_but_replays_existing_key_without_writes(serv
     assert events(service) == before
 
 
+def test_concurrent_explicit_round_creation_uses_first_deadline(service, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from datetime import timedelta
+    import threading
+    from app.ai_control_center import demo_workflows
+    original_commit, original_now = service._commit, demo_workflows._now
+    barrier, lock, deadlines = threading.Barrier(2), threading.Lock(), []
+    clock = [original_now()]
+
+    def tick():
+        with lock:
+            clock[0] += timedelta(milliseconds=1)
+            return clock[0]
+
+    def synchronized(ctx, allowed, record, expected):
+        if record.KIND == EntityKind.INTENT and record.header.revision == 1:
+            with lock:
+                deadlines.append(record.deadline)
+            barrier.wait(timeout=10)
+        return original_commit(ctx, allowed, record, expected)
+
+    monkeypatch.setattr(demo_workflows, "_now", tick)
+    monkeypatch.setattr(service, "_commit", synchronized)
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        results = list(workers.map(lambda _: run(service, round_index=0), range(2)))
+    assert len(set(deadlines)) == 2  # force the formerly intermittent conflict
+    assert results[0]["run"]["id"] == results[1]["run"]["id"]
+    intents = rows(service, EntityKind.INTENT)
+    assert len(intents) == 1 and intents[0].deadline in deadlines
+    assert len(rows(service, EntityKind.TASK)) == 4
+
+
 def test_run_limit_is_isolated_by_owner_and_workspace(service, monkeypatch):
     from app.ai_control_center import demo_workflows
     monkeypatch.setattr(demo_workflows, "MAX_DEMO_RUNS", 2)

@@ -19,7 +19,6 @@ from .model_evaluation import digest, json_bytes
 from .model_service import _LOCK
 from .states import ContractError, EntityKind
 
-_FINAL_CONSUMER = "agent_world.application.sf_chat.v1"
 _READ_LIMIT = 100
 # This is only a bounded read cursor, not another queue or execution ledger.
 # Restart loses the cursor, never task/receipt/idempotency information.
@@ -45,14 +44,24 @@ def _chart_spec(message):
 
 
 def _select_model(service, context, kind):
-    name = "толик" if kind == "backtest" else "иван"
-    personas = {str(row.header.entity_id) for row in service._all(context, EntityKind.PERSONA)
-                if row.status == "active" and row.display_name.strip().casefold() == name}
+    from .application_roles import for_kind
+    role = for_kind(kind)
+    personas = [row for row in service._all(context, EntityKind.PERSONA)
+                if row.status in {"active", "suspended"}
+                and service._json(context, row.profile).get("application_role") == role]
+    if not personas:
+        return None
+    if len(personas) != 1:
+        raise ContractError("application_role_selection_ambiguous")
+    if personas[0].status != "active":
+        raise ContractError("application_persona_inactive")
     candidates = [item for item in service.models(context=context)["items"]
-                  if item["status"] == "active" and item["persona_id"] in personas]
+                  if item["status"] == "active" and item["persona_id"] == str(personas[0].header.entity_id)]
     if len(candidates) > 1:
         raise ContractError("application_model_selection_ambiguous")
-    return candidates[0]["id"] if candidates else None
+    if not candidates:
+        raise ContractError("application_role_model_required")
+    return candidates[0]["id"]
 
 
 def try_chat(message, *, scope, conversation_id, request_id, source):
@@ -98,17 +107,10 @@ def _failure(service, authorized, task, checkpoint, code):
 
 
 def _publish_final(authorized, service, detail):
-    context = authorized["context"]
-    task = service._get(context, EntityKind.TASK, detail["id"])
-    event_id = uuid5(task.header.entity_id, f"revision:{task.header.revision}")
-    if service.repository.events.is_acknowledged(context=context, consumer=_FINAL_CONSUMER, event_id=event_id):
-        return
-    result = model_chat.publish(authorized, detail)
-    if not isinstance(result, dict) or result.get("ok") is not True:
-        raise ContractError("application_publication_unconfirmed")
-    # Existing event inbox records delivery only after the existing SF Chat
-    # store confirmed its idempotent append; uncertain writes remain retryable.
-    service.repository.events.acknowledge(context=context, consumer=_FINAL_CONSUMER, event_id=event_id)
+    # The monitor only queues the exact persisted terminal result. A separate
+    # direct append here would race the claimed delivery worker across processes.
+    history = domain_gateway.access(authorized["chat_scope"], read_only=True)
+    return domain_gateway.enqueue_model_delivery(history, domain_gateway.history_models(history), detail["id"])
 
 
 def _cancelled(authorized, service, task_id):
@@ -330,7 +332,7 @@ def reconcile(authorized, service):
             continue
         if task.status in {"succeeded", "failed", "cancelled"}:
             event_id = uuid5(task.header.entity_id, f"revision:{task.header.revision}")
-            if service.repository.events.is_acknowledged(context=context, consumer=_FINAL_CONSUMER, event_id=event_id):
+            if service.repository.events.is_acknowledged(context=context, consumer=model_chat.DELIVERY_CONSUMER, event_id=event_id):
                 continue
         elif task.status not in {"waiting", "ready", "running"}:
             continue

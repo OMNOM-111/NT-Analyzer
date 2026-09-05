@@ -3646,10 +3646,17 @@ class Handler(BaseHTTPRequestHandler):
         """Attach the central authorization view (subscription-driven nav +
         capabilities + Free Preview state) to an auth payload."""
         from .ai_control_center import gateway, live_gateway
-        payload["agent_world"] = (
-            gateway.navigation(context, control_authorized=self._preview_control_authorized())
-            if preview_sandbox.enabled() else live_gateway.navigation(self)
-        )
+        # Auth bootstrap precedes the route's stored context. Resolve navigation
+        # against the freshly authenticated context, never an absent/stale one.
+        previous_context = getattr(self, "_remote_context", None)
+        self._remote_context = context
+        try:
+            payload["agent_world"] = (
+                gateway.navigation(context, control_authorized=self._preview_control_authorized())
+                if preview_sandbox.enabled() else live_gateway.navigation(self)
+            )
+        finally:
+            self._remote_context = previous_context
         user = payload.get("user") or {}
         is_owner = bool(payload.get("is_owner"))
         subscription: Dict[str, Any] = {}
@@ -4049,6 +4056,43 @@ class Handler(BaseHTTPRequestHandler):
         payload["actions"] = _operations_actions()
         return payload
 
+    @staticmethod
+    def _personal_workspace_available(context: Dict[str, Any]) -> bool:
+        """A private container is not an NT connection or a capability grant."""
+        if (not runtime_env.is_development() or preview_sandbox.enabled()
+                or context.get("source") in {"local", "dev_service"}
+                or context.get("impersonating") or context.get("impersonator_owner_id")
+                or context.get("device_confirmation_state") != "active"
+                or context.get("device_confirmation_required")):
+            return False
+        uid, session_id = context.get("user_id"), str(context.get("session_id") or "")
+        user = account_auth.find_active_user(uid) if uid else None
+        return bool(user and not user.get("is_service_account") and not user.get("is_preview_user")
+                    and session_id and account_auth.local_session_is_active(session_id, uid))
+
+    def _account_personal_workspace_post(self) -> None:
+        if not self._check_local_post():
+            return
+        context = getattr(self, "_remote_context", None) or {}
+        if not self._personal_workspace_available(context):
+            self._err(HTTPStatus.FORBIDDEN, "Нужна подтверждённая личная Local-сессия.",
+                      code="personal_workspace_session_required")
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if (not isinstance(body, dict) or set(body) - {"display_name"}
+                or not isinstance(body.get("display_name", ""), str)
+                or len(body.get("display_name", "")) > 100):
+            self._err(HTTPStatus.BAD_REQUEST, "Допустимо только название личного пространства.", code="invalid_body")
+            return
+        try:
+            workspace = workspaces.ensure_personal_workspace(context["user_id"],
+                display_name=body.get("display_name") or "Моё личное пространство", require_entitlement=False)
+            self._json(HTTPStatus.OK, {"ok": True, "workspace": workspace})
+        except workspaces.WorkspaceError as exc:
+            self._err(exc.status, str(exc))
+
     def _cabinet_payload(self) -> Dict[str, Any]:
         context = getattr(self, "_remote_context", None) or {}
         uid = context.get("user_id")
@@ -4114,6 +4158,7 @@ class Handler(BaseHTTPRequestHandler):
         return {
             "authenticated": True,
             "trial_usage": trial_usage,
+            "personal_workspace_available": self._personal_workspace_available(context),
             "source": context.get("source"),
             "user": user,
             "role": context.get("role"),
@@ -10646,6 +10691,10 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 from .ai_control_center.live_http_api import handle_post
             handle_post(self, path)
+            return
+
+        if path == "/api/account/workspace/personal":
+            self._account_personal_workspace_post()
             return
 
         if path.startswith("/api/account/"):

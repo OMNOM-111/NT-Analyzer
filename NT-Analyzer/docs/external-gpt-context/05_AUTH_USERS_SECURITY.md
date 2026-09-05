@@ -3,8 +3,8 @@
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
 - Last verified UTC: 2026-09-05T04:04:22Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 486db834850d465006a3983d2d83ee809202df60 (clean beta.96 runtime baseline)
-- New integrated domain/model/social source: dirty worktree above 486db834; final commit and runtime acceptance pending
+- Local source verified SHA: ca505d83a25356df5de2fb468f5bc20666a436d5 (clean beta.96 runtime; scoped follow-up under verification)
+- Scoped follow-up: delivery-only recovery, explicit Persona application roles, workflow projection and ordinary-user private workspace; final clean commit/activation acceptance pending
 - Unified Local base: `0.10.0-beta.96`, PR #280; no Canary/Production promotion
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: PARTIAL
@@ -115,9 +115,17 @@ Key admin capability names already in the contract: `admin.view`,
 The following Production/Canary facts are historical deployment evidence, not a
 fresh environment check. The shared deployed anchor
 `8f42158661e8247832c90bea8fc4d9f0071e647b` is unchanged. Local `8765` now serves
-the clean `486db834` beta.96 runtime with original owner data/settings; the new
-dirty domain/model/social delta is not yet live. Earlier `fc78677` owner-review
-notes remain history. New real-provider/browser acceptance is pending.
+the clean `ca505d83` beta.96 runtime with original owner data/settings; scoped
+delivery/role/private-container follow-up awaits activation. Earlier `fc78677`
+owner-review notes remain history. Remaining real-provider/browser acceptance is pending.
+
+Development `POST /api/account/workspace/personal` creates/selects only the
+confirmed authenticated human's own empty container. It rejects Preview,
+non-Development, service/local-bypass/impersonated and unconfirmed/revoked
+sessions, foreign caller scope and invalid Origin/CSRF. It grants no NT, key,
+budget or AI opt-in. Original NT routes retain dual authentication. Ordinary
+test registration is at final Terms; owner must confirm and enter a separate
+OpenRouter key in the private wizard. Existing owner keys are never copied.
 
 - Production browser serves Sign in/Register and existing owner login is
   operational; authenticated beta.29 owner acceptance passed.

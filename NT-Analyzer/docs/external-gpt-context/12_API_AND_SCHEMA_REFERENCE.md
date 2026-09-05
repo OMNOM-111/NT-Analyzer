@@ -3,20 +3,30 @@
 - Context Pack document: 12_API_AND_SCHEMA_REFERENCE.md
 - Last verified UTC: 2026-09-05T04:04:22Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 486db834850d465006a3983d2d83ee809202df60 (clean beta.96 runtime baseline)
-- New integrated domain/model/social source: dirty worktree above 486db834; final commit and runtime acceptance pending
+- Local source verified SHA: ca505d83a25356df5de2fb468f5bc20666a436d5 (clean beta.96 runtime; scoped follow-up under verification)
+- Scoped follow-up: delivery-only recovery, explicit Persona application roles, workflow projection and ordinary-user private workspace; final clean commit/activation acceptance pending
 - Unified Local base: beta.96, PR #280; separate owner-review slice above foundation PR #281; no merge or Canary/Production promotion
 - Scope: Compact index of important endpoint families, entities and capability names
 - Status: IN DEVELOPMENT
 
-Local `8765` currently serves the clean `486db834` beta.96 build with original
-owner data/settings. New domain/model/social endpoints below describe the dirty
-integration delta, not a completed runtime switch or live-provider/browser PASS.
+Local `8765` currently serves the clean `ca505d83` beta.96 build with original
+owner data/settings. Integrated domain/model/social endpoints are active; scoped
+claimed-delivery/explicit-role/private-container follow-up awaits clean activation.
 `fc78677` is the historical adapter snapshot. The deployed anchor
 `8f42158661e8247832c90bea8fc4d9f0071e647b` remains unchanged; Production was not
 rechecked in this task.
 
 ## Key endpoint families
+
+Follow-up Local-only `POST /api/account/workspace/personal` accepts only optional
+`display_name` (string, <=100), infers the current confirmed human, and reuses the
+existing private container/membership store. It grants no NT/key/budget rights;
+Origin/CSRF and active-session checks apply. `GET /api/auth/me` advertises
+`personal_workspace_available`; old `/api/workspaces/personal` retains NT gates.
+Persona profile actions accept optional `application_role`: empty,
+`backtest_researcher`, `chart_researcher`. Omission on update preserves assignment;
+invalid/duplicate active-or-suspended assignment is rejected transactionally.
+No numbered DB migration is added.
 
 | Area | Endpoint family | Purpose |
 | --- | --- | --- |

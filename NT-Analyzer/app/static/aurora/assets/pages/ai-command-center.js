@@ -75,7 +75,7 @@
     if (domain === 'projects' && action === 'version') return [field('notes', 'Что изменилось', 'textarea', { required: true, max: 6000 }), field('parameters', 'Параметры версии (JSON-объект)', 'json', { required: true, max: 12000 })];
     if (domain === 'memory' && ['promote', 'revoke', 'publish_to_workspace'].includes(action)) return [field('reason', 'Основание', 'textarea', { required: true, max: 1000 })];
     if (!['create', 'update'].includes(action)) return [];
-    if (domain === 'personas') return [field('name', 'Имя персоны', 'text', { required: true, max: 160 }), field('description', 'Назначение', 'textarea', { max: 4000 }), field('style', 'Стиль общения', 'textarea', { max: 1000 })];
+    if (domain === 'personas') return [field('name', 'Имя персоны', 'text', { required: true, max: 160 }), field('description', 'Назначение', 'textarea', { max: 4000 }), field('style', 'Стиль общения', 'textarea', { max: 1000 }), field('application_role', 'Роль в приложении', 'select', { sendEmpty: true, options: [['', 'Не назначена'], ['backtest_researcher', 'Бэктестирование'], ['chart_researcher', 'Рабочий стол и графики']], hint: 'Явное назначение для команд SF Chat. Имя можно менять. Роль не выдаёт прав, ключей или торгового доступа. Одна активная / приостановленная Persona на роль.' })];
     const title = field('title', 'Название', 'text', { required: true, max: 160 });
     const description = field('description', 'Описание', 'textarea', { max: 4000, sendEmpty: true });
     const sources = field('source_ids', 'UUID исходных артефактов', 'ids', { maxItems: 20, hint: 'Необязательно. По одному UUID в строке; принадлежность проверит сервер.' });
@@ -245,7 +245,7 @@
       return `<span class="aw-avatar${size ? ` aw-avatar-${esc(size)}` : ''}" aria-hidden="true">${image}</span>`;
     };
     const progress = task => number(task.progress_pct) == null ? '<span class="aw-muted">Прогресс не измерен</span>' : `<span class="aw-progress"><progress max="100" value="${Math.min(100, Math.max(0, number(task.progress_pct)))}" aria-label="Выполнено ${esc(pct(task.progress_pct))}"></progress><span>${esc(pct(task.progress_pct))}</span></span>`;
-    const cost = value => number(value) == null ? 'не измерено' : Number(value).toLocaleString('ru-RU', { style: 'currency', currency: 'USD', maximumFractionDigits: 4 });
+    const cost = value => number(value) == null ? 'не измерено' : Number(value).toLocaleString('ru-RU', { style: 'currency', currency: 'USD', maximumFractionDigits: Number(value) > 0 && Number(value) < 0.0001 ? 8 : 4 });
     function announce(message, error) {
       const box = qs('#aw-notice'); box.textContent = message; box.hidden = !message; box.classList.toggle('aw-error', Boolean(error));
     }

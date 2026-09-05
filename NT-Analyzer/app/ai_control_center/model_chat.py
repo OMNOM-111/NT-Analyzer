@@ -4,9 +4,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from uuid import UUID, uuid5
 
 from ..ai_lab import chief_agent
-from .states import ContractError
+from .states import ContractError, EntityKind
+
+
+DELIVERY_CONSUMER = "agent_world.model.sf_chat.v1"
 
 
 def _conversation(authorized, key, title):
@@ -93,13 +97,74 @@ def compare(authorized, service, payload, key):
     return created
 
 
-def publish(authorized, detail):
+def _result_envelope(authorized, detail):
     task = detail.get("task") or detail
     if not task.get("conversation_id") or detail.get("stage") == "awaiting_application":
-        return {"published": False}
+        return None
     signature = hashlib.sha256(json.dumps({"status": task["status"], "evaluation": task.get("evaluation_id"),
         "response": detail.get("result_text"), "error": task.get("error_code")}, sort_keys=True).encode()).hexdigest()
-    return chief_agent.report_agent_world_live_update(envelope(authorized, detail, request_id="model-result:" + task["id"] + ":" + signature))
+    return envelope(authorized, detail, request_id="model-result:" + task["id"] + ":" + signature)
+
+
+def publish(authorized, detail):
+    value = _result_envelope(authorized, detail)
+    return chief_agent.report_agent_world_live_update(value) if value else {"published": False}
+
+
+def completion(authorized, service, task_id):
+    """Read one exact persisted completion; never finish or rerun a task."""
+    authorized["admit"]()
+    context = authorized["context"]
+    detail = service.task_detail(context=context, task_id=task_id)
+    task = service._get(context, EntityKind.TASK, task_id)
+    if task.status not in {"succeeded", "failed", "cancelled"}:
+        # A failed admission/unknown transmit is a truthful blocked report,
+        # not a completed response or an invitation to execute again.
+        if task.status != "blocked" or not detail.get("error_code"):
+            return None
+    value = _result_envelope(authorized, detail)
+    if value is None or not detail.get("message_id"):
+        return None
+    return {"task_id": str(task.header.entity_id),
+            "event_id": str(uuid5(task.header.entity_id, f"revision:{task.header.revision}")),
+            "checkpoint_sha256": task.checkpoint.sha256,
+            "message_id": detail["message_id"], "envelope": value}
+
+
+def validate_history_envelope(authorized, value):
+    """Trusted Chief-only guard: history access is not a general write grant."""
+    from . import domain_gateway
+    service = domain_gateway.history_models(authorized)
+    saved = completion(authorized, service, value.get("task_id"))
+    if saved is None or saved["envelope"] != value:
+        raise ContractError("model_delivery_evidence_mismatch")
+    cid = value["conversation_id"]
+    if chief_agent._safe_conversation_id(cid) != cid:
+        raise ContractError("model_delivery_conversation_mismatch")
+    rows = chief_agent.read_jsonl(chief_agent._conversation_file(cid, scope=authorized["chat_scope"]))
+    if not any(row.get("message_id") == saved["message_id"] and row.get("role") == "user"
+               and row.get("user_uuid") == str(authorized["context"].user_uuid)
+               and row.get("workspace_id") == authorized["context"].scope.workspace_id for row in rows):
+        raise ContractError("model_delivery_message_mismatch")
+    return saved
+
+
+def deliver(authorized, service, *, task_id, event_id, checkpoint_sha256, events):
+    """Retry only SF Chat delivery of a sealed result via the existing inbox."""
+    saved = completion(authorized, service, task_id)
+    if saved is None or saved["event_id"] != event_id or saved["checkpoint_sha256"] != checkpoint_sha256:
+        return {"ok": True, "status": "superseded", "task_id": str(task_id)}
+    context, identity = authorized["context"], UUID(event_id)
+    if service.repository.events.is_acknowledged(context=context, consumer=DELIVERY_CONSUMER, event_id=identity):
+        return {"ok": True, "status": "delivered", "task_id": str(task_id), "replayed": True}
+    authorized["admit"]()
+    result = chief_agent.report_agent_world_live_update(saved["envelope"], history_delivery=True)
+    if result.get("ok") is not True:
+        raise ContractError("model_delivery_unconfirmed")
+    authorized["admit"]()
+    events.acknowledge(context=context, consumer=DELIVERY_CONSUMER, event_id=identity)
+    return {"ok": True, "status": "delivered", "task_id": str(task_id),
+            "replayed": result.get("idempotent_replay") is True}
 
 
 def try_chat(message, *, scope, conversation_id, request_id, source):

@@ -3,8 +3,8 @@
 - Context Pack document: 08_UI_UX_AND_PRODUCT_CONTRACTS.md
 - Last verified UTC: 2026-09-05T04:22:06Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 486db834850d465006a3983d2d83ee809202df60
-- Active Local 8765: clean `486db834` beta.96, original owner data; new model/domain/social UI delta is dirty and not yet active there
+- Local source verified SHA: ca505d83a25356df5de2fb468f5bc20666a436d5 (clean beta.96 runtime; scoped follow-up under verification)
+- Active Local 8765: clean `ca505d83a25356df5de2fb468f5bc20666a436d5`, build `dev-0.10.0-beta.96-ca505d83a253`, original owner data, Preview=false
 - Unified Local accepted base: beta.96, open PR #280; no Canary/Production promotion
 - Scope: Major UI areas, visibility rules and important UX contracts
 - Status: IN DEVELOPMENT
@@ -57,12 +57,18 @@ The shared deployment anchor above is unchanged; Production was not rechecked.
 - Model connections in the new drawer belong to the authenticated user. They
   do not expose the owner-only legacy provider registry. Guarded owner bindings
   reuse existing caps; ordinary users supply their own connection and allowance.
-  The ordinary-test-account wizard and separate Gemini key entry are a pending
+  The ordinary-test-account wizard and separate OpenRouter key (`openrouter/free`) entry are a pending
   acceptance path, not seeded credentials or a reason to share owner secrets.
 - Task Inspector distinguishes the model plan from actual application work.
   A valid plan remains waiting for the canonical NT job or Desktop receipt;
   trace/history links open original evidence and the existing SF Chat, not a
   second messenger. A cancel request is not a confirmed cancelled source job.
+- The follow-up Persona form explicitly selects application role separately from
+  name/model. Exact linked model/application work counts once, with the original
+  execution retained. Legacy performer history is not merged into model quality.
+  Small positive model costs retain up to eight decimals instead of showing zero.
+  Cabinet offers a Local confirmed human a personal container without NT pairing;
+  AI access still requires exact server workspace opt-in and existing permissions.
 - Ratings use independent observed checks and distinct real inputs, with failures,
   available cost and latency shown honestly. n < 3 stays NEW; comparisons use
   identical input. Synthetic Preview fixtures and old manual jobs never become

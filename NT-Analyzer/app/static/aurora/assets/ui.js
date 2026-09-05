@@ -1434,7 +1434,7 @@
     applyChipUser(user);
     captureReferral();
     handlePaypalReturn();
-    applyNavAccess(CURRENT_AUTH);
+    if (applyNavAccess(CURRENT_AUTH)) return;
     applyTrialChip(CURRENT_AUTH.trial_usage);
     const chipUser = qs('#chip-user');
     if (chipUser) chipUser.onclick = () => openCabinet();
@@ -1960,9 +1960,9 @@
   // Beginner UX: hide pro sections entirely (not lock-blur).
   function applyNavAccess(auth) {
     auth = auth || {};
-    // A server-confirmed, workspace-scoped opt-in replaces only the rail entry.
-    // Legacy routes remain reachable from the center until parity is accepted.
-    const worldEnabled = !!(auth.agent_world && auth.agent_world.enabled);
+    // Only the authenticated server's exact workspace opt-in unifies the rail.
+    // A missing/disabled/malformed grant preserves the existing navigation.
+    const worldEnabled = !!(auth.agent_world && auth.agent_world.enabled === true);
     const worldNav = qs('.rail-item[data-nav="ai"]');
     if (worldNav) {
       worldNav.href = worldEnabled ? 'ai-command-center.html' : 'ai-lab.html';
@@ -2011,6 +2011,17 @@
     if (uxMode === 'beginner') {
       ensureBeginnerWatermark();
       return;
+    }
+    if (worldEnabled) {
+      // Old bookmarks stay compatible without keeping a second AI surface.
+      // Match the actual legacy file, not data-page="ai" (also used by the
+      // new center), so the canonical page can never redirect to itself.
+      const legacyAIPage = /(?:^|\/)(ai-lab|ai-agents)\.html$/.exec(location.pathname || '');
+      if (legacyAIPage) {
+        location.replace('ai-command-center.html' + (location.search || '')
+          + '#tab=' + (legacyAIPage[1] === 'ai-agents' ? 'agents' : 'overview'));
+        return true;
+      }
     }
     if (uxMode === 'professional' && page === 'practice') {
       location.replace('index.html');
@@ -2267,6 +2278,7 @@
       : `<div class="cab-card"><h4>Мой NinjaTrader</h4><div id="cab-nt"><div class="state-loading"><span class="spinner"></span>Проверка…</div></div></div>`;
     return `
       ${modeCard}
+      ${me.personal_workspace_available === true ? `<div class="cab-card"><h4>Личное рабочее пространство</h4><p class="cab-sub">Ваши модели, Persona и задачи хранятся отдельно. Ключи владельца не копируются. Подключение NinjaTrader не требуется и настраивается отдельно.</p><button class="btn primary sm" id="cab-personal-workspace">${me.active_workspace?.kind === 'personal' ? 'Открыть мои модели' : 'Создать / выбрать личное пространство'}</button><p class="cab-sub" id="cab-personal-workspace-msg" role="status"></p></div>` : ''}
       <div class="cab-card"><h4>Подписка</h4>
         <div class="cab-kv"><span class="k">Тариф</span><span class="v"><strong>${esc(planLabel)}</strong> ${planBadge}</span></div>
         ${expires ? `<div class="cab-kv"><span class="k">Срок</span><span class="v">${expires}</span></div>` : ''}
@@ -3349,6 +3361,25 @@
   }
   function renderProfileInto(cb, me) {
     cb.innerHTML = cabinetProfile(me);
+    const personal = qs('#cab-personal-workspace', cb);
+    if (personal) personal.onclick = async () => {
+      const msg = qs('#cab-personal-workspace-msg', cb);
+      personal.disabled = true;
+      msg.textContent = 'Проверяю личное пространство…';
+      try {
+        await API.http.accountPersonalWorkspace({ display_name: 'Моё личное пространство' });
+        const fresh = await API.http.authStatus();
+        CURRENT_AUTH = Object.assign({}, CURRENT_AUTH, fresh);
+        applyNavAccess(CURRENT_AUTH);
+        if (fresh.agent_world?.enabled === true) {
+          location.href = 'ai-command-center.html#tab=overview&domain=models';
+          return;
+        }
+        msg.textContent = 'Личное пространство готово. AI Центр пока не включён в нём: требуется точечное разрешение владельца для этого Local-пространства.';
+      } catch (e) {
+        msg.textContent = e.message || 'Не удалось создать личное пространство. Можно повторить.';
+      } finally { personal.disabled = false; }
+    };
     const nt = qs('#cab-nt', cb);
     if (nt) renderNinjaInto(nt, me);
     qsa('[data-set-ux]', cb).forEach(btn => {

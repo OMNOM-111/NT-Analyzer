@@ -541,6 +541,28 @@ class SQLiteAgentWorldRepository:
                              revision=reference.revision) is None:
                     raise ContractError("entity_reference_unavailable")
 
+    def _verify_persona_assignment(self, connection, context, record):
+        if not isinstance(record, c.Persona):
+            return
+        from .application_roles import role_key
+        def assigned(persona):
+            artifact = self._artifact(connection, context, persona.profile)
+            profile = json.loads(artifact[0]) if artifact[1] == "application/json" else {}
+            return role_key(profile.get("application_role", "")) if isinstance(profile, dict) else ""
+        role = assigned(record)
+        if not role or record.status not in {"active", "suspended"}:
+            return
+        # The existing BEGIN IMMEDIATE serializes assignment/activation across
+        # processes. Suspended agents retain their slot until explicitly unset.
+        rows = connection.execute("""SELECT v.payload FROM aw_records r
+            JOIN aw_revisions v ON v.seq=r.seq WHERE r.environment=? AND r.workspace_id=?
+            AND r.owner_uuid=? AND r.kind='persona' AND r.entity_id!=?""",
+            (*self._context(context), str(context.user_uuid), str(record.header.entity_id))).fetchall()
+        for row in rows:
+            other = decode_record(row["payload"])
+            if other.status in {"active", "suspended"} and assigned(other) == role:
+                raise ContractError("application_role_already_assigned")
+
     def commit(self, *, context: c.RequestContext, record: c.Record, expected_revision: int,
                event: EventEnvelope, mutation: MutationIdentity) -> CommitResult:
         scope = self._context(context)
@@ -574,6 +596,7 @@ class SQLiteAgentWorldRepository:
                             event=event, mutation=mutation, previous=previous)
             self._verify_references(connection, context, record)
             self._verify_references(connection, context, event, pending=record)
+            self._verify_persona_assignment(connection, context, record)
             payload, event_payload = encode_record(record), encode_event(event)
             identity = (*scope, record.KIND.value, str(record.header.entity_id))
             revision = connection.execute("""INSERT INTO aw_revisions

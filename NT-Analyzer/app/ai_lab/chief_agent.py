@@ -1950,14 +1950,21 @@ def _agent_world_request_key(value: str) -> str:
     return "aw.live." + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def report_agent_world_live_update(envelope: Dict[str, Any]) -> Dict[str, Any]:
+def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery: bool = False) -> Dict[str, Any]:
     """Append/recover a scoped real-result projection; never send Telegram.
 
     The existing jobs or Desktop receipts remain authoritative. No implicit
     quality rating, conversation closing, owner consent or trade is performed.
     """
     from ..ai_control_center import live_gateway, domain_gateway
-    authorized = (domain_gateway if envelope.get("source_kind") == "real_model_response" else live_gateway).access(envelope.get("scope"))
+    if history_delivery:
+        from ..ai_control_center import model_chat
+        if envelope.get("source_kind") != "real_model_response":
+            raise ChiefAgentError("История требует сохранённый результат модели.")
+        authorized = domain_gateway.access(envelope.get("scope"), read_only=True)
+        model_chat.validate_history_envelope(authorized, envelope)
+    else:
+        authorized = (domain_gateway if envelope.get("source_kind") == "real_model_response" else live_gateway).access(envelope.get("scope"))
     scope = authorized["chat_scope"]
     cid = _safe_conversation_id(envelope.get("conversation_id"))
     key = _agent_world_request_key(envelope.get("request_id"))

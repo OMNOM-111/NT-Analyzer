@@ -284,7 +284,10 @@ class DemoWorkflowService:
             "external_effects": "forbidden", "model_quality_assessed": False})
         intent = self._ensure(context, admission, c.Intent, run_id, run_id, policy, goal=goal,
                               acceptance=acceptance, risk=c.Risk.LOW, autonomy=c.Autonomy.DRAFT,
-                              budget=admission.budget, coalesce_create=requested_round is None)
+                              budget=admission.budget, coalesce_create=True)
+        # Concurrent explicit-round retries also have different creation clocks
+        # and deadlines. Keep the first committed deadline; budget and requested
+        # fixture equality are still checked below before any task is executed.
         if intent.budget != admission.budget:
             raise ContractError("idempotency_conflict")
         # Concurrent automatic selection may observe a different catalog count.

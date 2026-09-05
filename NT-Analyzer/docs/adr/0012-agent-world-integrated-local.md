@@ -90,6 +90,33 @@ replay; completion/GET never publishes a post.
 
 ## Authority, flags and storage
 
+Persona application assignment uses explicit stable role keys in the immutable
+profile: `backtest_researcher` or `chart_researcher`, or empty/unassigned. This is
+a compatibility association to existing adapters, not a permission grant or a
+replacement AgentRole authority. Names are not routing keys. Missing legacy
+fields remain unassigned; no migration guesses a role from Tolik/Ivan names.
+One active/suspended Persona per role/user/workspace is enforced inside the
+existing SQLite write transaction. A suspended assignment or missing model
+blocks the action; it never silently picks another model. Older-client rename
+preserves an omitted role; explicit empty unassigns it.
+
+The overview folds a model/application workflow only when stored source task ID,
+job/command ID and conversation match exactly and uniquely. Original execution
+remains attached; immutable history is not rewritten. Legacy performer cards are
+aliased only by explicit role, with legacy ratings kept separate from model tests.
+
+Saved SF Chat completion has one claimed publisher: a delivery-only job in the
+existing worker queue. Source/model execution and application reconciliation
+enqueue that job, not a second direct final writer. Fresh lease/attempt/session
+and exact original-message/event checks fence stale jobs; inbox acknowledgements
+follow append, with bounded recovery/replay and no repeat provider charge.
+
+Development `POST /api/account/workspace/personal` creates/selects an empty
+private container for the current confirmed non-service human session. It is
+independent of NinjaTrader pairing, but grants no NT, model-key or budget rights.
+Old NT workspace/pairing routes keep their original dual-auth gates. Preview,
+Canary/Production, impersonation and unconfirmed/revoked sessions are rejected.
+
 Every route/worker/provider call uses the existing confirmed account/device,
 active membership and permissions. Workers carry a non-secret session reference
 and recheck revocation/expiry before transmission. Trusted Local owner entry is

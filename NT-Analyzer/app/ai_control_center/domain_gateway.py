@@ -11,6 +11,7 @@ import math
 import os
 import re
 import sqlite3
+import time
 from uuid import UUID
 
 from .. import account_auth, ai_budgets, permissions, preview_sandbox, runtime_env, workspaces
@@ -187,6 +188,105 @@ def models(authorized, repo=None):
         allowed_origins=tuple(item.strip() for item in os.environ.get("STRATFORGE_AGENT_WORLD_MODEL_ORIGINS", "").split(",") if item.strip()))
 
 
+def history_models(authorized):
+    """Read-only completion projection with no executor/queue capability."""
+    if authorized.get("read_only") is not True:
+        raise ContractError("model_history_context_required")
+    from .model_service import ModelService
+    return ModelService(repository(authorized),
+        admit=lambda context, operation, estimate: _model_admit(authorized, context, operation, estimate))
+
+
+def _model_source(job):
+    payload = job.get("payload") or {}
+    scope = payload.get("scope") or {}
+    if (job.get("kind") != "agent_world_model" or payload.get("phase")
+            or str(scope.get("workspace_id") or "") != str(job.get("workspace_id") or "")
+            or str(scope.get("user_id") or "") != str(job.get("user_id") or "")):
+        raise ContractError("model_delivery_source_invalid")
+    try:
+        identity = "wj_aw_model_" + UUID(str(payload.get("task_id"))).hex
+    except (ValueError, TypeError):
+        raise ContractError("model_delivery_source_invalid") from None
+    if job.get("worker_job_id", job.get("id")) != identity:
+        raise ContractError("model_delivery_source_invalid")
+    return payload, scope
+
+
+def _delivery_job_id(task_id, event_id):
+    try:
+        return "wj_aw_delivery_" + UUID(str(task_id)).hex + "_" + UUID(str(event_id)).hex
+    except (ValueError, TypeError):
+        raise ContractError("model_delivery_identity_invalid") from None
+
+
+def _require_delivery_claim(job):
+    """Fence this publisher to the current existing worker claim, not a DTO."""
+    from .. import worker_router
+    current = worker_router.get(job.get("worker_job_id", job.get("id")),
+                                workspace_id=str(job.get("workspace_id") or "")) or {}
+    now = time.time()
+    if (job.get("status") != "running" or not job.get("worker_id")
+            or current.get("status") != "running" or current.get("kind") != "agent_world_model"
+            or current.get("worker_id") != job.get("worker_id")
+            or current.get("attempts") != job.get("attempts")
+            or current.get("payload") != job.get("payload")
+            or str(current.get("user_id")) != str(job.get("user_id"))
+            or current.get("cancel_requested") or float(current.get("locked_until") or 0) <= now
+            or float(current.get("deadline_at") or 0) <= now):
+        raise ContractError("model_delivery_claim_required")
+
+
+def enqueue_model_delivery(authorized, service, task_id):
+    """Existing worker, terminal-only phase; bounded delivery retries, no calls."""
+    from .. import worker_router
+    from . import model_chat
+    saved = model_chat.completion(authorized, service, task_id)
+    if saved is None:
+        return None
+    context = authorized["context"]
+    if service.repository.events.is_acknowledged(context=context, consumer=model_chat.DELIVERY_CONSUMER,
+                                                event_id=UUID(saved["event_id"])):
+        return None
+    source_id = "wj_aw_model_" + UUID(str(task_id)).hex
+    source, scope = _model_source(worker_router.get(source_id, workspace_id=context.scope.workspace_id) or {})
+    if (str(scope.get("user_uuid")) != str(context.user_uuid)
+            or str(scope.get("user_id")) != str(authorized["source_scope"]["user_id"])
+            or scope.get("auth_session_id") != authorized["chat_scope"].get("auth_session_id")):
+        raise ContractError("model_delivery_scope_invalid")
+    payload = {"phase": "delivery", "scope": scope, "source_worker_job_id": source_id,
+               **{field: saved[field] for field in ("task_id", "event_id", "checkpoint_sha256")}}
+    identity = _delivery_job_id(saved["task_id"], saved["event_id"])
+    try:
+        return worker_router.enqueue("agent_world_model", payload, user_id=authorized["source_scope"]["user_id"],
+            workspace_id=context.scope.workspace_id, job_id=identity, max_attempts=3, timeout_sec=30, priority=70)
+    except sqlite3.IntegrityError:
+        old = worker_router.get(identity, workspace_id=context.scope.workspace_id)
+        if (not old or old.get("kind") != "agent_world_model" or old.get("payload") != payload
+                or str(old.get("user_id")) != str(authorized["source_scope"]["user_id"])):
+            raise ContractError("model_delivery_identity_conflict") from None
+        return old
+
+
+def reconcile_model_deliveries(rows):
+    """Existing worker's bounded read batch; never called from GET or a timer."""
+    recovered, denied = 0, 0
+    for row in rows[:100]:
+        if row.get("status") not in {"succeeded", "failed", "stale", "cancelled"} or (row.get("payload") or {}).get("phase"):
+            continue
+        try:
+            payload, scope = _model_source(row)
+            authorized = access(scope, read_only=True)
+            authorized["admit"]()
+            queued = enqueue_model_delivery(authorized, history_models(authorized), payload["task_id"])
+            recovered += int(bool(queued and queued.get("status") == "queued"))
+        except Exception:
+            # A revoked/foreign scope or unavailable receipt is not permission
+            # to repair domain state. Only bounded counts leave this selector.
+            denied += 1
+    return {"recovered": recovered, "denied": denied}
+
+
 def _followup(authorized, *, context, kind, payload, idempotency_key):
     authorized["admit"]()
     if context != authorized["context"] or kind not in {"routine", "calendar_item"} or payload.get("automation_enabled") is not False:
@@ -330,6 +430,39 @@ def history_projection(authorized, result, *, domain=""):
     return project(result)
 
 
+def _application_workflows(legacy_tasks, model_rows):
+    """Fold only an exact stored model -> original source link, never titles.
+
+    A malformed or ambiguous link remains visible as separate work rather than
+    hiding evidence. The original task is retained under source_execution.
+    """
+    claims = {}
+    for row in model_rows:
+        task = row["task"]
+        dispatch = task.get("application_dispatch") or {}
+        identity = dispatch.get("source_task_id")
+        if identity:
+            claims.setdefault(identity, []).append(task)
+    folded, sources = set(), {}
+    for source in legacy_tasks:
+        candidates = claims.get(source.get("id"), [])
+        if len(candidates) != 1:
+            continue
+        parent = candidates[0]
+        dispatch = parent["application_dispatch"]
+        field = {"backtest": "source_job_id", "chart": "command_id"}.get(dispatch.get("kind"))
+        if (not field or not dispatch.get("source_id") or not parent.get("conversation_id")
+                or source.get(field) != dispatch["source_id"]
+                or source.get("conversation_id") != parent["conversation_id"]):
+            continue
+        folded.add(source["id"])
+        sources[parent["id"]] = dict(source)
+    tasks = [dict(row) for row in legacy_tasks if row.get("id") not in folded]
+    tasks += [{**row["task"], **({"source_execution": sources[row["id"]]} if row["id"] in sources else {})}
+              for row in model_rows]
+    return tasks, folded
+
+
 def enrich_overview(authorized, base=None):
     """One-page read model; no job dispatch, scores or chat writes on GET."""
     base = dict(base or {})
@@ -338,9 +471,23 @@ def enrich_overview(authorized, base=None):
     model_rows = model_service.tasks(context=context)["items"]
     configured_models = model_service.models(context=context)["items"]
     people = domains(authorized, model_service.repository).list(context=context, admit=authorized["admit"], domain="personas")["items"]
-    tasks = list(base.get("tasks") or []) + [row["task"] for row in model_rows]
-    tasks.sort(key=lambda row: row.get("updated_at", ""), reverse=True)
-    agents = list(base.get("agents") or [])
+    tasks, folded = _application_workflows(list(base.get("tasks") or []), model_rows)
+    tasks.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
+    from .application_roles import ROLES
+    assignments = {}
+    for person in people:
+        spec = ROLES.get(person.get("application_role"))
+        if spec and person["status"] in {"active", "suspended"}:
+            assignments.setdefault(spec["legacy_id"], []).append(person)
+    aliases = {legacy: group[0]["id"] for legacy, group in assignments.items() if len(group) == 1}
+    legacy_agents = {row["id"]: row for row in base.get("agents") or []}
+    agents = [row for row in legacy_agents.values() if row["id"] not in aliases]
+    for task in tasks:
+        lead = task.get("lead") or {}
+        if isinstance(lead, dict) and lead.get("id") in aliases:
+            person = next(person for person in people if person["id"] == aliases[lead["id"]])
+            task["legacy_lead"] = lead
+            task["lead"] = {**lead, "id": person["id"], "display_name": person.get("title") or person.get("name")}
     for person in people:
         bound = [row for row in configured_models if row.get("persona_id") == person["id"]]
         mine = [row for row in model_rows if row.get("persona_id") == person["id"]]
@@ -352,11 +499,15 @@ def enrich_overview(authorized, base=None):
                                  "task_class": stats["rubric_key"], **stats})
         if len(observations) == 1:
             evaluation = observations[0]
+        role_spec = ROLES.get(person.get("application_role"), {})
+        legacy = legacy_agents.get(role_spec.get("legacy_id")) if aliases.get(role_spec.get("legacy_id")) == person["id"] else None
         agents.append({"id": person["id"], "display_name": person.get("title") or person.get("name"),
-            "role": "Персона · собственные модели", "status": "working" if any(row["status"] in {"ready", "running", "waiting"} for row in mine) else person["status"],
+            "application_role": person.get("application_role", ""),
+            "role": role_spec.get("label", "Персона · роль не назначена"), "status": "working" if any(row["status"] in {"ready", "running", "waiting"} for row in mine) else person["status"],
             "synthetic": False, "models": bound, "model_observations": observations,
             "tasks_completed": sum(row["status"] == "succeeded" for row in mine),
-            "task_ids": [row["id"] for row in mine], "evaluation": evaluation})
+            "task_ids": [row["id"] for row in tasks if (row.get("lead") or {}).get("id") == person["id"]], "evaluation": evaluation,
+            "compatibility_history": {"label": "История исходного Local-исполнителя; не оценка модели", "source": legacy} if legacy else None})
     model_outcomes = [{"task_id": row["id"], "title": row["title"], "summary": row.get("result_text") or row.get("summary"),
                        "status": row["status"], "source_kind": "real_model_response", "synthetic": False,
                        "created_at": row["updated_at"]} for row in model_rows if row["status"] in {"succeeded", "failed", "review", "blocked", "cancelled"}]
@@ -365,7 +516,7 @@ def enrich_overview(authorized, base=None):
     active = sum(row["status"] in {"queued", "ready", "running", "waiting"} for row in tasks)
     attention = [row for row in tasks if row["status"] in {"review", "blocked", "failed"}]
     return {**base, "enabled": True, "status": "IN DEVELOPMENT", "tasks": tasks, "agents": agents,
-        "outcomes": model_outcomes + list(base.get("outcomes") or []),
+        "outcomes": model_outcomes + [row for row in base.get("outcomes") or [] if row.get("task_id") not in folded],
         "stats": {**base.get("stats", {}), "tasks_total": len(tasks), "active_tasks": active, "running": active,
                   "completed": completed, "completed_tasks": completed, "agents": len(agents), "attention": len(attention),
                   "failed": len(attention), "evaluations": sum(bool(row.get("evaluation_id")) for row in model_rows),
@@ -452,11 +603,34 @@ def execute_worker(job, cancelled, heartbeat):
     if (str(scope.get("workspace_id") or "") != str(job.get("workspace_id") or "")
             or str(scope.get("user_id") or "") != str(job.get("user_id") or "")):
         raise ContractError("model_worker_scope_required")
-    authorized = access(scope)
+    delivery = job.get("kind") == "agent_world_model" and payload.get("phase") == "delivery"
+    if payload.get("phase") and not delivery:
+        raise ContractError("model_worker_phase_invalid")
+    authorized = access(scope, read_only=True) if delivery else access(scope)
     authorized["admit"]()
     if cancelled():
         raise ContractError("model_cancelled")
     heartbeat()
+    if delivery:
+        from .. import worker_router
+        from . import model_chat
+        source, source_scope = _model_source(worker_router.get(payload.get("source_worker_job_id"),
+            workspace_id=authorized["context"].scope.workspace_id) or {})
+        if (source_scope != scope or source.get("task_id") != payload.get("task_id")
+                or job.get("worker_job_id", job.get("id")) != _delivery_job_id(payload.get("task_id"), payload.get("event_id"))):
+            raise ContractError("model_delivery_scope_invalid")
+        original_admit = authorized["admit"]
+        def delivery_admit():
+            original_admit()
+            _require_delivery_claim(job)
+            heartbeat()
+        authorized = {**authorized, "admit": delivery_admit}
+        authorized["admit"]()
+        # Only this inbox consumer is writable. The history service itself has
+        # no provider/queue and retains fresh read-only auth/flags admission.
+        events = repository({**authorized, "read_only": False}).events
+        return model_chat.deliver(authorized, history_models(authorized), task_id=payload["task_id"],
+            event_id=payload["event_id"], checkpoint_sha256=payload.get("checkpoint_sha256"), events=events)
     if job["kind"] == "agent_world_followup":
         request = payload.get("request") or {}
         if request.get("automation_enabled") is not False or request.get("manual_review_required") is not True:
@@ -469,5 +643,10 @@ def execute_worker(job, cancelled, heartbeat):
     heartbeat()
     from . import model_chat, application_chat
     application_chat.finish_dispatch(authorized, service, result)
-    model_chat.publish(authorized, service.task_detail(context=authorized["context"], task_id=payload["task_id"]))
+    # Only the claimed delivery phase appends a final model/application report.
+    # The source executor and Chief monitor enqueue it, never race its append.
+    # If interrupted even before enqueue, the existing worker's scan recovers it.
+    history = access(scope, read_only=True)
+    history_service = history_models(history)
+    enqueue_model_delivery(history, history_service, payload["task_id"])
     return {"ok": True, "task_id": payload["task_id"], "status": result["status"]}

@@ -421,7 +421,7 @@ def test_domain_actions_require_enabled_server_projection_and_explicit_allowlist
 def test_persona_payload_is_distinct_from_model_credentials_scope_and_role_authority():
     payload = {"name": "Research helper", "description": "Local comparison", "style": "Concise", "workspace_id": "foreign", "api_key": "secret", "permissions": ["admin"], "model": "injected", "role": "owner"}
     result = evaluate(f"ui.domainPayload('personas','create',{json.dumps(payload)})")
-    assert result == {"name": "Research helper", "description": "Local comparison", "style": "Concise"}
+    assert result == {"name": "Research helper", "description": "Local comparison", "style": "Concise", "application_role": ""}
 
 
 @pytest.mark.parametrize("domain,action,values,expected", [
@@ -609,7 +609,7 @@ def test_persona_update_real_handler_sends_cas_revision_and_narrow_envelope():
     post = result["posts"][0]
     assert (post["domain"], post["action"]) == ("personas", "update")
     assert post["body"]["expected_revision"] == 7
-    assert post["body"]["payload"] == {"name": "Changed persona", "description": "Kept purpose", "style": "Concise"}
+    assert post["body"]["payload"] == {"name": "Changed persona", "description": "Kept purpose", "style": "Concise", "application_role": ""}
     assert post["body"]["idempotency_key"]
     assert "Changed persona" in result["html"]
 

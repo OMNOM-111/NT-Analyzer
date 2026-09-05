@@ -13,10 +13,10 @@ No merge, Canary/Production, real orders or budget increase is authorized.
 | Accepted Unified Local | `4ae766ea0c3258a8bb049644ac2afbba6cb89330`, beta.96; open [PR #280](https://github.com/OMNOM-111/NT-Analyzer/pull/280) |
 | Foundation dependency | `d5d07ac6817cd10f57d916dab0ce655347a8cbde`; open [PR #281](https://github.com/OMNOM-111/NT-Analyzer/pull/281) |
 | Integration branch | `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282), base `codex/agent-world-foundation` |
-| Starting checkpoint | `486db834850d465006a3983d2d83ee809202df60`; subsequent integrated model/domain delta is being verified before commit |
-| Active Local 8765 | Clean detached runtime checkout `StratForge-worktrees/agent-world-local-runtime`, SHA `486db834850d465006a3983d2d83ee809202df60`, beta.96 |
+| Starting checkpoint | `486db834850d465006a3983d2d83ee809202df60`; integrated model/domain delta committed as `ca505d83a25356df5de2fb468f5bc20666a436d5`; scoped delivery/role/workspace follow-up is under verification |
+| Active Local 8765 | Clean detached runtime checkout `StratForge-worktrees/agent-world-local-runtime`, SHA `ca505d83a25356df5de2fb468f5bc20666a436d5`, beta.96 |
 | Preserved real state | Original Development data root; actual owner identity/workspace, account/balance/history/configuration and authenticated NinjaTrader preserved |
-| Build identity | `dev-0.10.0-beta.96-486db834850d`; new delta is not yet claimed as the active build |
+| Build identity | `dev-0.10.0-beta.96-ca505d83a253`; uncommitted follow-up is not yet claimed as active |
 | Preview | Separate loopback synthetic child/data/cookies; never the real Local data root |
 | Version / release | `0.10.0-beta.96` unchanged; no next beta assigned, merge/deploy/signing not performed |
 | Shared numbered migrations | Still 1–22; no new Production/Canary schema migration |
@@ -47,14 +47,14 @@ Automated fixture checks are distinct from actual browser/provider verification.
 | Safe Local switch | Local 8765, runtime identity/account/status | Existing scheduled task/supervisor; clean code + original data root | **готово и проверено** for initial clean `486db834`: copy/cold backups, SQLite integrity, no active job loss, owner/runtime restored |
 | Auth, registration, device permanent/session | Entry, account → Security | Existing account_auth / security_devices | Baseline retained; new read-only worker session checks: 17 PASS. Final browser recheck: **реализовано, но не проверено** |
 | Preview registration and Exit | Owner Preview → New User, Reset, Exit | Existing sandbox credentials/state/backend flow | Baseline preserved; new real domain actions fail closed in Preview. Final walkthrough: **реализовано, но не проверено** |
-| Persona | Toolbar → Persona; create/edit/activate/suspend | DomainService + immutable Persona profile | Domain/contract tests PASS; final browser: **реализовано, но не проверено** |
+| Persona | Toolbar → Persona; create/edit/activate/suspend | DomainService + immutable Persona profile; explicit application-role association | Tolik/Ivan creation and model binding **готово и проверено** in browser; new rename-safe role/projection: 18 tests PASS, browser recheck pending |
 | Own models / supported compatible agent | Toolbar → Models; connect/test/task/disconnect | ModelService → existing secret store, universal client and worker | Scoped transport/authority/idempotency tests PASS; ordinary live credentials: **внешний blocker** until a user-owned connection is available; no owner key copying |
-| Existing owner connections | Models → bind existing approved connection | Fresh owner/runtime authority, exact existing registry ID/caps | Revocation/scope tests PASS; final real calls: **реализовано, но не проверено** |
-| SF Chat → model → real backtest | Tolik command with explicit catalog strategy/instrument/period | application_chat → model plan → existing jobqueue/NT → verified source report | Application/receipt/cancel tests PASS; fresh live E2E: **реализовано, но не проверено** |
+| Existing owner connections | Models → bind existing approved connection | Fresh owner/runtime authority, exact existing registry ID/caps | DeepSeek Flash and Gemini Flash **готово и проверено**: real CONNECTION_OK; Z.AI **внешний blocker**: model_endpoint_unavailable; only its new binding retired, original registry preserved |
+| SF Chat → model → real backtest | Tolik command with explicit catalog strategy/instrument/period | application_chat → model plan → existing jobqueue/NT → verified source report | **готово и проверено** on ca505d83: fresh model task 62182839, source awnt_7ed6…, 64 trades, -969.70 after commission, original report + independent evidence; follow-up delivery/projection still needs runtime recheck |
 | SF Chat → model → actual Desktop screenshot | Ivan command; open Desktop matching instrument/timeframe | Existing Desktop command queue/canvas/snapshot store | Named-source/hash/PNG tests PASS; live capture/attachment opening: **реализовано, но не проверено** |
 | Task Inspector / trace / history | Work row or task card → drawer → SF Chat/evidence | Intent/Task/Contribution/model Execution + application Execution/Outcome/Evaluation | Same-store lineage/idempotency tests PASS; live inspection: **реализовано, но не проверено** |
-| Automatic observed rating | Agents → profile/rating | Independent versioned deterministic rubric, distinct-input dedupe | NEW below n=3; no self-scoring/synthetic mixing. Live multiple-model samples: **реализовано, но не проверено** |
-| Experiments / comparisons | Toolbar → Experiments → same-input comparison | ModelService + existing worker; separate actual responses | Contract tests PASS; live comparison: **реализовано, но не проверено** |
+| Automatic observed rating | Agents → profile/rating | Independent versioned deterministic rubric, distinct-input dedupe | **готово и проверено** per model: DeepSeek and Gemini, n=3 distinct real arithmetic inputs each, 3/3, OBSERVED/low confidence. Not general/trading quality; no routing effect |
+| Experiments / comparisons | Toolbar → Experiments → same-input comparison | ModelService + existing worker; separate actual responses | **готово и проверено** on ca505d83: three same-input comparisons, six actual verified model outputs; follow-up display/restart still to recheck |
 | Decisions / Consensus / Court | Toolbar → Decisions/Court; proposal, three isolated judges | DomainService + ModelService.judge; sealed packet, immutable votes, 2-of-3 | State/diversity/replay tests PASS; live judges: **реализовано, но не проверено**; verdict never executes work |
 | Memory / lessons / sharing | Toolbar → Memory; edit/promote/publish/revoke | Existing private artifacts + active TTL/purpose/source-revision grant | Own/shared/revocation tests PASS; browser retrieval: **реализовано, но не проверено** |
 | Strategy Projects | Toolbar → Projects; definition/version/history | DomainService immutable StrategyProject revisions | Contract tests PASS; browser: **реализовано, но не проверено** |
@@ -64,12 +64,35 @@ Automated fixture checks are distinct from actual browser/provider verification.
 | Restart / cancel / retry / isolation | Existing Local worker, task status and same conversation | Existing queues/leases/inbox; fresh authority before transmission | Contract tests PASS; live restart: **реализовано, но не проверено** |
 | Existing PostgreSQL regression | Disposable loopback test DB only | Existing migrations 1–22 and RLS-enabled app role, TLS | **готово и проверено**: 41 PASS, zero skips, 122.71 s on repeated actual DB run |
 | General Router / new Execution Engine / Agent World PostgreSQL adapter | Not switched into runtime | Existing Router/executors remain authorities | **не реализовано** for new replacement systems; no new PG adapter or Production fallback is claimed |
-| Full suite / final SHA CI / owner design | Verification and draft PR | Existing test/static/context/bundle/CI gates | **реализовано, но не проверено** on final commit; owner visual acceptance remains separate |
+| Full suite / final SHA CI / owner design | Verification and draft PR | Existing test/static/context/bundle/CI gates | Automated scoped checkpoint **готово и проверено**: 3906 PASS / 44 skips, legacy 13/13, bundle/static/context PASS. Final-SHA CI and owner design acceptance separate/pending |
 
 The manual historical job `ui_20260905T003301149Z` (1273 bars, 64 trades) remains
 excluded from Agent World statistics. It proves the original executor can return
-real reports, not that the new model/chat chain has passed. A fresh scoped task
-must supply that evidence. Backtesting page redesign remains outside this task.
+real reports, not the new chain. The fresh scoped task below supplies distinct
+model/chat-chain evidence. Backtesting page redesign remains outside this task.
+
+### Actual model-to-NinjaTrader receipt
+
+The browser SF Chat command requested SampleMACrossOver / MNQ 09-26 / 5m /
+2026-08-24 through 2026-08-29, Fast=10, Slow=25. Actual model response:
+`deepseek-v4-flash`, 1256 ms, reported cost USD 0.00006776.
+Model task `62182839-1c4c-563d-8186-bcef081ec599`, SF Chat `C-1322EA65B646`,
+source task `b316f454-662f-5791-9808-322bd00f92f4`, original NT job
+`awnt_7ed6b329cead8eac1391f5c8a0f3b59ad6d2d073baca9a6f` all match.
+64 actual historical trades, net after commission -969.70, PF 0.725188.
+Original `result.json` SHA256:
+`202e31d6775e7e08cb3e4300110cc7ec3878f2023ead080944e119db2251bc6f`.
+Immutable verified summary artifact `f1dae944-aaed-5afb-bd38-06dd5e362fdc`, SHA256
+`7c9e8d550e1f161a81ac59f8139a041f400ccd62f3f4435954be708f839c51be`.
+Execution-conformance PASS is not strategy profitability or general model quality.
+
+Actual connection task `b7114186-079b-58be-98dc-e38c552c65d2` returned Gemini
+`CONNECTION_OK` at 611 ms. Three browser comparisons used JSON inputs
+`[13,-5,22,10]`, `[7,-11,23,9,12]`, `[101,-24,38,7,12,-8]` for both models.
+Comparison IDs: `fe17dc14-2944-51c6-b125-7ea3065d7852`,
+`c55cf8c8-e31d-5862-a12d-038df10414fe`, `5d749d7b-e4fa-564d-8f69-7626d0cd4333`.
+All six outputs independently passed; n=3 per model is only low-confidence
+bounded arithmetic evidence. Failed Z.AI connection remains visible in history.
 
 ## Authority and flags
 
@@ -102,12 +125,16 @@ cannot replace, trim or reseed real Local data.
 
 ## Verification checkpoint
 
-- Latest broad pre-final run: **3803 passed, 44 skipped**, 578.02 s.
-  The earlier two stale cache-token expectations are corrected. This is the
-  pre-delivery-recovery checkpoint, not final acceptance of later fixes.
-- Rating class-label focused regression: **96 passed**. A transient SF Chat
-  delivery gap is being repaired using the existing worker/inbox; persisted
-  results must be delivered without another provider call or budget charge.
+- Broad checkpoint before final claim/role/workspace changes: **3852 passed,
+  44 skipped**, 622.61 s; not acceptance of subsequent changes.
+- Scoped follow-up: **270 passed** (private workspace, application chat, domains,
+  gateway, SQLite); **28 delivery** and **18 explicit-role/projection** tests PASS.
+  Single claimed delivery jobs recover saved results through the existing
+  worker/inbox; no repeat provider call or budget charge.
+- Final scoped follow-up full rerun: **3906 passed, 44 skipped**, 770.01 s.
+  Legacy **13/13 suites**, Python compile, **23 JS files**, root-level secret/
+  Markdown/CSP scans, context validator and **533-file bundle** gates PASS.
+  Forty-four skipped scenarios are not represented as generic Windows PASS.
 - Actual isolated PostgreSQL rerun: **41 passed**, 122.71 s, zero skipped;
   migrations 1–22, app/admin roles non-superuser and NOBYPASSRLS, TLS.
 - Forty-one of the 44 generic Windows skips are the separately executed PG
@@ -118,9 +145,14 @@ cannot replace, trim or reseed real Local data.
   and delegated scoped records. Fixture provider tests are not live model tests.
 - Historical branch CI on `b05ee124` is not current-delta CI. Final commit,
   push, mandatory/dispatched checks and clean Git are still to be recorded.
-- The owner requested a separate ordinary test account and a ready connection
-  wizard. A personal test key will be entered by the owner, not copied from
-  owner connections. Its real call is **PENDING OWNER KEY**; other work continues.
+- Ordinary test registration `aw_model_review_0905` reached final Terms on
+  localhost:8765, separate from the owner's 127.0.0.1 cookies. No account has
+  been finalized on the owner's behalf. **PENDING OWNER REGISTRATION / KEY**.
+  The prepared private-workspace route requires a real confirmed human session,
+  creates only that user's container, and grants no NT/key/budget access. Exact
+  workspace opt-in is still server-side. OpenRouter / `openrouter/free` is the
+  supported test choice; owner types the key into **Ключ подключения** personally.
+  Native Gemini is supported for existing owner bindings, not this private wizard.
 
 ## Shared-file ownership
 

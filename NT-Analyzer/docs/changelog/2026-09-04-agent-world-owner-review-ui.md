@@ -372,3 +372,27 @@ workspace-уровне, оставляя Task Graph включённым: пуб
 **95**, без skipped; Python compilation и scoped diff-check **PASS**.
 UI остаётся неизменным после **171 PASS**. PostgreSQL-кластер этим slice не
 затрагивался; его независимый повтор ведёт основной исполнитель.
+
+### Исправление единой AI-навигации после Local browser review
+
+Воспроизведено расхождение: AI Центр был разрешён для текущего workspace,
+но первичный `/api/auth/status` возвращал выключенную навигацию. Bootstrap
+ещё не сохранял проверенный context в Handler, а navigation adapter читал
+именно его. Основной исполнитель исправил передачу свежего context с
+восстановлением прежнего значения в `finally`; новые проверки выполняют
+настоящие HTTP bootstrap/overview и не подменяют navigation DTO.
+
+Rail объединяется в один «AI Центр» только при точном server
+`agent_world.enabled === true`. Отсутствующий, выключенный или некорректный
+grant сохраняет существующие Legacy/locked/student правила. Старые закладки
+`ai-lab.html` и `ai-agents.html` в разрешённом workspace переходят на
+«Обзор»/«Агенты» внутри AI Центра; сам AI Центр не перенаправляется.
+После перенаправления bootstrap не запускает старую страницу. Дизайн rail,
+Auth/Device Confirmation и прочие пункты навигации не менялись.
+
+Проверки этого дополнения: navigation/actual bootstrap **22 passed**;
+совместный UI + Aurora + navigation запуск **254 passed**, без skipped;
+`node --check`, Python compilation и scoped diff-check — **PASS**.
+Browser QA, общий cache-token bump, current/Context Pack, общий commit/PR и
+полный regression принадлежат основному исполнителю. Этот scoped результат
+не означает release/deploy или завершённую credentialed provider acceptance.

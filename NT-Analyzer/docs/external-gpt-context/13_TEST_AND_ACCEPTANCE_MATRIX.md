@@ -3,10 +3,20 @@
 - Context Pack document: 13_TEST_AND_ACCEPTANCE_MATRIX.md
 - Last verified UTC: 2026-09-05T04:22:06Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 486db834850d465006a3983d2d83ee809202df60
-- Active Local: clean `486db834` beta.96 on 8765 with original owner data; newer integrated delta is dirty and not active there
+- Local source verified SHA: ca505d83a25356df5de2fb468f5bc20666a436d5 (clean beta.96 runtime; scoped follow-up under verification)
+- Active Local 8765: clean `ca505d83a25356df5de2fb468f5bc20666a436d5`, build `dev-0.10.0-beta.96-ca505d83a253`, original owner data, Preview=false
 - Scope: Canonical test layers, release gates, acceptance and rollback expectations
 - Status: IN DEVELOPMENT
+
+## Latest scoped checkpoint verification
+
+3906 passed, 44 skipped (770.01 s); legacy 13/13; Python compile, 23 JS files,
+root secret/Markdown/CSP scans, context validator and 533-file bundle PASS.
+The 44 skips remain explicit; 41 have separate actual isolated PG evidence.
+Three real DeepSeek/Gemini comparisons (six outputs, three distinct arithmetic
+inputs per model) passed: n=3, OBSERVED, low confidence, no routing effect.
+This supersedes pending automated/comparison notes in earlier checkpoints;
+remaining Desktop/domain/own-key/final-SHA CI and owner acceptance stay open.
 
 ## Main gates
 
@@ -50,14 +60,16 @@ transport, contract assertion or HTTP 200 is actual provider/browser acceptance.
 
 | Current delta check | Result | Limit |
 | --- | --- | --- |
-| Pre-delivery-repair full pytest | **3803 passed, 44 skipped**, 578.02 s | Prior stale cache-token failures corrected; later delivery repair still requires final full regression |
+| Broad checkpoint pytest | **3852 passed, 44 skipped**, 622.61 s | Later final claim/role/workspace changes require full rerun |
+| Scoped follow-up | **270 scope, 28 delivery, 18 explicit-role tests PASS** | Disposable stores; actual browser follow-up separate |
 | Later domain gateway checks | **96 passed** | Focused checks, not a replacement for final full tests |
 | Actual isolated PostgreSQL 17.10 | **41 passed, zero skipped**, 122.71 s | TLS, non-superuser/NOBYPASSRLS roles, existing migrations 1–22 only; not an Agent World PostgreSQL adapter |
 | Agent World domain/storage/social | **348 passed** | Disposable-data service/contract scope; no live model/publication claim |
 | Session authority/history | **17 passed** | Disposable auth/device stores; final browser recheck remains separate |
-| Final SF Chat delivery recovery | **IN PROGRESS** | Persisted final results must recover via existing worker/inbox without repeating the provider call |
-| Live ordinary-user provider | **PENDING OWNER KEY** | Prepare the test-account wizard; owner supplies a separate Gemini key; no copied owner credentials |
-| Final model/chat/NT/Desktop/domain/restart browser acceptance | **PENDING** | New clean tested delta activation and actual receipts still required |
+| Final SF Chat delivery recovery | **CONTRACT PASS** | One claimed existing-worker publisher; final runtime recheck pending |
+| Live ordinary-user provider | **PENDING OWNER REGISTRATION / KEY** | Final Terms waiting on localhost; then own confirmed workspace and OpenRouter wizard; no copied owner credentials |
+| Actual owner providers / NT | **PARTIAL** | DeepSeek + Gemini CONNECTION_OK; SF Chat/model/NT original report PASS on ca505d83, Z.AI endpoint unavailable |
+| Final Desktop/domain/rating/restart browser acceptance | **PENDING** | Follow-up clean activation and remaining actual receipts still required |
 | Final static/context/bundle/CI | **PENDING** | Record final source and artifacts; older CI cannot certify the dirty delta |
 
 The 41 generic PostgreSQL skips are covered by the separate real isolated DB run.
@@ -66,12 +78,12 @@ those three are not Windows PASS. No Production DB or secrets are test fixtures.
 Agent World domain storage itself is Development SQLite only and fails closed
 outside Development; no new numbered migration or production repository is claimed.
 
-Initial Local switch acceptance is already complete: clean `486db834` beta.96
-serves 8765 against the original owner data after backup/integrity/copy checks.
-It is not the current dirty delta. The manual NinjaTrader proof
+Initial switch and later clean `ca505d83` beta.96 activation passed preserved
+owner-data/copy/integrity checks. New scoped follow-up is not active yet. The manual NinjaTrader proof
 `ui_20260905T003301149Z` contains 1,273 bars and 64 trades and remains excluded
-from Agent World statistics. A fresh SF Chat/model-created job, actual Desktop
-canvas receipt and real model/rating/domain actions are still required. See
+from Agent World statistics. Fresh SF Chat/model job 62182839 passed with original
+NT report; actual Desktop canvas and remaining model/rating/domain actions are
+still required. See
 [ADR-0012](../adr/0012-agent-world-integrated-local.md).
 
 ## Historical pre-model evidence

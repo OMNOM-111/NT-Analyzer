@@ -200,9 +200,11 @@ class DomainService:
 
     def _create_input(self, domain, payload):
         if domain == "personas":
-            data = _fields(payload, ("name",), ("description", "style"))
+            from .application_roles import role_key
+            data = _fields(payload, ("name",), ("description", "style", "application_role"))
             return {"name": _text(data["name"], limit=160), "description": _text(data.get("description", ""), empty=True),
-                    "style": _text(data.get("style", ""), limit=1000, empty=True)}
+                    "style": _text(data.get("style", ""), limit=1000, empty=True),
+                    "application_role": role_key(data.get("application_role", ""))}
         if domain == "memory":
             data = _fields(payload, ("title", "content", "purpose", "retention_days"),
                            ("source_ids", "memory_class", "task_id", "verified_outcome_id"))
@@ -332,6 +334,9 @@ class DomainService:
         references = ()
         if action == "update" and domain in {"personas", "projects", "memory"}:
             data = self._create_input(domain, clean)
+            if domain == "personas" and "application_role" not in clean:
+                # Older clients can rename a Persona without unassigning its role.
+                data["application_role"] = self._json(context, record.profile).get("application_role", "")
             if domain == "memory" and record.status != "draft":
                 raise ContractError("finalized_record_immutable")
             if domain == "memory" and record.retention_until <= self.now():

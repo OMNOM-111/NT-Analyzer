@@ -3,8 +3,8 @@
 - Context Pack document: 07_AI_AGENTS_AND_AUTOMATION.md
 - Last verified UTC: 2026-09-05T04:04:22Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 486db834850d465006a3983d2d83ee809202df60 (clean beta.96 runtime baseline)
-- New integrated domain/model/social source: dirty worktree above 486db834; final commit and runtime acceptance pending
+- Local source verified SHA: ca505d83a25356df5de2fb468f5bc20666a436d5 (clean beta.96 runtime; scoped follow-up under verification)
+- Scoped follow-up: delivery-only recovery, explicit Persona application roles, workflow projection and ordinary-user private workspace; final clean commit/activation acceptance pending
 - Scope: Agent hierarchy, AI Lab, queues, workspace boundaries and model-usage rules
 - Status: IN DEVELOPMENT
 
@@ -68,10 +68,11 @@ above Vitek.
 ## Agent World current contract
 
 The current live Local `8765` is clean beta.96 at
-`486db834850d465006a3983d2d83ee809202df60`, using the original owner data/settings
-from a clean runtime worktree. The implementation below is a newer dirty delta,
-not a claim that the running server already includes it. New real-provider,
-browser and owner acceptance, final Git/CI closeout and stages 0–13 remain open.
+`ca505d83a25356df5de2fb468f5bc20666a436d5`, using the original owner data/settings
+from a clean runtime worktree. Model/domain implementation below is active;
+scoped claimed-delivery/explicit-role/private-container changes await activation.
+Real SF Chat → model → NT report passed. Remaining provider/browser/owner
+acceptance, final Git/CI closeout and stages 0–13 remain open.
 `fc78677dfa258fb56042866a6764e8c8a45c42e6` is the earlier adapter snapshot. The
 shared deployment anchor `8f42158661e8247832c90bea8fc4d9f0071e647b` is unchanged;
 Production was not checked or changed by this work.
@@ -79,6 +80,12 @@ Production was not checked or changed by this work.
 Persona, Agent Role, Provider Account and Model retain separate identities.
 Legacy provider/account keys do not become personas or permissions. Source IDs
 and statuses remain explicit; unknown legacy states require review.
+
+Commands choose the explicitly assigned application role, not a Tolik/Ivan name.
+Rename preserves assignment; suspended/missing-model assignments block execution.
+One exact model/source execution chain counts once in Overview without rewriting
+the original task or mixing legacy performer metrics into model ratings. Final
+saved SF Chat output is delivered through one claimed existing worker path.
 
 In a controlled synthetic Preview workspace,
 four deterministic handlers perform finance reconciliation, OHLC statistics,
