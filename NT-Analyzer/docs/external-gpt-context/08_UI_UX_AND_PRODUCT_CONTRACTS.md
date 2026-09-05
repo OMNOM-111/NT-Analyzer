@@ -16,6 +16,17 @@ passed. Real multi-user sharing, permanent Social and own-key/owner acceptance
 remain separate. The pack-wide deployment anchor is unchanged; Production was
 not rechecked. Local verification uses the explicit source SHA above.
 
+## SF Chat dialog correction — verification in progress
+
+The task branch replaces native conversation confirmations and rename/folder
+prompts with styled asynchronous in-app dialogs, plus notification-inbox clear.
+Cancellation, keyboard focus, stale context and duplicate actions are guarded;
+existing backend, permissions, stores and Auth/device/Preview remain unchanged.
+This does not migrate unrelated release/trading/security administration dialogs.
+Active Local remains aa54c294 until the current regression/activation gates pass.
+Canonical status/evidence: [dialog change record](../changelog/2026-09-05-sf-chat-app-dialogs.md)
+and [program status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
+
 ## Current scoped follow-up — aa54c294
 
 Clean Local 8765 runs `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96,

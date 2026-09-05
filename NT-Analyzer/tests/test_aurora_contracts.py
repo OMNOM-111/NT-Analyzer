@@ -168,7 +168,7 @@ def test_every_aurora_page_uses_current_theme_cache_version():
         marker = 'href="assets/theme.css?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260902-permanent-record"}, versions
+    assert set(versions.values()) == {"20260905-app-dialogs"}, versions
 
 
 def test_development_preview_is_rewired_after_async_build_identity():
@@ -292,7 +292,7 @@ def test_every_aurora_page_uses_current_ui_cache_version():
             continue
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
     assert versions
-    assert set(versions.values()) == {"20260905-agent-world6"}, versions
+    assert set(versions.values()) == {"20260905-app-dialogs"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():

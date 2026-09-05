@@ -36,6 +36,20 @@ Desktop plans/images, historical `c9b2883`, foundation records and
 [ADR-0011](../adr/0011-agent-world-real-local-jobs.md) are not erased.
 [ADR-0012](../adr/0012-agent-world-integrated-local.md) records the current scope.
 
+## SF Chat application-local decisions
+
+Canonical feature status: `BETA` (implemented in the Local task branch;
+final regression and activation are pending this corrective run).
+Conversation create/switch/close/delete confirmations and rename/folder inputs
+now use styled asynchronous in-app dialogs. Inbox clear uses the same helper.
+Cancel preserves history/cursors; Escape closes only the decision window, not
+the chat/inspector. Repeated actions and changed conversation/auth context cannot
+reuse consent. Existing Chat APIs/stores and Auth/device/Preview gates are unchanged.
+Release/trading/security administrative native prompts outside this slice are
+not claimed migrated. See the
+[scoped change record](../changelog/2026-09-05-sf-chat-app-dialogs.md)
+for verification, exact source/activation and rollback evidence.
+
 ## One-page product contract and requirements matrix
 
 Exactly three primary tabs: **Обзор / Работа / Агенты**. All additional domains
