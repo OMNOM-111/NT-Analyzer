@@ -8,7 +8,7 @@ Version: `0.10.0-beta.96`, unchanged. Local-only correction, not a release.
 Branch: `codex/agent-world-owner-preview`, draft
 [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282).
 Source base SHA: `dc5cd1115c69d7a76a4f963e07658f1135512a18`.
-Exact source commit and Local activation receipt are recorded at closeout below.
+Source SHA: `95912cbff8152905966e6bb7bfc2a45d3db15f80` (active clean Local code).
 
 ## User-visible change and scope
 
@@ -52,9 +52,52 @@ Full pytest: **4032 passed / 44 skipped**, 966.68 s. The run collected before
 seven additional auth-context parameters were added; all seven are included in
 the final 62-case matrix above. Skips are not live-scenario PASS. No credentialed
 provider, PostgreSQL or full registration browser scenario was rerun for this UI fix.
-Exact staged 534-file bundle: PASS (static scan, shipped runtime reads, Python
-compile and JavaScript syntax). Local browser activation is the remaining gate.
-Verification result: PASS for automated regression; Local visual check pending.
+Exact staged and runtime 534-file bundles: PASS (static scan, shipped runtime
+reads, Python compile and JavaScript syntax).
+Verification result: **PASS** for this scoped UI correction, including Local
+activation, actual browser cancellation/navigation/focus checks and exact-code CI.
+
+## Actual Local and Git/CI receipt
+
+Only authorized Local 8765 was switched to clean detached source
+`95912cbff8152905966e6bb7bfc2a45d3db15f80`:
+`dev-0.10.0-beta.96-95912cbff815`, Development, dirty=false, Preview=false.
+No active canonical NT/Chief/worker job was interrupted. Original owner data and
+session stayed valid (`authenticated=true`, `is_owner=true`); NinjaTrader was not
+stopped. The isolated copy passed SQLite integrity and unchanged job/worker/chat
+counts with outgoing traffic denied; that copy is not the live owner database.
+Task/runtime ui.js SHA256 matches:
+`8e922279f7f04443016c6afb0e799cd7c62e7955b2bc18609187b71bb4f16d50`.
+
+Browser evidence on this source:
+
+- Existing unfinished Z.AI thread opened a styled DOM confirmation for New Chat.
+  Escape closed only the confirmation and returned focus to New Chat. Current
+  conversation, its complete displayed history and 13-conversation count matched
+  before/after. The old provider failure was not retried or changed.
+- Cancelled create/switch/close/delete, rename with edited input, add folder and
+  move-to-folder. No real conversation mutation or model request was submitted.
+- Explicitly confirmed read-only navigation returned to the original Ivan chart
+  thread; its 13 messages and real PNG remained visible.
+- Inbox clear cancellation preserved the inbox, kept its drawer open and
+  returned focus to the re-enabled Clear button. No notifications were deleted.
+- Screenshot: local non-shipped evidence
+  `.artifacts/verification-20260905/sf-chat-dialog-95912cbf.png`.
+  Only cancellation and read-only navigation were exercised against owner data;
+  creation/deletion/rename/folder acceptance is covered by disposable JS tests.
+
+[Exact-code CI 33970324754](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33970324754)
+is **3/3 PASS**: Windows **4039 passed / 44 skipped**, 934.12 s; Linux
+**4042 passed / 41 skipped**, 258.02 s; static gates PASS. The fresh CI collection
+includes all seven final auth-context cases. The 41 PostgreSQL cases require
+explicit isolated-test DSNs; Windows also skips two shell cases and one POSIX
+permissions case. Neither those skips nor earlier credentialed acceptance is
+counted as a new live-scenario PASS. Main-target mandatory CI/release is not inferred.
+
+Code is committed/pushed to the same draft PR #282, with documentation-only
+operational follow-up. `IMPLEMENTATION COMPLETE: YES` and `GIT CLOSEOUT COMPLETE:
+YES` for this corrective slice; `STAGE CLOSED: NO` for the wider Agent World
+program and owner acceptance. No additional feature stage was implemented here.
 
 Active Local rollback code at start: `aa54c2940150e540d8b594dbf1d6254e172adbfd`.
 There is no data migration or data rollback; never restore the old data backup

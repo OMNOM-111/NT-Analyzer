@@ -3,15 +3,16 @@
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
 - Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: aa54c2940150e540d8b594dbf1d6254e172adbfd (clean beta.96 runtime; integrated browser/provider checks and exact-code CI PASS; full owner acceptance remains separate)
+- Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
+- Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
 - Active scope: verified integrated Local, result presentation, same-input Consensus and three-model Court; full program and owner-dependent acceptance remain open
 - Unified Local base: `0.10.0-beta.96`, PR #280; no Canary/Production promotion
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: PARTIAL
 
-## Current scoped follow-up — aa54c294
+## Previous verified model/domain checkpoint — aa54c294
 
-Clean Local 8765 runs `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96,
+At that previous checkpoint, clean Local 8765 ran `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96,
 build `dev-0.10.0-beta.96-aa54c2940150`, original owner data, Preview=false,
 live orders=false. The code is committed/pushed to draft PR #282; #280/#281
 remain unmerged. Operational documentation may be newer than active runtime code.
@@ -149,7 +150,7 @@ Key admin capability names already in the contract: `admin.view`,
 The following Production/Canary facts are historical deployment evidence, not a
 fresh environment check. The shared deployed anchor
 `8f42158661e8247832c90bea8fc4d9f0071e647b` is unchanged. Local `8765` now serves
-the clean `aa54c294` beta.96 runtime with original owner data/settings and the
+the clean `95912cbf` beta.96 runtime with original owner data/settings and the
 scoped delivery/role/private-container changes active. Earlier `fc78677`
 owner-review notes remain history. Ordinary-user registration/device/key and
 real multi-user revocation are still pending; the documented owner-provider

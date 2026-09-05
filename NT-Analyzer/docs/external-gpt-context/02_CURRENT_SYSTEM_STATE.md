@@ -3,31 +3,38 @@
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
 - Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: aa54c2940150e540d8b594dbf1d6254e172adbfd (clean beta.96 runtime; integrated browser/provider checks and exact-code CI PASS; full owner acceptance remains separate)
+- Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
+- Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`; not released to Canary/Production
-- Active Local 8765: clean `aa54c2940150e540d8b594dbf1d6254e172adbfd`, build `dev-0.10.0-beta.96-aa54c2940150`, original owner data, Preview=false
-- Agent World branch: `codex/agent-world-owner-preview`, stacked draft PR #282 above open #281/#280; clean aa54c294 active and browser/CI verified, not a release
+- Active Local 8765: clean `95912cbff8152905966e6bb7bfc2a45d3db15f80`, build `dev-0.10.0-beta.96-95912cbff815`, original owner data, Preview=false
+- Agent World branch: `codex/agent-world-owner-preview`, stacked draft PR #282 above open #281/#280; clean 95912cbf active and dialog-browser verified, not a release
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
-## SF Chat dialog correction — verification in progress
+## SF Chat dialog correction — Local verified
 
 The task branch replaces native conversation confirmations and rename/folder
 prompts with styled asynchronous in-app dialogs, plus notification-inbox clear.
 Cancellation, keyboard focus, stale context and duplicate actions are guarded;
 existing backend, permissions, stores and Auth/device/Preview remain unchanged.
 This does not migrate unrelated release/trading/security administration dialogs.
-Active Local remains aa54c294 until the current regression/activation gates pass.
+Active Local is clean 95912cbf; styled dialogs, Escape/cancel, preserved history,
+safe navigation and inbox focus passed in the actual browser. Full regression:
+4032 PASS / 44 skipped, supplemented by final 62 dialog checks (seven auth-context
+cases added after collection); 352 focused regression, root/static/context and
+534-file staged/runtime bundles PASS. Exact-code CI 33970324754 is 3/3 PASS:
+Windows 4039/44, Linux 4042/41 and static, including all final auth-context cases.
+Skipped DB/platform cases are not new live PASS; this is no program/release closeout.
 Canonical status/evidence: [dialog change record](../changelog/2026-09-05-sf-chat-app-dialogs.md)
 and [program status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 
-## Current Local checkpoint — aa54c294
+## Previous verified model/domain checkpoint — aa54c294
 
-Clean Local 8765 runs `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96,
+At that previous checkpoint, clean Local 8765 ran `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96,
 build `dev-0.10.0-beta.96-aa54c2940150`, original owner data, Preview=false,
 live orders=false. The code is committed/pushed to draft PR #282; #280/#281
 remain unmerged. Operational documentation may be newer than active runtime code.

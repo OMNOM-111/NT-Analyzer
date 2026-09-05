@@ -3,14 +3,15 @@
 - Context Pack document: 07_AI_AGENTS_AND_AUTOMATION.md
 - Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: aa54c2940150e540d8b594dbf1d6254e172adbfd (clean beta.96 runtime; integrated browser/provider checks and exact-code CI PASS; full owner acceptance remains separate)
+- Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
+- Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
 - Active scope: verified integrated Local, result presentation, same-input Consensus and three-model Court; full program and owner-dependent acceptance remain open
 - Scope: Agent hierarchy, AI Lab, queues, workspace boundaries and model-usage rules
 - Status: IN DEVELOPMENT
 
-## Current scoped follow-up — aa54c294
+## Previous verified model/domain checkpoint — aa54c294
 
-Clean Local 8765 runs `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96,
+At that previous checkpoint, clean Local 8765 ran `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96,
 build `dev-0.10.0-beta.96-aa54c2940150`, original owner data, Preview=false,
 live orders=false. The code is committed/pushed to draft PR #282; #280/#281
 remain unmerged. Operational documentation may be newer than active runtime code.
@@ -102,7 +103,7 @@ above Vitek.
 ## Agent World current contract
 
 The current live Local `8765` is clean beta.96 at
-`aa54c2940150e540d8b594dbf1d6254e172adbfd`, using the original owner data/settings
+`95912cbff8152905966e6bb7bfc2a45d3db15f80`, using the original owner data/settings
 from a clean runtime worktree. Model/domain implementation below is active;
 claimed-delivery/explicit-role/private-container changes are active. Sealed
 rejection delivery and active-binding ratings passed in the actual browser;

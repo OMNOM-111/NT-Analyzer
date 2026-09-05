@@ -3,14 +3,15 @@
 - Context Pack document: 13_TEST_AND_ACCEPTANCE_MATRIX.md
 - Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: aa54c2940150e540d8b594dbf1d6254e172adbfd (clean beta.96 runtime; integrated browser/provider checks and exact-code CI PASS; full owner acceptance remains separate)
-- Active Local 8765: clean `aa54c2940150e540d8b594dbf1d6254e172adbfd`, build `dev-0.10.0-beta.96-aa54c2940150`, original owner data, Preview=false
+- Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
+- Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
+- Active Local 8765: clean `95912cbff8152905966e6bb7bfc2a45d3db15f80`, build `dev-0.10.0-beta.96-95912cbff815`, original owner data, Preview=false
 - Scope: Canonical test layers, release gates, acceptance and rollback expectations
 - Status: IN DEVELOPMENT
 
-## Current Local checkpoint — aa54c294
+## Previous verified model/domain checkpoint — aa54c294
 
-Clean Local 8765 runs `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96,
+At that previous checkpoint, clean Local 8765 ran `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96,
 build `dev-0.10.0-beta.96-aa54c2940150`, original owner data, Preview=false,
 live orders=false. The code is committed/pushed to draft PR #282; #280/#281
 remain unmerged. Operational documentation may be newer than active runtime code.
@@ -98,6 +99,7 @@ transport, contract assertion or HTTP 200 is actual provider/browser acceptance.
 
 | Current delta check | Result | Limit |
 | --- | --- | --- |
+| SF Chat in-app dialogs 95912cbf | **Local and exact-code CI PASS** | Full 4032/44 + final 62 dialog tests (seven added after collection), 352 focused, 534-file bundles and actual cancellation/navigation/focus browser checks PASS; CI 33970324754 3/3 PASS, fresh Windows 4039/44 and Linux 4042/41 |
 | Historical 34deb827 | **3906 passed, 44 skipped**, 770.01 s; exact-SHA CI 3/3 PASS | Superseded by ef4006eb; not a release |
 | Historical ef4006eb | **3914 passed, 44 skipped**, 759.73 s; **218 focused PASS**, staged/runtime bundles and CI 3/3 PASS | Earlier counts and interrupted run remain historical |
 | Azure owner binding bd239e76 | **3925 passed, 44 skipped**, 759.35 s; **187 focused PASS** | Staged/runtime bundle, activation, CI 3/3 and actual CONNECTION_OK PASS |

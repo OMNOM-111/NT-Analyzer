@@ -16,9 +16,9 @@ No merge, Canary/Production, real orders or budget increase is authorized.
 | Foundation dependency | `d5d07ac6817cd10f57d916dab0ce655347a8cbde`; open [PR #281](https://github.com/OMNOM-111/NT-Analyzer/pull/281) |
 | Integration branch | `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282), base `codex/agent-world-foundation` |
 | Starting checkpoint | `486db834850d465006a3983d2d83ee809202df60`; integrated model/domain delta `ca505d83a25356df5de2fb468f5bc20666a436d5`; delivery/role/workspace checkpoint `34deb827e4ed0e6a29d5693650b575e86e0f33d6` committed, pushed and activated |
-| Active Local 8765 | Clean detached runtime checkout `StratForge-worktrees/agent-world-local-runtime`, SHA `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96 |
+| Active Local 8765 | Clean detached runtime checkout `StratForge-worktrees/agent-world-local-runtime`, SHA `95912cbff8152905966e6bb7bfc2a45d3db15f80`, beta.96 |
 | Preserved real state | Original Development data root; actual owner identity/workspace, account/balance/history/configuration and authenticated NinjaTrader preserved |
-| Build identity | `dev-0.10.0-beta.96-aa54c2940150`, dirty=false; result presentation, compatible Consensus choices and versioned Court format active and browser-verified |
+| Build identity | `dev-0.10.0-beta.96-95912cbff815`, dirty=false; in-app SF Chat dialogs browser-verified; prior result/Consensus/Court behavior retained |
 | Preview | Separate loopback synthetic child/data/cookies; never the real Local data root |
 | Version / release | `0.10.0-beta.96` unchanged; no next beta assigned, merge/deploy/signing not performed |
 | Shared numbered migrations | Still 1–22; no new Production/Canary schema migration |
@@ -38,8 +38,7 @@ Desktop plans/images, historical `c9b2883`, foundation records and
 
 ## SF Chat application-local decisions
 
-Canonical feature status: `BETA` (implemented in the Local task branch;
-final regression and activation are pending this corrective run).
+Canonical feature status: `BETA` (active and browser-verified on Local 95912cbf).
 Conversation create/switch/close/delete confirmations and rename/folder inputs
 now use styled asynchronous in-app dialogs. Inbox clear uses the same helper.
 Cancel preserves history/cursors; Escape closes only the decision window, not
@@ -49,6 +48,17 @@ Release/trading/security administrative native prompts outside this slice are
 not claimed migrated. See the
 [scoped change record](../changelog/2026-09-05-sf-chat-app-dialogs.md)
 for verification, exact source/activation and rollback evidence.
+
+The actual browser check covered create/switch/close/delete, rename, folder create/
+move, Escape and inbox clear cancellation. The original 13-dialogue list and
+selected history were preserved. Confirmed read-only navigation returned to the
+original Ivan chart thread. No provider request, deletion, rename or folder write
+was made against real user data. Owner Local remains authenticated; runtime
+ui.js hash matches the task source. Full 4032 PASS/44 skipped plus the final
+62-case matrix and 352 focused regression, staged/runtime 534-file bundle PASS.
+Exact-code CI [33970324754](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33970324754)
+is 3/3 PASS: Windows 4039/44, Linux 4042/41 and static. This is not a full-program
+or release closeout; skipped PostgreSQL/platform cases are not new live PASS.
 
 ## One-page product contract and requirements matrix
 
@@ -60,7 +70,7 @@ Automated fixture checks are distinct from actual browser/provider verification.
 
 | Requirement | Where / action | Existing backend and additive adapter | Evidence / current acceptance state |
 | --- | --- | --- | --- |
-| Safe Local switch | Local 8765, runtime identity/account/status | Existing scheduled task/supervisor; clean code + original data root | **готово и проверено** through clean `aa54c294`: isolated-copy integrity/identity checks, no active work interrupted, same owner/runtime/NT restored |
+| Safe Local switch | Local 8765, runtime identity/account/status | Existing scheduled task/supervisor; clean code + original data root | **готово и проверено** through clean `95912cbf`: isolated-copy integrity/identity checks, no active work interrupted, same owner/runtime retained, NinjaTrader untouched |
 | Auth, registration, device permanent/session | Entry, account → Security | Existing account_auth / security_devices | Baseline retained; new read-only worker session checks: 17 PASS. Current full regression PASS; a fresh complete auth/device browser walkthrough was not repeated for this presentation correction |
 | Preview registration and Exit | Owner Preview → New User, Reset, Exit | Existing sandbox credentials/state/backend flow | Baseline preserved; new real domain actions fail closed in Preview. Accepted baseline Telegram/Google/email/OTP/QR/permanent/session/Exit walkthrough PASS; current regression PASS, no new complete walkthrough claimed |
 | Persona | Toolbar → Persona; create/edit/activate/suspend | DomainService + immutable Persona profile; explicit application-role association | **готово и проверено**: Tolik backtest / Ivan chart roles; separate Anna review Persona without application role, three actual records; retired model history preserved |
@@ -80,7 +90,7 @@ Automated fixture checks are distinct from actual browser/provider verification.
 | Restart / cancel / retry / isolation | Existing Local worker, task status and same conversation | Existing queues/leases/inbox; fresh authority before transmission | Contract PASS; actual restart retained backtest chat and recovered one sealed rejected-model report without a second provider job. Other-user/live revocation remains pending |
 | Existing PostgreSQL regression | Disposable loopback test DB only | Existing migrations 1–22 and RLS-enabled app role, TLS | **готово и проверено**: 41 PASS, zero skips, 122.71 s on repeated actual DB run |
 | General Router / new Execution Engine / Agent World PostgreSQL adapter | Not switched into runtime | Existing Router/executors remain authorities | **не реализовано** for new replacement systems; no new PG adapter or Production fallback is claimed |
-| Full suite / final SHA CI / owner design | Verification and draft PR | Existing test/static/context/bundle/CI gates | Active aa54c294: 3977 PASS / 44 skips, 319 final focused, 610 presentation focused, legacy 13/13 suites, staged/runtime 533-file bundles; exact-SHA CI 33965039490 3/3 PASS. Owner design acceptance remains separate |
+| Full suite / final SHA CI / owner design | Verification and draft PR | Existing test/static/context/bundle/CI gates | Active 95912cbf: full 4032/44 plus final 62 dialog tests, 352 focused and 534-file bundles PASS; fresh exact-code CI 33970324754 3/3 PASS (Windows 4039/44, Linux 4042/41). Prior aa54c294 evidence preserved below. Owner design acceptance remains separate |
 
 The manual historical job `ui_20260905T003301149Z` (1273 bars, 64 trades) remains
 excluded from Agent World statistics. It proves the original executor can return
@@ -316,7 +326,7 @@ Legacy 13/13, Python/JS, root CSP/secrets/Markdown, context/diff and exact stage
 533-file bundle PASS. Commit, Local activation and exact-SHA CI subsequently
 passed on aa54c294; see the operational acceptance below.
 
-## aa54c294 actual Local acceptance — 2026-09-05
+## Historical aa54c294 Local acceptance — 2026-09-05
 
 Code `aa54c2940150e540d8b594dbf1d6254e172adbfd` is committed and pushed.
 Clean runtime 8765 serves that exact code and original owner data; Preview=false,
@@ -434,8 +444,8 @@ New Router/Execution V2, autonomous routines and an Agent World PostgreSQL adapt
 are not implemented; their reviewed slices and stages 0–13 remain open.
 No merge or release follows from Local PASS.
 
-`IMPLEMENTATION COMPLETE: YES` for the aa54c294 corrective slice;
+`IMPLEMENTATION COMPLETE: YES` for the 95912cbf SF Chat dialog corrective slice;
 `IMPLEMENTATION COMPLETE: NO` for the full Agent World program/acceptance.
-`GIT CLOSEOUT COMPLETE: YES` for code aa54c294 (pushed, draft PR, exact-code CI PASS);
-this operational evidence is a documentation-only closeout in the same PR.
+`GIT CLOSEOUT COMPLETE: YES` for code 95912cbf (pushed, draft PR, exact-code CI PASS);
+this operational evidence is a documentation-only follow-up in the same PR.
 `STAGE CLOSED: NO`; owner visual acceptance and release stages remain distinct.
