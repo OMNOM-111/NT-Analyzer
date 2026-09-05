@@ -40,6 +40,18 @@ def _domain_eval(expression: str):
     return json.loads(proc.stdout.strip())
 
 
+@pytest.mark.parametrize("after,expected", [(0.725188, 0.7252), (0, 0), (None, 0.7541), (True, 0.7541), ("invalid", 0.7541)])
+def test_public_report_factor_uses_same_commission_basis_as_net_when_available(after, expected):
+    from app import community
+    metrics = {"net_profit": -898.4, "net_profit_after_commission": -969.7,
+               "profit_factor": .7541, "profit_factor_after_commission": after, "trade_count": 64}
+    original = dict(metrics)
+    snapshot = community.attested_result_snapshot("awnt_report", {"status": "done", "metrics": metrics})
+    assert snapshot["metrics"]["Net P&L"] == -969.7
+    assert snapshot["metrics"]["Profit factor"] == expected
+    assert metrics == original
+
+
 def test_job_detail_adapter_uses_nested_result_and_real_trade_fields():
     fixture = {
         "job_id": "job-1",
@@ -146,7 +158,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260901-community-chat1"}, versions
+    assert set(versions.values()) == {"20260904-agent-world4"}, versions
 
 
 def test_every_aurora_page_uses_current_theme_cache_version():
@@ -156,7 +168,7 @@ def test_every_aurora_page_uses_current_theme_cache_version():
         marker = 'href="assets/theme.css?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260902-permanent-record"}, versions
+    assert set(versions.values()) == {"20260905-app-dialogs"}, versions
 
 
 def test_development_preview_is_rewired_after_async_build_identity():
@@ -280,7 +292,7 @@ def test_every_aurora_page_uses_current_ui_cache_version():
             continue
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
     assert versions
-    assert set(versions.values()) == {"20260902-permanent-record"}, versions
+    assert set(versions.values()) == {"20260905-agent-world-followup"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():
@@ -1141,7 +1153,7 @@ def test_desktop_preserves_backend_freshness_across_http_poll():
     assert "price_marker_live: !!(res && res.price_marker_live)" in js
     assert "const liveTransportFresh = topstepSource && marketDataWsOk && marketFeedFresh" in js
     assert "Date.now() - Number(rec.liveBarAt || 0) <= 15000 || liveTransportFresh" in js
-    assert "desktop.js?v=20260813-live-marker-freshness1" in html
+    assert "desktop.js?v=20260904-agent-world-receipt1" in html
 
 
 def test_command_language_covers_every_desktop_instrument():

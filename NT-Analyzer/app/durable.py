@@ -536,11 +536,28 @@ def get_worker_job(root: Optional[Path], worker_job_id: str, *,
 
 
 def list_worker_jobs(root: Optional[Path], *, status: str = "",
-                     limit: int = 100, workspace_id: str = "") -> List[Dict[str, Any]]:
+                     limit: int = 100, workspace_id: str = "", kind: str = "",
+                     after_id: Optional[str] = None) -> List[Dict[str, Any]]:
     limit = max(1, min(1000, int(limit or 100)))
     with _LOCK:
         with connect(root) as conn:
-            if status and workspace_id:
+            if kind or after_id is not None:
+                # Internal recovery uses an immutable keyset, not a newest-N
+                # window which can permanently hide an interrupted old job.
+                # Omitted selectors preserve the existing listing order.
+                where, params = [], []
+                for column, value in (("status", status), ("workspace_id", workspace_id), ("kind", kind)):
+                    if value:
+                        where.append(column + "=?")
+                        params.append(str(value))
+                if after_id is not None:
+                    where.append("worker_job_id>?")
+                    params.append(str(after_id))
+                order = "worker_job_id" if after_id is not None else "updated_at_utc DESC"
+                rows = conn.execute("SELECT * FROM worker_jobs" +
+                    (" WHERE " + " AND ".join(where) if where else "") +
+                    " ORDER BY " + order + " LIMIT ?", (*params, limit)).fetchall()
+            elif status and workspace_id:
                 rows = conn.execute(
                     "SELECT * FROM worker_jobs WHERE status=? AND workspace_id=? "
                     "ORDER BY updated_at_utc DESC LIMIT ?",

@@ -1510,6 +1510,7 @@ def _public_social_post(doc: Dict[str, Any], row: Dict[str, Any], viewer_profile
 _RESULT_METRIC_FIELDS = (
     ("net_profit_after_commission", "Net P&L"),
     ("net_profit", "Net P&L"),
+    ("profit_factor_after_commission", "Profit factor"),
     ("profit_factor", "Profit factor"),
     ("max_drawdown", "Max drawdown"),
     ("trade_count", "Trades"),

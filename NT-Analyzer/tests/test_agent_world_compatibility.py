@@ -234,9 +234,11 @@ def test_unresolved_legacy_states_require_review(source, status):
     assert result.phase in {a.Phase.REVIEW, a.Phase.UNKNOWN}
 
 
-def test_foundation_has_no_runtime_importers_or_io_dependencies():
-    # This is a wiring boundary check, not evidence of DB/RLS or external-provider acceptance.
+def test_foundation_core_stays_pure_and_runtime_composition_is_narrow():
+    # Stage 2+ enables only the reviewed HTTP composition. Core contracts still
+    # do not own IO, permissions, execution, queues or runtime configuration.
     violations = []
+    pure_modules = {"contracts.py", "states.py", "events.py", "flags.py", "repositories.py", "adapters.py"}
     for path in APP.rglob("*.py"):
         if "__pycache__" in path.parts:
             continue
@@ -249,9 +251,9 @@ def test_foundation_has_no_runtime_importers_or_io_dependencies():
                 names = [node.module or ""] + [alias.name for alias in node.names]
             else:
                 continue
-            if not foundation and any("ai_control_center" in name for name in names):
+            if not foundation and path.name not in {"server.py", "chief_agent.py", "local_worker.py", "universal_llm.py"} and any("ai_control_center" in name for name in names):
                 violations.append(f"{path.name}: runtime importer")
-            if foundation and any(name.split(".")[0] in {
+            if foundation and path.name in pure_modules and any(name.split(".")[0] in {
                 "os", "pathlib", "socket", "requests", "urllib", "sqlite3", "subprocess", "threading", "asyncio",
             } for name in names):
                 violations.append(f"{path.name}: IO dependency")

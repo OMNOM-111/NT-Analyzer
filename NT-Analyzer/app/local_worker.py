@@ -27,6 +27,10 @@ _SUPERVISOR: Optional[threading.Thread] = None
 _SUPERVISOR_STOP = threading.Event()
 _WORKER_ID = "api-" + secrets.token_hex(4)
 DEFAULT_INTERVAL_SEC = 2.0
+_MODEL_RECOVERY_LOCK = threading.Lock()
+_MODEL_RECOVERY_STATE = {"root": "", "at": 0.0, "after_id": ""}
+_MODEL_RECOVERY_INTERVAL_SEC = 30.0
+_MODEL_RECOVERY_LIMIT = 100
 
 
 class WorkerCancelled(RuntimeError):
@@ -224,6 +228,9 @@ def _execute(job: Dict[str, Any], *, heartbeat=None, cancelled=None) -> Dict[str
             path = runtime_env.data_path("runtime", name, project_root=root)
             indexed.append(durable.record_telemetry_file(root, name=name, path=path, updated_at_utc=_now_iso()))
         return {"ok": bool(rotation.get("ok", True)), "rotation": rotation, "indexed": indexed}
+    if kind in {"agent_world_model", "agent_world_followup"}:
+        from .ai_control_center.domain_gateway import execute_worker
+        return execute_worker(job, cancelled, heartbeat)
     if kind == "ai_orchestrator":
         scope = payload.get("scope") if isinstance(payload.get("scope"), dict) else {}
         if (str(scope.get("workspace_id") or "") != str(job.get("workspace_id") or "")
@@ -315,10 +322,38 @@ def _execute(job: Dict[str, Any], *, heartbeat=None, cancelled=None) -> Dict[str
     raise RuntimeError(f"unknown worker job kind: {kind}")
 
 
+def _recover_model_deliveries(root: Path) -> None:
+    """Throttled keyset read of the existing queue, never a second worker."""
+    from .ai_control_center import domain_gateway
+    if not domain_gateway.live_gateway.configured():
+        return
+    if not _MODEL_RECOVERY_LOCK.acquire(blocking=False):
+        return
+    try:
+        identity, now = str(durable.db_path(root)), time.monotonic()
+        state = _MODEL_RECOVERY_STATE
+        if state["root"] != identity:
+            state.update(root=identity, at=0.0, after_id="")
+        if state["at"] and now - state["at"] < _MODEL_RECOVERY_INTERVAL_SEC:
+            return
+        state["at"] = now
+        rows = durable.list_worker_jobs(root, kind="agent_world_model", after_id=state["after_id"],
+                                        limit=_MODEL_RECOVERY_LIMIT)
+        state["after_id"] = str(rows[-1]["worker_job_id"]) if len(rows) == _MODEL_RECOVERY_LIMIT else ""
+        domain_gateway.reconcile_model_deliveries(rows)
+    except Exception:
+        # Recovery must not stop unrelated queued work. The cursor wraps, and
+        # existing source/failed-delivery records remain inspectable.
+        pass
+    finally:
+        _MODEL_RECOVERY_LOCK.release()
+
+
 def run_once(*, worker_id: str = "") -> Optional[Dict[str, Any]]:
     root = _root()
     active_worker_id = worker_id or _WORKER_ID
     durable.sweep_stale_worker_jobs(root)
+    _recover_model_deliveries(root)
     job = durable.claim_worker_job(root, worker_id=active_worker_id)
     if not job:
         return None

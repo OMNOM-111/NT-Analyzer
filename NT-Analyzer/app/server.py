@@ -376,6 +376,7 @@ def _is_self_service_post(path: str) -> bool:
         or path.startswith("/api/ninjatrader/jobs")
         or path == "/api/demo-backtests"
         or path == "/api/ops/runtime/bars/batch"
+        or permissions.agent_world_history_request(path, "POST")
     )
 
 
@@ -3306,7 +3307,10 @@ class Handler(BaseHTTPRequestHandler):
             # Access accounting must never be the reason a request fails.
             return True
         context["trial_usage"] = usage
-        if not usage.get("expired") or _trial_gate_allows(path):
+        # Existing own Agent World evidence remains readable after expiry;
+        # domain auth still enforces confirmed session, user and workspace.
+        agent_world_history = permissions.agent_world_history_request(path, getattr(self, "command", "GET"))
+        if not usage.get("expired") or _trial_gate_allows(path) or agent_world_history:
             return True
         self._err(
             HTTPStatus.PAYMENT_REQUIRED,
@@ -3641,6 +3645,18 @@ class Handler(BaseHTTPRequestHandler):
     def _augment_permissions(self, context: Dict[str, Any], payload: Dict[str, Any]) -> Dict[str, Any]:
         """Attach the central authorization view (subscription-driven nav +
         capabilities + Free Preview state) to an auth payload."""
+        from .ai_control_center import gateway, live_gateway
+        # Auth bootstrap precedes the route's stored context. Resolve navigation
+        # against the freshly authenticated context, never an absent/stale one.
+        previous_context = getattr(self, "_remote_context", None)
+        self._remote_context = context
+        try:
+            payload["agent_world"] = (
+                gateway.navigation(context, control_authorized=self._preview_control_authorized())
+                if preview_sandbox.enabled() else live_gateway.navigation(self)
+            )
+        finally:
+            self._remote_context = previous_context
         user = payload.get("user") or {}
         is_owner = bool(payload.get("is_owner"))
         subscription: Dict[str, Any] = {}
@@ -3727,6 +3743,9 @@ class Handler(BaseHTTPRequestHandler):
             "is_owner": bool(context.get("is_owner")),
             "display_name": display,
             "capabilities": context.get("capabilities") if isinstance(context.get("capabilities"), dict) else {},
+            # Non-secret lease reference lets scoped Agent World workers observe
+            # logout/device revocation before provider transmission.
+            "auth_session_id": str(context.get("session_id") or ""),
         }
         user_uuid = str(user.get("user_uuid") or user.get("id") or "").strip()
         if not user_uuid:
@@ -4037,6 +4056,43 @@ class Handler(BaseHTTPRequestHandler):
         payload["actions"] = _operations_actions()
         return payload
 
+    @staticmethod
+    def _personal_workspace_available(context: Dict[str, Any]) -> bool:
+        """A private container is not an NT connection or a capability grant."""
+        if (not runtime_env.is_development() or preview_sandbox.enabled()
+                or context.get("source") in {"local", "dev_service"}
+                or context.get("impersonating") or context.get("impersonator_owner_id")
+                or context.get("device_confirmation_state") != "active"
+                or context.get("device_confirmation_required")):
+            return False
+        uid, session_id = context.get("user_id"), str(context.get("session_id") or "")
+        user = account_auth.find_active_user(uid) if uid else None
+        return bool(user and not user.get("is_service_account") and not user.get("is_preview_user")
+                    and session_id and account_auth.local_session_is_active(session_id, uid))
+
+    def _account_personal_workspace_post(self) -> None:
+        if not self._check_local_post():
+            return
+        context = getattr(self, "_remote_context", None) or {}
+        if not self._personal_workspace_available(context):
+            self._err(HTTPStatus.FORBIDDEN, "Нужна подтверждённая личная Local-сессия.",
+                      code="personal_workspace_session_required")
+            return
+        body = self._read_body()
+        if body is None:
+            return
+        if (not isinstance(body, dict) or set(body) - {"display_name"}
+                or not isinstance(body.get("display_name", ""), str)
+                or len(body.get("display_name", "")) > 100):
+            self._err(HTTPStatus.BAD_REQUEST, "Допустимо только название личного пространства.", code="invalid_body")
+            return
+        try:
+            workspace = workspaces.ensure_personal_workspace(context["user_id"],
+                display_name=body.get("display_name") or "Моё личное пространство", require_entitlement=False)
+            self._json(HTTPStatus.OK, {"ok": True, "workspace": workspace})
+        except workspaces.WorkspaceError as exc:
+            self._err(exc.status, str(exc))
+
     def _cabinet_payload(self) -> Dict[str, Any]:
         context = getattr(self, "_remote_context", None) or {}
         uid = context.get("user_id")
@@ -4102,6 +4158,7 @@ class Handler(BaseHTTPRequestHandler):
         return {
             "authenticated": True,
             "trial_usage": trial_usage,
+            "personal_workspace_available": self._personal_workspace_available(context),
             "source": context.get("source"),
             "user": user,
             "role": context.get("role"),
@@ -6421,6 +6478,14 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith("/api/") and not self._authorize_api(path):
             return
 
+        if path.startswith("/api/ai-control-center/"):
+            if preview_sandbox.enabled():
+                from .ai_control_center.http_api import handle_get
+            else:
+                from .ai_control_center.live_http_api import handle_get
+            handle_get(self, path, qs)
+            return
+
         if path == "/api/account/card":
             # The Cabinet's own view. Deliberately takes no subject parameter:
             # an account can only ask for its own card, so there is no id for a
@@ -6812,7 +6877,7 @@ class Handler(BaseHTTPRequestHandler):
             # New Aurora UI is primary: its pages + assets are served from app/static/aurora/.
             _new_pages = {
                 "/", "/index.html", "/backtesting.html", "/trading.html",
-                "/performance.html", "/strategies.html", "/ai-lab.html", "/ai-agents.html", "/documents.html",
+                "/performance.html", "/strategies.html", "/ai-lab.html", "/ai-agents.html", "/ai-command-center.html", "/documents.html",
                 "/news.html", "/topstep.html", "/desktop.html", "/practice-trading.html", "/community.html",
                 "/mode-entry.html",
             }
@@ -10093,6 +10158,17 @@ class Handler(BaseHTTPRequestHandler):
             except market_data.MarketDataError as exc:
                 self._err(HTTPStatus.BAD_REQUEST, str(exc)); return
         if path == "/api/ops/runtime/chart-commands/ack":
+            if str(body.get("id") or "").startswith("cc_"):
+                from .ai_control_center import live_charts, live_gateway
+                with market_data._LOCK:
+                    marked = any(row.get("id") == body.get("id") and (row.get("payload") or {}).get("agent_world")
+                                 for row in market_data._load_commands_doc().get("commands", []) if isinstance(row, dict))
+                if marked:
+                    try:
+                        self._json(HTTPStatus.OK, live_charts.acknowledge(body, live_gateway.from_handler(self)))
+                    except (live_charts.ContractError, account_auth.AccountAuthError, workspaces.WorkspaceError, permissions.PermissionError):
+                        self._err(HTTPStatus.FORBIDDEN, "Снимок Agent World не подтверждён или чужой scope.")
+                    return
             out = market_data.ack_chart_command(
                 str(body.get("id") or ""),
                 status=str(body.get("status") or "done"),
@@ -10111,6 +10187,13 @@ class Handler(BaseHTTPRequestHandler):
             keep_favorites = bool(body.get("keep_favorites", True))
             self._json(HTTPStatus.OK, market_data.clear_snapshots(keep_favorites=keep_favorites)); return
         if path == "/api/ops/runtime/chart-snapshot":
+            if body.get("agent_world") is True:
+                from .ai_control_center import live_charts, live_gateway
+                try:
+                    self._json(HTTPStatus.OK, live_charts.complete(body, live_gateway.from_handler(self)))
+                except (live_charts.ContractError, account_auth.AccountAuthError, workspaces.WorkspaceError, permissions.PermissionError):
+                    self._err(HTTPStatus.FORBIDDEN, "Снимок Agent World не подтверждён или чужой scope.")
+                return
             saved = None
             if str(body.get("image") or "").strip():
                 try:
@@ -10600,6 +10683,18 @@ class Handler(BaseHTTPRequestHandler):
             "/api/account/identities/unlink",
         }:
             self._account_nt_security_post(path)
+            return
+
+        if path.startswith("/api/ai-control-center/"):
+            if preview_sandbox.enabled():
+                from .ai_control_center.http_api import handle_post
+            else:
+                from .ai_control_center.live_http_api import handle_post
+            handle_post(self, path)
+            return
+
+        if path == "/api/account/workspace/personal":
+            self._account_personal_workspace_post()
             return
 
         if path.startswith("/api/account/"):

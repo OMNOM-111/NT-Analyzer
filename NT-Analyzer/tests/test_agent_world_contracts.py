@@ -8,6 +8,8 @@ from uuid import UUID
 import pytest
 
 from app.ai_control_center import contracts as c
+from app.ai_control_center.domain_contracts import CalendarItem, CourtCase, CourtVote, Routine, StrategyProject
+from app.ai_control_center.model_contracts import Evaluation
 from app.ai_control_center.events import (EventData, EventEnvelope, MutationIdentity,
                                          is_replay)
 from app.ai_control_center.repositories import PageRequest, validate_commit
@@ -64,13 +66,27 @@ def record(kind=EntityKind.TASK, **changes):
         EntityKind.MEMORY: (c.Memory, dict(memory_class=c.MemoryClass.PRIVATE, visibility=c.Visibility.PRIVATE,
                                          sensitivity=c.Sensitivity.CONFIDENTIAL, content=snapshot(),
                                          provenance=(snapshot(),), retention_until=NOW + timedelta(days=1))),
+        EntityKind.STRATEGY_PROJECT: (StrategyProject, dict(title="Scoped project", definition=snapshot())),
+        EntityKind.ROUTINE: (Routine, dict(title="Review outcomes", definition=snapshot(), provenance=(snapshot(),))),
+        EntityKind.CALENDAR_ITEM: (CalendarItem, dict(title="Review", definition=snapshot(), provenance=(snapshot(),),
+                                                     starts_at=NOW, ends_at=NOW + timedelta(hours=1))),
+        EntityKind.COURT_CASE: (CourtCase, dict(decision=ref(EntityKind.DECISION), packet=snapshot(),
+                                               models=tuple(ref(EntityKind.MODEL, number=40 + index) for index in range(3)),
+                                               session_ids=tuple(UUID(int=50 + index) for index in range(3)), risk=c.Risk.LOW)),
+        EntityKind.COURT_VOTE: (CourtVote, dict(case=ref(EntityKind.COURT_CASE), model=ref(EntityKind.MODEL),
+                                               session_id=UUID(int=50), packet=snapshot(), verdict="abstain", confidence=0,
+                                               rationale=snapshot(), provider_key="test_provider", model_key="sample/model-v1",
+                                               model_version="fixture-v1", failure_domain="fixture-domain")),
+        EntityKind.EVALUATION: (Evaluation, dict(task=ref(EntityKind.TASK), outcome=ref(EntityKind.OUTCOME),
+                                                evidence=snapshot(), model=ref(EntityKind.MODEL), rubric_key="fixture-rubric-v1")),
     }
     cls, values = definitions[kind]
     return cls(**{**values, "header": header(), "status": INITIAL_STATES[kind], **changes})
 
 
 def event_for(item, **changes):
-    values = dict(event_id=UUID(int=80), event_type=f"stratforge.ai.{item.KIND.value}.changed",
+    suffix = "recorded" if item.KIND in {EntityKind.COURT_VOTE, EntityKind.EVALUATION} else "changed"
+    values = dict(event_id=UUID(int=80), event_type=f"stratforge.ai.{item.KIND.value}.{suffix}",
                   time=item.header.updated_at, subject=item.ref(), actor=ACTOR,
                   correlation_id=item.header.correlation_id, policy=item.header.policy,
                   data=EventData(references=(snapshot(),)))
@@ -321,6 +337,8 @@ def test_each_declared_edge_can_commit_with_preserved_evidence_and_a_revision_ev
         EntityKind.DECISION: {"approval": snapshot()},
         EntityKind.EXECUTION: {"receipt": snapshot()},
         EntityKind.OUTCOME: {"verification": snapshot()},
+        EntityKind.COURT_CASE: {"votes": tuple(ref(EntityKind.COURT_VOTE, number=60 + index) for index in range(3)),
+                               "verdict": "approve"},
     }.get(kind, {})
     previous = record(kind, status=before, **proof)
     following = replace(previous, status=after, header=header(revision=2))

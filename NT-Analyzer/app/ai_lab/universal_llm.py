@@ -28,6 +28,46 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from . import agent_registry, llm_timeouts, response_cache
 
 
+_REGISTRY_CONTEXT: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "stratforge_llm_registry_context", default=None
+)
+_ALLOW_HIDDEN_RETRIES: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "stratforge_llm_hidden_retries", default=True
+)
+
+
+def _registry():
+    """Internal trusted adapter; ordinary calls retain the existing registry."""
+    scoped = _REGISTRY_CONTEXT.get()
+    return scoped if scoped is not None else agent_registry
+
+
+@contextmanager
+def registry_scope(scoped_adapter):
+    """Bind one validated private registry to this context, never process globals."""
+    required = ("get_agent", "list_agents", "get_api_key", "auto_disable",
+                "clear_cooldown", "record_usage", "record_test")
+    if scoped_adapter is None or not all(callable(getattr(scoped_adapter, name, None)) for name in required):
+        raise UniversalLLMError("Invalid scoped model registry.")
+    token = _REGISTRY_CONTEXT.set(scoped_adapter)
+    try:
+        yield scoped_adapter
+    finally:
+        _REGISTRY_CONTEXT.reset(token)
+
+
+@contextmanager
+def invocation_policy(*, allow_hidden_retries: bool):
+    """Trusted bounded callers may forbid another call under one reservation."""
+    if type(allow_hidden_retries) is not bool:
+        raise UniversalLLMError("Invalid invocation policy.")
+    token = _ALLOW_HIDDEN_RETRIES.set(allow_hidden_retries)
+    try:
+        yield
+    finally:
+        _ALLOW_HIDDEN_RETRIES.reset(token)
+
+
 _BUDGET_LOCK = threading.RLock()
 _RESERVATIONS: Dict[str, Dict[str, Any]] = {}
 _USAGE_CONTEXT: contextvars.ContextVar[Dict[str, Any]] = contextvars.ContextVar(
@@ -100,7 +140,7 @@ def note_participation(step: Dict[str, Any]) -> None:
 
 
 def _record_usage(row: Dict[str, Any]) -> None:
-    agent_registry.record_usage({**row, **dict(_USAGE_CONTEXT.get() or {})})
+    _registry().record_usage({**row, **dict(_USAGE_CONTEXT.get() or {})})
     steps = _PARTICIPATION_STEPS.get()
     if isinstance(steps, list):
         note_participation({
@@ -222,6 +262,12 @@ def _request_json(
     timeout: int = llm_timeouts.ANALYSIS,
     secret: str = "",
 ) -> Dict[str, Any]:
+    if _REGISTRY_CONTEXT.get() is not None:
+        from ..ai_control_center.model_transport import PrivateTransportError, request_json
+        try:
+            return request_json(url, method=method, payload=payload, headers=headers, timeout=timeout)
+        except PrivateTransportError as exc:
+            raise UniversalLLMError(str(exc)) from None
     data = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request_headers = {"Accept": "application/json", **(headers or {})}
     if data is not None:
@@ -272,6 +318,9 @@ def _endpoint(agent: Dict[str, Any]) -> str:
         str(agent.get("provider") or ""), str(agent.get("model") or ""), base
     )
     route = "chat/completions" if kind == "chat" else "embeddings"
+    if (_REGISTRY_CONTEXT.get() is not None and kind == "chat"
+            and urllib.parse.urlsplit(base).path.endswith("/responses")):
+        return base  # explicit private compatible endpoint; no global change
     provider = str(agent.get("provider") or "")
     if provider == "gemini":
         operation = "generateContent" if kind == "chat" else "embedContent"
@@ -336,7 +385,7 @@ def _cost(agent: Dict[str, Any], input_tokens: int, output_tokens: int, cached_t
 
 
 def estimate_request_cost(agent_id: str, prompt: str, *, system_prompt: str = "", max_output_tokens: int = 256) -> Dict[str, Any]:
-    agent = agent_registry.get_agent(agent_id)
+    agent = _registry().get_agent(agent_id)
     input_tokens = _estimated_input_tokens(prompt, system_prompt)
     output_tokens = 0 if agent.get("endpoint_type") == "embeddings" else max(1, min(int(max_output_tokens), 16_384))
     return {
@@ -353,12 +402,12 @@ def _reserve(agent: Dict[str, Any], estimate: float, *, allow_disabled: bool) ->
     if not agent.get("key_configured"):
         raise BudgetExceeded("API-ключ агента не настроен.")
     if estimate > agent_registry.MAX_SINGLE_CALL_USD + 1e-12:
-        agent_registry.auto_disable(agent_id, "single_call_budget_exceeded")
+        _registry().auto_disable(agent_id, "single_call_budget_exceeded")
         raise BudgetExceeded(f"Оценка запроса превышает hard cap ${agent_registry.MAX_SINGLE_CALL_USD:.2f} на вызов.")
     with _BUDGET_LOCK:
         reserved_day = sum(float(item["cost"]) for item in _RESERVATIONS.values() if item["agent_id"] == agent_id)
         peer_ids = {
-            str(row.get("id") or "") for row in agent_registry.list_agents()
+            str(row.get("id") or "") for row in _registry().list_agents()
             if str(row.get("provider") or "") == str(agent.get("provider") or "")
             and str(row.get("account_name") or "") == str(agent.get("account_name") or "")
         }
@@ -369,14 +418,14 @@ def _reserve(agent: Dict[str, Any], estimate: float, *, allow_disabled: bool) ->
         daily_limit = float(agent.get("daily_budget_usd") or 0)
         monthly_limit = float(agent.get("monthly_budget_usd") or 0)
         if daily_limit > 0 and float(agent.get("spend_today_usd") or 0) + reserved_day + estimate > daily_limit + 1e-12:
-            agent_registry.auto_disable(agent_id, "daily_budget_exceeded")
+            _registry().auto_disable(agent_id, "daily_budget_exceeded")
             raise BudgetExceeded("Дневной бюджет агента исчерпан; агент автоматически отключён.")
         if monthly_limit > 0 and float(agent.get("account_spend_month_usd") or 0) + reserved_account + estimate > monthly_limit + 1e-12:
-            agent_registry.auto_disable(agent_id, "monthly_budget_exceeded")
+            _registry().auto_disable(agent_id, "monthly_budget_exceeded")
             raise BudgetExceeded("Месячный бюджет агента исчерпан; агент автоматически отключён.")
         credit = agent.get("credit_remaining_estimated_usd")
         if credit is not None and float(credit) < reserved_day + estimate - 1e-12:
-            agent_registry.auto_disable(agent_id, "credit_exhausted")
+            _registry().auto_disable(agent_id, "credit_exhausted")
             raise BudgetExceeded("Расчётный остаток гранта/кредита исчерпан; агент автоматически отключён.")
         reservation_id = uuid.uuid4().hex
         _RESERVATIONS[reservation_id] = {"agent_id": agent_id, "cost": estimate}
@@ -498,7 +547,8 @@ def _openai_compatible(
             reasoning = str(doc["choices"][0]["message"].get("reasoning_content") or "")
         except (KeyError, IndexError, TypeError):
             pass
-        if reasoning and agent.get("provider") == "deepseek":
+        if (reasoning and agent.get("provider") == "deepseek" and _REGISTRY_CONTEXT.get() is None
+                and _ALLOW_HIDDEN_RETRIES.get()):
             # Some DeepSeek gateways consume the complete allowance in hidden
             # reasoning and return no final answer. Retry once in concise mode;
             # both attempts remain included in usage/cost accounting.
@@ -549,6 +599,8 @@ def _request_stream(
     The provider bills exactly one request regardless of transport; streaming
     only changes *when* the already-generated tokens arrive.
     """
+    if _REGISTRY_CONTEXT.get() is not None:
+        raise UniversalLLMError("Private model streaming is not supported.")
     data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request_headers = {
         "Accept": "text/event-stream",
@@ -762,7 +814,7 @@ def invoke_agent(
     clean_prompt = str(prompt or "").strip()
     if not clean_prompt or len(clean_prompt) > 20_000:
         raise UniversalLLMError("Test prompt обязателен и должен быть короче 20 000 символов.")
-    agent = agent_registry.get_agent(agent_id)
+    agent = _registry().get_agent(agent_id)
     resolved_type = agent_registry.infer_endpoint_type(
         str(agent.get("provider") or ""), str(agent.get("model") or ""), str(agent.get("base_url") or "")
     )
@@ -796,7 +848,7 @@ def invoke_agent(
         else str((_USAGE_CONTEXT.get() or {}).get("workspace_id") or "")
     )
     cache_key = ""
-    if resolved_type == "chat" and _response_cache_allowed(purpose, cache_mode):
+    if _REGISTRY_CONTEXT.get() is None and resolved_type == "chat" and _response_cache_allowed(purpose, cache_mode):
         cache_key = response_cache.make_key(
             agent_id=agent_id, model=str(agent.get("model") or ""),
             system_prompt=system_prompt, prompt=clean_prompt,
@@ -896,7 +948,7 @@ def invoke_agent(
     durable_usage_recorded = False
     provider_attempted = False
     try:
-        api_key = agent_registry.get_api_key(agent_id)
+        api_key = _registry().get_api_key(agent_id)
         # Stream only when a caller explicitly wants live reasoning/content
         # (the app chat SSE endpoint). Every other caller — Telegram, missions,
         # background jobs — keeps the untouched synchronous transport.
@@ -969,14 +1021,14 @@ def invoke_agent(
                 "response": response_text, "actual_model": actual_model,
                 "input_tokens": input_tokens, "output_tokens": output_tokens,
             })
-        agent_registry.clear_cooldown(agent_id)
-        fresh = agent_registry.get_agent(agent_id)
+        _registry().clear_cooldown(agent_id)
+        fresh = _registry().get_agent(agent_id)
         if (
             (float(fresh.get("daily_budget_usd") or 0) > 0 and float(fresh.get("spend_today_usd") or 0) >= float(fresh.get("daily_budget_usd") or 0))
             or (float(fresh.get("monthly_budget_usd") or 0) > 0 and float(fresh.get("account_spend_month_usd") or 0) >= float(fresh.get("monthly_budget_usd") or 0))
             or (fresh.get("credit_remaining_estimated_usd") == 0 and agent.get("pricing_status") in {"free", "configured", "estimated"})
         ):
-            agent_registry.auto_disable(agent_id, "budget_reached_after_request")
+            _registry().auto_disable(agent_id, "budget_reached_after_request")
         return {
             "ok": True, "status": "success", "request_id": request_id,
             "agent_id": agent_id, "agent_name": agent["name"],
@@ -1052,11 +1104,11 @@ def test_connection(agent_id: str, prompt: str = "") -> Dict[str, Any]:
             request_role="connection_test", purpose="connection_test",
         )
         result["status"] = "connected"
-        agent_registry.record_test(agent_id, result)
+        _registry().record_test(agent_id, result)
         return result
     except (UniversalLLMError, BudgetExceeded) as exc:
         result = {"ok": False, "status": "error", "error": str(exc)}
-        agent_registry.record_test(agent_id, result)
+        _registry().record_test(agent_id, result)
         return result
 
 
@@ -1066,12 +1118,14 @@ def sync_credit_balance(agent_id: str) -> Dict[str, Any]:
     Azure/OpenAI/Gemini billing requires separate billing/admin authorization,
     so those providers intentionally remain manual/local estimates.
     """
-    agent = agent_registry.get_agent(agent_id, public=False)
+    if _REGISTRY_CONTEXT.get() is not None:
+        raise UniversalLLMError("Private model balance synchronization is not supported.")
+    agent = _registry().get_agent(agent_id, public=False)
     if agent.get("provider") != "openrouter":
         raise UniversalLLMError(
             "Автоматический balance API недоступен для этого provider; внесите фактический остаток из billing portal через Edit Agent."
         )
-    api_key = agent_registry.get_api_key(agent_id)
+    api_key = _registry().get_api_key(agent_id)
     doc = _request_json(
         "https://openrouter.ai/api/v1/credits", method="GET",
         headers={"Authorization": f"Bearer {api_key}"}, timeout=30, secret=api_key,

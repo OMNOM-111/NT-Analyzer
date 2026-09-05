@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -29,6 +30,9 @@ def preview_env(tmp_path, monkeypatch):
     monkeypatch.setenv("STRATFORGE_PREVIEW_SANDBOX", "1")
     monkeypatch.setenv("STRATFORGE_PREVIEW_ID", preview_id)
     monkeypatch.setenv("STRATFORGE_PREVIEW_SCENARIO", "new_user")
+    # Dataset seeding writes this variable directly. Register it with the
+    # fixture so each sandbox starts empty and teardown restores its caller.
+    monkeypatch.setenv("STRATFORGE_PREVIEW_PROMO_CODE", "")
     monkeypatch.setenv("STRATFORGE_PREVIEW_ENTRY_TOKEN", "e" * 64)
     monkeypatch.setenv("STRATFORGE_PREVIEW_CONTROL_TOKEN", "c" * 64)
     monkeypatch.setenv("STRATFORGE_PREVIEW_PARENT_ORIGIN", "http://127.0.0.1:8877")
@@ -92,6 +96,24 @@ def preview_env(tmp_path, monkeypatch):
     yield {"id": preview_id, "base": base, "root": root}
     account_auth._clear_doc_cache()
     runtime_env._data_root_cached.cache_clear()
+
+
+def test_preview_fixture_isolates_generated_promo_environment(tmp_path, monkeypatch):
+    key = "STRATFORGE_PREVIEW_PROMO_CODE"
+    monkeypatch.setenv(key, "outside-preview-fixture")
+    for name in ("first", "second"):
+        with pytest.MonkeyPatch.context() as isolated:
+            fixture = preview_env.__wrapped__(tmp_path / name, isolated)
+            next(fixture)
+            try:
+                assert runtime_env.public_status()["preview_sandbox"]["promo_code"] == ""
+                # Reproduce ensure_synthetic_dataset's direct environment
+                # assignment rather than monkeypatching the generated value.
+                os.environ[key] = "PREVIEW-GENERATED-IN-" + name.upper()
+                assert runtime_env.public_status()["preview_sandbox"]["promo_code"] == os.environ[key]
+            finally:
+                next(fixture, None)
+        assert os.environ[key] == "outside-preview-fixture"
 
 
 def test_preview_runtime_identity_and_cookie_names_are_isolated(preview_env):

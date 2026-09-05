@@ -7,6 +7,7 @@ import time
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
+from types import SimpleNamespace
 
 import pytest
 
@@ -487,7 +488,8 @@ def test_subscription_store_retries_transient_windows_replace(
     subscription_store, monkeypatch,
 ) -> None:
     subscriptions.set_payment_config(999, {"paypal_me": "sfOwner", "enabled": True})
-    real_replace = subscriptions.os.replace
+    real_os = subscriptions.os
+    real_replace = real_os.replace
     calls = {"count": 0}
 
     def flaky_replace(source, target):
@@ -496,7 +498,16 @@ def test_subscription_store_retries_transient_windows_replace(
             raise PermissionError(5, "simulated Windows sharing violation")
         return real_replace(source, target)
 
-    monkeypatch.setattr(subscriptions.os, "replace", flaky_replace)
+    # os is shared by every importer, including background Preview writers.
+    # Inject failures only through this module's reference, never process-wide.
+    isolated_os = SimpleNamespace(**vars(real_os))
+    isolated_os.replace = flaky_replace
+    monkeypatch.setattr(subscriptions, "os", isolated_os)
+    assert real_os.replace is real_replace
+    with pytest.raises(FileNotFoundError):
+        real_os.replace(subscription_store / "unrelated-missing-source",
+                        subscription_store / "unrelated-target")
+    assert calls["count"] == 0
     subscriptions.create_payment_request(42, "pro", note="retry contract")
 
     assert calls["count"] == 3

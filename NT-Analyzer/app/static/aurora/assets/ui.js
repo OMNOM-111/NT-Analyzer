@@ -478,7 +478,7 @@
     { id: 'ai', label: 'AI Lab', href: 'ai-lab.html', icon: 'ai' },
     { id: 'agents', label: 'AI Agents', href: 'ai-agents.html', icon: 'plug' },
     { id: 'news', label: 'Новости', href: 'news.html', icon: 'news' },
-    { id: 'community', label: 'SF Chat', href: 'community.html', icon: 'docs' },
+    { id: 'community', label: 'SF Social', href: 'community.html', icon: 'docs' },
     { id: 'topstep', label: 'TopStep', href: 'topstep.html', icon: 'trophy' },
     { id: 'docs', label: 'Документы', href: 'documents.html', icon: 'docs' },
   ];
@@ -1434,7 +1434,7 @@
     applyChipUser(user);
     captureReferral();
     handlePaypalReturn();
-    applyNavAccess(CURRENT_AUTH);
+    if (applyNavAccess(CURRENT_AUTH)) return;
     applyTrialChip(CURRENT_AUTH.trial_usage);
     const chipUser = qs('#chip-user');
     if (chipUser) chipUser.onclick = () => openCabinet();
@@ -1960,6 +1960,16 @@
   // Beginner UX: hide pro sections entirely (not lock-blur).
   function applyNavAccess(auth) {
     auth = auth || {};
+    // Only the authenticated server's exact workspace opt-in unifies the rail.
+    // A missing/disabled/malformed grant preserves the existing navigation.
+    const worldEnabled = !!(auth.agent_world && auth.agent_world.enabled === true);
+    const worldNav = qs('.rail-item[data-nav="ai"]');
+    if (worldNav) {
+      worldNav.href = worldEnabled ? 'ai-command-center.html' : 'ai-lab.html';
+      worldNav.title = worldEnabled ? 'AI Центр' : 'AI Lab';
+      const label = qs('.lb', worldNav);
+      if (label) label.textContent = worldNav.title;
+    }
     const isOwner = !!auth.is_owner;
     const user = auth.user || {};
     const uxMode = String(auth.ux_mode || user.ux_mode || (isOwner ? 'professional' : '')).toLowerCase();
@@ -1987,7 +1997,7 @@
         return;
       }
       // A professional must not see a student-only terminal in their rail.
-      item.hidden = id === 'practice';
+      item.hidden = id === 'practice' || (worldEnabled && id === 'agents');
       if (id === 'overview') { item.classList.remove('rail-locked'); return; }
       let isLocked = hasLockList ? locked.has(id) : (!isOwner && features && features[id] === false);
       item.classList.toggle('rail-locked', !!isLocked);
@@ -2001,6 +2011,17 @@
     if (uxMode === 'beginner') {
       ensureBeginnerWatermark();
       return;
+    }
+    if (worldEnabled) {
+      // Old bookmarks stay compatible without keeping a second AI surface.
+      // Match the actual legacy file, not data-page="ai" (also used by the
+      // new center), so the canonical page can never redirect to itself.
+      const legacyAIPage = /(?:^|\/)(ai-lab|ai-agents)\.html$/.exec(location.pathname || '');
+      if (legacyAIPage) {
+        location.replace('ai-command-center.html' + (location.search || '')
+          + '#tab=' + (legacyAIPage[1] === 'ai-agents' ? 'agents' : 'overview'));
+        return true;
+      }
     }
     if (uxMode === 'professional' && page === 'practice') {
       location.replace('index.html');
@@ -2257,6 +2278,7 @@
       : `<div class="cab-card"><h4>Мой NinjaTrader</h4><div id="cab-nt"><div class="state-loading"><span class="spinner"></span>Проверка…</div></div></div>`;
     return `
       ${modeCard}
+      ${me.personal_workspace_available === true ? `<div class="cab-card"><h4>Личное рабочее пространство</h4><p class="cab-sub">Ваши модели, Persona и задачи хранятся отдельно. Ключи владельца не копируются. Подключение NinjaTrader не требуется и настраивается отдельно.</p><button class="btn primary sm" id="cab-personal-workspace">${me.active_workspace?.kind === 'personal' ? 'Открыть мои модели' : 'Создать / выбрать личное пространство'}</button><p class="cab-sub" id="cab-personal-workspace-msg" role="status"></p></div>` : ''}
       <div class="cab-card"><h4>Подписка</h4>
         <div class="cab-kv"><span class="k">Тариф</span><span class="v"><strong>${esc(planLabel)}</strong> ${planBadge}</span></div>
         ${expires ? `<div class="cab-kv"><span class="k">Срок</span><span class="v">${expires}</span></div>` : ''}
@@ -3339,6 +3361,25 @@
   }
   function renderProfileInto(cb, me) {
     cb.innerHTML = cabinetProfile(me);
+    const personal = qs('#cab-personal-workspace', cb);
+    if (personal) personal.onclick = async () => {
+      const msg = qs('#cab-personal-workspace-msg', cb);
+      personal.disabled = true;
+      msg.textContent = 'Проверяю личное пространство…';
+      try {
+        await API.http.accountPersonalWorkspace({ display_name: 'Моё личное пространство' });
+        const fresh = await API.http.authStatus();
+        CURRENT_AUTH = Object.assign({}, CURRENT_AUTH, fresh);
+        applyNavAccess(CURRENT_AUTH);
+        if (fresh.agent_world?.enabled === true) {
+          location.href = 'ai-command-center.html#tab=overview&domain=models';
+          return;
+        }
+        msg.textContent = 'Личное пространство готово. AI Центр пока не включён в нём: требуется точечное разрешение владельца для этого Local-пространства.';
+      } catch (e) {
+        msg.textContent = e.message || 'Не удалось создать личное пространство. Можно повторить.';
+      } finally { personal.disabled = false; }
+    };
     const nt = qs('#cab-nt', cb);
     if (nt) renderNinjaInto(nt, me);
     qsa('[data-set-ux]', cb).forEach(btn => {
@@ -8580,14 +8621,24 @@
       };
       const clearAll = qs('[data-inbox-clear-all]', body);
       if (clearAll) clearAll.onclick = async () => {
-        if (!confirm('Удалить все системные уведомления? Личные сообщения останутся в SF Chat.')) return;
+        if (clearAll.disabled) return;
+        clearAll.disabled = true;
+        let confirmed = false;
         try {
+          confirmed = await confirmDialog('Удалить все системные уведомления? Личные сообщения останутся в SF Chat.', {
+            title: 'Очистить уведомления?', confirmLabel: 'Очистить', danger: true,
+          });
+          if (!confirmed) return;
           await API.http.notificationsClear({ mode: 'all' });
           qsa('.sf-notice').forEach((n) => n.remove());
           toast('Уведомления очищены');
           await render();
           refreshInAppNotices({ silent: true });
         } catch (e) { reportError(e); }
+        finally {
+          clearAll.disabled = false;
+          if (!confirmed && clearAll.isConnected) clearAll.focus({ preventScroll: true });
+        }
       };
       qsa('[data-inbox-open]', body).forEach((btn) => btn.addEventListener('click', () => {
         const id = String(btn.dataset.inboxOpen || '');
@@ -8692,6 +8743,78 @@
     }
   }
 
+  // ---- in-app decisions (never replace window.confirm/prompt globally) ---------
+  let ACTIVE_APP_DIALOG = null;
+  function requestDialog(options = {}) {
+    const hasInput = options.input === true;
+    const cancelled = hasInput ? null : false;
+    // Never queue a second action or share the first action's consent.
+    if (ACTIVE_APP_DIALOG) return Promise.resolve(cancelled);
+    const previousFocus = document.activeElement;
+    const dialog = el(`<dialog class="app-dialog" aria-modal="true" aria-labelledby="app-dialog-title" aria-describedby="app-dialog-message">
+      <form class="app-dialog-form">
+        <header class="app-dialog-head"><div><span class="app-dialog-context">${esc(options.context || APP_NAME)}</span><h2 id="app-dialog-title">${esc(options.title || 'Подтвердите действие')}</h2></div><button type="button" class="btn icon ghost" data-dialog-close aria-label="Закрыть окно">${icon('close')}</button></header>
+        <p id="app-dialog-message">${esc(options.message || '')}</p>
+        ${hasInput ? `<label class="app-dialog-field"><span>${esc(options.inputLabel || 'Название')}</span><input data-dialog-input type="text" autocomplete="off"></label>` : ''}
+        <footer class="app-dialog-actions"><button type="button" class="btn ghost" data-dialog-cancel>${esc(options.cancelLabel || 'Отмена')}</button><button type="submit" class="btn ${options.danger ? 'danger' : 'primary'}" data-dialog-accept>${esc(options.confirmLabel || 'Подтвердить')}</button></footer>
+      </form>
+    </dialog>`);
+    const input = qs('[data-dialog-input]', dialog);
+    if (input) {
+      input.value = String(options.value || '');
+      input.maxLength = options.maxLength || 200;
+      input.required = options.required !== false;
+    }
+    return new Promise(resolve => {
+      let settled = false, releaseFocus = () => {};
+      const finish = value => {
+        if (settled) return;
+        settled = true;
+        releaseFocus();
+        window.removeEventListener('pagehide', cancel);
+        window.removeEventListener('hashchange', cancel);
+        if (dialog.open) dialog.close();
+        dialog.remove();
+        ACTIVE_APP_DIALOG = null;
+        if (previousFocus && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
+        resolve(value);
+      };
+      const cancel = () => finish(cancelled);
+      ACTIVE_APP_DIALOG = dialog;
+      qs('[data-dialog-close]', dialog).onclick = cancel;
+      qs('[data-dialog-cancel]', dialog).onclick = cancel;
+      qs('form', dialog).onsubmit = event => {
+        event.preventDefault();
+        if (input && input.required && !input.value.trim()) { input.focus(); return; }
+        finish(input ? input.value : true);
+      };
+      // Escape belongs only to this dialog, not SF Chat or the underlying drawer.
+      dialog.addEventListener('keydown', event => event.stopPropagation());
+      dialog.addEventListener('cancel', event => { event.preventDefault(); cancel(); });
+      dialog.addEventListener('close', cancel);
+      releaseFocus = trapDialogFocus(dialog, cancel);
+      window.addEventListener('pagehide', cancel);
+      window.addEventListener('hashchange', cancel);
+      document.body.appendChild(dialog);
+      try {
+        // Styled DOM dialog: the tab is inert, but the browser/event loop keeps working.
+        // Unsupported clients fail closed; never fall back to a browser prompt.
+        dialog.showModal();
+        (input || qs('[data-dialog-cancel]', dialog)).focus();
+        if (input) input.select();
+      } catch (e) {
+        cancel();
+        toast('Не удалось открыть окно подтверждения. Действие отменено.');
+      }
+    });
+  }
+  function confirmDialog(message, options = {}) {
+    return requestDialog({ ...options, message, input: false });
+  }
+  function promptDialog(message, options = {}) {
+    return requestDialog({ ...options, message, input: true });
+  }
+
   // ---- drawer -----------------------------------------------------------------
   function drawer(titleHtml, bodyHtml) {
     let back = qs('.drawer-back');
@@ -8793,7 +8916,7 @@
   // Non-blocking: sending shows the message + a typing indicator immediately and
   // only awaits the reply; it never freezes the page.
   const ORCH = {
-    built: false, open: false, sending: false,
+    built: false, open: false, sending: false, dialogActionPending: false,
     conversations: [], currentId: 'default', loadingList: false, pollStop: null,
     mode: 'auto', messagesSignature: '', feedbackVoice: null, loadError: null,
     retryAfter: 0, transientError: null, viewerProfileId: '', aiAvailable: null,
@@ -9436,31 +9559,50 @@
     if (!ORCH.folders) ORCH.folders = orchLoadFolders();
     return ORCH.folders;
   }
-  function orchAddFolder() {
-    const name = prompt('Название папки:', '');
-    if (name == null) return;
-    const clean = String(name).trim().slice(0, 40);
-    if (!clean) return;
-    const state = orchFolders();
-    if (!state.names.includes(clean)) state.names.push(clean);
-    orchSaveFolders(state);
-    ORCH.listFilter = 'folder:' + clean;
-    orchRenderConversations();
+  async function orchDialogAction(action) {
+    if (ORCH.dialogActionPending) return;
+    if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
+    const originId = ORCH.currentId;
+    const originAuth = CURRENT_AUTH;
+    ORCH.dialogActionPending = true;
+    try { await action(() => ORCH.currentId === originId && CURRENT_AUTH === originAuth && !ORCH.sending); }
+    catch (e) { reportError(e); }
+    finally { ORCH.dialogActionPending = false; }
   }
-  function orchMoveToFolder(cid) {
-    const state = orchFolders();
-    const current = String(state.of[cid] || '');
-    const hint = state.names.length ? `Доступные папки: ${state.names.join(', ')}` : 'Папок пока нет — введите название новой.';
-    const name = prompt(`${hint}${String.fromCharCode(10)}Папка для диалога (пусто — без папки):`, current);
-    if (name == null) return;
-    const clean = String(name).trim().slice(0, 40);
-    if (!clean) delete state.of[cid];
-    else {
+  async function orchAddFolder() {
+    return orchDialogAction(async stillCurrent => {
+      const name = await promptDialog('Сгруппируйте диалоги в списке SF Chat.', {
+        context: 'SF Chat', title: 'Новая папка', inputLabel: 'Название папки', confirmLabel: 'Создать папку', maxLength: 40,
+      });
+      if (name == null || !stillCurrent()) return;
+      const clean = String(name).trim().slice(0, 40);
+      if (!clean) return;
+      const state = orchFolders();
       if (!state.names.includes(clean)) state.names.push(clean);
-      state.of[cid] = clean;
-    }
-    orchSaveFolders(state);
-    orchRenderConversations();
+      orchSaveFolders(state);
+      ORCH.listFilter = 'folder:' + clean;
+      orchRenderConversations();
+    });
+  }
+  async function orchMoveToFolder(cid) {
+    return orchDialogAction(async stillCurrent => {
+      const state = orchFolders();
+      const current = String(state.of[cid] || '');
+      const hint = state.names.length ? `Доступные папки: ${state.names.join(', ')}` : 'Папок пока нет — введите название новой.';
+      const name = await promptDialog(`${hint}\nОставьте поле пустым, чтобы убрать диалог из папки.`, {
+        context: 'SF Chat', title: 'Переместить диалог', inputLabel: 'Папка', value: current,
+        confirmLabel: 'Сохранить', maxLength: 40, required: false,
+      });
+      if (name == null || !stillCurrent()) return;
+      const clean = String(name).trim().slice(0, 40);
+      if (!clean) delete state.of[cid];
+      else {
+        if (!state.names.includes(clean)) state.names.push(clean);
+        state.of[cid] = clean;
+      }
+      orchSaveFolders(state);
+      orchRenderConversations();
+    });
   }
   function orchRenderFolderTabs(counts) {
     const wrap = qs('#orch-convo-tabs'); if (!wrap) return;
@@ -9626,36 +9768,40 @@
     catch (e) { reportError(e); }
   }
   async function orchSelectConversation(cid) {
-    if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
-    if (cid && cid !== ORCH.currentId) {
+    return orchDialogAction(async stillCurrent => {
+      if (!cid || cid === ORCH.currentId) {
+        qs('#orch-panel').classList.remove('show-convos');
+        if (cid) dismissNoticesForConversation(cid);
+        return;
+      }
+      if (orchHasUnfinishedCurrent() && !await confirmDialog('Текущая тема ещё не завершена. Её история останется в списке диалогов.', {
+        context: 'SF Chat', title: 'Перейти в другой диалог?', confirmLabel: 'Перейти', cancelLabel: 'Остаться в диалоге',
+      })) return;
+      if (!stillCurrent()) return;
       ORCH.historyRows = null; ORCH.historyMore = false; ORCH.historyBefore = undefined;
-    }
-    if (!cid || cid === ORCH.currentId) {
+      orchSaveCurrentId(cid);
+      ORCH.messagesSignature = '';
+      orchStopFeedbackVoice();
+      orchRenderConversations();
       qs('#orch-panel').classList.remove('show-convos');
-      if (cid) dismissNoticesForConversation(cid);
-      return;
-    }
-    if (orchHasUnfinishedCurrent() && !confirm('Текущая тема ещё не завершена. Перейти в другой диалог?')) return;
-    orchSaveCurrentId(cid);
-    ORCH.messagesSignature = '';
-    orchStopFeedbackVoice();
-    orchRenderConversations();
-    qs('#orch-panel').classList.remove('show-convos');
-    await orchLoadMessages(cid);
-    orchRenderWorkState();
-    if (orchIsHumanConversation(cid)) {
-      try { await API.http.sfChatRead(cid); } catch (e) { /* visible dialogue remains usable */ }
-      await refreshInAppNotices({ silent: true });
-    }
-    dismissNoticesForConversation(cid);
-    const ta = qs('#orch-text'); if (ta && !ta.disabled) ta.focus();
+      await orchLoadMessages(cid);
+      orchRenderWorkState();
+      if (orchIsHumanConversation(cid)) {
+        try { await API.http.sfChatRead(cid); } catch (e) { /* visible dialogue remains usable */ }
+        await refreshInAppNotices({ silent: true });
+      }
+      dismissNoticesForConversation(cid);
+      const ta = qs('#orch-text'); if (ta && !ta.disabled) ta.focus();
+    });
   }
   async function orchNewConversation() {
-    if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
-    if (!window.API || API.config.offline) return;
-    if (ORCH.aiAvailable === false) return;
-    if (orchHasUnfinishedCurrent() && !confirm('Текущая тема ещё не завершена. Создать новую тему всё равно?')) return;
-    try {
+    return orchDialogAction(async stillCurrent => {
+      if (!window.API || API.config.offline) return;
+      if (ORCH.aiAvailable === false) return;
+      if (orchHasUnfinishedCurrent() && !await confirmDialog('Текущая тема ещё не завершена. Её история останется в списке диалогов.', {
+        context: 'SF Chat', title: 'Создать новую тему?', confirmLabel: 'Создать тему', cancelLabel: 'Остаться в диалоге',
+      })) return;
+      if (!stillCurrent()) return;
       const res = await API.http.aiOrchestratorCreateConversation('');
       ORCH.listQuery = '';
       ORCH.listFilter = 'all';
@@ -9665,29 +9811,34 @@
       await orchLoadMessages(ORCH.currentId);
       qs('#orch-panel').classList.remove('show-convos');
       const ta = qs('#orch-text'); if (ta && !ta.disabled) ta.focus();
-    } catch (e) { reportError(e); }
+    });
   }
   async function orchRename(cid) {
-    if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
-    if (orchIsHumanConversation(cid)) return;
-    const current = ORCH.conversations.find(c => c.conversation_id === cid);
-    const title = prompt('Название диалога:', (current && current.title) || '');
-    if (title == null) return;
-    const clean = String(title).trim();
-    if (!clean) return;
-    try { await API.http.aiOrchestratorRenameConversation(cid, clean); await orchLoadConversations(); }
-    catch (e) { reportError(e); }
+    return orchDialogAction(async stillCurrent => {
+      if (orchIsHumanConversation(cid)) return;
+      const current = ORCH.conversations.find(c => c.conversation_id === cid);
+      const title = await promptDialog('Новое название будет показано в списке диалогов.', {
+        context: 'SF Chat', title: 'Переименовать диалог', inputLabel: 'Название диалога',
+        value: (current && current.title) || '', confirmLabel: 'Сохранить',
+      });
+      if (title == null || !stillCurrent()) return;
+      const clean = String(title).trim();
+      if (!clean) return;
+      await API.http.aiOrchestratorRenameConversation(cid, clean); await orchLoadConversations();
+    });
   }
   async function orchDelete(cid) {
-    if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
-    if (orchIsHumanConversation(cid)) return;
-    if (!confirm('Удалить этот диалог вместе с его историей?')) return;
-    try {
+    return orchDialogAction(async stillCurrent => {
+      if (orchIsHumanConversation(cid)) return;
+      if (!await confirmDialog('Диалог будет удалён вместе с его историей. Это действие нельзя отменить.', {
+        context: 'SF Chat', title: 'Удалить диалог?', confirmLabel: 'Удалить диалог', danger: true,
+      })) return;
+      if (!stillCurrent()) return;
       await API.http.aiOrchestratorDeleteConversation(cid);
       if (ORCH.currentId === cid) orchSaveCurrentId('default');
       await orchLoadConversations();
       await orchLoadMessages(ORCH.currentId);
-    } catch (e) { reportError(e); }
+    });
   }
   function orchRatingHtml(row, isUser) {
     if (isUser || !row.message_id) return '';
@@ -9720,6 +9871,7 @@
     unset: 'не отмечено', done: 'выполнено', failed: 'не выполнено', na: 'переписка',
   };
   function orchInferKind(row) {
+    if (row.role === 'system' && row.source === 'agent_world_followup') return 'informational';
     const explicit = String(row.message_kind || '').trim();
     if (ORCH_KIND_LABELS[explicit]) return explicit;
     const actions = Array.isArray(row.actions) ? row.actions.filter(a => a && typeof a === 'object') : [];
@@ -9774,6 +9926,32 @@
     blocked: ['Нужно внимание', 'blocked'], error: ['Ошибка', 'blocked'],
     completed: ['', 'done'], confirmed_connected: ['', 'done'],
   };
+  function orchAgentWorldReportUrl(row) {
+    if (row?.source !== 'agent_world_local' || row?.role !== 'assistant') return '';
+    for (const action of Array.isArray(row.actions) ? row.actions : []) {
+      if (action?.synthetic !== false || action?.status !== 'completed' || action?.verification?.passed !== true
+        || !['ninjatrader_report', 'real_model_response'].includes(action?.source_kind)) continue;
+      const job = String(action.source_job_id || '');
+      if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(job) || /[\r\n]/.test(job)) continue;
+      const url = '/ui/backtesting.html?job=' + encodeURIComponent(job);
+      if (action.report_url === url) return url;
+    }
+    return '';
+  }
+  function orchAttachmentsHtml(row) {
+    const reportUrl = orchAgentWorldReportUrl(row);
+    return (Array.isArray(row.attachments) ? row.attachments : []).filter(a => a && a.url).map(a => {
+      const scopedArtifact = /^\/api\/ai-control-center\/artifacts\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(a.url) && !/[\r\n]/.test(a.url);
+      // Older model envelopes omitted type, and Chief defaulted JSON to image.
+      // Read-time compatibility keeps the immutable conversation untouched.
+      const legacyReport = reportUrl && scopedArtifact && a.type === 'image';
+      if (scopedArtifact && row.source === 'agent_world_local' && (a.type === 'artifact' || legacyReport)) {
+        return `<a class="btn sm orch-msg-artifact" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${esc(a.caption || 'Артефакт отчёта')} ↗</a>`;
+      }
+      if (a.type !== 'image') return '';
+      return `<a class="orch-msg-shot" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.caption || 'Снимок графика')}"><img loading="lazy" src="${esc(a.url)}" alt="${esc(a.caption || 'Снимок графика')}"></a>`;
+    }).join('');
+  }
   function orchActionsHtml(row, isUser) {
     if (isUser || !Array.isArray(row.actions) || !row.actions.length) return '';
     // Progress rows stay informative while unfinished; terminal «Выполнено»
@@ -9786,7 +9964,9 @@
       const stateText = state[0] ? `<span class="orch-action-state">${esc(state[0])}</span>` : '';
       return `<div class="orch-action ${esc(state[1])}"><span class="orch-action-mark" aria-hidden="true"></span><span class="orch-action-label">${esc(label)}</span>${stateText}</div>`;
     }).join('');
-    return items ? `<div class="orch-actions" aria-label="Ход выполнения">${items}</div>` : '';
+    const reportUrl = orchAgentWorldReportUrl(row);
+    const report = reportUrl ? `<a class="btn sm" href="${esc(reportUrl)}">Открыть исходный отчёт</a>` : '';
+    return items ? `<div class="orch-actions" aria-label="Ход выполнения">${items}${report}</div>` : '';
   }
   function orchChainHtml(row) {
     const chain = Array.isArray(row.participation_chain)
@@ -9904,10 +10084,7 @@
     const footer = isUser
       ? (meta ? `<div class="orch-msg-meta">${meta}</div>` : '')
       : orchFooterHtml(row, isUser);
-    const attachments = Array.isArray(row.attachments) ? row.attachments.filter(a => a && a.type === 'image' && a.url) : [];
-    const media = attachments.map(a =>
-      `<a class="orch-msg-shot" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.caption || 'Снимок графика')}"><img loading="lazy" src="${esc(a.url)}" alt="${esc(a.caption || 'Снимок графика')}"></a>`
-    ).join('');
+    const media = orchAttachmentsHtml(row);
     const face = isUser ? '' : agentAvatarHtml(agentRef, {
       label: agentLabel, cls: 'orch-msg-face', messageId: row.message_id || '',
     });
@@ -9928,17 +10105,20 @@
     try { if (voice.rec) voice.rec.stop(); } catch (e) { /* ignore */ }
   }
   async function orchToggleConversationState() {
-    const current = orchCurrentConversation();
-    if (!current || !window.API || API.config.offline) return;
-    if (orchIsHumanConversation(current)) return;
-    const next = current.closed ? 'open' : 'closed';
-    if (next === 'closed' && orchHasUnfinishedCurrent() && !confirm('Вопрос ещё не завершён. Закрыть тему без продолжения?')) return;
-    try {
-      await API.http.aiOrchestratorSetConversationState(ORCH.currentId, next);
+    return orchDialogAction(async stillCurrent => {
+      const current = orchCurrentConversation();
+      if (!current || !window.API || API.config.offline) return;
+      if (orchIsHumanConversation(current)) return;
+      const next = current.closed ? 'open' : 'closed';
+      if (next === 'closed' && orchHasUnfinishedCurrent() && !await confirmDialog('Вопрос ещё не завершён. Тема останется в истории, и вы сможете открыть её снова.', {
+        context: 'SF Chat', title: 'Закрыть тему без продолжения?', confirmLabel: 'Закрыть тему',
+      })) return;
+      if (!stillCurrent()) return;
+      await API.http.aiOrchestratorSetConversationState(current.conversation_id, next);
       await orchLoadConversations();
       orchRenderWorkState();
       const ta = qs('#orch-text'); if (ta && !ta.disabled) ta.focus();
-    } catch (e) { reportError(e); }
+    });
   }
   function orchStartFeedbackVoice(btn, ta) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -10193,7 +10373,7 @@
     return true;
   }
   async function orchSend() {
-    if (ORCH.sending) return;
+    if (ORCH.sending || ORCH.dialogActionPending) return;
     const ta = qs('#orch-text'); const box = qs('#orch-msgs'); const sendBtn = qs('#orch-send');
     if (!ta || !box) return;
     const text = ta.value.trim();
@@ -10324,6 +10504,6 @@
     return true;
   }
 
-  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV, openOrchestrator, openSFChat, closeOrchestrator, isGuest, requireSignIn, agentAvatarId, agentAvatarUrl, agentAvatarHtml, wireAgentFaces, agentFacePlay, agentFacePause, openCabinet, openAdminPanel, showEnvironmentSwitcher, get CURRENT_AUTH() { return CURRENT_AUTH; } };
+  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, confirmDialog, promptDialog, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV, openOrchestrator, openSFChat, closeOrchestrator, isGuest, requireSignIn, agentAvatarId, agentAvatarUrl, agentAvatarHtml, wireAgentFaces, agentFacePlay, agentFacePause, openCabinet, openAdminPanel, showEnvironmentSwitcher, get CURRENT_AUTH() { return CURRENT_AUTH; } };
   document.addEventListener('DOMContentLoaded', buildShell);
 })();

@@ -806,6 +806,29 @@ details.cab-card[open] > summary { margin-bottom: 12px; }
 .btn.danger:hover { background: var(--neg-soft); }
 .btn.icon { padding: 8px; }
 
+/* App-local confirmation/input; never a browser-level blocking prompt. */
+.app-dialog {
+  width: min(480px, calc(100vw - 32px)); max-height: calc(100dvh - 32px);
+  margin: auto; padding: 24px; overflow: auto; box-sizing: border-box;
+  border: 1px solid var(--brand-line); border-radius: var(--r-lg);
+  color: var(--tx); background: var(--bg-2); box-shadow: var(--sh-2);
+  font-family: var(--font);
+}
+.app-dialog::backdrop { background: rgba(3, 8, 18, .56); backdrop-filter: blur(3px); }
+.app-dialog-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.app-dialog-context { color: var(--brand); font-size: 11px; font-weight: 600; letter-spacing: .06em; }
+.app-dialog h2 { margin: 7px 0 0; font-size: 19px; line-height: 1.35; }
+.app-dialog p { margin: 18px 0 22px; color: var(--tx-2); font-size: 13px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.app-dialog-field { display: grid; gap: 7px; font-size: 12px; color: var(--tx-2); }
+.app-dialog-field input { width: 100%; min-height: 42px; padding: 10px 12px; border-radius: var(--r-sm); border: 1px solid var(--line-2); background: var(--bg-3); color: var(--tx); }
+.app-dialog-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+.app-dialog-actions .btn { min-height: 40px; justify-content: center; }
+.app-dialog :focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+@media (max-width: 480px) {
+  .app-dialog { padding: 18px; }
+  .app-dialog-actions .btn { flex: 1 1 auto; }
+}
+
 .seg { display: inline-flex; flex-wrap: wrap; background: var(--bg-2); border: 1px solid var(--line-2); border-radius: var(--r-pill); padding: 3px; gap: 2px; max-width: 100%; }
 .seg button {
   border: 0; background: transparent; color: var(--tx-3); cursor: pointer; font-weight: 600;

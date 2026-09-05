@@ -1,12 +1,48 @@
 # 05. Auth, Users and Security
 
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
-- Last verified UTC: 2026-09-04T21:50:16Z
+- Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 4ae766ea0c3258a8bb049644ac2afbba6cb89330
-- Unified Local accepted base: `0.10.0-beta.96`, PR #280, not deployed
+- Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
+- Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
+- Active scope: verified integrated Local, result presentation, same-input Consensus and three-model Court; full program and owner-dependent acceptance remain open
+- Unified Local base: `0.10.0-beta.96`, PR #280; no Canary/Production promotion
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: PARTIAL
+
+## Previous verified model/domain checkpoint — aa54c294
+
+At that previous checkpoint, clean Local 8765 ran `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96,
+build `dev-0.10.0-beta.96-aa54c2940150`, original owner data, Preview=false,
+live orders=false. The code is committed/pushed to draft PR #282; #280/#281
+remain unmerged. Operational documentation may be newer than active runtime code.
+
+Final full **3977 passed / 44 skipped**, 954.04 s; final focused **319 PASS**,
+presentation focused **610 PASS**, legacy **13/13 suites**, root/static/context/
+diff and exact staged/runtime **533-file bundles PASS**.
+[Exact-code CI 33965039490](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33965039490)
+passed Windows, Ubuntu and static, 3/3. No main-target or release PASS is inferred.
+
+Actual browser acceptance on this SHA: stored application Outcome and original
+report links in Inspector/SF Chat; same 64-trade NT report; genuine Desktop PNG
+140/800 historical bars; preserved chats (5/13 messages); three Personas and
+n=3 arithmetic observations for Tolik/Ivan, NEW for Anna. Consensus proposal
+cf1464ab uses two accepted same-input contributions. Fresh Court ae0e5e45
+received three real valid isolated votes (DeepSeek/Gemini/Azure) and approve;
+old case 86a650ab retains its one vote and invalid Gemini response. No validator
+was weakened and a verdict does not execute actions.
+SF Social read-only preview e4853566… has net -969.7 and PF 0.7252 explicitly
+after commission; no post or permanent confirmation was created.
+
+`LOCAL VISUAL REVIEW AVAILABLE: YES`; the full program stays IN DEVELOPMENT.
+Ordinary registration/device/key, real multi-user sharing/revocation, permanent
+Social publication and owner design acceptance remain separate. New Router,
+Execution V2, autonomous routines and an Agent World PG adapter are not implemented.
+All ten flags default OFF; exact admitted Local workspace has eight paths ON,
+Router/Execution V2 OFF. Preview has separate synthetic flags, no real side effects.
+The earlier 93bb1298/other-SHA test and provider history is preserved in the
+[canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
+[integrated changelog](../changelog/2026-09-05-agent-world-integrated-local.md).
 
 ## Identity model
 
@@ -111,6 +147,27 @@ Key admin capability names already in the contract: `admin.view`,
 
 ## Operational auth snapshot
 
+The following Production/Canary facts are historical deployment evidence, not a
+fresh environment check. The shared deployed anchor
+`8f42158661e8247832c90bea8fc4d9f0071e647b` is unchanged. Local `8765` now serves
+the clean `95912cbf` beta.96 runtime with original owner data/settings and the
+scoped delivery/role/private-container changes active. Earlier `fc78677`
+owner-review notes remain history. Ordinary-user registration/device/key and
+real multi-user revocation are still pending; the documented owner-provider
+and result/Court browser scenarios pass on aa54c294.
+Native Azure binding compatibility permits only the canonical HTTPS api-version
+query from the already approved owner registry. Query credentials, extra or
+duplicate parameters, userinfo/fragments and non-Azure queries remain rejected;
+ordinary private transports receive no exception or copied owner credential.
+
+Development `POST /api/account/workspace/personal` creates/selects only the
+confirmed authenticated human's own empty container. It rejects Preview,
+non-Development, service/local-bypass/impersonated and unconfirmed/revoked
+sessions, foreign caller scope and invalid Origin/CSRF. It grants no NT, key,
+budget or AI opt-in. Original NT routes retain dual authentication. Ordinary
+test registration is at final Terms; owner must confirm and enter a separate
+OpenRouter key in the private wizard. Existing owner keys are never copied.
+
 - Production browser serves Sign in/Register and existing owner login is
   operational; authenticated beta.29 owner acceptance passed.
 - Canary owner login is operational through the existing shared bot routing,
@@ -153,7 +210,71 @@ Key admin capability names already in the contract: `admin.view`,
   fail-closed in Canary and Production.
 - Agent World reuses this identity, permission and device context. Its new
   scoped flags do not grant capabilities, bypass pending-device access or
-  authorize provider/command use. No auth/security code changes in stages 0–1.
+  authorize provider/command use. The historical stages 0–1 made no auth/security
+  changes; the current integration adds only the read-only session-lease helper
+  and narrow history-entitlement behavior described below, not another login flow.
+
+## Agent World integration boundary
+
+The Preview owner-review facade reuses existing session, permanent/session device,
+membership, role, ai_lab capability, trial, CSRF and zero-cost budget checks;
+synthetic identity does not receive owner privileges. New routes additionally
+require trusted Preview control and scoped default-off flags. Mutation checkpoints
+refresh access rather than trusting stale UI capabilities. Reset is serialized
+with the new SQLite operations before it wipes only synthetic state.
+See [ADR-0010](../adr/0010-agent-world-owner-review.md). Auth/provider registration
+logic, real credentials and the ordinary Local owner runtime are not replaced.
+
+The real Local adapter is independent: Development only, Preview forbidden,
+`STRATFORGE_AGENT_WORLD_LOCAL_WORKSPACES` is an exact server-owned allowlist
+(default empty; wildcard/invalid entries deny). Existing authenticated Local
+owner entry or confirmed owner browser session is required; active owner identity,
+UUID, owner workspace/membership and existing permissions/budget are rechecked.
+The earlier clean adapter activated read/UI/tasks only. The new uncommitted
+composition enables eight exact-workspace gates: read/UI/tasks/evaluation/memory/
+consensus/Court/social. Router shadow and Execution V2 remain OFF; every flag still
+defaults OFF globally. No synthetic identity,
+master code, client-supplied owner/scope grant or new permissions catalog exists.
+The durable chat worker uses its server-issued scope and fresh actor/membership
+admission; this is not a claim that a persisted job carries a live browser cookie.
+Neither pending devices nor other users/Canary/Production gain this access.
+
+The added domain facade admits ordinary authenticated users only through fresh
+active identity/UUID, current workspace membership, confirmed session and existing
+capabilities. Own-workspace owner mutations require `ai_lab`; real model calls
+also require `ai_pro_models` and the existing budget checks. Cross-user mutation,
+client-supplied actor/workspace/caps, Preview identities and non-DEV access fail
+closed. Current workspace members may read explicitly published same-workspace
+Memory; private records/artifacts are not made public by that membership.
+
+`account_auth.local_session_is_active` is a Development-only read of an already
+admitted session ID/user pair. It checks active user, unrevoked/unexpired Session
+and active Device Confirmation without creating a session, refreshing cookies or
+persisting bearer tokens in jobs. Session revoke/expiry is rechecked before later
+worker/provider actions; the helper is not a new authenticator or PG fallback.
+
+After trial/entitlement expiry, authenticated professional users can still read
+their scoped history/evidence and open an existing task's SF Chat conversation.
+The legacy chat-link POST accepts only an empty body and appends nothing. This
+history exception grants no new model call, job, domain mutation or social
+publication; action controls are removed and POST admission remains independent.
+Revoked sessions and foreign workspaces never gain history access.
+
+Private model credentials stay in the existing DPAPI store, referenced by opaque
+scoped IDs, never by browser-visible secret values. Private provider traffic uses
+the existing model client through an exact registry scope and HTTPS guard: public
+resolved IP, pinned connection with hostname TLS verification, bounded paths/body,
+no redirects/proxy/private-address fallback. It cannot enumerate or fall back to
+the owner registry. An explicit owner-only binding may reuse an existing owner
+connection and its existing budget caps without copying keys or increasing limits.
+New paid private connections remain blocked without an approved budget; provider
+availability and live acceptance must not be inferred from configured records.
+
+Social publishing requires the existing `community` capability plus its scoped
+Agent World gate, exact reviewed snapshot hash/revision and explicit human
+permanent-publication consent. Fresh admission precedes the Community write;
+actor and requester remain separate in a private approval artifact. No implicit
+publication from GET, completion, Court or shared Memory is permitted.
 
 ## Canonical evidence
 
