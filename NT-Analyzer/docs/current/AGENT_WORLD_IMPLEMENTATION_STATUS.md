@@ -16,9 +16,10 @@ No merge, Canary/Production, real orders or budget increase is authorized.
 | Foundation dependency | `d5d07ac6817cd10f57d916dab0ce655347a8cbde`; open [PR #281](https://github.com/OMNOM-111/NT-Analyzer/pull/281) |
 | Integration branch | `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282), base `codex/agent-world-foundation` |
 | Starting checkpoint | `486db834850d465006a3983d2d83ee809202df60`; integrated model/domain delta `ca505d83a25356df5de2fb468f5bc20666a436d5`; delivery/role/workspace checkpoint `34deb827e4ed0e6a29d5693650b575e86e0f33d6` committed, pushed and activated |
-| Active Local 8765 | Clean detached runtime checkout `StratForge-worktrees/agent-world-local-runtime`, SHA `95912cbff8152905966e6bb7bfc2a45d3db15f80`, beta.96 |
+| Active Local 8765 | Clean detached runtime checkout `StratForge-worktrees/agent-world-local-runtime`, SHA `2b6d0112bef88c5bfb73970de64ec5518443e56b`, beta.96 |
 | Preserved real state | Original Development data root; actual owner identity/workspace, account/balance/history/configuration and authenticated NinjaTrader preserved |
-| Build identity | `dev-0.10.0-beta.96-95912cbff815`, dirty=false; in-app SF Chat dialogs browser-verified; prior result/Consensus/Court behavior retained |
+| Build identity | `dev-0.10.0-beta.96-2b6d0112bef8`, dirty=false; original report/PNG, typed handoff, manual discussion and separate application observations verified |
+| Current exact-code CI | [33984524477](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33984524477), 3/3 PASS at `2b6d0112`: Windows 4235/44 skipped, Ubuntu 4238/41 skipped, static |
 | Preview | Separate loopback synthetic child/data/cookies; never the real Local data root |
 | Version / release | `0.10.0-beta.96` unchanged; no next beta assigned, merge/deploy/signing not performed |
 | Shared numbered migrations | Still 1–22; no new Production/Canary schema migration |
@@ -46,14 +47,45 @@ handoff to another Persona in the same SF Chat, and manual routine/calendar
 discussion delivery. Root owns gateway/UI/current docs; delegated scopes own
 application/handoff, follow-up, and isolated HTTP/contract tests respectively.
 
-The candidate is based on `f80d67f7`; until its clean activation passes,
-the active Local identity in the table above remains authoritative. Frozen
-full suite is **4235 PASS / 44 skipped**, 1129.40 s; 542-file staged bundle,
-root static/context/diff checks PASS. Skips are 41 unconfigured PostgreSQL
+The delta from `f80d67f7` is committed/pushed as `2b6d0112` and active on the
+clean Local runtime. Code rollback is `95912cbf`; original owner data was retained.
+Frozen full suite is **4235 PASS / 44 skipped**, 1129.40 s; 542-file staged and
+clean runtime bundles, isolated-copy integrity/startup and root static/context/diff
+checks PASS. Skips are 41 unconfigured PostgreSQL
 acceptance cases and three Windows-inapplicable shell/POSIX cases, not PASS.
 New live flow acceptance must not be inferred from focused fixture PASS.
 Memory now has 26 actual HTTP/SQLite synthetic-session cases (190 combined PASS);
 live multi-human browser sharing remains a separate pending scenario.
+
+### Current real execution and browser receipts — 2b6d0112
+
+- The retained real NT result `62182839` and original JSON/report links were
+  reverified, not rerun: 64 trades, net after commission -969.70, PF 0.725188.
+  The actual Desktop PNG `c691534b` remains 718×424 / 31,541 bytes, SHA256
+  `45ba864f7ccb06c9fba8655a4839378e1e9fd049d0d5f3d350567ae3081e9c40`.
+  Browser image loading and a screenshot of the PNG inside SF Chat passed.
+  It shows 140/800 historical bars, not a live market-data claim.
+- **New real handoff PASS:** task `bf665c7e-bdc4-5652-8c22-c2bfcdbc5df1`
+  depends on parent `62182839-1c4c-563d-8186-bcef081ec599` revision 9,
+  with the same correlation. Anna's separate Azure model returned the eight
+  source facts; actual response and `extract_facts` evaluation agree. Estimated
+  cost USD 0.000355. This is fact transfer, not strategy or image analysis.
+  Original SF Chat `C-1322EA65B646` now contains eight messages, exactly one
+  final child result `MSG-235DD76B5F2C`; the original report is preserved.
+- **Manual routine/calendar delivery PASS:** the existing accepted revision-2
+  records created `AW-FU-df856682d5195c3f69a61d4bbc6e` and
+  `AW-FU-8bdfc131d0dcd300d6d04d46db34`, each with one neutral system message.
+  Reopening the calendar creates no duplicate. Receipt/message hashes match;
+  model/provider are empty, no rating event, automation/execution/scheduled
+  delivery=false. This is explicit immediate discussion, not a due-time scheduler.
+- Agents display separate application observations: Tolik backtest n=1 NEW,
+  Ivan chart n=1 NEW, independently of their n=3 arithmetic observations.
+  Anna's fact-transfer evaluation is visible in task/history; no fabricated
+  arithmetic score or pooled rating is assigned.
+- Post-action read-only check: 12 GET, exact runtime SHA stable before/after,
+  `2026-09-05T19:05:43Z`. Evidence under `.artifacts/program-review-20260905/`
+  is local/non-shipped. Real receipts and synthetic HTTP/contract tests are
+  separate evidence classes. No new backtest was needed for this read check.
 
 ### Coverage against all canonical stages
 
@@ -82,7 +114,7 @@ This limitation does not stop the other review paths.
 
 ## SF Chat application-local decisions
 
-Canonical feature status: `BETA` (active and browser-verified on Local 95912cbf).
+Canonical feature status: `BETA` (browser-verified on 95912cbf, retained on 2b6d0112).
 Conversation create/switch/close/delete confirmations and rename/folder inputs
 now use styled asynchronous in-app dialogs. Inbox clear uses the same helper.
 Cancel preserves history/cursors; Escape closes only the decision window, not
@@ -114,7 +146,7 @@ Automated fixture checks are distinct from actual browser/provider verification.
 
 | Requirement | Where / action | Existing backend and additive adapter | Evidence / current acceptance state |
 | --- | --- | --- | --- |
-| Safe Local switch | Local 8765, runtime identity/account/status | Existing scheduled task/supervisor; clean code + original data root | **готово и проверено** through clean `95912cbf`: isolated-copy integrity/identity checks, no active work interrupted, same owner/runtime retained, NinjaTrader untouched |
+| Safe Local switch | Local 8765, runtime identity/account/status | Existing scheduled task/supervisor; clean code + original data root | **готово и проверено** through clean `2b6d0112`: isolated-copy integrity/identity checks, exact runtime bundle PASS, same owner/runtime retained, NinjaTrader untouched |
 | Auth, registration, device permanent/session | Entry, account → Security | Existing account_auth / security_devices | Baseline retained; new read-only worker session checks: 17 PASS. Current full regression PASS; a fresh complete auth/device browser walkthrough was not repeated for this presentation correction |
 | Preview registration and Exit | Owner Preview → New User, Reset, Exit | Existing sandbox credentials/state/backend flow | Baseline preserved; new real domain actions fail closed in Preview. Accepted baseline Telegram/Google/email/OTP/QR/permanent/session/Exit walkthrough PASS; current regression PASS, no new complete walkthrough claimed |
 | Persona | Toolbar → Persona; create/edit/activate/suspend | DomainService + immutable Persona profile; explicit application-role association | **готово и проверено**: Tolik backtest / Ivan chart roles; separate Anna review Persona without application role, three actual records; retired model history preserved |
@@ -123,18 +155,19 @@ Automated fixture checks are distinct from actual browser/provider verification.
 | SF Chat → model → real backtest | Tolik command with explicit catalog strategy/instrument/period | application_chat → model plan → existing jobqueue/NT → verified source report | **готово и проверено**: model task 62182839, source awnt_7ed6…, 64 trades, -969.70 after commission; five same-chat messages survived 34deb827 restart without duplication, one folded source workflow |
 | SF Chat → model → actual Desktop screenshot | Ivan command; open Desktop matching instrument/timeframe | Existing Desktop command queue/canvas/snapshot store | **готово и проверено** on ef4006eb and rechecked on aa54c294: task c691534b, actual Gemini → Desktop PNG, 140/800 historical bars, same-chat report. Earlier rejected plan and initial no-bars timeout remain failures, not relabelled success |
 | Task Inspector / trace / history | Work row or task card → drawer → SF Chat/evidence | Intent/Task/Contribution/model Execution + application Execution/Outcome/Evaluation | **готово и проверено** on aa54c294: stored application Outcome/verification, original report link and correct file/PNG rendering; both original chats preserved |
-| Automatic observed rating | Agents → profile/rating | Independent versioned deterministic rubric, distinct-input dedupe | **готово и проверено**: DeepSeek/Gemini n=3 distinct arithmetic inputs each, 3/3 OBSERVED/low confidence, single active binding reflected in Persona on ef4006eb. Anna remains NEW, not assigned invented statistics. No routing effect |
+| Automatic observed rating | Agents → profile/rating | Independent versioned deterministic rubric plus separate application receipt observations, distinct-input dedupe | **готово и проверено** on 2b6d0112: DeepSeek/Gemini n=3 arithmetic inputs each, low confidence; Tolik backtest n=1 and Ivan chart n=1 NEW in separate columns. Anna fact-transfer evaluation is in history, not invented arithmetic. No pooled score or routing effect |
+| Explicit agent delegation | Verified application task → transfer facts → another active Persona | Existing ModelService/worker/SF Chat, typed dependency and sealed source facts | **готово и проверено** on 2b6d0112: real Azure child bf665c7e, extract_facts PASS, same conversation/correlation, exact parent revision. General recursive delegation is **не реализовано** |
 | Experiments / comparisons | Toolbar → Experiments → same-input comparison | ModelService + existing worker; separate actual responses | **готово и проверено**: three same-input comparisons, six actual verified model outputs; aa54c294 shows n=3 arithmetic observations for Tolik/Ivan and NEW for Anna |
 | Decisions / Consensus / Court | Toolbar → Decisions/Court; proposal, three isolated judges | DomainService + ModelService.judge; sealed packet, immutable votes, 2-of-3 | **готово и проверено** on aa54c294: same-input Consensus proposal cf1464ab; fresh Court ae0e5e45 has three valid independent votes and approve verdict. Old 86a650ab still has one vote; its rejected Gemini response remains a failure. No execution authority |
-| Memory / lessons / sharing | Toolbar → Memory; edit/promote/publish/revoke | Existing private artifacts + active TTL/purpose/source-revision grant | Private create/source binding/promote/read **готово и проверено** in browser on 34deb827. Sharing/revocation have contract PASS, separate multi-user visual acceptance pending |
+| Memory / lessons / sharing | Toolbar → Memory; edit/promote/publish/revoke | Existing private artifacts + active TTL/purpose/source-revision grant | Private create/source binding/promote/read **готово и проверено** in browser; 26 actual HTTP/SQLite synthetic-session checks PASS for sharing/revoke/TTL/authority. Separate multi-user visual acceptance **не проверено** |
 | Strategy Projects | Toolbar → Projects; definition/version/history | DomainService immutable StrategyProject revisions | Browser create/version/history **готово и проверено**; actual version 2 on bd239e76 shows 02:35 local time; old version 1 remains undated |
-| Routines / calendar | Toolbar → routines/calendar; propose/accept/manual follow-up | DomainService → existing worker follow-up receipt | Browser creation/explicit acceptance **готово и проверено**; ef4006eb shows local 00:00–00:30 while preserving UTC 07:00–07:30 and revision 2. Autonomous scheduling is **не реализовано**; automation stays OFF |
+| Routines / calendar | Toolbar → routines/calendar; propose/accept/open manual discussion | DomainService → existing worker follow-up receipt | **готово и проверено** on 2b6d0112: accepted definitions/dates preserved, each manual action delivered exactly one system SF Chat message; repeated calendar action deduplicated. Autonomous scheduling is **не реализовано**; automation stays OFF |
 | System | Toolbar → System | Existing runtime/capabilities/registry flags, no secrets | **готово и проверено**: eight exact-workspace paths active, Router/Execution V2 and external actions OFF, existing worker and budget authorities visible |
 | SF Social publication | Toolbar → В SF Social; select source → exact preview → explicit permanent confirmation | SocialPublicationService → existing Community store/idempotency | **Предпросмотр готов и проверен** on aa54c294: net -969.70 / PF 0.7252 explicitly after commission, immutable source revision 2. No post created; permanent publication awaits owner's confirmation |
 | Restart / cancel / retry / isolation | Existing Local worker, task status and same conversation | Existing queues/leases/inbox; fresh authority before transmission | Contract PASS; actual restart retained backtest chat and recovered one sealed rejected-model report without a second provider job. Other-user/live revocation remains pending |
-| Existing PostgreSQL regression | Disposable loopback test DB only | Existing migrations 1–22 and RLS-enabled app role, TLS | **готово и проверено**: 41 PASS, zero skips, 122.71 s on repeated actual DB run |
+| Existing PostgreSQL regression | Disposable loopback test DB only | Existing migrations 1–22 and RLS-enabled app role, TLS | Historical actual DB run: 41 PASS, zero skips, 122.71 s. Current full regression skips these 41 cases without isolated DSNs; no fresh PG PASS or new Agent World adapter claimed |
 | General Router / new Execution Engine / Agent World PostgreSQL adapter | Not switched into runtime | Existing Router/executors remain authorities | **не реализовано** for new replacement systems; no new PG adapter or Production fallback is claimed |
-| Full suite / final SHA CI / owner design | Verification and draft PR | Existing test/static/context/bundle/CI gates | Active 95912cbf: full 4032/44 plus final 62 dialog tests, 352 focused and 534-file bundles PASS; fresh exact-code CI 33970324754 3/3 PASS (Windows 4039/44, Linux 4042/41). Prior aa54c294 evidence preserved below. Owner design acceptance remains separate |
+| Full suite / final SHA CI / owner design | Verification and draft PR | Existing test/static/context/bundle/CI gates | Active 2b6d0112: full 4235/44 skipped, 267 integrated focused, staged/runtime 542-file bundles PASS; exact-code CI 33984524477 3/3 PASS (Windows 4235/44, Linux 4238/41). Earlier evidence preserved below. Owner design acceptance remains separate |
 
 The manual historical job `ui_20260905T003301149Z` (1273 bars, 64 trades) remains
 excluded from Agent World statistics. It proves the original executor can return
@@ -434,13 +467,19 @@ Actual browser checks after activation:
 
 ## Owner visual review route
 
-Open Local `/ui/ai-command-center.html#tab=overview`. Three primary tabs remain
+Open [Local review](http://127.0.0.1:8765/ui/ai-command-center.html?review=2b6d0112#tab=overview). Three primary tabs remain
 Обзор / Работа / Агенты; all secondary tools and task evidence open in drawers.
 Work → **Толик · backtest_spec** contains the original 64-trade report and its
 same SF Chat. **Иван · chart_spec**, succeeded/application_verified, contains
 the real historical Desktop PNG; earlier failed attempts are intentionally visible.
-Agents shows three Personas, measured n=3 arithmetic observations for Tolik/Ivan,
-and NEW for Anna. Court decisions never authorize execution or trading.
+The backtest task also opens the completed **Передать факты агенту** child from
+Anna in the same SF Chat. Agents shows three Personas, measured n=3 arithmetic
+observations for Tolik/Ivan and separate n=1 backtest/chart NEW observations.
+Anna's fact-transfer result is in task history. Court decisions never authorize
+execution or trading. Toolbar drawers give Memory, Projects, Decisions/Court,
+Routines/Calendar and the explicit private SF Social preview without leaving
+the page. The accepted routine/calendar **Открыть ручной разбор в SF Chat**
+actions reopen their delivered discussions without automatic task execution.
 
 Ordinary review identity `aw_model_review_0905` is a registration draft, not yet
 a created account. Its separate `localhost` browser tab awaits personal Terms
@@ -488,8 +527,9 @@ New Router/Execution V2, autonomous routines and an Agent World PostgreSQL adapt
 are not implemented; their reviewed slices and stages 0–13 remain open.
 No merge or release follows from Local PASS.
 
-`IMPLEMENTATION COMPLETE: YES` for the 95912cbf SF Chat dialog corrective slice;
+`IMPLEMENTATION COMPLETE: YES` for the completed SF Chat dialogs and integrated
+2b6d0112 owner-review slice described above;
 `IMPLEMENTATION COMPLETE: NO` for the full Agent World program/acceptance.
-`GIT CLOSEOUT COMPLETE: YES` for code 95912cbf (pushed, draft PR, exact-code CI PASS);
+`GIT CLOSEOUT COMPLETE: YES` for code 2b6d0112 (pushed, draft PR, exact-code CI PASS);
 this operational evidence is a documentation-only follow-up in the same PR.
 `STAGE CLOSED: NO`; owner visual acceptance and release stages remain distinct.

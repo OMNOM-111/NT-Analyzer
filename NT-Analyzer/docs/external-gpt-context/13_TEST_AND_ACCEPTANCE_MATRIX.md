@@ -3,10 +3,11 @@
 - Context Pack document: 13_TEST_AND_ACCEPTANCE_MATRIX.md
 - Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
+- Local source verified SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (clean beta.96 runtime; real handoff/manual delivery and original report/PNG verified, exact-code CI PASS)
+- Local verification UTC: 2026-09-05T19:05:43Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
-- Current program delta: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — application receipt observations, explicit typed fact handoff, manual follow-up delivery and ordinary-session Memory HTTP evidence; final activation/acceptance is separately recorded there.
-- Active Local 8765: clean `95912cbff8152905966e6bb7bfc2a45d3db15f80`, build `dev-0.10.0-beta.96-95912cbff815`, original owner data, Preview=false
+- Current program delta: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. Full-program/owner acceptance remains open.
+- Active Local 8765: clean `2b6d0112bef88c5bfb73970de64ec5518443e56b`, build `dev-0.10.0-beta.96-2b6d0112bef8`, original owner data, Preview=false
 - Scope: Canonical test layers, release gates, acceptance and rollback expectations
 - Status: IN DEVELOPMENT
 
@@ -17,8 +18,12 @@ zero skipped, 278.92 s. Memory has 26 actual HTTP/SQLite tests with synthetic
 ordinary cookie sessions (190 combined PASS); private/granted artifact access,
 revocation/TTL/source supersession, foreign membership, device/session and CSRF
 checks are not replaced by an owner fallback. This is not multi-human browser
-acceptance. Real provider handoff/manual discussion and final full-suite/Local
-identity evidence belong to the linked integrated review operational closeout.
+acceptance. Real Azure handoff bf665c7e and both manual discussion receipts
+passed on active 2b6d0112; repeated calendar delivery did not duplicate its
+single message. The retained original report/PNG were reverified, not rerun.
+Full Local suite: 4235 passed / 44 skipped; exact-code CI 33984524477: Windows
+4235/44, Ubuntu 4238/41, static, 3/3 PASS. Exact staged/runtime bundles: 542 files,
+PASS. Details belong to the linked integrated review operational closeout.
 The interrupted pre-freeze full run is not PASS. Existing real historical NT/PNG
 proof, synthetic provider fixtures and fresh live execution are separate layers.
 
@@ -112,6 +117,7 @@ transport, contract assertion or HTTP 200 is actual provider/browser acceptance.
 
 | Current delta check | Result | Limit |
 | --- | --- | --- |
+| Integrated review 2b6d0112 | **Local and exact-code CI PASS** | Full 4235/44 skipped, 267 integrated focused, 542-file bundles, CI 33984524477 3/3; actual original NT/PNG, real Azure handoff, separate application observations and manual delivery/deduplication verified. Full-program/owner acceptance remains open |
 | SF Chat in-app dialogs 95912cbf | **Local and exact-code CI PASS** | Full 4032/44 + final 62 dialog tests (seven added after collection), 352 focused, 534-file bundles and actual cancellation/navigation/focus browser checks PASS; CI 33970324754 3/3 PASS, fresh Windows 4039/44 and Linux 4042/41 |
 | Historical 34deb827 | **3906 passed, 44 skipped**, 770.01 s; exact-SHA CI 3/3 PASS | Superseded by ef4006eb; not a release |
 | Historical ef4006eb | **3914 passed, 44 skipped**, 759.73 s; **218 focused PASS**, staged/runtime bundles and CI 3/3 PASS | Earlier counts and interrupted run remain historical |
@@ -122,12 +128,13 @@ transport, contract assertion or HTTP 200 is actual provider/browser acceptance.
 | Agent World domain/storage/social | **348 passed** | Disposable-data service/contract scope; no live model/publication claim |
 | Session authority/history | **17 passed** | Disposable auth/device stores; final browser recheck remains separate |
 | SF Chat delivery recovery | **NT RESULT / RESTART / SEALED REJECTION PASS** | Five backtest messages preserved; Gemini failure delivered once without a new provider call or evaluation change |
-| Live ordinary-user provider | **PENDING OWNER REGISTRATION / KEY** | Final Terms waiting on localhost; then own confirmed workspace and OpenRouter wizard; no copied owner credentials |
+| Live ordinary-user provider | **PENDING OWNER REGISTRATION / KEY** | Draft registration has expired/used email challenge; no completed ordinary account. Complete proof/consent/device/workspace before separate OpenRouter key. The empty owner wizard was inspected/cancelled without reading or copying credentials |
 | Actual owner providers / NT | **PARTIAL** | DeepSeek + Gemini CONNECTION_OK and three comparisons PASS; SF Chat/model/NT original report PASS, Z.AI unavailable and Gemini's noncanonical chart plan rejected |
 | Domain/browser acceptance | **PARTIAL** | Projects/private Memory/manual routines/calendar/System, restart, NT/PNG, ratings, Azure, same-input Consensus, three-model Court and read-only Social preview PASS; real multi-user Memory/permanent Social/own-key/owner acceptance pending |
 | Static/context/bundle/CI | **aa54c294 PASS** | Full 3977/44, 319 final focused, 610 presentation focused, legacy 13/13 suites, root/static/context/diff, staged/runtime 533-file bundles and exact-SHA CI 33965039490 3/3 PASS |
 
-The 41 generic PostgreSQL skips are covered by the separate real isolated DB run.
+The 41 generic PostgreSQL skips have separate historical isolated DB evidence;
+they were not rerun against an actual DB for 2b6d0112 and are not fresh PASS.
 Two shell checks and one POSIX permissions check remain unavailable on Windows;
 those three are not Windows PASS. No Production DB or secrets are test fixtures.
 Agent World domain storage itself is Development SQLite only and fails closed

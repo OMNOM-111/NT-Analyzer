@@ -98,7 +98,7 @@ General autonomous delegation/Router shadow cutover, a replacement Execution
 Engine/Deviation Control, autonomous due-time routines, and an Agent World
 PostgreSQL adapter are not implemented by this slice. Existing safe adapters
 remain authorities. Backtesting-page redesign is outside this program slice.
-Owner design acceptance, final Git/CI closeout and stage closure are separate.
+Owner design acceptance, scoped Git/CI closeout and full-stage closure are separate.
 
 ## Release impact and rollback
 
@@ -115,10 +115,60 @@ retains the original owner data root and refuses active work or an unknown PID.
 
 ## Operational closeout
 
-Code verification result: **PASS**. Frozen full regression and exact staged
-bundle passed. Exact clean Local activation, new live handoff/manual discussion
-and Git/CI identity will be appended after verification; they are not inferred
-from fixture checks. Full-program owner acceptance remains **PENDING**.
+Code verification result: **PASS**. Exact source commit:
+`2b6d0112bef88c5bfb73970de64ec5518443e56b`, committed/pushed to the task branch
+and draft PR #282. Local 8765 runs that clean detached code at beta.96,
+build `dev-0.10.0-beta.96-2b6d0112bef8`, dirty=false, Preview=false.
+Original owner data/settings remain in the original Development data root.
+Isolated-copy startup/integrity/identity, staged and clean runtime 542-file
+bundles PASS. No unrelated runtime or NinjaTrader process was changed.
+
+[Exact-code CI 33984524477](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33984524477)
+passed 3/3: Windows 4235 passed / 44 skipped in 1053.96 s, Ubuntu 4238 passed /
+41 skipped in 305.64 s, static. These are dispatched branch checks, not absent
+main-target merge checks. Local full suite is 4235/44 in 1129.40 s. The current
+41 PostgreSQL skips are not a fresh repeat of the historical DB acceptance.
+
+### Actual browser/runtime continuation
+
+- Original report and PNG were reverified on 2b6d0112 without a new NT run.
+  PNG is 718×424, 31,541 bytes, SHA256
+  `45ba864f7ccb06c9fba8655a4839378e1e9fd049d0d5f3d350567ae3081e9c40`;
+  an actual browser screenshot shows it in the original SF Chat message.
+- New real handoff `bf665c7e-bdc4-5652-8c22-c2bfcdbc5df1` depends on
+  `62182839-1c4c-563d-8186-bcef081ec599` revision 9, same correlation.
+  Anna's Azure response passed `extract_facts`; estimated cost USD 0.000355.
+  Eight allowlisted facts match source packet SHA256
+  `2bfd4e23f74c09a1c99d302dda9e5612ddc2b1fe01bd5ac90851405e7fd2ccb2`.
+  Chat `C-1322EA65B646` has eight messages and exactly one completed child
+  `MSG-235DD76B5F2C`. The original source result remains intact.
+- Accepted routine `a590f088-8ac5-59e1-ac62-b44142b66f9d` and calendar
+  `4901ad4b-d44c-5f28-86c7-5d40543fcd62` each delivered one system message
+  through the explicit manual action. Threads:
+  `AW-FU-df856682d5195c3f69a61d4bbc6e` / `AW-FU-8bdfc131d0dcd300d6d04d46db34`.
+  Message IDs `MSG-81B21C17C904` / `MSG-3A46C0147400`; hashes match their
+  receipts. Repeated calendar action did not duplicate delivery. No model,
+  provider or rating event in either receipt; automation/execution/scheduled
+  delivery=false. This is not automatic scheduling.
+- Agents show separate Tolik backtest n=1 and Ivan chart n=1, both NEW,
+  independently of the n=3 arithmetic observations. Anna's fact-transfer
+  evaluation appears in task/history, not a fabricated arithmetic score.
+- The empty own-model wizard was opened in the real owner UI and cancelled
+  without submission. Its inline guide, separate Persona/provider fields and
+  `api_key` password/new-password field were checked without reading secrets.
+  This does not certify an ordinary account or a real user-supplied key.
+- Read-only post-action verifier: 12 GET, runtime source stable before/after,
+  2026-09-05T19:05:43Z. Exact receipts, hashes and message counts are in local
+  `.artifacts/program-review-20260905/`; no runtime data or secrets enter Git.
+
+`IMPLEMENTATION COMPLETE: YES` for this bounded integrated owner-review slice
+and the earlier SF Chat dialogs. `GIT CLOSEOUT COMPLETE: YES` for code 2b6d0112
+(pushed, draft PR, exact-code CI PASS). Operational documentation advances the
+branch separately; the active runtime code SHA above remains authoritative.
+`STAGE CLOSED: NO`; full-program implementation/owner acceptance is **PENDING**
+with the unverified, unimplemented and external/owner blockers listed above.
+No merge or deploy was performed.
+
 The repository-only `docs/current/AGENT_WORLD_IMPLEMENTATION_STATUS.md`
 is the single current handoff; this shipped record supplies scoped historical
 evidence. Owner/developer current documents are excluded from the runtime bundle.

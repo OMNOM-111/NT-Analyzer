@@ -3,25 +3,26 @@
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
+- Local source verified SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (clean beta.96 runtime; real handoff/manual delivery and original report/PNG verified, exact-code CI PASS)
+- Local verification UTC: 2026-09-05T19:05:43Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
-- Current program delta: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — application receipt observations, explicit typed fact handoff, manual follow-up delivery and ordinary-session Memory HTTP evidence; final activation/acceptance is separately recorded there.
+- Current program delta: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. Full-program/owner acceptance remains open.
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Active branch: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; both dependencies remain open
-- Version: `0.10.0-beta.96`, `pre_release`; clean `95912cbf` active on Local 8765, no Canary/Production promotion
-- Integration state: scoped model/domain/Chat/NT/Desktop, result presentation/Consensus and three-model Court active and verified; owner-dependent and full-program work remain
+- Version: `0.10.0-beta.96`, `pre_release`; clean `2b6d0112` active on Local 8765, no Canary/Production promotion
+- Integration state: scoped model/domain/Chat/NT/Desktop, real fact handoff, manual discussion, separate application observations, Consensus and Court verified; owner-dependent and full-program work remain
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 
-## SF Chat dialog correction — Local verified
+## Completed SF Chat dialog correction — historical 95912cbf verification
 
 The task branch replaces native conversation confirmations and rename/folder
 prompts with styled asynchronous in-app dialogs, plus notification-inbox clear.
 Cancellation, keyboard focus, stale context and duplicate actions are guarded;
 existing backend, permissions, stores and Auth/device/Preview remain unchanged.
 This does not migrate unrelated release/trading/security administration dialogs.
-Active Local is clean 95912cbf; styled dialogs, Escape/cancel, preserved history,
+At the completed 95912cbf checkpoint, styled dialogs, Escape/cancel, preserved history,
 safe navigation and inbox focus passed in the actual browser. Full regression:
 4032 PASS / 44 skipped, supplemented by final 62 dialog checks (seven auth-context
 cases added after collection); 352 focused regression, root/static/context and
@@ -112,13 +113,16 @@ The original Local at 8765 served dirty beta.93 / `7062f749` because its schedul
 task still pointed at that checkout. This is historical, not the current runtime.
 After owner authorization, copy/cold backups, SQLite integrity and isolated-copy
 startup checks, only the matched Local process/task chain was replaced. Clean
-detached `agent-world-local-runtime` at `aa54c2940150e540d8b594dbf1d6254e172adbfd`
-now serves beta.96, build `dev-0.10.0-beta.96-aa54c2940150`, with the original
+detached `agent-world-local-runtime` at `2b6d0112bef88c5bfb73970de64ec5518443e56b`
+now serves beta.96, build `dev-0.10.0-beta.96-2b6d0112bef8`, with the original
 owner data, account, workspace, history and NT heartbeat. No active job was lost.
 Delivery, roles, private containers, sealed-rejection recovery, active-model
 ratings, local calendar and new-version timestamps are active. Azure compatibility
 accepts only canonical api-version on resolved Azure owner bindings;
 private transport, secrets, native adapter and existing budgets do not change.
+The current explicit Anna handoff retains the original report and adds one
+child result to the same chat (eight total messages). Two manual follow-up
+discussions each have one neutral system message; no autonomous scheduler runs.
 
 The manual NinjaTrader proof `ui_20260905T003301149Z` has 1,273 actual bars and
 64 trades, but is not Agent World-originated and remains excluded from statistics.
@@ -204,6 +208,15 @@ static PASS. Later 34deb827 run 33951941036 passed three jobs. Historical ef4006
 [run 33956017912](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33956017912)
 also passed all three jobs. Azure CI 33958551325 and Court CI 33960694698 passed 3/3. PR #282 stays
 draft for owner review; program stages remain open.
+
+Current exact-code [run 33984524477](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33984524477)
+passed 3/3 at `2b6d0112bef88c5bfb73970de64ec5518443e56b`: Windows 4235/44,
+Ubuntu 4238/41 and static. Local full 4235/44 and staged/runtime 542-file bundles
+PASS. Clean Local activation, real Anna fact handoff and two deduplicated manual
+discussion receipts passed. Code rollback is 95912cbf with later owner writes
+preserved; no data rollback, merge or deploy is authorized. Operational docs
+may advance branch HEAD without another runtime switch. Full-program closure
+and owner design acceptance are not inferred from this code closeout.
 
 ## Historical deployment identity
 

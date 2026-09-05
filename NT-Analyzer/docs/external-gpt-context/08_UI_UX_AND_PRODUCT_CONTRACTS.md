@@ -3,30 +3,32 @@
 - Context Pack document: 08_UI_UX_AND_PRODUCT_CONTRACTS.md
 - Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
+- Local source verified SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (clean beta.96 runtime; real handoff/manual delivery and original report/PNG verified, exact-code CI PASS)
+- Local verification UTC: 2026-09-05T19:05:43Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
-- Current program delta: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — application receipt observations, explicit typed fact handoff, manual follow-up delivery and ordinary-session Memory HTTP evidence; final activation/acceptance is separately recorded there.
-- Active Local 8765: clean `95912cbff8152905966e6bb7bfc2a45d3db15f80`, build `dev-0.10.0-beta.96-95912cbff815`, original owner data, Preview=false
+- Current program delta: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. Full-program/owner acceptance remains open.
+- Active Local 8765: clean `2b6d0112bef88c5bfb73970de64ec5518443e56b`, build `dev-0.10.0-beta.96-2b6d0112bef8`, original owner data, Preview=false
 - Unified Local accepted base: beta.96, open PR #280; no Canary/Production promotion
 - Scope: Major UI areas, visibility rules and important UX contracts
 - Status: IN DEVELOPMENT
 
 The Agent World rows below describe the integrated Development delta, not a
-completed program acceptance. Clean 95912cbf is active with browser-verified
-in-app SF Chat dialogs. The previous aa54c294 NT/PNG, ratings, Inspector/SF Chat,
-Consensus and three-model Court evidence is preserved below.
+completed program acceptance. Clean 2b6d0112 is active with the completed
+in-app SF Chat dialogs, real typed handoff, separate application observations
+and manual routine/calendar chat delivery. Original NT report/PNG were reverified;
+the earlier ratings, Inspector/SF Chat, Consensus and Court evidence is preserved below.
 Real multi-user sharing, permanent Social and own-key/owner acceptance
 remain separate. The pack-wide deployment anchor is unchanged; Production was
 not rechecked. Local verification uses the explicit source SHA above.
 
-## SF Chat dialog correction — Local verified
+## Completed SF Chat dialog correction — historical 95912cbf verification
 
 The task branch replaces native conversation confirmations and rename/folder
 prompts with styled asynchronous in-app dialogs, plus notification-inbox clear.
 Cancellation, keyboard focus, stale context and duplicate actions are guarded;
 existing backend, permissions, stores and Auth/device/Preview remain unchanged.
 This does not migrate unrelated release/trading/security administration dialogs.
-Active Local is clean 95912cbf; styled dialogs, Escape/cancel, preserved history,
+At the completed 95912cbf checkpoint, styled dialogs, Escape/cancel, preserved history,
 safe navigation and inbox focus passed in the actual browser. Full regression:
 4032 PASS / 44 skipped, supplemented by final 62 dialog checks (seven auth-context
 cases added after collection); 352 focused regression, root/static/context and
