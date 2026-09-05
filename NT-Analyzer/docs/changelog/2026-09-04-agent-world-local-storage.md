@@ -60,3 +60,22 @@ No Canary/Production deployment, release, merge, version bump or production
 secrets/database operation was performed. Shared current documents and the
 External GPT Context Pack are updated by the integration owner in the same
 owner-preview task.
+
+## Test-isolation follow-up
+
+The new gateway tests exposed an existing order dependency in the shared
+`preview_env` test fixture. Dataset seeding directly sets
+`STRATFORGE_PREVIEW_PROMO_CODE`, but the fixture previously did not register that
+environment variable for restoration. A seeded synthetic scenario followed by
+the fresh-runtime identity test reproduced the failure without any gateway code.
+
+The shared fixture now starts that variable empty through `monkeypatch.setenv`,
+which also restores its caller's environment at teardown. A two-fixture
+regression checks both empty initialization and restoration after a direct
+synthetic assignment. The original empty-promo assertion is unchanged. No
+application/runtime code or user data was changed by this follow-up.
+
+Verification: reproduction order plus new regression **3 passed**; full Preview
+sandbox module **23 passed**; root owner-preview gateway module followed by the
+fresh-runtime identity test **17 passed** with the same fixture fix applied
+in-memory through a pytest hook (root files remained read-only).
