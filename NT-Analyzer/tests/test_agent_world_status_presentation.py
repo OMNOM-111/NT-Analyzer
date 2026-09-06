@@ -101,13 +101,16 @@ def test_phase_split_never_folds_review_or_blocked_into_execution():
                         "done": 2, "failed": 1, "cancelled": 0}
 
 
-def test_unfinished_task_reports_no_completion_percentage():
-    """A failed/review task used to render a full 100 % bar beside its badge."""
+def test_only_a_finished_task_reports_a_completion_percentage():
+    """A failed/review task used to render a full 100 % bar beside its badge.
+
+    Nothing measures partial completion here, so an unfinished task reports no
+    number at all rather than a made-up one; the card shows its phase instead.
+    """
     assert presentation.progress_pct("succeeded") == 100
-    assert presentation.progress_pct("running") == 0
-    assert presentation.progress_pct("review") is None
-    assert presentation.progress_pct("failed") is None
-    assert presentation.progress_pct("cancelled") is None
+    assert presentation.progress_pct("completed") == 100
+    for status in ["running", "waiting", "queued", "review", "failed", "cancelled", "blocked"]:
+        assert presentation.progress_pct(status) is None, status
 
 
 def test_unknown_status_is_never_counted_as_finished_work():
@@ -148,7 +151,8 @@ def test_metric_and_panel_heading_cannot_contradict_each_other():
 
 
 def test_executing_work_still_uses_the_in_progress_heading():
-    result = render(workspace([task(status="running", phase="executing", progress_pct=0)]))
+    result = render(workspace([task(status="running", phase="executing",
+                                    phase_label="Выполняется", progress_pct=None)]))
     assert "Сейчас в работе" in result["html"]
 
 

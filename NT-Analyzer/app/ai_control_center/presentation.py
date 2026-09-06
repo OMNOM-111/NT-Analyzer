@@ -104,18 +104,15 @@ def stage_label(stage) -> str:
 
 
 def progress_pct(status) -> int | None:
-    """Honest progress.
+    """Honest progress: a number only where one was actually measured.
 
-    Only a finished task is 100 %. A failed, cancelled or awaiting-review task
-    has no meaningful completion percentage, so it reports none instead of a
-    full bar that contradicts its own status badge.
+    Nothing in this path measures partial completion, so only a finished task
+    reports 100. Everything else reports none and the card shows its phase and
+    stage instead — which says more than a fabricated percentage and cannot
+    contradict the badge beside it. This matches the existing convention in
+    live_backtests.py and live_charts.py.
     """
-    phase = task_phase(status)
-    if phase == PHASE_DONE:
-        return 100
-    if phase == PHASE_EXECUTING:
-        return 0
-    return None
+    return 100 if task_phase(status) == PHASE_DONE else None
 
 
 def attention_reason(phase) -> tuple[str, str]:

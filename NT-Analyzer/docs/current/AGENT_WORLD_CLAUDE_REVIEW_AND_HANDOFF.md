@@ -121,6 +121,25 @@ Two further findings from the same pass:
   HTTP (`test_foreign_workspace_cannot_read_known_shared_ids_or_artifacts`).
   All pass on this branch. A second live human account was not created: that
   needs owner registration, and no account was finalised on the owner's behalf.
+- **Interrupted delivery and repeat execution.** Correct as implemented and
+  already covered by `tests/test_agent_world_model_delivery.py` (15 cases, all
+  passing here). The exact scenario named in the instruction — the model
+  answered but the SF Chat append failed — is
+  `test_transient_chat_failure_retries_persisted_result_without_second_call`:
+  the persisted result is redelivered and no second provider call is made.
+  Alongside it: restart after completion but before the delivery enqueue, an
+  append repaired idempotently before the inbox ack, competing monitor and
+  worker claims publishing exactly once, a replaced or unclaimed claim unable
+  to publish, bounded retries, and no retry enqueued while the provider is
+  still pending. An unsealed `review` result is explicitly not deliverable.
+- **A model response cannot widen what may be executed.** `finish_dispatch`
+  re-checks `model_plan_verified` inside its lock, re-runs `admit()`, rejects a
+  scope mismatch, and dispatches only one of two fixed kinds — a backtest or a
+  desktop snapshot. The chart command string is constructed server-side from the
+  validated spec rather than taken from the model's text, and the idempotency
+  key is derived from the task id, so a repeat cannot create a second source
+  job. Model text therefore fills a pre-approved spec; it never names the
+  action.
 - **Layout.** No clipped control and no horizontal page overflow at 1590 px or
   1170 px with real data.
 
@@ -165,7 +184,13 @@ Commands run from `NT-Analyzer/`, Windows, Python 3.12, Node v23.2.0.
 | `pytest tests/test_agent_world_storage_scope.py` | 15 passed (new) |
 | `pytest` over the six Agent World suites touched | 482 passed |
 | `node --check` on `ai-command-center.js` | pass after every edit |
-| Full regression | see the run recorded below |
+| `pytest` over delivery, session authority and storage | 118 passed |
+| `python -m compileall app tools tests` | pass |
+| `node --check` over all 23 shipped Aurora JS files | pass |
+| `python tools/pre_release_check.py` | PASS — 543-file bundle, static scan in bundle, runtime reads, Python compile, JavaScript syntax |
+| `python NT-Analyzer/tools/release_static_scan.py --scan all` from the repository root | CSP OK, SECRETS OK, MARKDOWN OK |
+| `python tools/validate_external_gpt_context.py` | EXTERNAL GPT CONTEXT OK |
+| Full regression | see below |
 
 **Every new presentation and focus regression was verified to fail on the
 pre-fix code** by stashing only the source file and re-running: 10 of the
@@ -182,6 +207,12 @@ finding #1. Its real intent (a queued task stays visible) is preserved and now
 asserted through the phase mapping. Two persona payload tests were widened by
 the new `avatar_key` field, with an added assertion that credentials, scope,
 model and authority still cannot enter that payload.
+
+The "legacy 13/13 suites" step from earlier records was **not** reproduced: no
+runner for it exists in the repository under that name, and the legacy tests it
+appears to refer to (`tests/test_legacy_isolation.py` among them) run inside the
+full suite. If GPT knows the intended invocation, it should be run before
+integration rather than inherited from an earlier record.
 
 CI was **not** run for these commits. The branch is local and unpushed.
 
@@ -233,8 +264,22 @@ Unchanged from the program record unless noted.
 
 - **Agent World PostgreSQL/RLS adapter** — not implemented. Section 4 explains
   why no PostgreSQL acceptance was possible for it.
-- **Router** — not implemented; not switched to shadow. Observed scores still
-  have `routing_effect: "none"`. Now stated as such in the System panel.
+- **Router** — not implemented for Agent World; not switched to shadow.
+  Observed scores still carry `routing_effect: "none"`. Now stated as such in
+  the System panel. **Before building one, read `app/ai_lab/agent_router.py`.**
+  A router already exists and is 240 lines: `candidates()` filters the owner's
+  global registry by configured key, endpoint type, enablement, cooldown and
+  billing mode, orders by role and complexity, and then re-ranks through
+  `ai_ratings.rank_agents(role, rows, explore=True, workspace_id=...)` — that is
+  already learned, workspace-scoped, exploring routing that never bypasses
+  key/budget/cooldown gates, and it already documents that it grants no
+  execution authority. The genuine gap is scope, not mechanism: the existing
+  router routes StratForge staff roles over the owner's global registry using
+  star ratings, whereas Agent World needs to route a *user's own* connections
+  for a *task class* using Agent World's own bounded evaluations. Those
+  evaluations are a deliberately separate evidence class. Reuse the ranking and
+  exploration mechanism rather than writing a second one; a duplicate here is
+  exactly the second implementation the instruction rules out.
 - **Execution Engine V2 with Deviation Control** — not implemented. Now a
   separate System row so the working legacy worker cannot imply it.
 - **Multi-level delegation** — one explicit typed hand-off exists and is
