@@ -80,6 +80,13 @@ intent is preserved through the phase mapping. Two persona payload tests were
 widened by the new `avatar_key`, with an added assertion that credentials,
 scope, model and authority still cannot enter that payload.
 
+Full regression on the final `6b111590`: **4296 passed, 42 skipped, 0 failed**,
+1007.59 s. The 42 are the 41 unconfigured PostgreSQL cases plus one POSIX
+permission case; earlier records say 44 because two bash-gated shell cases
+skipped there and ran and passed here. `python tools/pre_release_check.py`
+PASS with a 544-file bundle, root-level CSP/secrets/Markdown scan OK, and
+`python tools/validate_external_gpt_context.py` OK.
+
 CI was not run: the branch is local and unpushed. Exact-SHA CI must certify
 whichever SHA results from integration.
 

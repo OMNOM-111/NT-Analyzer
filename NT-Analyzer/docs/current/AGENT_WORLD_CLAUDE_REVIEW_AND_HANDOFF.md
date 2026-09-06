@@ -190,7 +190,7 @@ Commands run from `NT-Analyzer/`, Windows, Python 3.12, Node v23.2.0.
 | `python tools/pre_release_check.py` | PASS — 543-file bundle, static scan in bundle, runtime reads, Python compile, JavaScript syntax |
 | `python NT-Analyzer/tools/release_static_scan.py --scan all` from the repository root | CSP OK, SECRETS OK, MARKDOWN OK |
 | `python tools/validate_external_gpt_context.py` | EXTERNAL GPT CONTEXT OK |
-| Full regression | see below |
+| Full regression on `6b111590` | **4296 passed, 42 skipped, 0 failed, 0 errors**, 1007.59 s, `.artifacts/claude-review/full-regression-6b111590.xml` |
 
 **Every new presentation and focus regression was verified to fail on the
 pre-fix code** by stashing only the source file and re-running: 10 of the
@@ -207,6 +207,16 @@ finding #1. Its real intent (a queued task stays visible) is preserved and now
 asserted through the phase mapping. Two persona payload tests were widened by
 the new `avatar_key` field, with an added assertion that credentials, scope,
 model and authority still cannot enter that payload.
+
+The 42 skips are 41 PostgreSQL cases — exactly the four suites enumerated in
+section 4, each reporting its missing DSN — plus one POSIX-permission-bits case
+in `test_platform_secrets`. **The earlier records say 44.** The difference is
+not lost coverage and is not caused by this branch: two shell cases gated on
+`shutil.which("bash")` (in `test_secret_containment.py` and
+`test_phase9_blue_green.py`) skipped on the earlier runner and **ran and passed
+here**, because Git Bash is on PATH in this environment. So this run has two
+more genuine passes and two fewer skips than the recorded baseline. A runner
+without bash will show 44 again, and that is correct rather than a regression.
 
 The "legacy 13/13 suites" step from earlier records was **not** reproduced: no
 runner for it exists in the repository under that name, and the legacy tests it
