@@ -14,6 +14,14 @@
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
+- Independent review pass (not merged): `claude/agent-world-review-and-hardening`,
+  local and unpushed, base `45ab4361`, HEAD `c865db2248a12f6927d077dc31efe8b05c02426e`.
+  Findings, deliberate non-changes and the exact next operation are in
+  [AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md)
+  with its [change record](../changelog/2026-09-06-agent-world-status-presentation-review.md).
+  It reworks status counters, Persona occupancy, warning actionability, score
+  provenance, System readiness axes, evidence placement and Inspector focus; it
+  runs no CI and changes no flag, migration, route or authority.
 
 ## Completed SF Chat dialog correction — historical 95912cbf verification
 
@@ -248,7 +256,12 @@ They no longer define the current Local baseline.
 
 - Development SQLite implements the Agent World repository; non-Development
   use fails closed. Actual PostgreSQL 41/41 covers existing relational/RLS
-  migrations 1–22, not a missing Agent World PostgreSQL adapter.
+  migrations 1–22, not a missing Agent World PostgreSQL adapter. The 41 are
+  `test_production_storage` (12), `test_production_workers` (12),
+  `test_sf_chat_relational_postgres` (9) and `test_stage8_postgresql` (8); none
+  imports `ai_control_center` and no shipped migration creates an Agent World
+  table, so neither the historical PASS nor the current skips describe Agent
+  World coverage. `tests/test_agent_world_storage_scope.py` pins this.
 - DeepSeek and Gemini connections and three actual comparisons passed; fresh
   model/chat/NT report passed on ca505d83 and survived 34deb827 restart. Z.AI
   unavailability and initial chart failures are not PASS. New actual PNG, saved

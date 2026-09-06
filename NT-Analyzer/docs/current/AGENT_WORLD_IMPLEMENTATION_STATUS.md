@@ -31,6 +31,17 @@ used a clean runtime checkout and retained the original real data root. A normal
 development-profile launch would reset data to the code checkout, so the Local
 wrapper reapplies the verified data root after loading that profile.
 
+An independent review pass over the owner-reported screen findings is recorded
+in [AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md)
+with its [change record](../changelog/2026-09-06-agent-world-status-presentation-review.md).
+It sits on `claude/agent-world-review-and-hardening` (local, unpushed, base
+`45ab4361`) and is not merged into this branch or PR #282. That document also
+settles what the 41 PostgreSQL cases cover: they are Stage 8 storage/workers and
+the SF Chat relational read path, none of them import `ai_control_center`, and
+no shipped migration creates an Agent World table — so the historical 41 PASS
+never certified the Agent World schema and the current 41 skips are not lost
+Agent World coverage.
+
 The previous source/test/CI snapshot is preserved in
 [the pre-model archive](../archive/AGENT_WORLD_PRE_MODEL_CHECKPOINT_486DB834.md).
 Desktop plans/images, historical `c9b2883`, foundation records and
