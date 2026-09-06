@@ -7,6 +7,7 @@ so a single "active" number can never stand for all of them.
 """
 from __future__ import annotations
 
+import re
 from types import MappingProxyType
 
 # Persona/model/task machine statuses keep their meaning. Phases group them for
@@ -51,6 +52,9 @@ RUBRIC_LABELS = MappingProxyType({
     "backtest_spec": "План бэктеста",
     "chart_spec": "План графика",
     "application_execution": "Соответствие результата приложения",
+    # Emitted by the existing NinjaTrader and Desktop adapters.
+    "ninjatrader_historical_backtest": "Исторический бэктест NinjaTrader",
+    "desktop_chart_snapshot": "Снимок графика Рабочего стола",
 })
 
 STAGE_LABELS = MappingProxyType({
@@ -93,6 +97,15 @@ def phase_label(phase) -> str:
     return PHASE_LABELS.get(str(phase or ""), "Состояние не определено")
 
 
+def _machine_key(value) -> bool:
+    """A lowercase ASCII identifier, as opposed to text written for a reader.
+
+    The NinjaTrader and Desktop adapters already send a written stage; replacing
+    that with a placeholder would be a step backwards.
+    """
+    return bool(re.fullmatch(r"[a-z][a-z0-9_]*", str(value or "")))
+
+
 def rubric_label(rubric_key) -> str:
     key = str(rubric_key or "")
     return RUBRIC_LABELS.get(key, key or "Класс задачи не указан")
@@ -100,7 +113,11 @@ def rubric_label(rubric_key) -> str:
 
 def stage_label(stage) -> str:
     key = str(stage or "")
-    return STAGE_LABELS.get(key, key or "Этап не указан")
+    if key in STAGE_LABELS:
+        return STAGE_LABELS[key]
+    if not key:
+        return "Этап не указан"
+    return "Этап: технические детали" if _machine_key(key) else key
 
 
 def progress_pct(status) -> int | None:

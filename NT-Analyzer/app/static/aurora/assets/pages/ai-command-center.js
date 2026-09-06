@@ -38,7 +38,7 @@
   const AVATAR_KEYS = Object.freeze(['vitek', 'manager', 'marina', 'tolik', 'nikita', 'ivan']);
   const AVATAR_LABELS = Object.freeze({ vitek: 'Виктор', manager: 'Управляющий', marina: 'Марина', tolik: 'Толик', nikita: 'Никита', ivan: 'Иван' });
   const ATTENTION_PHASES = Object.freeze(['awaiting_review', 'awaiting_decision', 'failed']);
-  const RUBRIC_LABELS = Object.freeze({ connection_exact: 'Проверка соединения', json_arithmetic: 'Арифметика · JSON', extract_facts: 'Извлечение фактов', court_vote: 'Голос Court', backtest_spec: 'План бэктеста', chart_spec: 'План графика', application_execution: 'Соответствие результата приложения' });
+  const RUBRIC_LABELS = Object.freeze({ connection_exact: 'Проверка соединения', json_arithmetic: 'Арифметика · JSON', extract_facts: 'Извлечение фактов', court_vote: 'Голос Court', backtest_spec: 'План бэктеста', chart_spec: 'План графика', application_execution: 'Соответствие результата приложения', ninjatrader_historical_backtest: 'Исторический бэктест NinjaTrader', desktop_chart_snapshot: 'Снимок графика Рабочего стола' });
   const STAGE_LABELS = Object.freeze({ awaiting_provider: 'Ожидает ответа модели', provider_receipt: 'Ответ модели получен', awaiting_application: 'Ожидает результата приложения', application_verified: 'Результат приложения проверен', application_failed: 'Приложение вернуло ошибку', application_cancel_requested: 'Запрошена отмена в приложении', work: 'Выполнение', evaluation: 'Проверка результата', planning: 'Планирование', review: 'Проверка' });
   const phaseOf = task => {
     const sent = String(task && task.phase || '');
@@ -46,7 +46,11 @@
       : PHASE_BY_STATUS[String(task && task.status || '').toLowerCase()] || 'awaiting_decision';
   };
   const phaseLabel = task => task?.phase_label || PHASE_LABELS[phaseOf(task)] || 'Состояние не определено';
-  const rubricLabel = value => { const key = String(value || ''); return Object.prototype.hasOwnProperty.call(RUBRIC_LABELS, key) ? RUBRIC_LABELS[key] : ''; };
+  const rubricLabel = value => {
+    const key = String(value || '');
+    if (Object.prototype.hasOwnProperty.call(RUBRIC_LABELS, key)) return RUBRIC_LABELS[key];
+    return machineKey(key) ? '' : key;
+  };
   const esc = value => String(value == null ? '' : value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
   const rows = value => Array.isArray(value) ? value : [];
   const items = value => Array.isArray(value) ? value : rows(value && (value.items || value.tasks || value.agents));
@@ -60,7 +64,17 @@
   const statusMeta = value => STATUS[String(value || '').toLowerCase()] || ['Статус не указан', 'neutral'];
   const badge = value => { const meta = statusMeta(value); return `<span class="aw-status aw-${meta[1]}">${esc(meta[0])}</span>`; };
   const taskId = row => String(row && (row.id || row.task_id) || '');
-  const stageName = value => { const key = String(value || ''); return Object.prototype.hasOwnProperty.call(STAGE_LABELS, key) ? STAGE_LABELS[key] : (key ? 'Этап: технические детали' : '—'); };
+  // A machine key is lowercase ASCII with underscores. The NinjaTrader and
+  // Desktop adapters already send a written stage ("Ожидание NinjaTrader"), and
+  // replacing that with a placeholder would be a step backwards, so anything
+  // already written for a reader passes through untouched.
+  const machineKey = value => /^[a-z][a-z0-9_]*$/.test(String(value || ''));
+  const stageName = value => {
+    const key = String(value || '');
+    if (Object.prototype.hasOwnProperty.call(STAGE_LABELS, key)) return STAGE_LABELS[key];
+    if (!key) return '—';
+    return machineKey(key) ? 'Этап: технические детали' : key;
+  };
   const agentId = row => String(row && (row.id || row.persona_id || row.agent_id) || '');
   const name = row => typeof row === 'string' ? row : String(row && (row.display_name || row.name || row.title || row.id) || 'Не назначен');
   const role = row => typeof row?.role === 'object' ? name(row.role) : String(row?.role_label || row?.role || row?.specialization || 'Роль не указана');
@@ -358,7 +372,7 @@
   function modelConnectionGuide() {
     return '<aside class="aw-note"><strong>Отдельный тестовый ключ</strong><p>Можно выбрать OpenRouter и модель <code>openrouter/free</code>; Endpoint оставить пустым. Создайте отдельный inference API key на <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">странице ключей OpenRouter</a> и самостоятельно вставьте его в поле «Ключ подключения». Owner-ключи не копируются.</p><p><a href="https://openrouter.ai/docs/guides/routing/routers/free-router" target="_blank" rel="noopener noreferrer">Free router</a> выбирает доступную бесплатную модель; состав моделей и лимиты зависят от сервиса. Проверьте его условия. Секрет не отправляйте в чат.</p><p>«Внешний агент» здесь означает совместимый HTTPS chat-completions endpoint. Это не подключение произвольного MCP-сервера или удалённого рабочего стола.</p></aside>';
   }
-  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, readinessGrid, AVATAR_KEYS, technicalSplit, technicalDetails, rows, items, taskMatches, evaluationMeta, phaseOf, phaseLabel, rubricLabel, stageName, availabilityMeta, occupancyMeta, applicationRows, applicationTable, safeArtifactUrl, sourceMeta, overviewOutcomes, realChatCommands, canRunDemo, flagRows, captureChart, knownDomain, allowedDomainActions, domainFormFields, domainPayload, actionLabel, domainError, publicJSON, handoffCard, followupCard, modelConnectionGuide }; return; }
+  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, readinessGrid, AVATAR_KEYS, machineKey, technicalSplit, technicalDetails, rows, items, taskMatches, evaluationMeta, phaseOf, phaseLabel, rubricLabel, stageName, availabilityMeta, occupancyMeta, applicationRows, applicationTable, safeArtifactUrl, sourceMeta, overviewOutcomes, realChatCommands, canRunDemo, flagRows, captureChart, knownDomain, allowedDomainActions, domainFormFields, domainPayload, actionLabel, domainError, publicJSON, handoffCard, followupCard, modelConnectionGuide }; return; }
 
   root.UI.ready(async function () {
     const UI = root.UI, API = root.API.http;

@@ -330,3 +330,22 @@ def test_agent_face_is_an_explicit_stored_choice_not_the_name():
     # An unapproved key must not resolve to a shipped agent asset either.
     assert render(workspace([], agents=[{**agent, "avatar_key": "../vitek"}]))["html"].count("aw-avatar") \
         == without["html"].count("aw-avatar")
+
+
+def test_stage_text_already_written_for_a_reader_is_not_replaced():
+    """The NinjaTrader and Desktop adapters send written stages, not enum keys."""
+    for written in ["Ожидание NinjaTrader", "Выполняется в NinjaTrader",
+                    "Изображение проверено", "Ожидание/проверка снимка Desktop"]:
+        assert presentation.stage_label(written) == written
+        assert evaluate("ui.stageName(" + json.dumps(written) + ")") == written
+    assert presentation.stage_label("some_internal_stage") == "Этап: технические детали"
+    assert presentation.stage_label("") == "Этап не указан"
+
+
+def test_legacy_adapter_task_classes_have_labels_too():
+    assert presentation.rubric_label("ninjatrader_historical_backtest") == "Исторический бэктест NinjaTrader"
+    assert evaluate("ui.rubricLabel('ninjatrader_historical_backtest')") == "Исторический бэктест NinjaTrader"
+    # An unknown machine key yields nothing so the caller can fall back; text
+    # written for a reader is passed straight through.
+    assert evaluate("ui.rubricLabel('unknown_machine_key')") == ""
+    assert evaluate("ui.rubricLabel('Проверка соединения')") == "Проверка соединения"
