@@ -90,7 +90,11 @@
     return AVAILABILITY[key] || (['working', 'running', 'busy'].includes(key) ? AVAILABILITY.active : ['Доступность не указана', 'neutral']);
   }
   const chip = meta => `<span class="aw-status aw-${meta[1]}">${esc(meta[0])}</span>`;
-  const agentState = agent => `<span class="aw-agent-state">${chip(availabilityMeta(agent))}${chip(occupancyMeta(agent))}</span>`;
+  const agentState = agent => {
+    const open = Math.max(0, Math.floor(number(agent?.open_items) || 0));
+    return `<span class="aw-agent-state">${chip(availabilityMeta(agent))}${chip(occupancyMeta(agent))}`
+      + (open ? `<span class="aw-status aw-review">${esc(open)} ждут решения</span>` : '') + '</span>';
+  };
   const canRunDemo = data => data?.enabled === true && data?.capabilities?.can_run_demo === true;
   const knownDomain = value => Object.prototype.hasOwnProperty.call(DOMAINS, String(value || ''));
   const actionLabel = value => Object.prototype.hasOwnProperty.call(ACTION_LABELS, value) ? ACTION_LABELS[value] : 'Действие';

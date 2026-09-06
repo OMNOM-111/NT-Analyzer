@@ -349,3 +349,14 @@ def test_legacy_adapter_task_classes_have_labels_too():
     # written for a reader is passed straight through.
     assert evaluate("ui.rubricLabel('unknown_machine_key')") == ""
     assert evaluate("ui.rubricLabel('Проверка соединения')") == "Проверка соединения"
+
+
+def test_a_free_agent_still_shows_how_many_items_wait_on_the_owner():
+    """Being free is not the same as having nothing outstanding."""
+    agent = {"id": "aaaaaaaa-5555-1111-1111-111111111111", "display_name": "Иван",
+             "availability": "active", "occupancy": "free", "open_items": 2,
+             "synthetic": False, "evaluation": {"sample_size": 0}}
+    html = render(workspace([], agents=[agent]))["html"]
+    assert "Свободен" in html and "2 ждут решения" in html
+    none_open = render(workspace([], agents=[{**agent, "open_items": 0}]))["html"]
+    assert "ждут решения" not in none_open

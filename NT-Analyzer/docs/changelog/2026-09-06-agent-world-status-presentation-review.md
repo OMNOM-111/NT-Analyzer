@@ -87,6 +87,9 @@ whichever SHA results from integration.
 
 None. Nothing is published, promoted or deployed by this change. Full findings,
 what was deliberately not changed, and the exact next operation are in
-[AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md),
-which also settles what the 41 PostgreSQL cases cover and records that Agent
-World has no PostgreSQL schema or adapter for them to exercise.
+`NT-Analyzer/docs/current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md`, which also
+settles what the 41 PostgreSQL cases cover and records that Agent World has no
+PostgreSQL schema or adapter for them to exercise. That path is named rather
+than linked: `docs/current` is not one of the shipped trees, so a relative link
+from a changelog resolves in a checkout and breaks inside the release bundle —
+the beta.81 signer failure `tests/test_pre_release_check.py` exists to catch.

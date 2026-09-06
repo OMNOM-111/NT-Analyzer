@@ -341,3 +341,74 @@ Unchanged from the program record unless noted.
 Secrets, cookies, personal data, working databases and raw runtime archives
 were not added to Git. The copied data root, the isolated launcher and the
 deleted harness live only under the session scratchpad.
+
+## 9. Commits, in application order
+
+| SHA | What it does |
+| --- | --- |
+| `72f7fc88` | Separate the states a single status number conflated: phase split, occupancy, warning reasons, score provenance, System readiness axes |
+| `42b60a2b` | Return keyboard focus after Escape; move digests, JSON and links into details |
+| `c865db22` | Persona face, connection identity, PostgreSQL scope guards |
+| `ed60fb83` | This handoff, the change record, the status link and the two Context Pack files |
+| `6092ab33` | Report a completion percentage only where one is measured; correct the Router row |
+| `3bb4af0f` | Do not replace stage text the legacy adapters already wrote for a reader |
+| `6a1b1b52` | Drop the empty date placeholder on records that carry no date |
+
+`git diff --stat 45ab4361..6a1b1b52`: 17 files, +1611 / −55.
+
+Two of these came from reading rather than from a failing test, and both were
+regressions this branch would otherwise have introduced: `3bb4af0f` (the
+NinjaTrader and Desktop adapters already send written stages, which the new
+label lookup would have replaced with a placeholder) and `6092ab33` (the
+earlier fix still emitted an invented 0 % for executing tasks). Both now have
+regression tests.
+
+## 10. Contract changes
+
+Every change is **additive**. No field was removed or renamed, no HTTP route was
+added or changed, no flag, no SQL migration, no state-machine transition and no
+authority check was modified.
+
+| Where | Added | Changed |
+| --- | --- | --- |
+| Task DTO (`model_service.task_detail`) | `phase`, `phase_label`, `stage_label`, `task_class_label` | `title` uses the human rubric label (the key stays in `task_class`); `progress_pct` is 100 only for a finished task and `null` otherwise, replacing `100`-for-any-terminal and the invented `40`/`0` |
+| Connection DTO (`model_service.model_detail`) | `persona_name` | — |
+| Agent DTO (`domain_gateway.overview`) | `availability`, `occupancy`, `open_items`, `avatar_key` | `status` kept for compatibility |
+| `stats` (`domain_gateway.overview`) | `executing`, `awaiting_review`, `awaiting_decision`, `done`, `cancelled`, `failed_tasks`, `results_total` | `active_tasks`, `completed_tasks`, `attention`, `failed` unchanged |
+| Attention items | `phase`, `phase_label`, `reason`, `action_hint`, `since`, `task_class_label` | previously bare task rows |
+| Activity items | `status`, `phase` | `summary` ends with the phase label instead of the raw status |
+| System items (`domain_gateway.system`) | `implemented`, `enabled`, `mode`, `available`, `note`, plus rows `execution_v2`, `router`, `schedule` | `status` is derived from those four; `budgets` moves from the unrendered `guarded` to `active` |
+| Persona create/update payload | optional `avatar_key`, validated server-side against the six shipped faces | — |
+
+A consumer reading only the previous fields sees no behaviour change except
+`progress_pct`, which is the defect being fixed.
+
+## 11. Severity
+
+| Finding | Severity | Why |
+| --- | --- | --- |
+| Counters contradicting their own panel | high | The owner cannot tell whether anything is running; the number and the card disagree about the same task |
+| 100 % on failed and awaiting-review tasks | high | A full green bar next to «Ошибка» actively misreports the outcome |
+| Warning counter unreachable beyond three | high | An item needing a decision is invisible with no affordance to reach it |
+| Score without its class of check | high | A bare 100 % reads as proven professional quality from three arithmetic inputs |
+| System conflating implemented / enabled / available | high | A green legacy worker could be read as Execution V2 readiness |
+| One badge for enabled, free and executing | medium | Occupancy is unreadable, but nothing is misreported as complete |
+| Connection label implying a permanent binding | medium | Misleads about the model, but the underlying records are correct |
+| Raw enum keys and inline digests/JSON | medium | Unreadable rather than wrong; evidence was present |
+| Escape not returning focus | medium | Keyboard users lose their place; mouse users unaffected |
+| Warning cards without reason, time or action | medium | Actionable information was missing, not wrong |
+| Empty date placeholder on undated records | low | Cosmetic |
+| Aurora shell booting only via `requestAnimationFrame` | low, **not fixed** | Self-heals on focus; shared `ui.js` left to a single owner |
+
+## 12. A release blocker caught in this pass
+
+The changelog for this work initially linked to this document as
+`[...](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md)`. `docs/changelog`
+is a shipped tree and `docs/current` is not, so that link resolves in a checkout
+and dangles inside the release bundle — the beta.81 signer failure that
+`tests/test_pre_release_check.py::test_catches_a_link_that_leaves_the_bundle`
+exists to reproduce. It is the only such link that has ever appeared in
+`docs/changelog`. The changelog now names the path in plain text instead, and
+`python tools/pre_release_check.py` passes with a 544-file bundle. This is why
+that check has to run from `NT-Analyzer/` after the documentation is written,
+not before it.
