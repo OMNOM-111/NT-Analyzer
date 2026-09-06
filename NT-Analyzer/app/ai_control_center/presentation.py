@@ -134,3 +134,20 @@ def counters(statuses) -> dict:
         "failed": phases.count(PHASE_FAILED),
         "cancelled": phases.count(PHASE_CANCELLED),
     }
+
+
+# Persona faces. Only keys with a shipped asset directory under
+# app/static/aurora/assets/agents/ are offered; an unknown key falls back to the
+# name initial rather than borrowing another agent's face. A Persona name is
+# free text, so a face is always an explicit choice, never inferred from it.
+AVATAR_KEYS = ("vitek", "manager", "marina", "tolik", "nikita", "ivan")
+AVATAR_LABELS = MappingProxyType({
+    "vitek": "Виктор", "manager": "Управляющий", "marina": "Марина",
+    "tolik": "Толик", "nikita": "Никита", "ivan": "Иван",
+})
+
+
+def avatar_key(value) -> str:
+    """Empty string for anything not on the list; never raises on user text."""
+    key = str(value or "").strip().lower()
+    return key if key in AVATAR_KEYS else ""

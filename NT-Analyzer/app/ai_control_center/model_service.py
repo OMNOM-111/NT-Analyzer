@@ -272,12 +272,22 @@ class ModelService:
         return {"id": str(model.header.entity_id), "title": profile["label"], "label": profile["label"],
             "status": model.status, "model": model.model_key, "provider": model.provider_key,
             "persona_id": profile["persona_id"], "provider_account_id": str(account.header.entity_id),
+            "persona_name": self._persona_name(context, profile["persona_id"]),
             "connection_kind": profile["connection_kind"], "connected": bool(profile.get("connected")) and active,
             "credential_source": profile.get("credential_source"),
             "credentials_configured": active, "base_url": profile["base_url"], "synthetic": False,
             "last_test": profile.get("last_test"), "actions": ["test", "task", "disconnect"] if active else [],
             "fields": {"model": model.model_key, "provider": model.provider_key,
                        "connection_kind": profile["connection_kind"], "credentials": "configured" if active else "disconnected"}}
+
+    def _persona_name(self, context, persona_id):
+        """The connection label is free text the owner typed. The Persona this
+        connection currently points at is a separate fact and is reported as
+        one, so renaming or rebinding never looks like a permanent identity."""
+        try:
+            return self._get(context, EntityKind.PERSONA, persona_id).display_name
+        except ContractError:
+            return ""
 
     def models(self, *, context):
         self._access(context)

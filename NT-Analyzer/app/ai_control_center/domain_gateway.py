@@ -586,6 +586,7 @@ def enrich_overview(authorized, base=None):
         legacy = legacy_agents.get(role_spec.get("legacy_id")) if aliases.get(role_spec.get("legacy_id")) == person["id"] else None
         agents.append({"id": person["id"], "display_name": person.get("title") or person.get("name"),
             "application_role": person.get("application_role", ""),
+            "avatar_key": presentation.avatar_key(person.get("avatar_key", "")),
             "role": role_spec.get("label", "Персона · роль не назначена"),
             "status": "working" if any(row["status"] in {"ready", "running", "waiting"} for row in mine) else person["status"],
             "availability": person["status"], "occupancy": "working" if any(

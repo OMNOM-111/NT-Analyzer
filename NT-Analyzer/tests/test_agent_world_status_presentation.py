@@ -310,3 +310,19 @@ def test_inline_report_link_moves_to_details_without_a_dangling_label():
     assert "Оригинальный отчёт" not in split["prose"] and "/ui/" not in split["prose"]
     assert split["prose"] == "Отчёт проверен. Сделок: 64. Это результат NinjaTrader."
     assert split["technical"] == ["/ui/backtesting.html?job=awnt_7ed6b329cead"]
+
+
+# --- Persona, role, provider account and model stay four separate records ----
+
+
+
+
+def test_agent_face_is_an_explicit_stored_choice_not_the_name():
+    agent = {"id": "aaaaaaaa-4444-1111-1111-111111111111", "display_name": "Толик",
+             "availability": "active", "occupancy": "free", "synthetic": False,
+             "evaluation": {"sample_size": 0}}
+    without = render(workspace([], agents=[agent]))
+    assert "Т" in without["html"]
+    # An unapproved key must not resolve to a shipped agent asset either.
+    assert render(workspace([], agents=[{**agent, "avatar_key": "../vitek"}]))["html"].count("aw-avatar") \
+        == without["html"].count("aw-avatar")
