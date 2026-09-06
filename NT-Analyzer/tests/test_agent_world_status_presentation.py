@@ -269,3 +269,44 @@ def test_readiness_grid_states_each_axis_for_the_owner():
 
 def test_readiness_grid_is_omitted_for_records_without_those_facts():
     assert evaluate("ui.readinessGrid({title:'x'})") == ""
+
+
+# --- technical evidence placement --------------------------------------------
+
+
+def test_long_hash_moves_out_of_the_sentence_but_is_still_available():
+    """Evidence is relocated, never removed."""
+    digest = "45ba864f7ccb06c9fba8655a4839378e1e9fd049d0d5f3d350567ae3081e9c40"
+    split = evaluate("ui.technicalSplit(" + json.dumps(
+        "Снимок рабочего стола: MNQ 09-26. SHA256: " + digest + " Это снимок Desktop.") + ")")
+    assert digest not in split["prose"]
+    assert any(digest in entry for entry in split["technical"])
+    assert "Снимок рабочего стола" in split["prose"] and "Это снимок Desktop." in split["prose"]
+
+
+def test_embedded_json_payload_moves_into_technical_details():
+    split = evaluate("ui.technicalSplit(" + json.dumps(
+        'Точность передачи фактов. {"trades":"64","strategy":"SampleMACrossOver"} Конец.') + ")")
+    assert "{" not in split["prose"] and "SampleMACrossOver" not in split["prose"]
+    assert "SampleMACrossOver" in "".join(split["technical"])
+    assert split["prose"] == "Точность передачи фактов. Конец."
+
+
+def test_plain_summary_is_left_untouched_and_gains_no_details_block():
+    split = evaluate("ui.technicalSplit('Отчёт проверен. Сделок: 64.')")
+    assert split == {"prose": "Отчёт проверен. Сделок: 64.", "technical": []}
+    assert evaluate("ui.technicalDetails([], 'x')") == ""
+
+
+def test_unparseable_brace_text_is_not_silently_swallowed():
+    split = evaluate("ui.technicalSplit('Ошибка формата {не json Конец.')")
+    assert "не json" in split["prose"] and split["technical"] == []
+
+
+def test_inline_report_link_moves_to_details_without_a_dangling_label():
+    split = evaluate("ui.technicalSplit(" + json.dumps(
+        "Отчёт проверен. Сделок: 64. Оригинальный отчёт: "
+        "/ui/backtesting.html?job=awnt_7ed6b329cead Это результат NinjaTrader.") + ")")
+    assert "Оригинальный отчёт" not in split["prose"] and "/ui/" not in split["prose"]
+    assert split["prose"] == "Отчёт проверен. Сделок: 64. Это результат NinjaTrader."
+    assert split["technical"] == ["/ui/backtesting.html?job=awnt_7ed6b329cead"]

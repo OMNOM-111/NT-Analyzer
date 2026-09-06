@@ -185,6 +185,54 @@
     const mode = item.mode ? `<div><dt>Рабочий режим</dt><dd>${esc(item.mode)}</dd></div>` : '';
     return `<dl class="aw-readiness">${cells}${mode}</dl>${item.note ? `<p class="aw-field-hint">${esc(item.note)}</p>` : ''}`;
   }
+  // Evidence is never dropped: a raw JSON payload or a 64-hex digest is moved
+  // out of the sentence the owner reads and into a details block beside it.
+  function technicalSplit(text) {
+    let prose = String(text == null ? '' : text);
+    const technical = [];
+    for (const match of prose.match(/\b[0-9a-f]{64}\b/g) || []) {
+      technical.push('SHA256 ' + match);
+      prose = prose.replace(new RegExp('(?:SHA256|sha256)\\s*:?\\s*' + match, 'g'), '').replace(match, '');
+    }
+    // Balanced scan: a regex cannot match nested braces reliably.
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const start = prose.search(/[{[]/);
+      if (start < 0) break;
+      const open = prose[start], close = open === '{' ? '}' : ']';
+      let depth = 0, end = -1, quoted = false, escaped = false;
+      for (let i = start; i < prose.length; i += 1) {
+        const char = prose[i];
+        if (escaped) { escaped = false; continue; }
+        if (char === '\\') { escaped = true; continue; }
+        if (char === '"') { quoted = !quoted; continue; }
+        if (quoted) continue;
+        if (char === open) depth += 1;
+        else if (char === close) { depth -= 1; if (!depth) { end = i; break; } }
+      }
+      if (end < 0) break;
+      const slice = prose.slice(start, end + 1);
+      let parsed = null;
+      try { parsed = JSON.parse(slice); } catch (_) { parsed = null; }
+      if (parsed === null || typeof parsed !== 'object') break;
+      technical.push(publicJSON(parsed));
+      prose = prose.slice(0, start) + prose.slice(end + 1);
+    }
+    // A bare link duplicates the action button beside the card.
+    // A bare link duplicates the action button beside the card; its label goes
+    // with it so no dangling "Оригинальный отчёт:" is left behind.
+    const LINK = /(?:(?:Оригинальный отчёт|Источник|Ссылка)\s*:\s*)?(?:https?:\/\/|\/)[^\s,;]{12,}/g;
+    for (const match of prose.match(LINK) || []) {
+      technical.push(match.replace(/^[^/h]*/, ''));
+      prose = prose.replace(match, '');
+    }
+    prose = prose.replace(/(?:SHA256|sha256)\s*:?\s*(?=[.,;]|$)/g, '')
+                 .replace(/\s{2,}/g, ' ').replace(/\s+([.,;:])/g, '$1').replace(/^[\s.,;:]+/, '').trim();
+    return { prose, technical };
+  }
+  function technicalDetails(entries, label) {
+    if (!entries || !entries.length) return '';
+    return `<details class="aw-technical"><summary>${esc(label || 'Технические детали')}</summary><pre class="aw-result-text">${esc(entries.join('\n\n'))}</pre></details>`;
+  }
   function publicJSON(value) {
     return JSON.stringify(value, (key, entry) => /(?:secret|password|api_?key|access_?token|authorization|cookie)/i.test(key) ? '[скрыто]' : entry, 2);
   }
@@ -308,7 +356,7 @@
   function modelConnectionGuide() {
     return '<aside class="aw-note"><strong>Отдельный тестовый ключ</strong><p>Можно выбрать OpenRouter и модель <code>openrouter/free</code>; Endpoint оставить пустым. Создайте отдельный inference API key на <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">странице ключей OpenRouter</a> и самостоятельно вставьте его в поле «Ключ подключения». Owner-ключи не копируются.</p><p><a href="https://openrouter.ai/docs/guides/routing/routers/free-router" target="_blank" rel="noopener noreferrer">Free router</a> выбирает доступную бесплатную модель; состав моделей и лимиты зависят от сервиса. Проверьте его условия. Секрет не отправляйте в чат.</p><p>«Внешний агент» здесь означает совместимый HTTPS chat-completions endpoint. Это не подключение произвольного MCP-сервера или удалённого рабочего стола.</p></aside>';
   }
-  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, readinessGrid, rows, items, taskMatches, evaluationMeta, phaseOf, phaseLabel, rubricLabel, stageName, availabilityMeta, occupancyMeta, applicationRows, applicationTable, safeArtifactUrl, sourceMeta, overviewOutcomes, realChatCommands, canRunDemo, flagRows, captureChart, knownDomain, allowedDomainActions, domainFormFields, domainPayload, actionLabel, domainError, publicJSON, handoffCard, followupCard, modelConnectionGuide }; return; }
+  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, readinessGrid, technicalSplit, technicalDetails, rows, items, taskMatches, evaluationMeta, phaseOf, phaseLabel, rubricLabel, stageName, availabilityMeta, occupancyMeta, applicationRows, applicationTable, safeArtifactUrl, sourceMeta, overviewOutcomes, realChatCommands, canRunDemo, flagRows, captureChart, knownDomain, allowedDomainActions, domainFormFields, domainPayload, actionLabel, domainError, publicJSON, handoffCard, followupCard, modelConnectionGuide }; return; }
 
   root.UI.ready(async function () {
     const UI = root.UI, API = root.API.http;
@@ -363,7 +411,7 @@
     function outcomeCard(outcome, index) {
       const source = sourceMeta(outcome), artifact = outcome.artifact || {}, url = safeArtifactUrl(artifact.url, source.kind);
       const image = (index === 0 || source.kind === 'desktop_chart') && url && ['image/svg+xml', 'image/png', 'image/jpeg', 'image/webp'].includes(artifact.media_type || artifact.mime_type);
-      return `<article class="aw-outcome"><div class="aw-outcome-meta"><span class="aw-source aw-source-${esc(source.kind)}">${esc(source.label)}</span>${outcome.status ? badge(outcome.status) : ''}</div><h3>${esc(outcome.title || 'Результат задачи')}</h3>${outcome.summary ? `<p>${esc(outcome.summary)}</p>` : ''}${image ? `<a class="aw-outcome-image" href="${esc(url)}" target="_blank" rel="noopener noreferrer"><img src="${esc(url)}" alt="${esc(artifact.title || outcome.title || 'Артефакт результата')}" loading="lazy" referrerpolicy="same-origin"></a>` : ''}<div class="aw-outcome-foot"><div class="aw-actions">${taskLink(outcome.task_id, 'Результат и действия')}${source.reportUrl ? `<a class="aw-link-button" href="${esc(source.reportUrl)}">Открыть исходный отчёт ↗</a>` : ''}</div><time datetime="${esc(outcome.created_at || '')}">${esc(date(outcome.created_at, true))}</time></div></article>`;
+      return `<article class="aw-outcome"><div class="aw-outcome-meta"><span class="aw-source aw-source-${esc(source.kind)}">${esc(source.label)}</span>${outcome.status ? badge(outcome.status) : ''}</div><h3>${esc(outcome.title || 'Результат задачи')}</h3>${(() => { const split = technicalSplit(outcome.summary); return `${split.prose ? `<p>${esc(split.prose)}</p>` : ''}${technicalDetails(split.technical, 'Доказательства и хеши')}`; })()}${image ? `<a class="aw-outcome-image" href="${esc(url)}" target="_blank" rel="noopener noreferrer"><img src="${esc(url)}" alt="${esc(artifact.title || outcome.title || 'Артефакт результата')}" loading="lazy" referrerpolicy="same-origin"></a>` : ''}<div class="aw-outcome-foot"><div class="aw-actions">${taskLink(outcome.task_id, 'Результат и действия')}${source.reportUrl ? `<a class="aw-link-button" href="${esc(source.reportUrl)}">Открыть исходный отчёт ↗</a>` : ''}</div><time datetime="${esc(outcome.created_at || '')}">${esc(date(outcome.created_at, true))}</time></div></article>`;
     }
     function foundationCard() {
       const limitations = rows(overview.limitations).map(value => typeof value === 'string' ? value : value.summary || value.message || value.description).filter(Boolean);
@@ -500,7 +548,14 @@
       return values.map(value => `<section class="aw-panel"><div class="aw-panel-body"><div class="aw-inline"><strong>${esc(pct(value.score_pct ?? value.observed_score_pct))}</strong><span class="aw-muted">проверенных критериев этого ответа</span></div><p class="aw-note">${esc(value.scope || value.rubric_key || 'Класс конкретной задачи')} · ${esc(value.verifier || value.evaluator || 'Источник проверки не указан')}</p><div class="aw-stack">${rows(value.rubric || value.checks).map(check => `<div class="aw-inline">${badge(check.passed === true ? 'passed' : check.passed === false ? 'failed' : 'pending')}<span class="aw-text">${esc(check.label || check.key || check.summary)}</span></div>`).join('')}</div>${value.summary ? `<p class="aw-text">${esc(value.summary)}</p>` : ''}${value.response_sha256 ? `<div class="aw-hash">RESPONSE SHA256 ${esc(value.response_sha256)}</div>` : ''}${value.input_sha256 ? `<div class="aw-hash">INPUT SHA256 ${esc(value.input_sha256)}</div>` : ''}<p class="aw-field-hint">Проверка одного ответа не является общей оценкой качества модели или торговой стратегии.</p></div></section>`).join('');
     }
     function openDrawer(title, html) {
-      if (!currentDrawer || !currentDrawer.classList.contains('open')) returnFocus = document.activeElement;
+      // The inspector re-renders itself on every tab switch and refresh. By then
+      // the active element is the drawer, so re-capturing here would make Escape
+      // "return" focus into the panel it just closed instead of to the row,
+      // card or button the owner actually came from.
+      const active = document.activeElement;
+      const inspectorOpen = Boolean(currentDrawer && currentDrawer.classList.contains('open')
+        && currentDrawer.querySelector('.aw-inspector'));
+      if (!inspectorOpen && active && active !== document.body && !currentDrawer?.contains(active)) returnFocus = active;
       currentDrawer = UI.drawer(`<h3>${esc(title)}</h3>`, `<div class="aw-inspector">${html}</div>`);
       currentDrawer.classList.add('wide');
       currentDrawer.setAttribute('role', 'dialog'); currentDrawer.setAttribute('aria-modal', 'true'); currentDrawer.setAttribute('aria-label', title); currentDrawer.tabIndex = -1;
@@ -724,7 +779,7 @@
       const labels = { summary: 'Обзор', activity: 'Активность', evidence: 'Evidence', agents: 'Агенты', evaluations: 'Оценка', artifacts: 'Артефакты', decisions: 'Решения', errors: 'Ошибки' };
       const svg = art.find(value => safeArtifactUrl(value.url) && (value.media_type || value.mime_type) === 'image/svg+xml');
       let body;
-      if (detailTab === 'summary') body = `<div class="aw-inspector-summary"><h2 class="aw-inspector-title">${esc(task.title || 'Задача')}</h2><div class="aw-inline">${badge(task.status)}${task.synthetic ? '<span class="aw-status aw-info">SYNTHETIC · локальный обработчик</span>' : ''}</div><dl class="aw-detail-grid"><div><dt>Текущий этап</dt><dd>${esc(task.stage || '—')}</dd></div><div><dt>Координатор</dt><dd>${esc(name(task.lead))}</dd></div><div><dt>Класс задачи</dt><dd>${esc(task.task_class || '—')}</dd></div><div><dt>Измеренная стоимость</dt><dd>${esc(cost(task.cost_usd))}</dd></div><div><dt>Создана</dt><dd>${esc(date(task.created_at))}</dd></div><div><dt>Обновлена</dt><dd>${esc(date(task.updated_at))}</dd></div></dl>${progress(task)}${task.summary ? `<p class="aw-text">${esc(task.summary)}</p>` : ''}</div><section class="aw-detail-section"><h3>Проверяемый результат</h3>${detailRows(rows(detail.outcomes), 'Результат ещё не зафиксирован.')}</section>${art.length ? `<section class="aw-detail-section"><h3>Последний артефакт</h3>${artifacts(art.slice(-1), sourceKind)}</section>` : ''}<p class="aw-note">Здесь отображаются наблюдаемые действия и результаты. Скрытая цепочка рассуждений модели не публикуется.</p>`;
+      if (detailTab === 'summary') body = `<div class="aw-inspector-summary"><h2 class="aw-inspector-title">${esc(task.title || 'Задача')}</h2><div class="aw-inline">${badge(task.status)}${task.synthetic ? '<span class="aw-status aw-info">SYNTHETIC · локальный обработчик</span>' : ''}</div><dl class="aw-detail-grid"><div><dt>Состояние</dt><dd>${esc(phaseLabel(task))}</dd></div><div><dt>Текущий этап</dt><dd>${esc(task.stage_label || stageName(task.stage))}</dd></div><div><dt>Координатор</dt><dd>${esc(name(task.lead))}</dd></div><div><dt>Класс задачи</dt><dd>${esc(task.task_class_label || rubricLabel(task.task_class) || task.task_class || '—')}</dd></div><div><dt>Измеренная стоимость</dt><dd>${esc(cost(task.cost_usd))}</dd></div><div><dt>Создана</dt><dd>${esc(date(task.created_at))}</dd></div><div><dt>Обновлена</dt><dd>${esc(date(task.updated_at))}</dd></div></dl>${progress(task)}${(() => { const split = technicalSplit(task.summary); return `${split.prose ? `<p class="aw-text">${esc(split.prose)}</p>` : ''}${technicalDetails([...split.technical, `status=${task.status}`, `stage=${task.stage || '-'}`, `task_class=${task.task_class || '-'}`, `task_id=${taskId(task)}`], 'Технические идентификаторы')}`; })()}</div><section class="aw-detail-section"><h3>Проверяемый результат</h3>${detailRows(rows(detail.outcomes), 'Результат ещё не зафиксирован.')}</section>${art.length ? `<section class="aw-detail-section"><h3>Последний артефакт</h3>${artifacts(art.slice(-1), sourceKind)}</section>` : ''}<p class="aw-note">Здесь отображаются наблюдаемые действия и результаты. Скрытая цепочка рассуждений модели не публикуется.</p>`;
       else if (detailTab === 'activity') body = timeline(rows(detail.activity), true);
       else if (detailTab === 'evidence') body = detailRows(rows(detail.contributions), 'Проверяемые вклады ещё не записаны.') + artifacts(art, sourceKind);
       else if (detailTab === 'agents') body = `<div class="aw-stack">${rows(task.participants).map(person => `<div class="aw-detail-row"><div class="aw-people">${avatar(person)}<div><strong>${esc(name(person))}</strong><p>${esc(role(person))}</p></div></div>${agentId(person) ? `<button class="aw-link-button" data-aw-agent="${esc(agentId(person))}">Профиль →</button>` : ''}</div>`).join('') || smallEmpty('Участники ещё не назначены.')}</div>`;
@@ -795,8 +850,15 @@
       } catch (error) { announce((error?.message || 'Не удалось завершить запуск.') + ' Повторная попытка использует тот же ключ и не создаёт дубликат.', true); }
       finally { demoBusy = false; renderHeader(); }
     }
+    function restoreFocus() {
+      const target = returnFocus;
+      returnFocus = null;
+      if (target && target.isConnected && typeof target.focus === 'function' && target.getClientRects().length) { target.focus(); return; }
+      const tabs = qsa('[data-aw-tab]', shell);
+      (tabs.find(button => button.getAttribute('aria-selected') === 'true') || tabs[0])?.focus();
+    }
     function click(event) {
-      if (currentDrawer?.querySelector('.aw-inspector') && event.target.closest('.drawer-back, [data-close-drawer]')) { ++detailGeneration; actionForm = null; returnFocus?.focus?.(); return; }
+      if (currentDrawer?.querySelector('.aw-inspector') && event.target.closest('.drawer-back, [data-close-drawer]')) { ++detailGeneration; actionForm = null; restoreFocus(); return; }
       const target = event.target.closest('button, a');
       if (!target) return;
       const inside = shell.contains(target) || (currentDrawer && currentDrawer.contains(target) && target.closest('.aw-inspector'));
@@ -831,7 +893,7 @@
         event.preventDefault(); buttons[next].focus(); buttons[next].click(); return;
       }
       if (!currentDrawer?.querySelector('.aw-inspector')) return;
-      if (event.key === 'Escape') { ++detailGeneration; actionForm = null; UI.closeDrawer(); returnFocus?.focus?.(); }
+      if (event.key === 'Escape') { ++detailGeneration; actionForm = null; UI.closeDrawer(); restoreFocus(); }
       if (!currentDrawer.classList.contains('open')) return;
       if (event.key === 'Tab') {
         const focusable = qsa('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]', currentDrawer).filter(value => !value.hidden && value.getClientRects().length);
