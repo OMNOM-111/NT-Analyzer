@@ -23,6 +23,7 @@ from .events import EventData, EventEnvelope, MutationIdentity
 from .model_contracts import Evaluation
 from .model_evaluation import (APPLICATION_RUBRIC, APPLICATION_SOURCES, RUBRICS, VERSION,
     application_reputation, digest, evaluate, is_application_observation, json_bytes, prepare, prompts, reputation)
+from . import presentation
 from .repositories import PageRequest
 from .states import ContractError, EntityKind, INITIAL_STATES
 
@@ -708,7 +709,10 @@ class ModelService:
         # Recheck independent evidence against the exact stored response on read.
         if evidence is not None and any(evidence.get(k) != v for k, v in evaluate(checkpoint["spec"], receipt.get("response", "")).items()):
             raise ContractError("model_evaluation_mismatch")
-        title = f"{checkpoint['persona_name']} · {checkpoint['spec']['rubric_key']}"
+        rubric_key = checkpoint["spec"]["rubric_key"]
+        # The owner reads this title; the rubric key stays machine-readable in
+        # task_class and in the technical details of the inspector.
+        title = f"{checkpoint['persona_name']} · {presentation.rubric_label(rubric_key)}"
         task_dto = {"id": str(task.header.entity_id), "task_id": str(task.header.entity_id),
             "title": title, "status": task.status, "stage": "provider_receipt" if receipt else "awaiting_provider",
             "summary": checkpoint.get("error_code") or ("Verified bounded response" if task.status == "succeeded" else task.status),
@@ -726,7 +730,9 @@ class ModelService:
             "created_at": task.header.created_at.isoformat(), "updated_at": task.header.updated_at.isoformat(),
             "evidence_count": 2 if evaluation else int(bool(receipt)), "comparison_id": checkpoint.get("comparison_id"),
             "comparison_title": checkpoint.get("comparison_title"), "error_code": checkpoint.get("error_code"),
-            "actions": ["cancel"] if task.status in _ACTIVE else [], "progress_pct": 100 if task.status not in _ACTIVE else 0}
+            "actions": ["cancel"] if task.status in _ACTIVE else [],
+            "task_class_label": presentation.rubric_label(rubric_key),
+            "progress_pct": presentation.progress_pct(task.status)}
         if checkpoint.get("application_cancel_request"):
             task_dto["actions"] = []
         task_dto["application_dispatch"] = checkpoint.get("application_dispatch")
@@ -749,7 +755,7 @@ class ModelService:
             task_dto["stage"] = "application_verified" if result else "awaiting_application"
             task_dto["status"] = "succeeded" if result else "waiting"
             task_dto["summary"] = "Application receipt verified" if result else "Model plan verified; actual application result is still pending"
-            task_dto["progress_pct"] = 100 if result else 40
+            task_dto["progress_pct"] = presentation.progress_pct(task_dto["status"])
             if not result and checkpoint.get("application_cancel_request"):
                 task_dto["stage"] = "application_cancel_requested"
                 task_dto["summary"] = "Cancellation requested; awaiting authoritative application confirmation"
@@ -795,6 +801,10 @@ class ModelService:
                                     else "Передача фактов: " + task.status + ". ") + LIMITATION
             if result_text:
                 result_text = LIMITATION + "\n\n" + result_text
+        task_dto["phase"] = presentation.task_phase(task_dto["status"])
+        task_dto["phase_label"] = presentation.phase_label(task_dto["phase"])
+        task_dto["stage_label"] = presentation.stage_label(task_dto["stage"])
+        task_dto["progress_pct"] = presentation.progress_pct(task_dto["status"])
         return {"task": task_dto, **task_dto, "result_text": result_text,
             "actual_model": receipt.get("actual_model"), "evaluation": evidence,
             "application_evaluation": application_evaluation,

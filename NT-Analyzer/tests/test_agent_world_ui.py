@@ -197,8 +197,14 @@ def test_real_chat_hints_reuse_existing_chat_not_a_backtest_composer():
 def test_canonical_ready_tasks_remain_visible_as_queued_in_active_and_waiting_views():
     result = evaluate("({label:ui.statusMeta('ready'),active:ui.taskMatches({status:'ready'},'active',''),waiting:ui.taskMatches({status:'ready'},'waiting',''),completed:ui.taskMatches({status:'ready'},'completed','')})")
     assert result == {"label": ["В очереди", "neutral"], "active": True, "waiting": True, "completed": False}
-    source = SCRIPT.read_text(encoding="utf-8")
-    assert "['running', 'working', 'active', 'ready', 'queued', 'review', 'blocked', 'planned']" in source
+    # A queued task belongs to execution. The overview panel used to widen this
+    # set with review/blocked/planned, which is why its heading contradicted the
+    # "В работе" metric; the phase split replaced that union.
+    phases = evaluate("({ready:ui.phaseOf({status:'ready'}),queued:ui.phaseOf({status:'queued'}),"
+                      "review:ui.phaseOf({status:'review'}),blocked:ui.phaseOf({status:'blocked'}),"
+                      "planned:ui.phaseOf({status:'planned'}),succeeded:ui.phaseOf({status:'succeeded'})})")
+    assert phases == {"ready": "executing", "queued": "executing", "review": "awaiting_review",
+                      "blocked": "awaiting_decision", "planned": "executing", "succeeded": "done"}
 
 
 def test_working_runtime_agent_alias_has_running_style_and_active_filter():
