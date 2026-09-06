@@ -447,10 +447,20 @@
       const tasks = rows(overview.tasks), agents = rows(overview.agents), stats = overview.stats || {};
       // Execution, waiting for a review and waiting for a decision are three
       // different states. The panel title and the metric must use the same one.
+      // Waiting for a check and waiting for a decision are not the same thing.
+      // Folding them into one heading would re-create, one level up, exactly
+      // the conflation this panel was fixed to remove: a task whose automatic
+      // verification is outstanding would be announced as needing the owner.
       const executing = tasks.filter(task => phaseOf(task) === 'executing');
-      const openItems = tasks.filter(task => OPEN_PHASES.includes(phaseOf(task)));
-      const heading = executing.length ? 'Сейчас в работе' : openItems.length ? 'Ожидают вашего решения' : 'Последняя работа';
-      const shown = (executing.length ? executing : openItems.length ? openItems : tasks).slice(0, 3);
+      const awaitingDecision = tasks.filter(task => phaseOf(task) === 'awaiting_decision');
+      const awaitingReview = tasks.filter(task => phaseOf(task) === 'awaiting_review');
+      const group = executing.length ? executing : awaitingDecision.length ? awaitingDecision
+        : awaitingReview.length ? awaitingReview : tasks;
+      const heading = executing.length ? 'Сейчас в работе'
+        : awaitingDecision.length ? 'Ожидают вашего решения'
+        : awaitingReview.length ? 'Ожидают проверки'
+        : 'Последняя работа';
+      const shown = group.slice(0, 3);
       const outcomes = overviewOutcomes(overview).slice(0, 3);
       const attentionKnown = Array.isArray(overview.attention), alerts = rows(overview.attention).filter(item => !['info', 'healthy'].includes(item.severity || item.status));
       const alertsBody = alerts.length ? `<div class="aw-stack">${alerts.slice(0, 3).map(alertCard).join('')}</div>${alerts.length > 3 ? `<button class="aw-link-button" data-aw-tab="work" data-aw-filter="attention">Показать все (${count(alerts.length)}) →</button>` : ''}` : attentionKnown && number(stats.attention) === 0 ? `<div class="aw-attention-clear">${badge('healthy')}<span>Сервер не сообщает об ошибках или ожидающих подтверждениях.</span></div>` : smallEmpty('Сводка подтверждений пока не опубликована. Отсутствие данных не означает, что все проверки пройдены.');

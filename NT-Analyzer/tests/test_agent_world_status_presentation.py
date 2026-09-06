@@ -146,8 +146,37 @@ def test_metric_and_panel_heading_cannot_contradict_each_other():
     """«В работе 0» was shown above a panel titled «Сейчас в работе»."""
     result = render(workspace([task(), task(id="22222222-2222-2222-2222-222222222222")]))
     assert "Сейчас в работе" not in result["html"]
-    assert "Ожидают вашего решения" in result["html"]
+    assert "Ожидают проверки" in result["html"]
     assert "Выполняется" in result["html"]
+
+
+def test_awaiting_a_check_is_never_announced_as_awaiting_the_owner_decision():
+    """Human confirmation is required only where the process provides for it.
+
+    Folding both waiting phases under one heading would re-create the original
+    conflation one level up: a task whose independent verification is simply
+    outstanding would be announced as blocked on the owner.
+    """
+    review_only = render(workspace([task(status="review")]))
+    assert "Ожидают проверки" in review_only["html"]
+    assert "Ожидают вашего решения" not in review_only["html"]
+
+    decision = render(workspace([task(status="blocked", phase="awaiting_decision",
+                                      phase_label="Ожидает решения")]))
+    assert "Ожидают вашего решения" in decision["html"]
+
+    # With both present the decision leads, because that one cannot proceed at all.
+    both = render(workspace([task(status="review"),
+                             task(id="33333333-3333-3333-3333-333333333333", status="blocked",
+                                  phase="awaiting_decision", phase_label="Ожидает решения")]))
+    assert "Ожидают вашего решения" in both["html"]
+
+
+def test_the_review_warning_does_not_demand_a_decision():
+    reason, action = presentation.attention_reason(presentation.PHASE_AWAITING_REVIEW)
+    decision_reason, decision_action = presentation.attention_reason(presentation.PHASE_AWAITING_DECISION)
+    assert "решите" not in action and "Подтверждение требуется не везде." in action
+    assert action != decision_action and reason != decision_reason
 
 
 def test_executing_work_still_uses_the_in_progress_heading():
