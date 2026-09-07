@@ -32,7 +32,10 @@
   snapshot and left untouched: 113 passed / 68 skipped in isolation, the 68
   being the PostgreSQL suite, unrunnable here for want of a server. Its
   `task_presentation.py` supersedes this branch's phase logic; the merge order
-  and the port list are in the handoff.
+  and the port list are in the handoff. Codex has since checkpointed that work
+  as `f9b94445`/`db85773f`; 31 of the 33 reviewed files are byte-identical to
+  `db85773f` and the two that differ are changelogs, so the review binds to
+  that commit.
 
 ## Completed SF Chat dialog correction — historical 95912cbf verification
 

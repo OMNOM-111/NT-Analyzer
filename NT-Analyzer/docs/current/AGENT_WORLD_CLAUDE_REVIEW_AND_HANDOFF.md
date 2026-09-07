@@ -520,6 +520,27 @@ were copied — no database, cookie, secret or runtime artefact.
 Tests ran against a separate tree built by extracting `45ab4361` with
 `git archive` and overlaying the snapshot, so no git state was created anywhere.
 
+### The snapshot now binds to a real commit
+
+After the review, Codex checkpointed its own work — `f9b94445`
+(`wip(agent-world): preserve isolated mechanisms checkpoint`) and `db85773f`
+(`docs(agent-world): record exact WIP continuation point`) on
+`codex/agent-world-mechanisms`.
+
+Comparing the 33 reviewed files against `db85773f` by content hash:
+**31 identical, 2 differ, 0 missing.** Both differences are changelog documents
+Codex updated while checkpointing
+(`2026-09-05-agent-world-execution-v2-deviations.md`,
+`2026-09-05-agent-world-router-delegation-scheduler.md`). **Every source file,
+test file and the migration are byte-identical**, so the findings in this
+section apply to commit `db85773f` directly and not only to a working state
+that no longer exists.
+
+One file appeared after the snapshot and is therefore **outside this review**:
+`NT-Analyzer/tests/test_agent_world_mechanism_flags.py`, still untracked at the
+time of writing. The snapshot was deliberately not retaken to chase it —
+findings stay bound to verified hashes rather than to a moving worktree.
+
 ### Readiness, one row per mechanism
 
 These five states are deliberately not collapsed into "ready".
