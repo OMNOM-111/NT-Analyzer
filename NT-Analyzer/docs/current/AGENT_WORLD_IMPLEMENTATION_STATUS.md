@@ -10,6 +10,11 @@ No merge, Canary/Production, real orders or budget increase is authorized.
 
 ## Active mechanisms WIP — 2026-09-06
 
+Saved WIP source: `f9b9444524aa497781fe3de7254d1bfb0e3b062c` (37 files;
+clean worktree after commit). Short static/secret/context/diff and 556-file
+bundle gates PASS; exact-checkpoint full pytest NOT RUN. All further backend
+work is a separate commit; frozen UI remains exactly as in this checkpoint.
+
 Canonical status for PostgreSQL/RLS, Router V2, Execution/Deviation, bounded
 delegation and autonomous scheduling: **IN DEVELOPMENT**, with implementation
 and integration gaps. Their additive code is saved on

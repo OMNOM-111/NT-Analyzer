@@ -8,8 +8,9 @@ Version: `0.10.0-beta.96`, без изменения.
 
 - Ветка: `codex/agent-world-mechanisms`.
 - Parent: `45ab4361d5ab9b8422ec049c0c689953d548a318`.
-- Checkpoint: commit, впервые добавивший этот документ; точный SHA записывается
-  следующим handoff-коммитом, без amend и без изменения сохранённого снимка.
+- Checkpoint: `f9b9444524aa497781fe3de7254d1bfb0e3b062c`, 37 файлов.
+  SHA зафиксирован отдельным documentation handoff, без amend снимка.
+  После checkpoint рабочее дерево было чистым; проверено независимо.
 - Защищённый Local: `http://127.0.0.1:8765/ui/ai-command-center.html`,
   clean detached `2b6d0112bef88c5bfb73970de64ec5518443e56b`.
   Не перезапускался и не переключался; рабочие данные не изменялись.
