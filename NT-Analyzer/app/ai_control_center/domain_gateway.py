@@ -502,6 +502,21 @@ def _mechanism_gateway():
     return mechanism_gateway
 
 
+def projected_task(row):
+    """Project one task row and derive its progress from that single state.
+
+    An adapter row arrives carrying its source status and a progress number
+    computed from it alone. Being terminal at the source is not the same as
+    being done: a finished report whose evidence failed verification is still
+    awaiting a check, and it must not draw a completed bar. Nothing here
+    re-derives the state -- it only makes progress agree with it.
+    """
+    from . import presentation, task_presentation
+    projected = row if row.get("display_status") else task_presentation.project(row)
+    projected["progress_pct"] = presentation.progress_pct(projected.get("display_status"))
+    return projected
+
+
 def list_domain(authorized, domain, *, identity=None, limit=50, cursor=None):
     if domain not in DOMAINS:
         raise ContractError("unknown_domain")
@@ -639,7 +654,7 @@ def enrich_overview(authorized, base=None):
     people = domains(authorized, model_service.repository).list(context=context, admit=authorized["admit"], domain="personas")["items"]
     tasks, folded = _application_workflows(list(base.get("tasks") or []), model_rows)
     from . import task_presentation
-    tasks = [row if row.get("display_status") else task_presentation.project(row) for row in tasks]
+    tasks = [projected_task(row) for row in tasks]
     tasks.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
     from .application_roles import ROLES
     assignments = {}

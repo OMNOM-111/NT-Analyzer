@@ -33,7 +33,12 @@ def _task_detail(authorized, identity):
         return None
     owner = gateway.access(scope)
     detail = LiveBacktestService().task_detail(**gateway.service_args(owner), entity_id=UUID(identity))
-    return detail or next((item for item in live_charts.details(owner) if item["task"]["id"] == identity), None)
+    detail = detail or next((item for item in live_charts.details(owner) if item["task"]["id"] == identity), None)
+    if detail:
+        # The inspector reads the same computed state as the card that opened
+        # it, instead of falling back to the adapter's own source status.
+        detail = {**detail, "task": domain_gateway.projected_task(detail["task"])}
+    return detail
 
 
 def handle_get(handler, path, qs):

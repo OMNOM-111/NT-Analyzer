@@ -522,3 +522,49 @@ def test_the_attention_filter_the_overview_links_to_is_actually_offered():
     assert 'data-aw-filter="attention"' in source
     assert evaluate("ui.taskMatches({display_status:'awaiting_review'},'attention','')") is True
     assert evaluate("ui.taskMatches({display_status:'completed'},'attention','')") is False
+
+def _adapter_row(**changes):
+    """The shape live_backtests hands over: source status and its own progress."""
+    return {"id": "a1", "status": "succeeded", "source_kind": "ninjatrader_report",
+            "task_class": "ninjatrader_historical_backtest", "source_status": "done",
+            "evidence_count": 3, "progress_pct": 100, **changes}
+
+
+def test_an_adapter_row_reports_progress_from_its_state_not_its_source_status():
+    """A full bar under a card that says the work is not finished.
+
+    live_backtests derives progress from the source status alone, so a report
+    that reached `done` but failed verification arrived carrying 100% while the
+    projection put it in awaiting_review. The panel renders a progress element
+    whenever the number is present, so the owner saw a completed bar on work
+    that still needed a check. Failed and cancelled rows had the same problem.
+    """
+    from app.ai_control_center.domain_gateway import projected_task
+
+    verified = projected_task(_adapter_row())
+    assert verified["display_status"] == "verified_automatically"
+    assert verified["progress_pct"] == 100
+
+    for row, expected in ((_adapter_row(evidence_count=0), "awaiting_review"),
+                          (_adapter_row(status="failed", source_status="failed"), "failed"),
+                          (_adapter_row(status="cancelled", source_status="cancelled"), "cancelled"),
+                          (_adapter_row(status="running", source_status="running",
+                                        evidence_count=0, progress_pct=None), "running")):
+        projected = projected_task(row)
+        assert projected["display_status"] == expected
+        assert projected["progress_pct"] is None, expected
+
+
+def test_a_row_that_already_carries_a_computed_state_is_not_re_projected():
+    """Model rows arrive projected; the seam must not form a second opinion."""
+    from app.ai_control_center.domain_gateway import projected_task
+
+    row = {"id": "m1", "status": "succeeded", "display_status": "awaiting_review",
+           "display_status_label": "Ожидает вашей проверки", "progress_pct": 100}
+    projected = projected_task(row)
+    assert projected["display_status"] == "awaiting_review"
+    assert projected["display_status_label"] == "Ожидает вашей проверки"
+    assert projected["progress_pct"] is None
+
+    accepted = projected_task({**row, "display_status": "completed", "progress_pct": None})
+    assert accepted["progress_pct"] == 100
