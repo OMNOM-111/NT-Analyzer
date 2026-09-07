@@ -599,3 +599,38 @@ def test_finished_source_with_broken_evidence_deviates_instead_of_completing(
     # The damaged source folder is read, never repaired or rewritten to make
     # the controller finish.
     assert json.loads((folder / "result.json").read_text(encoding="utf-8")) == report
+
+@pytest.mark.parametrize("execution", ["owner"], indirect=True)
+def test_a_deviated_result_cannot_be_signed_off_by_a_human(execution):
+    """Accepting is not a way to clear a deviation.
+
+    The controller recorded that what came back is not what was approved. A
+    human may still look at it, but the review projection has to stay blocked
+    and name why, and the button must refuse -- otherwise one click would turn
+    an unverified result into an accepted one and the deviation would read as
+    settled.
+    """
+    from app.ai_control_center import task_review
+    execution.output[0]["response"] = '{"incorrect":true}'
+    run_claim(execution, claim(execution))
+    before = project(execution)
+    assert before["status"] == "deviated" and before["human_accepted"] is False
+
+    detail = execution.service.task_detail(context=execution.context, task_id=execution.task_id)
+    review = detail["human_review"]
+    # Not "blocked" but "not_required": a deviated result never reaches the
+    # point of being offered for sign-off at all, and no action is exposed.
+    assert review == {"status": "not_required", "quality_claim": False}
+    assert "review_result" not in (detail.get("actions") or [])
+
+    with pytest.raises(ContractError) as refused:
+        task_review.submit(execution.service, context=execution.context, task_id=execution.task_id,
+                           payload={"decision": "accept", "comment": "",
+                                    "source_sha256": review.get("source_sha256", "")},
+                           expected_revision=detail["revision"],
+                           idempotency_key="accept-a-deviated-result")
+    assert refused.value.code == "task_review_result_required"
+
+    after = project(execution)
+    assert after["status"] == "deviated" and after["human_accepted"] is False
+    assert after["reason_codes"] == before["reason_codes"] == ["provider_result_rejected"]

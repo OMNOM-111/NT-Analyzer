@@ -568,3 +568,38 @@ def test_a_row_that_already_carries_a_computed_state_is_not_re_projected():
 
     accepted = projected_task({**row, "display_status": "completed", "progress_pct": None})
     assert accepted["progress_pct"] == 100
+
+def test_a_row_that_needs_a_check_is_never_left_without_a_route():
+    """The panel must not ask for a check and then offer nothing to do.
+
+    An adapter row whose evidence failed verification is projected as awaiting
+    review, but it carries no human-review record, so no accept or reject action
+    exists for it. It used to render with no action, no link and no reason at
+    all. It now says why acceptance is unavailable and points at the source it
+    came from.
+    """
+    from app.ai_control_center.domain_gateway import projected_task
+
+    stuck = projected_task(_adapter_row(evidence_count=0, actions=[],
+                                        report_url="/ui/backtesting.html?job=awnt_x"))
+    assert stuck["display_status"] == "awaiting_review"
+    assert stuck["progress_pct"] is None
+    assert any("принять" in line.lower() for line in stuck["limitations"])
+    assert stuck["source_url"] == "/ui/backtesting.html?job=awnt_x"
+
+    # A verified row is not annotated, and an off-site link is never surfaced.
+    verified = projected_task(_adapter_row(report_url="/ui/backtesting.html?job=awnt_y"))
+    assert "limitations" not in verified and "source_url" not in verified
+    foreign = projected_task(_adapter_row(evidence_count=0, actions=[],
+                                          report_url="https://example.invalid/report"))
+    assert "source_url" not in foreign and foreign["limitations"]
+
+
+def test_the_inspector_renders_the_reason_and_the_source_link():
+    source = SCRIPT.read_text(encoding="utf-8")
+    # The summary tab reads both fields the server now supplies, and only ever
+    # links to an in-app path.
+    assert "rows(task.limitations)" in source
+    assert "aw-limitations" in source
+    assert "String(task.source_url || '').startsWith('/ui/')" in source
+    assert "Открыть исходный отчёт" in source

@@ -700,16 +700,22 @@ def test_publication_feature_flag_off_denies_get_prepare_and_publish_before_serv
     assert publication.posts == []
 
 @pytest.mark.parametrize("domain", ["automation", "router"])
-def test_mechanism_domain_without_its_module_answers_a_code_not_a_crash(models, monkeypatch, domain):
-    """A domain whose handler module is absent must not surface as a 500.
+def test_a_mechanism_domain_answers_its_own_state_not_an_unhandled_crash(models, monkeypatch, domain):
+    """These two routes used to surface a 500 with no code at all.
 
-    Both routes are registered and dispatch to `mechanism_gateway`. While that
-    module is missing the import failure used to escape as an unhandled error,
-    so the live route answered "internal server error" with no code at all.
-    Blocking the import here keeps the case reproducible after the module
-    lands.
+    They dispatch to `mechanism_gateway`, a module no branch contains, and the
+    import failure escaped the handler. `mechanism_domains` now stands in for it
+    while it is absent, so the route answers with state; when neither module is
+    importable it fails closed with a stable code instead of crashing. The
+    substitution order and the fail-closed case are pinned in
+    `test_agent_world_mechanism_domains`.
     """
+    handler = http_get(models.account, "domains/" + domain)
+    assert handler.status in {200, 403, 409}
+    assert handler.result.get("error") != "internal server error"
+
     monkeypatch.setitem(sys.modules, "app.ai_control_center.mechanism_gateway", None)
+    monkeypatch.setitem(sys.modules, "app.ai_control_center.mechanism_domains", None)
     with pytest.raises(ContractError) as read:
         gateway.list_domain(models.authorized, domain)
     assert read.value.code == "mechanism_domain_unavailable"
@@ -718,6 +724,6 @@ def test_mechanism_domain_without_its_module_answers_a_code_not_a_crash(models, 
                        {"payload": {}, "idempotency_key": "mechanism-domain-probe"})
     assert write.value.code == "mechanism_domain_unavailable"
 
-    handler = http_get(models.account, "domains/" + domain)
-    assert handler.status == 409 and handler.result["code"] == "mechanism_domain_unavailable"
+    closed = http_get(models.account, "domains/" + domain)
+    assert closed.status == 409 and closed.result["code"] == "mechanism_domain_unavailable"
     assert models.executions == [] and models.queue == {}

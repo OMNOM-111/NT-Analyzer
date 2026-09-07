@@ -6,6 +6,7 @@ Real NinjaTrader/Desktop access still requires the stricter Local-owner adapter.
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import math
 import os
@@ -366,6 +367,37 @@ def reconcile_model_deliveries(rows):
     return {"recovered": recovered, "denied": denied}
 
 
+def reconcile_schedules(rows):
+    """Existing worker's bounded batch; the scheduler owns every decision.
+
+    A schedule nobody is watching still has to run. This never invents a scope
+    -- it reuses the one recorded on a job the workspace already produced --
+    and never dispatches anything itself. `scan_due` selects the controllers it
+    considers due, and each occurrence is admitted against its own stored
+    grant, flag and budget exactly as it would be from the panel.
+    """
+    from . import scheduler
+    scanned, denied, seen = 0, 0, set()
+    for row in rows[:100]:
+        scope = (row.get("payload") or {}).get("scope")
+        key = (str(row.get("workspace_id") or ""), str(row.get("user_id") or ""))
+        if not isinstance(scope, dict) or not all(key) or key in seen:
+            continue
+        seen.add(key)
+        try:
+            authorized = access(scope)
+            if not resolve(Flag.AI_SCHEDULER_V1, scope=authorized["context"].scope,
+                           snapshot=authorized["snapshot"]).enabled:
+                continue
+            scanned += len(scheduler.scan_due(authorized, models(authorized)))
+        except Exception:
+            # A revoked grant, a disabled flag or a foreign scope is not a
+            # reason to stop scanning the rest, and never a reason to run
+            # anything. Only bounded counts leave this selector.
+            denied += 1
+    return {"scanned": scanned, "denied": denied}
+
+
 def _followup(authorized, *, context, kind, payload, idempotency_key):
     authorized["admit"]()
     if context != authorized["context"] or kind not in {"routine", "calendar_item"} or payload.get("automation_enabled") is not False:
@@ -489,17 +521,23 @@ def _followup_projection(authorized, service, domain, row):
 
 
 def _mechanism_gateway():
-    """Mechanism domains ship with their own module; fail closed without it.
+    """Resolve the module that owns the mechanism domains.
 
-    Absence is a deployment fact, not a caller error: answer with a stable
-    contract code rather than an unhandled import failure, and never fall back
-    to another domain's handler.
+    `mechanism_gateway` is the module the mechanisms checkpoint dispatches to
+    and has never contained. While it is absent, `mechanism_domains` stands in:
+    a thin adapter over `automation_authority`, `scheduler` and `router_v2` that
+    creates no second mechanism of its own. When the real module lands it wins
+    here, so the two never have to be merged.
+
+    If neither exists the routes fail closed with a stable contract code rather
+    than an unhandled import error, and never fall back to another domain.
     """
-    try:
-        from . import mechanism_gateway
-    except ImportError:
-        raise ContractError("mechanism_domain_unavailable") from None
-    return mechanism_gateway
+    for name in ("mechanism_gateway", "mechanism_domains"):
+        try:
+            return importlib.import_module("." + name, __package__)
+        except ImportError:
+            continue
+    raise ContractError("mechanism_domain_unavailable")
 
 
 def projected_task(row):
@@ -513,8 +551,21 @@ def projected_task(row):
     """
     from . import presentation, task_presentation
     projected = row if row.get("display_status") else task_presentation.project(row)
-    return {**projected,
-            "progress_pct": presentation.progress_pct(projected.get("display_status"))}
+    result = {**projected,
+              "progress_pct": presentation.progress_pct(projected.get("display_status"))}
+    if (result.get("display_status") == "awaiting_review" and not result.get("actions")
+            and result.get("source_kind") in {"ninjatrader_report", "desktop_chart"}):
+        # An adapter row has no review record to accept or reject: its own
+        # executor could not confirm its output. Say what happened and point at
+        # the source instead of leaving a card with nothing to do.
+        result["limitations"] = [*result.get("limitations", []),
+            "Автоматическая проверка исходных файлов не пройдена, поэтому принять"
+            " этот результат нельзя. Откройте исходный отчёт и при необходимости"
+            " запустите новый расчёт."]
+        source = str(result.get("report_url") or "")
+        if source.startswith("/ui/"):
+            result["source_url"] = source
+    return result
 
 
 def list_domain(authorized, domain, *, identity=None, limit=50, cursor=None):
