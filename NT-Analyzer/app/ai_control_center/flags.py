@@ -130,3 +130,21 @@ def resolve(flag: Flag, *, scope: TenantScope,
                             revision=snapshot.revision, blocked_by=blocked_by)
 
     return decision(flag, frozenset())
+
+
+def current_snapshot(authorized):
+    """The snapshot to resolve against, re-read when authority can be refreshed.
+
+    A snapshot captured when the request was admitted is not a standing grant:
+    revoking a mechanism must take effect for work already in flight. execution_v2
+    already re-reads authority this way; delegation, the scheduler and the router
+    resolve through here so all four behave the same.
+    """
+    from .states import ContractError
+    refresh = authorized.get("refresh") if isinstance(authorized, dict) else None
+    if not callable(refresh):
+        return authorized.get("snapshot", DISABLED) if isinstance(authorized, dict) else DISABLED
+    current = refresh()
+    if not isinstance(current, dict) or current.get("context") != authorized.get("context"):
+        raise ContractError("mechanism_authority_denied")
+    return current.get("snapshot", DISABLED)

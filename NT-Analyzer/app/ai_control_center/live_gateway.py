@@ -113,8 +113,20 @@ def mechanism_configuration(workspace_id):
     raw = os.environ.get(MECHANISMS_ENV, "").strip()
     if not raw or not configured(workspace_id):
         return empty
+    def _reject_duplicate_keys(pairs):
+        # json.loads keeps the last value for a repeated key. A configuration
+        # that says both {"AI_EXECUTION_V2": ["*"]} and a narrow list must not
+        # quietly resolve to whichever came last; an ambiguous document is
+        # invalid and disables every new mechanism.
+        seen = {}
+        for key, item in pairs:
+            if key in seen:
+                raise ValueError("duplicate key in mechanism configuration")
+            seen[key] = item
+        return seen
+
     try:
-        value = json.loads(raw)
+        value = json.loads(raw, object_pairs_hook=_reject_duplicate_keys)
         if (type(value) is not dict or set(value) != {"environment", "flags"}
                 or value["environment"] != Environment.DEVELOPMENT.value
                 or type(value["flags"]) is not dict):

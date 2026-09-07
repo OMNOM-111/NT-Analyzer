@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import math
 
 from . import contracts as c
-from .flags import DISABLED, Flag, resolve
+from .flags import DISABLED, Flag, current_snapshot, resolve
 from .model_evaluation import digest
 from .states import ContractError, EntityKind
 
@@ -50,7 +50,7 @@ def _gate(authorized, mode):
     authorized["admit"]()
     # An active switch is not an interpretation of the existing shadow flag.
     flag = getattr(Flag, "AI_ROUTER_V2", None) if mode == "active" else Flag.AI_ROUTER_SHADOW_V2
-    if flag is None or not resolve(flag, scope=context.scope, snapshot=authorized.get("snapshot", DISABLED)).enabled:
+    if flag is None or not resolve(flag, scope=context.scope, snapshot=current_snapshot(authorized)).enabled:
         raise ContractError("routing_disabled")
     if mode == "active" and (authorized.get("read_only") or authorized.get("session_read_only")):
         raise ContractError("routing_read_only")

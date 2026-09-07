@@ -13,7 +13,7 @@ from uuid import UUID
 
 from .. import worker_router
 from . import contracts as c, result_handoff
-from .flags import DISABLED, Flag, resolve
+from .flags import DISABLED, Flag, current_snapshot, resolve
 from .model_evaluation import digest, json_bytes, prepare
 from .model_service import _id, _key, _uuid
 from .states import ContractError, EntityKind
@@ -94,7 +94,7 @@ def gate(authorized, name):
     context = write_admission(authorized)
     flag = getattr(Flag, name, None)
     if (flag is None or context.scope.environment != c.Environment.DEVELOPMENT
-            or not resolve(flag, scope=context.scope, snapshot=authorized.get("snapshot", DISABLED)).enabled):
+            or not resolve(flag, scope=context.scope, snapshot=current_snapshot(authorized)).enabled):
         raise ContractError("mechanism_disabled")
     return context
 
