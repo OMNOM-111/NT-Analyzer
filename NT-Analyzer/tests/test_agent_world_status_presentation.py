@@ -507,3 +507,18 @@ def test_a_model_result_is_not_completed_by_its_own_automatic_check():
     assert project(model, human_review={"status": "pending"})["display_status"] == "awaiting_review"
     assert project(model, human_review={"status": "accepted"})["display_status"] == "completed"
     assert project(model, human_review={"status": "rejected"})["display_status"] == "rejected"
+
+
+def test_the_attention_filter_the_overview_links_to_is_actually_offered():
+    """The overflow link on the warning panel targets this filter by name.
+
+    Lost once during integration when the page module was rebased onto the
+    other branch's filter set: taskMatches still understood 'attention' but the
+    Работа tab no longer listed it, so the link led to a filter the owner could
+    not see or clear.
+    """
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert "attention: 'Требуют внимания'" in source
+    assert 'data-aw-filter="attention"' in source
+    assert evaluate("ui.taskMatches({display_status:'awaiting_review'},'attention','')") is True
+    assert evaluate("ui.taskMatches({display_status:'completed'},'attention','')") is False
