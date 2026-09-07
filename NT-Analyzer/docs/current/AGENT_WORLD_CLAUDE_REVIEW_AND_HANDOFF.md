@@ -666,3 +666,633 @@ a prohibition.
 Not done and not authorised in this pass: merge to main, changing PR #282's
 base, pushing to a Codex branch, switching or restarting Local 8765, Canary or
 Production deployment, real orders, budget increases.
+
+# Part C — integration branch: the merged build, its mechanisms, and what it leaves open
+
+Part A reviewed the pre-merge branch. Part B reviewed Codex's checkpoint
+read-only and recommended a merge order. Part C is the result of carrying that
+order out as sole integrator: the merge itself, the defects the merged build
+turned out to have, the mechanism scenarios that were finished, and the four
+statuses this leaves behind.
+
+## C1. Exactly what was tested, and where
+
+| | |
+| --- | --- |
+| Integration branch | `claude/agent-world-integration` |
+| Branch HEAD | `15cf6d761a4ec8a379853791c1c4c28e8696684b` |
+| Merge commit | `922c5d52bf5d467608f4e5d9bfc0ab3622ee1b93` |
+| Codex checkpoint merged | `f9b9444524aa497781fe3de7254d1bfb0e3b062c` (+ `db85773f5d2c50386744d63972d467b5a60af244`) |
+| Review branch state merged in | `7d347d204ea99103e33abdd2a011eee500028fff` |
+| Isolated instance | `http://localhost:8802` |
+| Its data root | `…/scratchpad/aurora-integration-data` (fresh, not a copy of the owner's) |
+| Its identity | synthetic owner id `990000001`, workspace `ws_owner_training_cc4a3af5ad8c` |
+| Its queue | its own; no provider key, no NinjaTrader, no socket to the owner's runtime |
+
+Never touched in this pass: Local 8765, the owner's data root, Canary,
+Production, `main`, PR #282/#283/#284 and their bases, Codex's worktrees, any
+real provider call, any trading action.
+
+Local 8765 is verifiable rather than merely asserted: its process
+(`python -m app.server 8765`) has been running continuously since
+2026-09-05 15:52 and was neither restarted nor switched at any point in this
+pass. The isolated instance on 8802 was stopped and restarted several times to
+pick up code changes; 8765 never was.
+
+Every result below is pinned to a SHA. Where a number came from a run, the run
+is named.
+
+## C2. Four statuses, kept apart
+
+| Subject | Pinned at | Status |
+| --- | --- | --- |
+| Claude review branch | `7d347d20` | Verified in Part A/B. Presentation, focus, identity and boot fixes, each with a regression. |
+| Codex mechanisms checkpoint | `f9b94445` / `db85773f` | Reviewed read-only in Part B. **Carried 30 test failures** and one module that does not exist. Both dealt with here — see C3, C4. |
+| Merged build | `15cf6d76`, carried to `d30439e4` | Full suite **4521 passed, 110 skipped, 0 failed** at `d30439e4` (C7, D6). Mechanisms exercised end to end (C5). Browser-verified on the isolated instance (C6). |
+| Owner Local 8765 | — | **NO.** Not switched, not restarted, not verified. Nothing here changes it. |
+
+The fourth row is the one that matters operationally: none of this has been
+applied to the machine the owner actually uses.
+
+## C3. The 30 failures the checkpoint carried in
+
+Fixed in `ee3252b5187529003f4397e4c8957a1ef96b55e2`. Every one of them was
+traced to Codex's checkpoint alone by running the suite at `f9b94445` before
+the merge — the merge introduced none of them. Two were real defects rather
+than stale expectations:
+
+* the mechanism config parser kept the last value for a repeated JSON key, so a
+  document that said both `{"AI_EXECUTION_V2": ["*"]}` and a narrow list
+  resolved to whichever came last; an ambiguous document now disables every new
+  mechanism instead;
+* the compatibility agent row lacked `availability`/`occupancy`/`open_review`/
+  `open_decision`, so it could not answer the two questions every other agent
+  card answers.
+
+The remaining 28 were expectation updates the merge required, listed in the
+commit.
+
+## C4. Defects found in the merged build
+
+Each was found on the running isolated instance, not by reading code, and each
+has a regression that fails without its fix.
+
+### C4.1 Two live endpoints answered 500 — `6126dc10`
+
+`domain_gateway` dispatches the `automation` and `router` domains to a module
+called `mechanism_gateway`. That module exists in no branch and in no worktree:
+the checkpoint wired three call sites to code it never contained. On the merged
+build, `GET /api/ai-control-center/domains/automation` and `.../router` both
+answered:
+
+```
+500 {"error": "internal server error"}
+```
+
+with no code at all, because the `ModuleNotFoundError` escaped the handler. The
+third call site is the `automation_watch` worker phase, which nothing enqueues
+yet and which would have failed the same way.
+
+The call sites are unchanged, so the module drops in unmodified when its author
+lands it. Only the import is guarded, and it raises the project's own error
+type, which the live layer already maps to a 409 carrying the code. After the
+fix, on the same instance:
+
+```
+automation  409 {"code": "mechanism_domain_unavailable"}
+router      409 {"code": "mechanism_domain_unavailable"}
+```
+
+The Aurora page's own `DOMAINS` map contains neither domain, so no screen was
+reaching this; it was reachable by direct API call only. **`mechanism_gateway`
+is Codex's to write — this is a fail-closed guard, not an implementation.**
+
+### C4.2 A full progress bar on work that is not finished — `15cf6d76`
+
+`live_backtests` derives `progress_pct` from the *source* status, so a report
+that reached `done` but failed verification arrived carrying `100` while the
+projection put it in `awaiting_review`. The page renders a `<progress>` element
+whenever the number is present, so a completed bar sat under a card that says
+the work still needs a check. Failed and cancelled rows drew one too.
+
+This is the same defect class as finding #6 of Part A ("report a completion
+percentage only where one is measured", `6092ab33`) surviving in the adapter
+path, which the earlier fix did not reach.
+
+### C4.3 The inspector and the card disagreed about the same task — `15cf6d76`
+
+The single-task route returned an adapter row unprojected: `display_status` was
+`null`, so the inspector rendered from `status`/`stage` while the list rendered
+from the computed state. Same task, two bases — exactly the presentation
+overlap this work exists to remove.
+
+`projected_task` is now the one seam both paths go through. It re-derives
+nothing: it projects a row that has no computed state yet, then makes progress
+agree with that state instead of with the source status.
+
+### C4.4 An adapter row completed on the strength of its type — `203eed18`
+
+Recorded in Part B and fixed before this pass, repeated here because C6 tests it
+live: a finished adapter row counted as carrying a result merely by not being a
+model task. It now requires its executor's own evidence — source checksums for a
+NinjaTrader report, a verified snapshot for a Desktop capture — and a finished
+row with none is reported as `awaiting_review`, not completed.
+
+## C5. The mechanism scenarios, finished
+
+### C5.1 Permission revocation, in a live process — `9e1fb7ad`
+
+`tests/test_agent_world_automation_revocation.py`, 6 cases, on the real stack:
+the real owner row, workspace, capability override, permission resolver, feature
+flags, budget check, durable job payload and Agent World records, on a
+disposable data root. No provider, no socket.
+
+Three sides, because passing only one of them would be a defect in the other
+direction:
+
+| | Result |
+| --- | --- |
+| No `ai_automation` grant | Neither the human approval nor worker ingress is admitted (`automation_entitlement_required`). Being the owner grants every other capability and still withholds this one. |
+| Live grant + mechanism flag + approved plan + budget head room | The run **is** admitted. The worker receives a SERVICE actor derived from the human's identity, bound to the controller and the grant. |
+| After withdrawal | The open worker handle, the next mechanism step, and a restarted worker replaying the same durable payload are all refused. |
+
+Also pinned: withdrawal is not a one-way latch — restoring the grant resumes the
+same approved plan under the same grant, so the fix is not a blanket automation
+ban. The flag, the per-call ceiling, the approved operation kind and the plan
+digest each gate a step on their own, so a grant alone is never authority.
+Explicit `revoke()` supersedes the Decision without erasing it: the approval,
+its human author and the completed records stay readable through a read-only
+handle, and a read-only worker can still deliver what the run already produced.
+
+Mutation-checked: granting `ai_automation` to the owner unconditionally, and
+dropping the capability from the per-step check, each fail 3 of the 6 cases;
+freezing the worker's authority after creation fails the restart case.
+
+### C5.2 A Router decision that is actually used — `a223ef08`
+
+Every pre-existing Router case ended at a denial or at shadow advice, so nothing
+showed a decision being followed. The new scenario prices two connected
+candidates, has the caller arrive on the expensive one, and runs the task
+through normal ingress at the model the active decision points to. The provider
+call lands on the routed model, not the caller's. Shadow mode over identical
+evidence keeps the caller where it was — which is what separates "the router had
+an opinion" from "the opinion changed which model answered". The ranking is
+checked to rest on this workspace's own verified observations of that exact
+class, and the decision is confirmed to grant nothing by itself
+(`dispatch_performed` and `permission_granted` both stay false).
+
+### C5.3 A scheduled run with no tick and no chat request — `a223ef08`
+
+Every pre-existing scheduler case advances the occurrence with an explicit
+`tick`, which is the path a person watching the panel takes. The new scenario
+never calls it: the ordinary recovery scan finds the due controller, the
+existing worker claims and executes it, and the collected result is what the
+next scan reports. One provider call; the accepted manual source untouched and
+still `automation_enabled: false`; the transcript only appended to by the
+delivery that was already in flight; a drained queue that cannot produce a
+second run.
+
+### C5.4 Execution / Deviation on damaged evidence — `68021953`
+
+The application path was pinned for a source that reports `failed`, and for one
+that reports `done` with an intact report. The case in between was uncovered: a
+run that reaches its terminal `done` folder while the evidence it left behind
+does not hold up. Three kinds of damage are now applied to a real terminal
+folder after the fact — the historical-data fingerprint no longer describes the
+bars it was computed from, the referenced trades file is gone, the report names
+a different job. Each records a deviation and stays unaccepted. The damaged
+folder is read without being repaired or rewritten to make the controller
+finish.
+
+### C5.5 A harness trap worth knowing
+
+`observed()` in the Router suite installs its arithmetic executor and leaves it
+there, so a second model's connection test never returns `CONNECTION_OK` and
+that candidate silently stays unverified — it appears in the result as
+`routing_connection_not_verified` rather than as a fixture error. Both new cases
+restore the fixture executor between models.
+
+### C5.6 A completed external action is never reported as cancelled
+
+Checked, not changed: this was already correct and is recorded here because it
+was asked for explicitly. `cancel_dispatch` refuses at three separate points
+once the external action has reached a terminal state — the source's own status,
+the cancel receipt returned by the queue, and a chart receipt that has already
+been saved — each raising `application_cancel_too_late`.
+
+`test_cancel_verified_chart_receipt_is_too_late_and_never_overwrites` pins the
+Desktop side: the saved receipt and its PNG bytes are unchanged after the
+refused cancel, and reconcile still completes the task.
+`test_cancel_running_nt_remains_pending_until_actual_terminal` pins the
+NinjaTrader side, which is the harder case because a running Strategy Analyzer
+is not preemptible: the request stays `waiting` with stage
+`application_cancel_requested` until the source itself reaches a terminal state,
+and if that state is `done` the task becomes **succeeded**, not cancelled. A
+cancel that did not happen is never reported as one, and the result it would
+have discarded is kept.
+
+## C6. What the merged interface actually shows
+
+Verified in a browser against `http://localhost:8802` at `15cf6d76`, in a
+profile with no owner cookie.
+
+Two backtests were seeded into the isolated instance that differ **only** in
+their evidence. Both reach the terminal `done` folder exactly as a real run
+would; one keeps an intact fingerprint, the other's no longer describes the bars
+it was computed from. Neither starts NinjaTrader; nothing is written outside the
+disposable root.
+
+The Работа table, read from the live DOM:
+
+| Task | Progress column | Status |
+| --- | --- | --- |
+| Бэктест · AWRegisteredStrategy · MNQ 09-26 (damaged evidence) | *no bar* — «Ожидает вашей проверки» | Ожидает вашей проверки |
+| Бэктест · AWRegisteredStrategy · MNQ 09-26 (intact evidence) | **100%** bar | Автоматическая проверка завершена |
+| model task, cancelled | *no bar* — «Отменено» | Отменено |
+| model task, failed | *no bar* — «Ошибка» | Ошибка |
+| model task, accepted by the owner | **100%** bar | Проверка завершена |
+| model task, rejected by the owner | *no bar* — «Результат отклонён» | Результат отклонён |
+| 2 × model task awaiting review | *no bar* — «Ожидает вашей проверки» | Ожидает вашей проверки |
+
+Same type, same source status, different outcome — decided by evidence, not by
+being a backtest.
+
+The overview at the same moment: **zero** `<progress>` elements on the whole
+page; counters «В работе 0 · Очередь, выполнение и ожидание результата»,
+«Результаты 7 · Получены, но не обязательно приняты», «Ждут проверки 3 · Ответ
+есть, проверка не пройдена»; panel headings «ОЖИДАЮТ ПРОВЕРКИ» and «ТРЕБУЕТ
+ВНИМАНИЯ» kept apart; no raw enum key rendered as a sentence.
+
+Transitions driven through the API with `expected_revision` CAS, not by editing
+storage: `a7f917b3 awaiting_review → completed` (owner accepted),
+`fa34f6da awaiting_review → rejected` (owner rejected). Replaying the same
+decision with the same idempotency key does not double-apply.
+
+Four states stay distinct throughout, which was the point of the exercise:
+
+| State | Where it comes from | What it does **not** mean |
+| --- | --- | --- |
+| execution finished | the task's own status | not verified |
+| automatically verified | the executor's evidence | not accepted |
+| awaiting manual review | evidence present, no human decision | not done |
+| owner decision | `human_review: accepted / rejected` | not a quality claim (`quality_claim: False`) |
+
+## C7. Regression and gates
+
+Run at `15cf6d76` unless stated.
+
+| Gate | Command | Result |
+| --- | --- | --- |
+| Full suite | `python -m pytest -q` | at `d30439e4`: **4521 passed, 110 skipped, 0 failed** (28m16s), tagged `checkpoint/agent-world-integration-regression` |
+| Compile | `python -m compileall -q app tests` | pass |
+| Aurora JS | `node --check` over `app/static/aurora/assets/**/*.js` | pass, 0 failures |
+| External GPT context pack | `python tools/validate_external_gpt_context.py` | `EXTERNAL GPT CONTEXT OK`, with the standing warning that the pack's verification SHA differs from HEAD |
+| Agent World PostgreSQL | `python -m pytest tests/test_agent_world_postgres.py` against a disposable TLS cluster | **69 passed**, migrations 1–23 applied, `migration_set_sha256 3e5a1ccf5c1e1fa75ef9ba66e8e9926ceebc3aac97adc7bea470c3f534ee38e3` |
+| Mechanism flag suite | `python -m pytest tests/test_agent_world_mechanism_flags.py` | **73 passed** |
+
+### Why 69 and not 68
+
+They are the same suite counted in two situations, not two suites. The file has
+not changed since `f9b94445`: 27 test functions expanding to 69 cases —
+17 contract kinds, 10 repository behaviours, 6 payload identity bindings,
+5 immutability cases, 4 missing-context RLS cases, 3 TLS environment-separation
+cases, 3 cross-workspace RLS cases, 2 memory-grant cases and 20 singletons.
+
+With no PostgreSQL DSN, **68 skip and 1 passes** — the one that asserts the
+constructor performs no database IO, DDL or fallback, which needs no server.
+That is the "68" in Part B's readiness table, and it is a skip count. With the
+disposable cluster present, all **69 pass**. Nothing was added, removed or
+re-parametrised to get there.
+
+### The disposable PostgreSQL, reproducibly — `0386621d`
+
+`deploy/testing/provision-disposable-agent-world-postgres.py` brings up a
+throwaway TLS-enabled cluster from the official Windows zip: its own directory,
+its own free loopback port, no Windows service, no elevation, no PATH, firewall
+or existing-PostgreSQL change, no Docker or Podman. `--teardown` removes it.
+
+Passwords are generated per run into `<workdir>/acceptance.env`, which is
+git-ignored; nothing prints a secret and no DSN is committed. The administrative
+role is used **only** to create and later drop the throwaway database. The suite
+itself connects as `stratforge_app`, created `NOSUPERUSER NOCREATEDB
+NOBYPASSRLS`, so workspace isolation is proven with runtime-like rights rather
+than around them. No ALLOW gate, DSN restriction or database protection was
+weakened to obtain the green run.
+
+## C8. The 21 ported flag tests — `69875444`
+
+All 21 residual cases were ported, expanding to **73** with parametrisation, and
+carry a provenance header recording the sha256 of the file they came from. They
+exposed three further enforcement gaps, all fixed in the same commit:
+
+1. `flags.current_snapshot()` — a caller-supplied snapshot was authority, so a
+   handle created before a revocation kept resolving against it. `delegation.gate`
+   and `router_v2._gate` now re-read through the refreshable authority.
+2. the local-owner bootstrap in `server.py` granted every capability by loop,
+   including `ai_automation`; it is now excluded by name, and C5.1 proves the
+   exclusion did not make legitimate automation impossible.
+3. duplicate JSON keys in the mechanism configuration (see C3).
+
+## C9. Open, deferred, and not done
+
+Listed separately from the results above, on purpose.
+
+**Owned by Codex, not written here**
+
+* `mechanism_gateway` — `read`, `mutate`, `execute_watch`. Three call sites are
+  wired and guarded; the module is missing. Until it lands, the `automation` and
+  `router` domains answer 409 `mechanism_domain_unavailable`, and the
+  `automation_watch` worker phase cannot run. Nothing enqueues that phase today.
+
+**Not verified, and why**
+
+* Local 8765 — untouched by instruction; nothing here has been applied to it.
+* PostgreSQL as the *runtime* backend for Agent World — the suite passes against
+  a disposable cluster, but no instance was ever started with
+  `STRATFORGE_AGENT_WORLD_STORAGE=postgres`. SQLite remains the only backend any
+  running build has used.
+* Adapter rows on a real NinjaTrader or a real Desktop capture — the isolated
+  instance has neither, so every adapter row in C6 is synthetic, written into
+  the disposable root and kept out of real history and ratings.
+* The external GPT context pack's own facts — the gate passes, but its
+  verification SHA still points at an earlier HEAD. Re-pinning it is a
+  governance action for the owner, and it should follow a merge, not precede it.
+* Cross-user isolation beyond the workspace scope tests, and Court, were
+  reviewed in Part A and not re-run against the merged build in this pass.
+
+**Deliberately not done**
+
+Merge to `main`; any change to PR #282/#283/#284 or their bases; any push to a
+Codex branch; force push; switching or restarting Local 8765; Canary or
+Production deployment; registering a Windows service; requesting elevation;
+touching the global PATH, firewall or an existing PostgreSQL configuration;
+installing Docker or Podman; using an owner, Canary or Production DSN,
+credential or cookie; any real provider call, paid call or trading action.
+
+## C10. What a reader should do next
+
+1. Read C4 first: two of those defects were only visible on a running build, and
+   one of them (C4.1) is a missing module that its author still has to write.
+2. Take the branch as a whole or not at all — the merge resolved overlapping
+   state logic, and cherry-picking a presentation fix without the projection it
+   reads from will reintroduce the conflation this work removed.
+3. Before Local 8765 is switched, decide who owns `mechanism_gateway` and
+   whether the `automation`/`router` domains should be registered at all while
+   it is absent. A registered domain that always answers 409 is honest but
+   pointless; removing it from `DOMAINS` is the alternative and is a
+   one-line change either way.
+
+# Part D — the mechanism domains, the review boundary, and what is genuinely usable
+
+Part C reported the merged build with the mechanism domains failing closed. That
+was a fixed crash, not a working capability, and this part says so plainly and
+then closes it. It also finishes the review boundary between a human accepting a
+result and the evidence holding up, and settles the background-load check that
+Part C left implicit.
+
+## D1. What the 409 actually cost, and what now answers instead
+
+**Confirmed again, read-only:** `mechanism_gateway` exists in **no branch and no
+worktree**. Every local ref was searched (`git ls-tree` over all of `refs/heads`)
+and every checkout under `StratForge-worktrees` was scanned; the newest Codex
+branch is still `codex/agent-world-mechanisms` at `db85773f` with no file of that
+name and nothing newer than the checkpoint in its working tree.
+
+### What depended on it
+
+| Entry | Depends on | Before | Now |
+| --- | --- | --- | --- |
+| `GET /api/ai-control-center/domains/automation` | `mechanism_gateway.read` | 500, then 409 | 200 — grants, schedules, capability state, flags |
+| `GET /api/ai-control-center/domains/automation/{controller}` | `mechanism_gateway.read` | 500, then 409 | 200 — one grant |
+| `POST /api/ai-control-center/domains/automation/{id}/{action}` | `mechanism_gateway.mutate` | 500, then 409 | `propose`, `enable`, `cancel`, `revoke` |
+| `GET /api/ai-control-center/domains/router` | `mechanism_gateway.read` | 500, then 409 | 200 — policy, flags, task classes |
+| `GET /api/ai-control-center/domains/router/{task}` | `mechanism_gateway.read` | 500, then 409 | 200 — the model that actually ran it, and the candidate evidence |
+| `POST /api/ai-control-center/domains/router/{task}/preview` | `mechanism_gateway.mutate` | 500, then 409 | a real shadow decision |
+| worker phase `automation_watch` | `mechanism_gateway.execute_watch` | would crash | runs the scheduler's own `scan_due` |
+
+**User-facing elements that depended on them: none.** The Aurora page's `DOMAINS`
+map contains neither domain, so no screen reached these routes. The cost was to
+any client using the documented API, and to the `automation_watch` phase. That is
+the honest scope of the 409 — it was never a broken screen.
+
+### The adapter
+
+`app/ai_control_center/mechanism_domains.py` is an adapter, not a mechanism. It
+creates no second router, no second scheduler and no second authority: every
+ranking, grant, device check, flag check and budget check is made by
+`automation_authority`, `scheduler` or `router_v2`. A request it cannot forward
+is refused by name — `mechanism_action_unsupported`,
+`mechanism_payload_incomplete`, `mechanism_source_request_required` — never
+guessed at, and a test asserts that a forwarded request's refusal code never
+starts with `mechanism_`.
+
+`domain_gateway._mechanism_gateway()` resolves `mechanism_gateway` first and this
+adapter only while that module is absent, so the checkpoint's own module replaces
+this file rather than being merged with it. With neither importable, both routes
+still fail closed with `mechanism_domain_unavailable`.
+
+**Temporarily unsupported, named rather than answered:** delegation has no action
+on this domain, and the router's active mode is not applied from here — both are
+listed in the `limitations` each read returns, so a caller sees what is absent
+instead of inferring completeness. Those two remain a permanent 409 in the sense
+that matters: they are not offered at all.
+
+## D2. The user path, walked over the normal API
+
+On the isolated instance, over HTTP only, with no process access. The run below
+is the one against the committed code at `92436698`; an identical walk on the
+working tree before the commit produced the same outcomes.
+
+| Step | Result |
+| --- | --- |
+| `GET domains/automation`, `GET domains/router` | 200; task count **9 → 9**. Reading starts nothing. |
+| `POST domains/routines/new/create` + `/accept` | accepted, `automation_enabled: false` |
+| `POST domains/automation/{routine}/propose` | 200, returns `controller_id` and `approved: false`; task count **9 → 9** |
+| `POST .../enable` **without** the capability | **403 `automation_entitlement_required`** |
+| `POST /api/auth/users/{id}/permission` `{ai_automation: true}` | 200; the domain read then shows `ai_automation: true` |
+| `POST .../enable` **with** it | 200 — schedule `ready`, `approved: true`, actions `["cancel", "revoke"]` |
+| worker's own periodic scan | started the due occurrence unattended after 17s: `task_id` present, `coordination_job_status: succeeded`, panel **9 → 10 tasks**. No tick, no panel, no chat request. |
+| the run itself | the provider call is refused by the budget authority — `model_private_budget_not_configured`, because this synthetic connection has no approved paid allowance, so **no provider call is made**. The task is visible in the panel with that state. |
+| `POST .../cancel` | 200, schedule `cancelled` — including while an occurrence was still queued |
+| `POST .../revoke` | 200; the grant reads `status: superseded`, `operational: false` |
+
+The scheduler had no producer at all before this: `create` leaves a controller
+and queues nothing, and `scan_due` was called only by tests, so an approved
+schedule never started unless a person opened the panel and advanced it.
+`domain_gateway.reconcile_schedules` adds that producer beside the
+model-delivery recovery already in `local_worker.run_once` — same throttle, same
+bounded keyset read, same rule that a scope is reused from a job the workspace
+already produced rather than assembled. It decides nothing.
+
+### The permission itself
+
+The route that grants and revokes `ai_automation` already existed:
+`POST /api/auth/users/{user_id}/permission`, owner-only, with
+`{"capability": "ai_automation", "enabled": true | false | null}`. It is used in
+the walk above and it works. The `automation` domain reports the capability state
+and names that route rather than duplicating the authority. **No Aurora screen
+exposes it yet** — that is the remaining user-facing gap, and it is a control on
+an existing page, not a redesign.
+
+### Router: the task, the choice, the explanation
+
+`GET domains/router/{task}` returns the task's class, the model that **actually**
+ran it, and `actual_choice: {decided_by: "request", routing_applied: false}` —
+it never claims a routing decision was applied to a task that never had one —
+beside each candidate's same-class evidence (one connection with 3 verified
+observations, another with 2 and not all passing).
+
+`POST .../preview` returns a real shadow decision: `decision_sha256`,
+`dispatch_performed: false`, `permission_granted: false`, `quality_ranking:
+false`, and a reason code per candidate. On this instance both candidates were
+excluded as `routing_connection_not_verified`.
+
+**This is not a comparison of real external models.** No external model was
+called, no paid call was made, and the candidates were excluded before any
+provider boundary. What is demonstrated is the link between a task, a decision
+and its stated reasons — not model quality.
+
+## D3. Human acceptance against evidence integrity
+
+`tests/test_agent_world_manual_review.py` (7 cases) walks the boundary
+separately, and one further case sits with the deviation machinery in
+`test_agent_world_execution_v2.py`:
+
+| Case | Result |
+| --- | --- |
+| A correct result | accepted; `display_status` becomes `completed` |
+| A stale revision | `task_review_stale`, nothing written |
+| A hash that does not match the shown result | `task_review_result_required`, nothing written |
+| A result whose automatic check never happened | `not_required` — no acceptance is offered at all |
+| A deviated result | `not_required`, no `review_result` action, and forcing a submit is refused; the deviation and its reason survive unchanged |
+| The opposite decision afterwards | `task_review_already_recorded`; the same decision replayed is deduplicated, not a second record |
+
+What acceptance may not do is pinned directly:
+
+* **it cannot rewrite the hash it is bound to** — the stored proof carries the
+  server's own fingerprint of the task, and the caller's value is only checked
+  against it;
+* **it cannot erase a deviation** — a deviated task is never offered for
+  sign-off, and a forced submit leaves `status: deviated`, `human_accepted:
+  false` and the same reason codes;
+* **it cannot declare a damaged result technically verified** — the automatic
+  `evaluation_id` and `application_evaluation_id` are unchanged by a decision.
+
+The record keeps the two facts apart: the machine's verdict stays in its own
+evaluation, and the human decision is a separate `EVALUATION` record with
+`rubric_key: human_review`, `origin: explicit_human_review`,
+`quality_claim: false`, the reviewer's uuid, the task revision and the source
+hash. The panel shows them apart too — «Автоматическая проверка завершена» for a
+machine verdict, «Проверка завершена» only after an owner accepted.
+
+### A state with no exit, closed
+
+An adapter row whose evidence failed verification is projected as awaiting
+review — correctly, since being a backtest is not a result — but it carries no
+review record, so no accept or reject action exists for it. It rendered with no
+action, no link and no reason: the panel asked for a check and offered nothing to
+do. It now states why acceptance is unavailable and links to the source report it
+came from. Verified in the browser: the inspector shows
+
+> Автоматическая проверка исходных файлов не пройдена, поэтому принять этот
+> результат нельзя. Откройте исходный отчёт и при необходимости запустите новый
+> расчёт.
+
+with «Открыть исходный отчёт» pointing at the job's own report page. The verified
+adapter row and the model row that has its own `review_result` action are not
+annotated, and an off-site link is never surfaced.
+
+## D4. Background load — verified, not deferred
+
+The browser pane does mark a tab hidden, provided another tab is fronted first
+and the target is navigated while in the background. With that, a **confirmed
+hidden initial load**:
+
+| Observation | Value |
+| --- | --- |
+| `document.visibilityState` throughout | `hidden` |
+| `document.hidden` / `document.hasFocus()` | `true` / `false` |
+| `document.readyState` | `complete` |
+| Shell rendered | 13 Agent World panels, 14 rail links, 6733 characters |
+| `/api/auth/status` requests for that load | **exactly 1** — no double shell start |
+| Served `ui.js` | sha256 `ae6936740d69fbb2b119cc07cc19075c47c27c2149b47fb88d7b0c070cba28e4`, byte-identical to the repository file, containing the `shellStarted` latch and `setTimeout(startShell, 0)` |
+| Build stamp on the served assets | `6802195` |
+
+The tab was never fronted before or during the measurement. The mechanism was
+**not** changed for this check — the fix and its latch test are unchanged from
+`f589cba2`/the merge, and this is the browser confirmation Part B could not
+obtain.
+
+## D5. Where each mechanism actually stands
+
+Four separate columns, because collapsing them is what this work exists to
+prevent. "API подключён" means a normal HTTP entry exists and was exercised;
+"пользовательский сценарий проверен" means it was walked end to end on the
+isolated instance, not that a test passed.
+
+| Mechanism | Реализован | API подключён | Пользовательский сценарий проверен | Остаётся blocker |
+| --- | --- | --- | --- | --- |
+| Task lifecycle projection | yes | yes | yes — browser, six states, one basis | — |
+| Manual human review | yes | yes | yes — accept and reject driven over the API | — |
+| Evidence integrity on acceptance | yes | yes | yes — refusals walked separately | — |
+| Automation authority | yes | **yes (new)** — read + revoke | yes — grant → enable → revoke | no Aurora control for the capability itself |
+| Scheduler | yes | **yes (new)** — propose/enable/cancel, and a producer for the scan | yes — the scan started it unattended | no successful scheduled provider result: this instance has no approved connection |
+| Router V2 | yes | **yes (new)** — task view + shadow preview | partly — the task↔choice↔reason link, no active routed dispatch | an applied active route has never run; no real external comparison was made or claimed |
+| Execution V2 / Deviation | yes | yes | partly — deviations by test and by damaged synthetic evidence | no live provider execution on this instance |
+| Delegation | yes | **no** — no action on this domain, named as a limitation | no | needs a domain surface; not added here |
+| PostgreSQL / RLS repository | yes | selection exists | no — 69 tests against a disposable cluster, but no instance ever ran on it | never run with `STRATFORGE_AGENT_WORLD_STORAGE=postgres` |
+| `mechanism_gateway` | **no — exists nowhere** | adapter stands in | n/a | **yes — owned by GPT/Codex** |
+| Hidden-tab boot | yes | n/a | yes — confirmed hidden initial load | — |
+
+### Programme items this set does not close
+
+Nothing here touches the open programme-level items, and they stay open: separate
+ordinary-user registration and key, multi-user sharing and revocation, permanent
+Social publication, and owner acceptance of the whole programme. `OWNER
+ACCEPTANCE READY` remains **NO**, and Local 8765 remains untouched, not switched
+and not restarted.
+
+## D6. Gates, at the SHA each was run on
+
+Results are not carried forward across commits. Two full runs were made, one per
+code state; the docs commit that records them changes no executable code,
+configuration, migration or test.
+
+| SHA | What it is | Full suite | Release runner | compileall | Aurora JS | Context pack |
+| --- | --- | --- | --- | --- | --- | --- |
+| `d30439e439ceaca3a4748285c9a52331cb91e75c` | integration checkpoint, tagged `checkpoint/agent-world-integration-regression` | **4521 passed, 110 skipped, 0 failed** (28m16s) | — | pass | pass | OK |
+| `92436698c279fa41530b96fc9ad5509cc56596ad` | mechanism domains connected, review boundary closed | **4537 passed, 110 skipped, 0 failed** (28m44s) | **13/13 suites** | pass | pass, 0 failures | `EXTERNAL GPT CONTEXT OK` |
+
+The delta is exactly the 16 cases this pass added: 6 in
+`test_agent_world_mechanism_domains`, 7 in `test_agent_world_manual_review`, 1 in
+`test_agent_world_execution_v2`, 2 in `test_agent_world_status_presentation`.
+Nothing else changed count.
+
+The 110 skips are identical in both runs and are all PostgreSQL-gated: 68 in the
+Agent World suite (its 69th case needs no server), 12 + 12 + 9 + 8 in the four
+baseline suites, and 1 in `test_platform_secrets`. Against a disposable TLS
+cluster the Agent World suite is **69 passed** — see C7.
+
+The context pack still carries its standing warning that its verification SHA
+differs from HEAD. Re-pinning it is a governance action for the owner and should
+follow a merge, not precede one.
+
+### Commit pairing
+
+| Kind | Commit | Contents |
+| --- | --- | --- |
+| Code + tests | `92436698c279fa41530b96fc9ad5509cc56596ad` | `mechanism_domains`, the module preference in `domain_gateway`, `reconcile_schedules`, the worker scan hook, the adapter-row exit, the inspector rendering, and 16 tests |
+| Docs | the commit that adds this section | Part D, the status-document section, and the changelog record. No executable change. |
+
+## D7. What a reader should do next
+
+Take the branch whole. The presentation, the projection and the adapter read
+each other, and lifting one fix without the computation it reads from
+reintroduces the conflation this work removed.
+
+Before Local 8765 is switched, three decisions are the owner's, not mine:
+whether `mechanism_gateway` is still Codex's to write now that an adapter
+answers those routes; whether delegation should gain a domain surface or stay
+out of the API; and whether the `ai_automation` capability deserves a control in
+the panel rather than only an owner route. None of them blocks the branch; all
+three change what a user can reach.

@@ -8,6 +8,69 @@ ordinary-user registration/key, multi-user sharing/revocation and permanent Soci
 publication remain unverified owner-dependent scenarios. The full program is not closed.
 No merge, Canary/Production, real orders or budget increase is authorized.
 
+## Mechanism domains connected, 2026-09-07
+
+`mechanism_gateway` still exists in no branch and no worktree; the search was
+repeated over every local ref and every checkout. `mechanism_domains` now stands
+in for it so the `automation` and `router` domains answer their own state
+instead of a permanent 409, and `domain_gateway` prefers the real module the
+moment it appears. The adapter owns no decision: it forwards to
+`automation_authority`, `scheduler` and `router_v2`, and refuses by name what it
+cannot forward.
+
+The scheduler also gained the producer it never had — `scan_due` was called only
+by tests, so an approved schedule never started unless someone opened the panel.
+`reconcile_schedules` runs it from the worker beside the existing model-delivery
+recovery, under the same throttle and the same scope rule.
+
+Where each mechanism stands — implemented / API connected / user scenario
+verified / remaining blocker — is the table in Part D of the
+[review and handoff](AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md). Summarised:
+delegation still has no domain surface; the Router has never applied an active
+route; no instance has ever run on the PostgreSQL backend; and there is no
+Aurora control for the `ai_automation` capability, though the owner route that
+grants and revokes it exists and was exercised end to end.
+
+Nothing in this set closes any programme-level item. Separate ordinary-user
+registration and key, multi-user sharing and revocation, and permanent Social
+publication remain unverified, `OWNER ACCEPTANCE READY` remains **NO**, and
+Local 8765 was not switched, not restarted and not read.
+
+## Integration branch — merged mechanisms, 2026-09-07
+
+`claude/agent-world-integration` at `15cf6d761a4ec8a379853791c1c4c28e8696684b`
+carries the mechanisms checkpoint `f9b9444524aa497781fe3de7254d1bfb0e3b062c`
+merged with the review branch `7d347d204ea99103e33abdd2a011eee500028fff`
+(merge `922c5d52bf5d467608f4e5d9bfc0ab3622ee1b93`). The section below on the
+saved WIP remains the record of that checkpoint as it stood; it is not the
+current state of this branch.
+
+What changed for this document's claims:
+
+- The exact-checkpoint full pytest **has** now been run, after the merge: the
+  30 failures the checkpoint carried were traced to it alone and fixed
+  (`ee3252b5`), and the branch's own full suite result is recorded in Part C of
+  the [review and handoff](AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md).
+- PostgreSQL/RLS is no longer unexercised. The Agent World suite runs against a
+  disposable TLS cluster provisioned by
+  `deploy/testing/provision-disposable-agent-world-postgres.py`: **69 passed**,
+  migrations 1–23, `migration_set_sha256
+  3e5a1ccf5c1e1fa75ef9ba66e8e9926ceebc3aac97adc7bea470c3f534ee38e3`. No
+  instance has yet been *run* with `STRATFORGE_AGENT_WORLD_STORAGE=postgres`;
+  SQLite is still the only backend a running build has used.
+- The 21 residual mechanism flag tests were ported (**73 cases**, `69875444`)
+  and exposed three enforcement gaps, all fixed.
+- `mechanism_gateway` — dispatched to by the `automation` and `router` domains
+  and by the `automation_watch` worker phase — **does not exist in any branch**.
+  Those two endpoints answered 500 on the merged build and now fail closed with
+  `mechanism_domain_unavailable` (`6126dc10`). Writing that module is backend
+  work still owned by GPT/Codex.
+
+`LOCAL VISUAL REVIEW AVAILABLE` for this branch: **YES**, on an isolated
+instance at `http://localhost:8802` with its own data root, synthetic owner id
+and queue. `OWNER ACCEPTANCE READY`: **NO**. Local 8765 was not switched, not
+restarted and not verified, and nothing here has been applied to it.
+
 ## Active mechanisms WIP — 2026-09-06
 
 Saved WIP source: `f9b9444524aa497781fe3de7254d1bfb0e3b062c` (37 files;
