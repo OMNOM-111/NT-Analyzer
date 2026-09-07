@@ -452,3 +452,58 @@ def test_every_agent_row_answers_both_questions_not_just_domain_ones():
             "synthetic": False, "evaluation": {"sample_size": 0}}
     html = render(workspace([], agents=[bare]))["html"]
     assert "Доступность не указана" in html and "Свободен" in html
+
+
+# --- adapter rows: evidence, not type, decides completion --------------------
+
+
+def _display(row):
+    from app.ai_control_center.task_presentation import project
+    return project(row)["display_status"]
+
+
+def test_a_finished_adapter_result_does_not_stay_in_progress():
+    """A verified NinjaTrader report or Desktop snapshot is finished work.
+
+    Before this, project() judged every row by the model-task fields, so an
+    adapter row — which carries no provider receipt because its own executor
+    verified it — came out as waiting_result and the owner saw a completed
+    backtest reported as still running.
+    """
+    assert _display({"status": "succeeded", "source_kind": "ninjatrader_report",
+                     "evidence_count": 3}) == "verified_automatically"
+    assert _display({"status": "succeeded", "source_kind": "desktop_chart",
+                     "evidence_count": 1}) == "verified_automatically"
+
+
+def test_missing_or_broken_evidence_never_completes_on_the_strength_of_a_type():
+    """Being an adapter row is not itself a result.
+
+    live_backtests reports evidence_count as the number of verified source
+    checksums and live_charts as 1 only when the snapshot verified, so zero
+    means the executor could not confirm its own output. That is something a
+    human has to look at — neither finished nor still running.
+    """
+    assert _display({"status": "succeeded", "source_kind": "ninjatrader_report",
+                     "evidence_count": 0}) == "awaiting_review"
+    assert _display({"status": "succeeded", "source_kind": "desktop_chart",
+                     "evidence_count": 0}) == "awaiting_review"
+    assert _display({"status": "succeeded", "source_kind": "desktop_chart"}) == "awaiting_review"
+
+
+def test_an_unfinished_adapter_row_is_still_reported_as_running():
+    assert _display({"status": "running", "source_kind": "ninjatrader_report",
+                     "evidence_count": 0}) == "running"
+    assert _display({"status": "failed", "source_kind": "ninjatrader_report",
+                     "evidence_count": 3}) == "failed"
+
+
+def test_a_model_result_is_not_completed_by_its_own_automatic_check():
+    """Execution, automatic verification and owner acceptance stay distinct."""
+    model = {"status": "succeeded", "source_kind": "real_model_response",
+             "task_class": "json_arithmetic", "evaluation_id": "e1"}
+    assert _display(model) == "result_received"
+    from app.ai_control_center.task_presentation import project
+    assert project(model, human_review={"status": "pending"})["display_status"] == "awaiting_review"
+    assert project(model, human_review={"status": "accepted"})["display_status"] == "completed"
+    assert project(model, human_review={"status": "rejected"})["display_status"] == "rejected"

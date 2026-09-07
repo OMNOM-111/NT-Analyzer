@@ -41,9 +41,15 @@ def project(task: dict, *, evaluation=None, human_review=None) -> dict:
     model_task = (task.get("source_kind") == "real_model_response"
                   or "provider_result_received" in task or bool(task.get("evaluation_id"))
                   or bool(task.get("application_request")))
+    # An adapter row counts as carrying a result only when its own executor
+    # recorded evidence: source checksums for a NinjaTrader report, a verified
+    # snapshot for a Desktop capture. Being an adapter row is not itself a
+    # result, so a finished job whose evidence is missing or failed
+    # verification never completes on the strength of its type.
+    adapter_evidence = not model_task and int(task.get("evidence_count") or 0) > 0
     provider_result = (task.get("provider_result_received") is True
                        if "provider_result_received" in task
-                       else bool(task.get("evaluation_id")) or not model_task)
+                       else bool(task.get("evaluation_id")) or adapter_evidence)
     application = task.get("application_result")
     application_result = (isinstance(application, dict) and application.get("verified") is True
                           and bool(application.get("artifact_ids")) and bool(task.get("application_evaluation_id")))
@@ -62,8 +68,13 @@ def project(task: dict, *, evaluation=None, human_review=None) -> dict:
     elif raw in {"succeeded", "completed"}:
         if application_required and not application_result or execution_status and execution_status != "succeeded":
             display = "waiting_result"
+        elif not model_task and not adapter_evidence:
+            # Execution finished, but the adapter could not confirm its own
+            # evidence. That is a result a human has to look at, not a
+            # completed one and not one still running.
+            display = "awaiting_review"
         else:
-            automatic = (result and not model_task) or (
+            automatic = (result and adapter_evidence) or (
                 task.get("task_class") in {"connection_exact", "court_vote"}
                 and result and isinstance(evaluation, dict) and evaluation.get("passed") is True)
             display = {"pending": "awaiting_review", "accepted": "completed", "rejected": "rejected"}.get(
