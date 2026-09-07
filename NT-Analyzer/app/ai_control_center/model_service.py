@@ -76,7 +76,7 @@ def _wire(ref):
 
 class ModelService:
     def __init__(self, repository, *, admit, enqueue=None, executor=None, secrets=None,
-                 allowed_origins=(), chat_scope=None):
+                 allowed_origins=(), chat_scope=None, mechanism_admit=None, mechanism_authorized=None):
         self.repository = repository
         self.admit = admit
         self.enqueue = enqueue
@@ -86,6 +86,8 @@ class ModelService:
         # Optional trusted composition dependency, never an HTTP/task field.
         # Only explicit result handoffs require chat existence before a call.
         self.chat_scope = dict(chat_scope) if isinstance(chat_scope, dict) else None
+        self.mechanism_admit = mechanism_admit
+        self.mechanism_authorized = mechanism_authorized
 
     def _access(self, context, operation="read", estimate=0.0):
         if not isinstance(context, c.RequestContext):
@@ -360,7 +362,7 @@ class ModelService:
 
     def start_task(self, *, context, model_id, payload, idempotency_key, conversation_id=None,
                    message_id=None, comparison_id=None, comparison_title=None, _sealed_spec=None, _comparison_spec=None,
-                   _handoff=None):
+                   _handoff=None, _delegation=None):
         self._access(context, "task")
         key = _key(idempotency_key)
         if not isinstance(payload, dict) or set(payload) - {"rubric_key", "input_text"}:
@@ -376,6 +378,13 @@ class ModelService:
         identity = {"model_id": str(_uuid(model_id)), "spec": spec, "conversation_id": conversation,
                     "message_id": message, "comparison_id": comparison_id, "comparison_title": comparison_title}
         correlation, dependencies = task_id, ()
+        if _delegation is not None:
+            if _handoff is not None or _sealed_spec is not None or _comparison_spec is not None:
+                raise ContractError("model_delegation_exclusive")
+            from .delegation import validate_constructor
+            identity["delegation"] = validate_constructor(self, context, _delegation,
+                model_id=model_id, spec=spec, conversation_id=conversation)
+            correlation, dependencies = _delegation.correlation_id, _delegation.dependencies
         if _handoff is not None:
             from .result_handoff import validate_constructor
             identity["handoff"] = validate_constructor(self, context, _handoff, model_id=model_id,
@@ -443,8 +452,10 @@ class ModelService:
         task_id, policy = task.header.entity_id, task.header.policy
         correlation = task.header.correlation_id
         intent = self._get(context, EntityKind.INTENT, task.intent.entity_id)
-        approval = self._put(context, {"source": "explicit_bounded_user_request", "user_uuid": str(context.user_uuid),
-            "request_sha256": checkpoint["request_sha256"], "task_id": str(task_id), "tools": [], "court": False})
+        origin = "approved_bounded_automation" if checkpoint.get("delegation") else "explicit_bounded_user_request"
+        approval = self._put(context, {"source": origin, "user_uuid": str(context.user_uuid),
+            "request_sha256": checkpoint["request_sha256"], "task_id": str(task_id), "tools": [], "court": False,
+            **({"delegation": checkpoint["delegation"]} if checkpoint.get("delegation") else {})})
         decision = self._ensure(context, c.Decision, _id(context, f"decision:{task_id}"), correlation, policy,
             intent=intent.ref(), contributions=(), evidence_packet=approval)
         if decision.status == "proposed":
@@ -568,8 +579,11 @@ class ModelService:
             if profile.get("credential_source") != "owner_registry_binding":
                 self._endpoint(model.provider_key, profile["base_url"])
             self._access(context, "provider_transmit")
-            if checkpoint.get("handoff") or task.dependencies:
-                from .result_handoff import validate_execution
+            if checkpoint.get("delegation") or checkpoint.get("handoff") or task.dependencies:
+                if checkpoint.get("delegation"):
+                    from .delegation import validate_execution
+                else:
+                    from .result_handoff import validate_execution
                 try:
                     validate_execution(self, context, task, checkpoint)
                 except ContractError as exc:
@@ -710,6 +724,7 @@ class ModelService:
             raise ContractError("model_evaluation_mismatch")
         title = f"{checkpoint['persona_name']} · {checkpoint['spec']['rubric_key']}"
         task_dto = {"id": str(task.header.entity_id), "task_id": str(task.header.entity_id),
+            "revision": task.header.revision,
             "title": title, "status": task.status, "stage": "provider_receipt" if receipt else "awaiting_provider",
             "summary": checkpoint.get("error_code") or ("Verified bounded response" if task.status == "succeeded" else task.status),
             "task_class": checkpoint["spec"]["rubric_key"], "source_kind": "real_model_response", "synthetic": False,
@@ -722,6 +737,7 @@ class ModelService:
             "contribution_id": str(_id(context, f"contribution:{task.header.entity_id}")) if receipt and evaluation else None,
             "outcome_id": str(evaluation.outcome.entity_id) if evaluation else None,
             "evaluation_id": str(evaluation.header.entity_id) if evaluation else None,
+            "provider_result_received": bool(receipt),
             "cost_usd": receipt.get("cost_usd"), "latency_ms": receipt.get("latency_ms"),
             "created_at": task.header.created_at.isoformat(), "updated_at": task.header.updated_at.isoformat(),
             "evidence_count": 2 if evaluation else int(bool(receipt)), "comparison_id": checkpoint.get("comparison_id"),
@@ -795,6 +811,13 @@ class ModelService:
                                     else "Передача фактов: " + task.status + ". ") + LIMITATION
             if result_text:
                 result_text = LIMITATION + "\n\n" + result_text
+        from . import task_review, task_presentation
+        from . import execution_v2
+        task_dto["execution_v2"] = execution_v2.projection(self, context, task.header.entity_id) if execution_v2.is_managed(self, context, task.header.entity_id) else None
+        review = task_review.projection(self, context, task, checkpoint, task_dto)
+        if review["status"] == "pending":
+            task_dto["actions"].append("review_result")
+        task_dto = task_presentation.project(task_dto, evaluation=evidence, human_review=review)
         return {"task": task_dto, **task_dto, "result_text": result_text,
             "actual_model": receipt.get("actual_model"), "evaluation": evidence,
             "application_evaluation": application_evaluation,

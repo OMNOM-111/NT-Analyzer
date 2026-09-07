@@ -8,7 +8,35 @@ ordinary-user registration/key, multi-user sharing/revocation and permanent Soci
 publication remain unverified owner-dependent scenarios. The full program is not closed.
 No merge, Canary/Production, real orders or budget increase is authorized.
 
-## Source and Local identity
+## Active mechanisms WIP — 2026-09-06
+
+Saved WIP source: `f9b9444524aa497781fe3de7254d1bfb0e3b062c` (37 files;
+clean worktree after commit). Short static/secret/context/diff and 556-file
+bundle gates PASS; exact-checkpoint full pytest NOT RUN. All further backend
+work is a separate commit; frozen UI remains exactly as in this checkpoint.
+
+Canonical status for PostgreSQL/RLS, Router V2, Execution/Deviation, bounded
+delegation and autonomous scheduling: **IN DEVELOPMENT**, with implementation
+and integration gaps. Their additive code is saved on
+`codex/agent-world-mechanisms` from `45ab4361`; it is not active on Local.
+The exact checkpoint, retained mechanisms, test failures/skips, ownership,
+review coordination and next operation are recorded in the
+[WIP change record](../changelog/2026-09-06-agent-world-mechanisms-wip.md).
+This is preservation of unfinished work, not release readiness or owner acceptance.
+
+Protected Local remains clean `2b6d0112` / beta.96 on port 8765, without
+restart, new migrations, flags or data changes. UI/presentation integration is
+frozen pending reconciliation with independent draft PR #283. No automatic
+transfer of that PR, no merge/deploy, no paid external calls or trading.
+Owner registration, separate key and exact permanent Social approval remain
+separate pending actions and do not block non-overlapping backend work.
+
+**Reading the sections below:** they describe the retained, reviewable Local
+`2b6d0112`, including its historical tests and then-missing mechanisms.
+They do not claim that new mechanisms code is absent from the WIP branch or
+that its incomplete integration is already available on Local.
+
+## Protected Local source and historical acceptance identity
 
 | Field | Current fact |
 | --- | --- |

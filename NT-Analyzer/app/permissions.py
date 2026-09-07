@@ -301,6 +301,7 @@ def resolve(user: Optional[Dict[str, Any]],
     user = user or {}
     if user.get("is_owner"):
         caps = {cid: True for cid in CAPABILITY_IDS}
+        caps["ai_automation"] = (user.get("permission_overrides") or {}).get("ai_automation") is True
         admin_caps = resolve_admin_capabilities(user)
         nav = {nid: True for nid in NAV_SECTIONS}
         # The owner is a professional by definition; the student terminal is

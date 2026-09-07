@@ -109,6 +109,8 @@ def _failure(service, authorized, task, checkpoint, code):
 def _publish_final(authorized, service, detail):
     # The monitor only queues the exact persisted terminal result. A separate
     # direct append here would race the claimed delivery worker across processes.
+    from . import execution_v2
+    execution_v2.observe(authorized, service, detail["id"])
     history = domain_gateway.access(authorized["chat_scope"], read_only=True)
     return domain_gateway.enqueue_model_delivery(history, domain_gateway.history_models(history), detail["id"])
 
@@ -209,9 +211,18 @@ def finish_dispatch(authorized, service, result):
         return {"dispatched": False}
     context = authorized["context"]
     authorized["admit"]()
+    from . import execution_v2
+    execution_guard = execution_v2.before_application(authorized, service, task_dto["id"])
     live = live_gateway.access(authorized["chat_scope"])
     if live["context"] != context:
         raise ContractError("application_scope_mismatch")
+    if callable(execution_guard):
+        original_admit = live["admit"]
+        def admit():
+            original_admit()
+            execution_guard()
+        # Existing source adapters call this again immediately before enqueue.
+        live = {**live, "admit": admit}
     failure = None
     with _LOCK:
         task = service._get(context, EntityKind.TASK, task_dto["id"])

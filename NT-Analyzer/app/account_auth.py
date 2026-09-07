@@ -1635,7 +1635,7 @@ def set_user_permission(owner_id: Any, user_id: Any, capability: str, enabled: A
         user = _user(doc, uid)
         if user is None:
             raise AccountAuthError("Пользователь не найден.", 404)
-        if user.get("is_owner"):
+        if user.get("is_owner") and cap != "ai_automation":
             raise AccountAuthError("У владельца все разрешения включены.", 400)
         overrides = user.get("permission_overrides") if isinstance(user.get("permission_overrides"), dict) else {}
         if enabled is None:
