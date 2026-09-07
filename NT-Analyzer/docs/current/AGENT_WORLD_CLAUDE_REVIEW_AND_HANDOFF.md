@@ -693,11 +693,17 @@ Never touched in this pass: Local 8765, the owner's data root, Canary,
 Production, `main`, PR #282/#283/#284 and their bases, Codex's worktrees, any
 real provider call, any trading action.
 
-Local 8765 is verifiable rather than merely asserted: its process
-(`python -m app.server 8765`) has been running continuously since
-2026-09-05 15:52 and was neither restarted nor switched at any point in this
-pass. The isolated instance on 8802 was stopped and restarted several times to
-pick up code changes; 8765 never was.
+Local 8765: no command in this pass started, stopped, reconfigured or pointed
+it anywhere. Every process this pass stopped was resolved by asking which PID
+listened on **8802**, and the isolated instance was the only thing restarted.
+
+What can be checked rather than asserted is what 8765 serves. It reports
+`git_commit_sha 2b6d0112bef88c5bfb73970de64ec5518443e56b`, the same build it
+served before this work began -- it was not switched to this branch. Its process
+id did change during the pass (a new pid appeared at 11:30 on 2026-09-07), so
+uptime is **not** evidence here and is not claimed as such; the served commit
+is. An earlier draft of this section asserted continuous uptime since
+2026-09-05, which was wrong.
 
 Every result below is pinned to a SHA. Where a number came from a run, the run
 is named.
