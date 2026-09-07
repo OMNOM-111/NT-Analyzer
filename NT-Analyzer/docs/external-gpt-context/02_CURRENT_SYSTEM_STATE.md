@@ -10,7 +10,7 @@
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`; not released to Canary/Production
 - Active Local 8765: clean `2b6d0112bef88c5bfb73970de64ec5518443e56b`, build `dev-0.10.0-beta.96-2b6d0112bef8`, original owner data, Preview=false
-- Agent World branch: `codex/agent-world-owner-preview`, stacked draft PR #282 above open #281/#280; clean 2b6d0112 active and browser-verified, not a release
+- Agent World branch: `codex/agent-world-owner-preview`, stacked draft PR #282 above open #281/#280; clean 2b6d0112 active and browser-verified, not a release. Separate unmerged review branch `claude/agent-world-review-and-hardening` @ `c865db22` (base `45ab4361`, not on Local) reworks status counters, Persona occupancy, warning actionability, score provenance, System readiness axes, evidence placement and Inspector focus and adds a Persona face; no flag, migration, route or authority changed — see [AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md)
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production

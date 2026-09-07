@@ -14,6 +14,7 @@ from uuid import UUID
 from .. import account_auth, ai_budgets, audit_events, permissions, preview_sandbox, runtime_env, workspaces
 from .contracts import ActorKind, ActorRef, Environment, RequestContext, TenantScope
 from .flags import Flag, FlagRule, FlagSnapshot, REGISTRY, resolve
+from . import presentation
 from .states import ContractError
 
 PREFIX = "/api/ai-control-center/"
@@ -158,7 +159,15 @@ def overview(authorized: dict) -> dict:
              "running": sum(task["status"] in {"ready", "queued", "running"} for task in tasks),
              "failed": sum(task["status"] in {"failed", "blocked", "review"} for task in tasks),
              "artifacts": sum(task.get("evidence_count", 0) for task in tasks)}
-    agents.append({**live_charts.PERSONA, "status": "working" if any(task["status"] == "queued" for task in chart_tasks) else "idle",
+    chart_busy = any(task["status"] == "queued" for task in chart_tasks)
+    # This compatibility row is rendered by the same card as a domain agent, so
+    # it has to answer the same two questions: switched on, and busy right now.
+    agents.append({**live_charts.PERSONA, "status": "working" if chart_busy else "idle",
+                   "availability": "active", "occupancy": "working" if chart_busy else "free",
+                   "open_review": sum(presentation.task_phase(task["status"]) == presentation.PHASE_AWAITING_REVIEW
+                                      for task in chart_tasks),
+                   "open_decision": sum(presentation.task_phase(task["status"]) == presentation.PHASE_AWAITING_DECISION
+                                        for task in chart_tasks),
                    "tasks_completed": sum(task["status"] == "succeeded" for task in chart_tasks), "task_ids": [task["id"] for task in chart_tasks],
                    "evaluation": {"sample_size": 0, "score_pct": None, "confidence": "insufficient", "mode": "desktop_canvas_receipt",
                                   "model_quality_assessed": False, "routing_effect": "none"}})
@@ -166,7 +175,8 @@ def overview(authorized: dict) -> dict:
     return {**payload, "enabled": True, "status": "IN DEVELOPMENT", "tasks": tasks, "agents": agents, "outcomes": outcomes,
             "stats": {**stats, "active_tasks": stats["running"], "completed_tasks": stats["completed"], "agents": len(agents), "attention": stats["failed"]},
             "scope": {"environment": "development", "workspace_id": authorized["context"].scope.workspace_id, "synthetic": False},
-            "activity": [{"title": task["title"], "summary": task["title"] + " · " + task["status"],
+            "activity": [{"title": task["title"],
+                          "summary": task["title"] + " · " + presentation.phase_label(presentation.task_phase(task["status"])),
                           "time": task["updated_at"], "task_id": task["id"]} for task in tasks[:8]],
             "attention": [{"task_id": task["id"], "title": task["title"], "status": task["status"], "summary": task.get("summary", "")}
                           for task in tasks if task["status"] in {"failed", "blocked", "review"}],

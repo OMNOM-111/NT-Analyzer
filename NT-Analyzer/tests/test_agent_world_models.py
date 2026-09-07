@@ -890,3 +890,19 @@ def test_private_explicit_responses_endpoint_is_not_rewritten_to_chat():
     config = {"provider": "custom", "model": "configured-model", "base_url": "https://approved.example/v1/responses"}
     with universal_llm.registry_scope(Adapter()):
         assert universal_llm._endpoint(config) == config["base_url"]
+
+
+def test_connection_reports_the_persona_it_points_at_beside_its_own_label(setup):
+    """The owner's label read as a permanent Persona-to-model binding.
+
+    «Толик · DeepSeek Flash» is text the owner typed into one field. The Persona
+    this connection currently points at is a separate record, so the projection
+    states it separately and a rebind or rename cannot be mistaken for identity.
+    """
+    service, ctx = setup[0], setup[1]
+    detail = service.model_detail(context=ctx, model_id=connected(setup)["id"])
+    assert detail["label"] == "Own connection"
+    assert detail["persona_name"] == "Test Persona"
+    assert detail["persona_id"] and detail["provider_account_id"]
+    assert detail["persona_id"] != detail["provider_account_id"] != detail["id"]
+    assert detail["model"] == "deepseek-v4-flash" and detail["provider"] == "deepseek"

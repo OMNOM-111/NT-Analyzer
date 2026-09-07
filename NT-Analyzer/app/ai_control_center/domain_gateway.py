@@ -18,6 +18,7 @@ from .. import account_auth, ai_budgets, permissions, preview_sandbox, runtime_e
 from . import live_gateway
 from .contracts import ActorKind, ActorRef, Environment, RequestContext, TenantScope
 from .flags import Flag, REGISTRY, resolve
+from . import presentation
 from .states import ContractError, EntityKind
 
 DOMAINS = frozenset({"personas", "memory", "projects", "routines", "calendar", "decisions", "court",
@@ -341,15 +342,59 @@ def social_admission(authorized):
     return check
 
 
+def _component(identity, title, summary, *, implemented, enabled, mode, available, note=""):
+    """Four separate facts about one component.
+
+    Whether the code exists, whether it is switched on, which implementation is
+    actually serving requests and whether it currently answers are different
+    questions. One green badge answered all four and hid the ones that were
+    false, so each is reported on its own.
+    """
+    return {"id": identity, "title": title, "summary": summary,
+            "implemented": implemented, "enabled": enabled, "mode": mode, "available": available,
+            "status": "active" if implemented and enabled and available else
+                      "planned" if not implemented else
+                      "disabled" if not enabled else "external_blocked",
+            "note": note}
+
+
 def system(authorized):
     authorized["admit"]()
     flags = {flag.value: resolve(flag, scope=authorized["context"].scope, snapshot=authorized["snapshot"]).enabled for flag in REGISTRY}
     return {"enabled": True, "items": [
-        {"id": "scope", "title": "Рабочая область", "status": "active", "summary": authorized["context"].scope.workspace_id},
-        {"id": "storage", "title": "Хранилище", "status": "active", "summary": "Development SQLite WAL · изоляция владельца и workspace · неизменяемые revisions/evidence"},
-        {"id": "worker", "title": "Исполнение", "status": "active", "summary": "Существующий Local worker и очередь NinjaTrader; повторный dispatch модели после неопределённого ответа запрещён"},
-        {"id": "budgets", "title": "Бюджет", "status": "guarded", "summary": "Owner connections: существующие лимиты. Новые private paid connections: требуется ранее согласованный бюджет; free endpoints без расходов."},
-        {"id": "external", "title": "Внешние действия", "status": "disabled", "summary": "Торговые ордера, Telegram mirror, автоматическое исполнение Court/routines выключены"}],
+        _component("scope", "Рабочая область", authorized["context"].scope.workspace_id,
+                   implemented=True, enabled=True, mode="development", available=True),
+        _component("storage", "Хранилище",
+                   "Изоляция владельца и workspace · неизменяемые revisions/evidence",
+                   implemented=True, enabled=True, mode="Development SQLite WAL", available=True,
+                   note="PostgreSQL/RLS адаптер Agent World не реализован; этот путь не обслуживает Canary/Production."),
+        _component("worker", "Исполнение",
+                   "Повторный dispatch модели после неопределённого ответа запрещён",
+                   implemented=True, enabled=True,
+                   mode="существующий Local worker и очередь NinjaTrader", available=True,
+                   note="Работает исходный исполнитель. Это не готовность Execution V2."),
+        _component("execution_v2", "Execution Engine V2 · Deviation Control",
+                   "Новый движок исполнения с контролем отклонений",
+                   implemented=False, enabled=False,
+                   mode="не обслуживает запросы", available=False,
+                   note="Не реализован. Зелёный статус соседнего исполнителя его не заменяет."),
+        _component("router", "Маршрутизация ваших подключений (Router)",
+                   "Выбор вашей модели по классу задачи и наблюдаемой точности",
+                   implemented=False, enabled=False,
+                   mode="модель для каждого задания выбираете явно", available=False,
+                   note="Наблюдаемые оценки AI Центра не влияют ни на один выбор. Отдельная маршрутизация штатных ролей AI Lab — другой механизм и другие данные."),
+        _component("schedule", "Автономное расписание",
+                   "Запуск принятых рутин по наступлении срока",
+                   implemented=False, enabled=False,
+                   mode="только ручной разбор", available=False,
+                   note="Принятая рутина не включает фоновое исполнение."),
+        _component("budgets", "Бюджет",
+                   "Owner connections: существующие лимиты. Новые private paid connections: требуется ранее согласованный бюджет; free endpoints без расходов.",
+                   implemented=True, enabled=True,
+                   mode="существующие лимиты владельца", available=True),
+        _component("external", "Внешние действия",
+                   "Торговые ордера, Telegram mirror, автоматическое исполнение Court/routines",
+                   implemented=True, enabled=False, mode="выключены", available=False)],
         "flags": flags, "capabilities": authorized["chat_scope"]["capabilities"], "actions": [], "limitations": []}
 
 
@@ -541,7 +586,14 @@ def enrich_overview(authorized, base=None):
         legacy = legacy_agents.get(role_spec.get("legacy_id")) if aliases.get(role_spec.get("legacy_id")) == person["id"] else None
         agents.append({"id": person["id"], "display_name": person.get("title") or person.get("name"),
             "application_role": person.get("application_role", ""),
-            "role": role_spec.get("label", "Персона · роль не назначена"), "status": "working" if any(row["status"] in {"ready", "running", "waiting"} for row in mine) else person["status"],
+            "avatar_key": presentation.avatar_key(person.get("avatar_key", "")),
+            "role": role_spec.get("label", "Персона · роль не назначена"),
+            "status": "working" if any(row["status"] in {"ready", "running", "waiting"} for row in mine) else person["status"],
+            "availability": person["status"], "occupancy": "working" if any(
+                row["status"] in {"ready", "running", "waiting"} for row in mine) else "free",
+            "open_review": sum(presentation.task_phase(row["status"]) == presentation.PHASE_AWAITING_REVIEW for row in mine),
+            "open_decision": sum(presentation.task_phase(row["status"]) == presentation.PHASE_AWAITING_DECISION for row in mine),
+            "open_items": sum(presentation.task_phase(row["status"]) in presentation.OPEN_PHASES for row in mine),
             "synthetic": False, "models": bound, "model_observations": observations,
             "application_observations": application_observations,
             "tasks_completed": sum(row["status"] == "succeeded" for row in mine),
@@ -556,15 +608,33 @@ def enrich_overview(authorized, base=None):
     costs = [row["cost_usd"] for row in model_rows if isinstance(row.get("cost_usd"), (int, float))]
     completed = sum(row["status"] == "succeeded" for row in tasks)
     active = sum(row["status"] in {"queued", "ready", "running", "waiting"} for row in tasks)
-    attention = [row for row in tasks if row["status"] in {"review", "blocked", "failed"}]
+    # Execution, waiting for a review, waiting for an owner decision and being
+    # finished are counted separately. Adding them back together would rebuild
+    # the ambiguous single number this replaces.
+    phases = presentation.counters(row["status"] for row in tasks)
+    attention = []
+    for row in tasks:
+        phase = presentation.task_phase(row["status"])
+        if phase not in presentation.ATTENTION_PHASES:
+            continue
+        reason, action = presentation.attention_reason(phase)
+        attention.append({**row, "phase": phase, "phase_label": presentation.phase_label(phase),
+                          "reason": reason,
+                          "action_hint": action, "since": row.get("updated_at") or row.get("created_at"),
+                          "task_class_label": row.get("task_class_label") or presentation.rubric_label(row.get("task_class"))})
     return {**base, "enabled": True, "status": "IN DEVELOPMENT", "tasks": tasks, "agents": agents,
         "outcomes": model_outcomes + [row for row in base.get("outcomes") or [] if row.get("task_id") not in folded],
-        "stats": {**base.get("stats", {}), "tasks_total": len(tasks), "active_tasks": active, "running": active,
+        "stats": {**base.get("stats", {}), **phases, "tasks_total": len(tasks), "active_tasks": active, "running": active,
                   "completed": completed, "completed_tasks": completed, "agents": len(agents), "attention": len(attention),
-                  "failed": len(attention), "evaluations": sum(len(row.get("evaluations") or []) for row in model_rows),
+                  "failed": len(attention), "failed_tasks": phases["failed"],
+                  "results_total": sum(len(row.get("outcomes") or []) for row in model_rows),
+                  "evaluations": sum(len(row.get("evaluations") or []) for row in model_rows),
                   "artifacts": sum(row.get("evidence_count", 0) for row in tasks),
                   "paid_calls": sum(cost > 0 for cost in costs), "cost_usd": round(sum(costs), 8) if costs else None},
-        "activity": [{"title": row["title"], "summary": row["title"] + " · " + row["status"], "task_id": row["id"], "time": row["updated_at"]} for row in tasks[:8]],
+        "activity": [{"title": row["title"],
+                      "summary": row["title"] + " · " + presentation.phase_label(presentation.task_phase(row["status"])),
+                      "status": row["status"], "phase": presentation.task_phase(row["status"]),
+                      "task_id": row["id"], "time": row["updated_at"]} for row in tasks[:8]],
         "attention": attention, "scope": {"environment": "development", "workspace_id": context.scope.workspace_id, "synthetic": False},
         "capabilities": {"can_run_demo": False, "can_view_models": True, "can_call_models": can_models, "can_view_system": True},
         "flags": system(authorized)["flags"],

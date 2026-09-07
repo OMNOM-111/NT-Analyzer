@@ -201,10 +201,12 @@ class DomainService:
     def _create_input(self, domain, payload):
         if domain == "personas":
             from .application_roles import role_key
-            data = _fields(payload, ("name",), ("description", "style", "application_role"))
+            from .presentation import avatar_key
+            data = _fields(payload, ("name",), ("description", "style", "application_role", "avatar_key"))
             return {"name": _text(data["name"], limit=160), "description": _text(data.get("description", ""), empty=True),
                     "style": _text(data.get("style", ""), limit=1000, empty=True),
-                    "application_role": role_key(data.get("application_role", ""))}
+                    "application_role": role_key(data.get("application_role", "")),
+                    "avatar_key": avatar_key(data.get("avatar_key", ""))}
         if domain == "memory":
             data = _fields(payload, ("title", "content", "purpose", "retention_days"),
                            ("source_ids", "memory_class", "task_id", "verified_outcome_id"))
