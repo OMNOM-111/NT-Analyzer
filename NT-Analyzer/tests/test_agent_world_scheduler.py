@@ -11,6 +11,7 @@ from app.ai_control_center.states import ContractError, EntityKind
 from app.ai_control_center.flags import FlagSnapshot
 from tests.test_agent_world_delegation import (mechanism, env, target, model_setup, chat_authorized,
     queue_service, canonical_queue, run_claimed)
+from tests.test_agent_world_result_handoff import messages
 
 
 def spec(start=None, **changes):
@@ -200,3 +201,68 @@ def test_queued_occurrence_rechecks_source_and_due_before_provider_call(mechanis
         if run_claimed(env) is None: break
     child = env.service._get(env.ctx, EntityKind.TASK, scheduler._child_id(env.ctx, opened["id"], 0))
     assert child.status == "blocked" and not env.calls
+
+def test_due_run_is_carried_from_scan_to_result_without_a_tick_or_a_chat_request(mechanism):
+    """The whole occurrence, started by the ordinary scanner and nothing else.
+
+    Every other case here drives `tick` directly, which is how a person looking
+    at the panel would advance it. This one never calls `tick` and never sends a
+    chat request: the recovery scan finds the due controller, the existing
+    worker claims and executes it, and the collected result is what the next
+    scan reports. That is the path a scheduled run takes while nobody is
+    watching, so it is the one that has to be shown working end to end.
+    """
+    env = mechanism
+    domain_service, item, opened = create(env)
+    original = messages(env)
+
+    found = scheduler.scan_due(env.authorized, env.service)
+    assert [row["id"] for row in found] == [opened["id"]]
+    # Queued by the scan; the provider task itself is created by the claimed
+    # coordination job, not by the scan that noticed the due time.
+    assert found[0]["occurrences"][0]["status"] == "queued"
+    assert found[0]["occurrences"][0]["task_id"] is None
+
+    for _ in range(15):
+        run_claimed(env)
+        view = scheduler.scan_due(env.authorized, env.service)
+        view = view[0] if view else scheduler.projection(env.authorized, env.service, opened["id"])
+        if view["status"] == "review":
+            break
+    assert view["status"] == "review" and view["occurrences"][0]["status"] == "succeeded"
+    assert view["occurrences"][0]["task_id"]
+
+    # One provider call, the result collected, and no quality or acceptance
+    # claimed on the strength of the schedule having run.
+    assert len(env.calls) == 1 and view["human_accepted"] is False
+    child = env.service._get(env.ctx, EntityKind.TASK, scheduler._child_id(env.ctx, opened["id"], 0))
+    assert child.status == "succeeded"
+    outcome = env.service.task_detail(context=env.ctx, task_id=str(child.header.entity_id))
+    assert outcome["status"] == "succeeded" and outcome["result_text"]
+
+    # The accepted manual source is untouched and still not automated.
+    current = domain_service.get(context=env.ctx, admit=env.authorized["admit"], domain="routines", entity_id=item["id"])
+    assert current["revision"] == item["revision"] and current["automation_enabled"] is False
+
+    # Nothing sent a chat request and no conversation was opened. The one line
+    # the transcript gained is the original manual task's own delivery, which
+    # the existing worker had queued before this schedule existed; the scanner
+    # neither rewrites earlier messages nor injects the scheduled result into
+    # the conversation.
+    delivered = messages(env)
+    assert delivered[:len(original)] == original and len(delivered) == len(original) + 1
+    child_id = view["occurrences"][0]["task_id"]
+    assert all(child_id not in str(row.get("content") or "") for row in delivered)
+
+    # Settled: repeating the ordinary scan neither redispatches nor recharges.
+    assert scheduler.scan_due(env.authorized, env.service) == []
+    for _ in range(5):
+        drained = run_claimed(env)
+        if drained is None:
+            break
+        # What is left in the queue is the accepted source's own manual
+        # reminder receipt. It is not an executable command and never reaches a
+        # provider, so draining it cannot turn the schedule into a second run.
+        assert drained[0]["kind"] == "agent_world_followup"
+        assert drained[1]["execution_performed"] is False
+    assert len(env.calls) == 1

@@ -149,3 +149,90 @@ def test_foreign_model_discloses_no_related_identifiers(setup):
     result = router.select(authorization(ctx), service, request(model, candidate_model_ids=[model["id"], fake]), quote=quote)
     row = next(row for row in result["candidates"] if row["model_id"] == fake)
     assert row["eligible"] is False and "persona_id" not in row and "provider_account_id" not in row
+
+def priced(cheap, expensive):
+    """A trusted server quote: the cheaper candidate is not the current one."""
+    def quote(*, context, model, account, profile):
+        identity = str(model.header.entity_id)
+        return {"allowed": True, "cost_usd": .0005 if identity == cheap["id"] else .004}
+    return quote
+
+
+def test_active_decision_is_actually_used_and_grants_nothing_by_itself(setup):
+    """An advisory decision is only real once the work runs where it points.
+
+    Shadow mode reports the same ranking but keeps the caller's model, so
+    running both modes over identical evidence separates "the router had an
+    opinion" from "the opinion changed which model answered".
+    """
+    service, ctx, *_ = setup
+    # `observed` installs its own arithmetic executor and leaves it there, so a
+    # second model's connection test would not return CONNECTION_OK and that
+    # candidate would stay unverified. Restore the fixture's executor between
+    # the two so both models are genuinely connected.
+    connection_executor = service.executor
+    current = observed(setup, "router-usage-current")
+    service.executor = connection_executor
+    cheaper = observed(setup, "router-usage-cheaper")
+    quote = priced(cheaper, current)
+    body = request(current, candidate_model_ids=[current["id"], cheaper["id"]], current_model_id=current["id"])
+    auth = authorization(ctx)
+
+    advice = router.select(auth, service, {**body, "mode": "shadow"}, quote=quote)
+    assert advice["selected_model_id"] == cheaper["id"]
+    # Shadow ranked the same way and still leaves the caller where it was.
+    assert advice["effective_model_id"] == current["id"] and advice["matches_legacy"] is False
+
+    decision = router.select(auth, service, {**body, "mode": "active"}, quote=quote)
+    assert decision["status"] == "selected" and decision["effective_model_id"] == cheaper["id"]
+    assert decision["legacy_model_id"] == current["id"]
+    assert decision["dispatch_performed"] is decision["permission_granted"] is False
+    assert decision["quality_ranking"] is False and decision["decision_sha256"]
+
+    # The ranking rests on this workspace's own verified observations of that
+    # exact class, not on a self-reported score or a global registry.
+    chosen = next(row for row in decision["candidates"] if row["model_id"] == cheaper["id"])
+    assert chosen["sample_size"] == 3 and len(chosen["evidence"]) == 3
+    assert chosen["quality_score"] is None and chosen["quality_effect"] == "none"
+    for reference in chosen["evidence"]:
+        record = service._get(ctx, EntityKind.EVALUATION, reference["entity_id"])
+        assert str(record.model.entity_id) == cheaper["id"] and record.rubric_key == "json_arithmetic"
+
+    # Use it: normal task ingress with the model the decision points at.
+    served = []
+    def execute(**kwargs):
+        served.append(str(kwargs["model"].header.entity_id))
+        values = json.loads(kwargs["prompt"].split("Array: ")[1])
+        return response(json.dumps({"count": len(values), "sum": sum(values),
+                                    "min": min(values), "max": max(values), "mean": sum(values) / len(values)}))
+    service.executor = execute
+    task = service.start_task(context=ctx, model_id=decision["effective_model_id"],
+        payload={"rubric_key": "json_arithmetic", "input_text": json.dumps([7, 2, 3])},
+        idempotency_key="router-decision-actually-used", conversation_id=uuid4(), message_id=uuid4())
+    result = service.execute(context=ctx, task_id=task["id"])
+
+    assert result["status"] == "succeeded" and result["evaluation"]["passed"]
+    # The provider call went to the routed model, not to the one the caller
+    # arrived with: the decision changed the outcome rather than describing it.
+    assert served == [cheaper["id"]] and cheaper["id"] != current["id"]
+    # Routing produced no new authority: the run still went through the normal
+    # admission, and the decision itself remains advisory.
+    assert router.select(auth, service, {**body, "mode": "active"}, quote=quote)["decision_sha256"]
+    assert decision["permission_granted"] is False
+
+
+def test_active_decision_is_not_used_when_its_own_flag_is_absent(setup):
+    """Without AI_ROUTER_V2 there is no decision to follow, only shadow advice."""
+    service, ctx, *_ = setup
+    connection_executor = service.executor
+    current = observed(setup, "router-unrouted-current")
+    service.executor = connection_executor
+    cheaper = observed(setup, "router-unrouted-cheaper")
+    quote = priced(cheaper, current)
+    body = request(current, mode="active", candidate_model_ids=[current["id"], cheaper["id"]],
+                   current_model_id=current["id"])
+    with pytest.raises(ContractError) as denied:
+        router.select(authorization(ctx, active=False), service, body, quote=quote)
+    assert denied.value.code == "routing_disabled"
+    shadow = router.select(authorization(ctx, active=False), service, {**body, "mode": "shadow"}, quote=quote)
+    assert shadow["selected_model_id"] == cheaper["id"] and shadow["effective_model_id"] == current["id"]
