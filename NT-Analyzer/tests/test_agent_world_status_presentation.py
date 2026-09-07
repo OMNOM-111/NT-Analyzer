@@ -11,6 +11,7 @@ No running application, provider or browser profile is used here.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -380,12 +381,50 @@ def test_legacy_adapter_task_classes_have_labels_too():
     assert evaluate("ui.rubricLabel('Проверка соединения')") == "Проверка соединения"
 
 
-def test_a_free_agent_still_shows_how_many_items_wait_on_the_owner():
-    """Being free is not the same as having nothing outstanding."""
+def test_a_free_agent_shows_what_waits_on_the_owner_without_conflating_it():
+    """Being free is not the same as having nothing outstanding.
+
+    Found in the isolated Aurora run: a single chip covering both waiting
+    phases announced a review task as «ждут решения», putting the owner on the
+    hook for work that only needed looking at.
+    """
     agent = {"id": "aaaaaaaa-5555-1111-1111-111111111111", "display_name": "Иван",
-             "availability": "active", "occupancy": "free", "open_items": 2,
+             "availability": "active", "occupancy": "free",
+             "open_review": 1, "open_decision": 0,
              "synthetic": False, "evaluation": {"sample_size": 0}}
-    html = render(workspace([], agents=[agent]))["html"]
-    assert "Свободен" in html and "2 ждут решения" in html
-    none_open = render(workspace([], agents=[{**agent, "open_items": 0}]))["html"]
-    assert "ждут решения" not in none_open
+    def chips(state):
+        """Only the agent-state chips; page copy elsewhere mentions both words."""
+        html = render(workspace([], agents=[state]))["html"]
+        found = re.findall(r'<span class="aw-agent-state">(.*?)</span></span>', html, re.S)
+        return " ".join(found)
+
+    review_only = chips(agent)
+    assert "Свободен" in review_only and "1 на проверке" in review_only
+    assert "решения" not in review_only
+
+    deciding = chips({**agent, "open_review": 0, "open_decision": 2})
+    assert "2 ждёт вашего решения" in deciding and "на проверке" not in deciding
+
+    both = chips({**agent, "open_review": 1, "open_decision": 1})
+    assert "1 ждёт вашего решения" in both and "1 на проверке" in both
+
+    quiet = chips({**agent, "open_review": 0, "open_decision": 0})
+    assert "на проверке" not in quiet and "решения" not in quiet
+
+
+def test_every_agent_row_answers_both_questions_not_just_domain_ones():
+    """The compatibility row is drawn by the same card as a domain agent.
+
+    Found in the isolated Aurora run: legacy rows arrived without the new
+    fields and rendered «Доступность не указана», because only the domain
+    projection had been given them.
+    """
+    from app.ai_control_center import live_gateway
+    source = Path(live_gateway.__file__).read_text(encoding="utf-8", errors="ignore")
+    assert '"availability": "active"' in source and '"occupancy":' in source
+
+    # And the page must still degrade honestly if a row somehow lacks them.
+    bare = {"id": "aaaaaaaa-6666-1111-1111-111111111111", "display_name": "Legacy",
+            "synthetic": False, "evaluation": {"sample_size": 0}}
+    html = render(workspace([], agents=[bare]))["html"]
+    assert "Доступность не указана" in html and "Свободен" in html

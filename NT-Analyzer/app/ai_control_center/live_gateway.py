@@ -159,7 +159,15 @@ def overview(authorized: dict) -> dict:
              "running": sum(task["status"] in {"ready", "queued", "running"} for task in tasks),
              "failed": sum(task["status"] in {"failed", "blocked", "review"} for task in tasks),
              "artifacts": sum(task.get("evidence_count", 0) for task in tasks)}
-    agents.append({**live_charts.PERSONA, "status": "working" if any(task["status"] == "queued" for task in chart_tasks) else "idle",
+    chart_busy = any(task["status"] == "queued" for task in chart_tasks)
+    # This compatibility row is rendered by the same card as a domain agent, so
+    # it has to answer the same two questions: switched on, and busy right now.
+    agents.append({**live_charts.PERSONA, "status": "working" if chart_busy else "idle",
+                   "availability": "active", "occupancy": "working" if chart_busy else "free",
+                   "open_review": sum(presentation.task_phase(task["status"]) == presentation.PHASE_AWAITING_REVIEW
+                                      for task in chart_tasks),
+                   "open_decision": sum(presentation.task_phase(task["status"]) == presentation.PHASE_AWAITING_DECISION
+                                        for task in chart_tasks),
                    "tasks_completed": sum(task["status"] == "succeeded" for task in chart_tasks), "task_ids": [task["id"] for task in chart_tasks],
                    "evaluation": {"sample_size": 0, "score_pct": None, "confidence": "insufficient", "mode": "desktop_canvas_receipt",
                                   "model_quality_assessed": False, "routing_effect": "none"}})

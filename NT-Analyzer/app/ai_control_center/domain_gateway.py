@@ -591,6 +591,8 @@ def enrich_overview(authorized, base=None):
             "status": "working" if any(row["status"] in {"ready", "running", "waiting"} for row in mine) else person["status"],
             "availability": person["status"], "occupancy": "working" if any(
                 row["status"] in {"ready", "running", "waiting"} for row in mine) else "free",
+            "open_review": sum(presentation.task_phase(row["status"]) == presentation.PHASE_AWAITING_REVIEW for row in mine),
+            "open_decision": sum(presentation.task_phase(row["status"]) == presentation.PHASE_AWAITING_DECISION for row in mine),
             "open_items": sum(presentation.task_phase(row["status"]) in presentation.OPEN_PHASES for row in mine),
             "synthetic": False, "models": bound, "model_observations": observations,
             "application_observations": application_observations,

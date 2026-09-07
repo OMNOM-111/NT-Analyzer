@@ -91,9 +91,18 @@
   }
   const chip = meta => `<span class="aw-status aw-${meta[1]}">${esc(meta[0])}</span>`;
   const agentState = agent => {
-    const open = Math.max(0, Math.floor(number(agent?.open_items) || 0));
+    // Waiting for a check and waiting for a decision are named separately here
+    // too: one chip covering both would put the owner back on the hook for work
+    // that only needs looking at.
+    const count = key => Math.max(0, Math.floor(number(agent?.[key]) || 0));
+    const review = count('open_review'), decision = count('open_decision');
+    const pending = review || decision ? '' : count('open_items');
+    const parts = [];
+    if (decision) parts.push(`${esc(decision)} ждёт вашего решения`);
+    if (review) parts.push(`${esc(review)} на проверке`);
+    if (pending) parts.push(`${esc(pending)} в ожидании`);
     return `<span class="aw-agent-state">${chip(availabilityMeta(agent))}${chip(occupancyMeta(agent))}`
-      + (open ? `<span class="aw-status aw-review">${esc(open)} ждут решения</span>` : '') + '</span>';
+      + parts.map(text => `<span class="aw-status aw-review">${text}</span>`).join('') + '</span>';
   };
   const canRunDemo = data => data?.enabled === true && data?.capabilities?.can_run_demo === true;
   const knownDomain = value => Object.prototype.hasOwnProperty.call(DOMAINS, String(value || ''));
