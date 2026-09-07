@@ -7,6 +7,7 @@ The existing Handler's JSON/origin/CSRF checks execute without a browser.
 from __future__ import annotations
 
 import copy
+import sys
 import hashlib
 import json
 import sqlite3
@@ -697,3 +698,26 @@ def test_publication_feature_flag_off_denies_get_prepare_and_publish_before_serv
             "payload": payload, "expected_revision": prepared["source_revision"], "idempotency_key": "social-flag-off-request"})
         assert result.status == 403 and result.result["code"] == "agent_world_domain_disabled"
     assert publication.posts == []
+
+@pytest.mark.parametrize("domain", ["automation", "router"])
+def test_mechanism_domain_without_its_module_answers_a_code_not_a_crash(models, monkeypatch, domain):
+    """A domain whose handler module is absent must not surface as a 500.
+
+    Both routes are registered and dispatch to `mechanism_gateway`. While that
+    module is missing the import failure used to escape as an unhandled error,
+    so the live route answered "internal server error" with no code at all.
+    Blocking the import here keeps the case reproducible after the module
+    lands.
+    """
+    monkeypatch.setitem(sys.modules, "app.ai_control_center.mechanism_gateway", None)
+    with pytest.raises(ContractError) as read:
+        gateway.list_domain(models.authorized, domain)
+    assert read.value.code == "mechanism_domain_unavailable"
+    with pytest.raises(ContractError) as write:
+        gateway.mutate(models.authorized, domain, "new", "create",
+                       {"payload": {}, "idempotency_key": "mechanism-domain-probe"})
+    assert write.value.code == "mechanism_domain_unavailable"
+
+    handler = http_get(models.account, "domains/" + domain)
+    assert handler.status == 409 and handler.result["code"] == "mechanism_domain_unavailable"
+    assert models.executions == [] and models.queue == {}

@@ -488,6 +488,20 @@ def _followup_projection(authorized, service, domain, row):
     return row
 
 
+def _mechanism_gateway():
+    """Mechanism domains ship with their own module; fail closed without it.
+
+    Absence is a deployment fact, not a caller error: answer with a stable
+    contract code rather than an unhandled import failure, and never fall back
+    to another domain's handler.
+    """
+    try:
+        from . import mechanism_gateway
+    except ImportError:
+        raise ContractError("mechanism_domain_unavailable") from None
+    return mechanism_gateway
+
+
 def list_domain(authorized, domain, *, identity=None, limit=50, cursor=None):
     if domain not in DOMAINS:
         raise ContractError("unknown_domain")
@@ -497,8 +511,7 @@ def list_domain(authorized, domain, *, identity=None, limit=50, cursor=None):
         return system(authorized)
     model_service = models(authorized)
     if domain in {"automation", "router"}:
-        from . import mechanism_gateway
-        return mechanism_gateway.read(authorized, model_service, domain, identity=identity, limit=limit, cursor=cursor)
+        return _mechanism_gateway().read(authorized, model_service, domain, identity=identity, limit=limit, cursor=cursor)
     if domain == "publications":
         from .repositories import PageRequest
         service, allowed = social(authorized, model_service.repository), social_admission(authorized)
@@ -740,8 +753,7 @@ def mutate(authorized, domain, identity, action, body):
     context, service = authorized["context"], models(authorized)
     admit = domain_admission(authorized, domain, action)
     if domain in {"automation", "router"}:
-        from . import mechanism_gateway
-        return mechanism_gateway.mutate(authorized, service, domain, identity, action, payload,
+        return _mechanism_gateway().mutate(authorized, service, domain, identity, action, payload,
             expected_revision=body.get("expected_revision"), idempotency_key=key)
     if domain == "models":
         if identity == "new" and action == "connect":
@@ -856,8 +868,7 @@ def execute_worker(job, cancelled, heartbeat):
         from . import delegation, scheduler
         service = models(authorized)
         if payload["phase"] == "automation_watch":
-            from . import mechanism_gateway
-            return mechanism_gateway.execute_watch(authorized, service, job, cancelled, heartbeat)
+            return _mechanism_gateway().execute_watch(authorized, service, job, cancelled, heartbeat)
         return (delegation if payload["phase"] == "delegation_step" else scheduler).execute(authorized, service, job, cancelled, heartbeat)
     if job["kind"] == "agent_world_followup":
         request = payload.get("request") or {}
