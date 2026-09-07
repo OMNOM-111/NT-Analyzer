@@ -513,8 +513,8 @@ def projected_task(row):
     """
     from . import presentation, task_presentation
     projected = row if row.get("display_status") else task_presentation.project(row)
-    projected["progress_pct"] = presentation.progress_pct(projected.get("display_status"))
-    return projected
+    return {**projected,
+            "progress_pct": presentation.progress_pct(projected.get("display_status"))}
 
 
 def list_domain(authorized, domain, *, identity=None, limit=50, cursor=None):
