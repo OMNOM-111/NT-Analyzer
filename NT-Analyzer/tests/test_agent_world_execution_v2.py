@@ -552,3 +552,50 @@ def test_existing_backtest_queue_report_verifier_controls_v2_result(execution, c
     assert after["human_accepted"] is False
     assert (folder / "result.json").read_bytes() == original_bytes
     assert len(execution.calls) == 2
+
+@pytest.mark.parametrize("execution", ["owner"], indirect=True)
+@pytest.mark.parametrize("damage", ["fingerprint", "missing_trades", "foreign_job_id"])
+def test_finished_source_with_broken_evidence_deviates_instead_of_completing(
+        execution, canonical_queue, monkeypatch, damage):
+    """A report that says "done" is not a result until its evidence holds up.
+
+    The source here reaches its terminal `done` folder exactly as a real run
+    would, and only the recorded evidence is damaged afterwards. Being a
+    backtest is not itself an outcome: with the fingerprint no longer matching
+    the bars it was computed from, with the referenced trades file gone, or
+    with the report naming a different job, the controller has to record a
+    deviation and stay unaccepted rather than completing on the strength of the
+    request having been of that type.
+    """
+    from app.ai_control_center import application_chat
+    monkeypatch.setattr(jobqueue, "read_templates_catalog", lambda: {
+        "trading_hours_templates": [{"name": "CME US Index Futures RTH", "supported": True}],
+        "commission_templates": [{"name": "NinjaTrader Brokerage Free", "supported": True}, {"name": "None", "supported": True}],
+    })
+    job = _chart_plan(execution, kind="backtest")
+    run_claim(execution, job)
+    task = execution.service._get(execution.context, EntityKind.TASK, execution.task_id)
+    source_id = execution.service._json(execution.context, task.checkpoint)["application_dispatch"]["source_id"]
+    folder, _ = _terminal({"job_id": source_id}, status="done")
+
+    report = json.loads((folder / "result.json").read_text(encoding="utf-8"))
+    if damage == "fingerprint":
+        # The bars are intact; the digest no longer describes them.
+        report["context"]["historical_data_fingerprint"]["value"] = "sha256:" + "b" * 64
+    elif damage == "missing_trades":
+        (folder / "trades.json").unlink()
+    else:
+        report["job_id"] = str(uuid4())
+    (folder / "result.json").write_text(json.dumps(report), encoding="utf-8")
+    jobqueue.reset_caches()
+
+    application_chat.reconcile(execution.auth, execution.service)
+    after = project(execution)
+    assert after["status"] == "deviated" and after["human_accepted"] is False
+    # The existing source verifier owns truth about the report, so the rejection
+    # is recorded under its code rather than re-derived here.
+    assert after["reason_codes"] == ["application_result_rejected"]
+    assert "succeeded" not in after["status"]
+    # The damaged source folder is read, never repaired or rewritten to make
+    # the controller finish.
+    assert json.loads((folder / "result.json").read_text(encoding="utf-8")) == report
