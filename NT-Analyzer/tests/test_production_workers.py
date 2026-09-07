@@ -114,7 +114,7 @@ def _enqueue(store, index: int, key: str, **kwargs):
 
 def test_worker_migration_and_class_contract(worker_store) -> None:
     plan = MigrationRunner(ADMIN_URL).plan()
-    assert plan["applied_versions"] == list(range(1, 23))
+    assert plan["applied_versions"] == list(range(1, 24))
     assert plan["pending"] == []
     configs = worker_store["queue"].class_configs()
     assert set(configs) == set(production_workers.DEFAULT_WORKER_CLASSES)

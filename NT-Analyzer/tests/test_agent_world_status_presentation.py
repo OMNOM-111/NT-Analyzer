@@ -70,7 +70,10 @@ def render(state: dict) -> dict:
 
 def task(**overrides) -> dict:
     base = {"id": "11111111-1111-1111-1111-111111111111", "title": "Иван · Голос Court",
-            "status": "review", "phase": "awaiting_review", "phase_label": "Ожидает проверки",
+            "display_title": "Иван · Голос Court",
+            "status": "review", "display_status": "awaiting_review",
+            "display_status_label": "Ожидает вашей проверки",
+            "is_active": False, "needs_attention": True,
             "stage": "provider_receipt", "stage_label": "Ответ модели получен",
             "task_class": "court_vote", "task_class_label": "Голос Court",
             "progress_pct": None, "synthetic": False, "updated_at": "2026-09-05T03:37:00Z"}
@@ -79,15 +82,17 @@ def task(**overrides) -> dict:
 
 def workspace(tasks, agents=(), attention=None, stats=None) -> dict:
     rows = list(tasks)
-    computed = presentation.counters(row["status"] for row in rows)
+    computed = presentation.counters(row.get("display_status") for row in rows)
     alerts = [row for row in rows
-              if presentation.task_phase(row["status"]) in presentation.ATTENTION_PHASES]
+              if presentation.task_phase(row.get("display_status")) in presentation.ATTENTION_PHASES]
     return {"enabled": True, "scope": {"synthetic": False, "workspace_id": "ws"},
             "capabilities": {"can_run_demo": False}, "tasks": rows, "agents": list(agents),
             "outcomes": [], "activity": [],
             "attention": list(alerts if attention is None else attention),
             "stats": {**computed, "agents": len(agents), "attention": len(alerts),
                       "active_tasks": computed["executing"], "completed_tasks": computed["done"],
+                      "results_received": computed["done"] + computed["result_unconfirmed"],
+                      "failed": computed["failed"],
                       **(stats or {})}}
 
 
@@ -97,21 +102,35 @@ def workspace(tasks, agents=(), attention=None, stats=None) -> dict:
 def test_phase_split_never_folds_review_or_blocked_into_execution():
     """The live Local reported active_tasks=0 while two review tasks were open."""
     counters = presentation.counters(
-        ["review", "review", "failed", "succeeded", "succeeded", "blocked"])
+        ["awaiting_review", "awaiting_review", "failed", "completed",
+         "verified_automatically", "blocked"])
     assert counters == {"executing": 0, "awaiting_review": 2, "awaiting_decision": 1,
-                        "done": 2, "failed": 1, "cancelled": 0}
+                        "result_unconfirmed": 0, "done": 2, "failed": 1, "cancelled": 0}
+
+
+def test_every_display_state_is_classified_exactly_once():
+    """A new state in the single projection cannot slip through unplaced."""
+    from app.ai_control_center.task_presentation import STATES
+    for state in STATES:
+        assert presentation.task_phase(state) in presentation.PHASE_LABELS, state
+    # A received-but-unaccepted result is its own group: not finished, and not
+    # blocked on anybody either.
+    assert presentation.task_phase("result_received") == presentation.PHASE_RESULT_UNCONFIRMED
+    assert presentation.task_phase("verified_automatically") == presentation.PHASE_DONE
 
 
 def test_only_a_finished_task_reports_a_completion_percentage():
     """A failed/review task used to render a full 100 % bar beside its badge.
 
     Nothing measures partial completion here, so an unfinished task reports no
-    number at all rather than a made-up one; the card shows its phase instead.
+    number at all rather than a made-up one; the card shows its state instead.
+    A result that arrived but was never accepted is explicitly not 100 %.
     """
-    assert presentation.progress_pct("succeeded") == 100
     assert presentation.progress_pct("completed") == 100
-    for status in ["running", "waiting", "queued", "review", "failed", "cancelled", "blocked"]:
-        assert presentation.progress_pct(status) is None, status
+    assert presentation.progress_pct("verified_automatically") == 100
+    for state in ["running", "queued", "waiting_result", "awaiting_review",
+                  "result_received", "failed", "rejected", "cancelled", "blocked", "planned"]:
+        assert presentation.progress_pct(state) is None, state
 
 
 def test_unknown_status_is_never_counted_as_finished_work():
@@ -148,7 +167,7 @@ def test_metric_and_panel_heading_cannot_contradict_each_other():
     result = render(workspace([task(), task(id="22222222-2222-2222-2222-222222222222")]))
     assert "Сейчас в работе" not in result["html"]
     assert "Ожидают проверки" in result["html"]
-    assert "Выполняется" in result["html"]
+    assert "В работе" in result["html"]
 
 
 def test_awaiting_a_check_is_never_announced_as_awaiting_the_owner_decision():
@@ -158,18 +177,19 @@ def test_awaiting_a_check_is_never_announced_as_awaiting_the_owner_decision():
     conflation one level up: a task whose independent verification is simply
     outstanding would be announced as blocked on the owner.
     """
-    review_only = render(workspace([task(status="review")]))
+    review_only = render(workspace([task()]))
     assert "Ожидают проверки" in review_only["html"]
     assert "Ожидают вашего решения" not in review_only["html"]
 
-    decision = render(workspace([task(status="blocked", phase="awaiting_decision",
-                                      phase_label="Ожидает решения")]))
+    decision = render(workspace([task(status="blocked", display_status="blocked",
+                                      display_status_label="Приостановлено: нужно решение")]))
     assert "Ожидают вашего решения" in decision["html"]
 
     # With both present the decision leads, because that one cannot proceed at all.
-    both = render(workspace([task(status="review"),
+    both = render(workspace([task(),
                              task(id="33333333-3333-3333-3333-333333333333", status="blocked",
-                                  phase="awaiting_decision", phase_label="Ожидает решения")]))
+                                  display_status="blocked",
+                                  display_status_label="Приостановлено: нужно решение")]))
     assert "Ожидают вашего решения" in both["html"]
 
 
@@ -181,15 +201,17 @@ def test_the_review_warning_does_not_demand_a_decision():
 
 
 def test_executing_work_still_uses_the_in_progress_heading():
-    result = render(workspace([task(status="running", phase="executing",
-                                    phase_label="Выполняется", progress_pct=None)]))
+    result = render(workspace([task(status="running", display_status="running",
+                                    display_status_label="Выполняется", is_active=True,
+                                    needs_attention=False, progress_pct=None)]))
     assert "Сейчас в работе" in result["html"]
 
 
 def test_truncated_attention_list_offers_a_route_to_the_remaining_items():
     """The counter said 4; only three cards were rendered and nothing linked on."""
     rows = [task(id=f"{n}{n}{n}{n}{n}{n}{n}{n}-1111-1111-1111-111111111111",
-                 status="failed" if n % 2 else "review") for n in range(1, 5)]
+                 status="failed" if n % 2 else "review",
+                 display_status="failed" if n % 2 else "awaiting_review") for n in range(1, 5)]
     result = render(workspace(rows))
     assert result["html"].count("aw-alert\"") == 3
     assert "Показать все (4)" in result["html"]
@@ -203,15 +225,17 @@ def test_attention_card_shows_why_and_what_to_do():
     assert reason in result["html"] and action in result["html"]
 
 
-def test_unfinished_task_card_shows_its_phase_instead_of_a_full_bar():
+def test_unfinished_task_card_shows_its_state_instead_of_a_full_bar():
     result = render(workspace([task()]))
     assert "<progress" not in result["html"]
-    assert "Ожидает проверки" in result["html"]
+    # The card prints the projection's own label for the state it is in.
+    assert "Ожидает вашей проверки" in result["html"]
 
 
 def test_finished_task_card_still_shows_measured_progress():
-    result = render(workspace([task(status="succeeded", phase="done",
-                                    phase_label="Завершено", progress_pct=100)]))
+    result = render(workspace([task(status="succeeded", display_status="completed",
+                                    display_status_label="Проверка завершена",
+                                    needs_attention=False, progress_pct=100)]))
     assert "<progress" in result["html"]
 
 
@@ -266,7 +290,7 @@ def test_raw_enum_keys_do_not_reach_the_owner_facing_card():
 
 
 def test_unknown_stage_key_is_not_printed_verbatim():
-    assert evaluate("ui.stageName('some_internal_stage')") == "Этап: технические детали"
+    assert evaluate("ui.stageName('some_internal_stage')") == "См. состояние задачи"
     assert evaluate("ui.stageName('provider_receipt')") == "Ответ модели получен"
 
 

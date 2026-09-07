@@ -15,16 +15,13 @@ instance (8799): with the pane hidden, `document.hidden` was true,
 and the rail label still the static "AI Lab"; fronting the pane completed the
 boot within one frame.
 
-**Deliberately not fixed in this branch.** `ui.js` is a shared file that
-currently has uncommitted changes in the `codex/agent-world-mechanisms`
-worktree, so it has an active editor who is not this reviewer. Editing it here
-would create a second editor on one file and a conflict at integration, which
-is exactly what the working agreement forbids. The fix belongs to whoever owns
-`ui.js` during integration.
+**Fixed in the integration branch**, where this reviewer is the single owner of
+the `ui.js` edit. It was deliberately left alone earlier, while the file still
+had uncommitted changes in the `codex/agent-world-mechanisms` worktree; that
+worktree was never modified.
 
-The expected fix is one line beside the existing call, not a rewrite: schedule
-the same start through a timeout as well as a frame, and let whichever fires
-first win, so a hidden document still boots.
+The fix schedules the same start through a timeout as well as a frame and lets
+whichever fires first win, so a hidden document still boots.
 
     let started = false;
     const start = () => { if (!started) { started = true; authenticateAndStart(newsStrip); } };
@@ -49,25 +46,20 @@ ROOT = Path(__file__).resolve().parents[1]
 UI = ROOT / "app" / "static" / "aurora" / "assets" / "ui.js"
 
 
-def test_the_shell_start_is_still_scheduled_only_through_a_frame():
-    """Records the present state. Delete this test when the fix lands."""
+def test_the_shell_start_is_scheduled_through_both_a_frame_and_a_timeout():
+    """A hidden document runs no animation frame, so a timeout must also fire."""
     source = UI.read_text(encoding="utf-8", errors="ignore")
     assert "document.addEventListener('DOMContentLoaded', buildShell)" in source
-    assert re.search(r"requestAnimationFrame\(\s*\(\)\s*=>\s*\{\s*authenticateAndStart", source), (
-        "The rAF-only boot appears to have changed. If the visibility fix has landed, "
-        "replace this module with a check of the new contract: the shell starts exactly "
-        "once whether or not the document was hidden.")
-    # Not a bare "setTimeout(start" sentinel: the speech fallback already uses
-    # that name for an unrelated timer. Look only at the boot region.
-    boot = source[source.index("requestAnimationFrame(() => { authenticateAndStart"):][:400]
-    assert "setTimeout" not in boot, "fix appears present in the boot path; update this module"
+    boot = source[source.index("const startShell ="):][:400]
+    assert "requestAnimationFrame(startShell)" in boot
+    assert "setTimeout(startShell, 0)" in boot
 
 
-@pytest.mark.xfail(reason="ui.js has an active uncommitted editor in "
-                          "codex/agent-world-mechanisms; the fix belongs to the integrator",
-                   strict=False)
-def test_a_hidden_document_still_boots_the_shell():
-    assert "setTimeout(start, 0)" in UI.read_text(encoding="utf-8", errors="ignore")
+def test_the_boot_latch_is_present_so_the_two_schedulers_start_it_once():
+    """Without the latch the fix would run the auth exchange twice."""
+    source = UI.read_text(encoding="utf-8", errors="ignore")
+    boot = source[source.index("let shellStarted = false;"):][:400]
+    assert "if (!shellStarted) { shellStarted = true; authenticateAndStart(newsStrip); }" in boot
 
 
 def test_the_proposed_latch_starts_the_application_exactly_once():

@@ -17,6 +17,30 @@
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
+## New mechanisms WIP checkpoint — 2026-09-06
+
+Saved WIP source: `f9b9444524aa497781fe3de7254d1bfb0e3b062c` (37 files;
+clean worktree after commit). Short static/secret/context/diff and 556-file
+bundle gates PASS; exact-checkpoint full pytest NOT RUN. All further backend
+work is a separate commit; frozen UI remains exactly as in this checkpoint.
+
+Separate branch `codex/agent-world-mechanisms` preserves additive PostgreSQL
+repository/RLS migration 0023, Router V2, Execution/Deviation, finite delegation,
+schedule, automation authority and unfinished status/UI work from `45ab4361`.
+Canonical status: **IN DEVELOPMENT**, with integration gaps; not active on
+protected Local 8765 (`2b6d0112`, beta.96). No new flags or migrations applied.
+New disposable AW PostgreSQL evidence: 69 PASS/0 skipped; existing PG suites:
+41 PASS/0 skipped separately. Without DSNs, the new suite has 68 skips, not PASS.
+Latest UI subset has 3 FAIL/88 PASS; exact-checkpoint full regression not run.
+Do not inherit prior Local/CI PASS. Details, known defects, ownership and resume
+operation: [mechanisms WIP record](../changelog/2026-09-06-agent-world-mechanisms-wip.md).
+
+Independent PR #283 remains separate; no UI/presentation consolidation until
+review reconciliation, and no edits to its branch/tests. Preserve existing
+WIP UI only; continue non-overlapping backend in later commits. No merge/deploy
+or paid external calls. Owner visual acceptance, registration, separate key and
+exact permanent Social publication remain pending.
+
 ## Completed SF Chat dialog correction — historical 95912cbf verification
 
 The task branch replaces native conversation confirmations and rename/folder

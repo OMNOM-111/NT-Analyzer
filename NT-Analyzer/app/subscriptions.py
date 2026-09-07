@@ -77,6 +77,7 @@ PLAN_FEATURES: Tuple[Dict[str, str], ...] = (
     {"id": "charts_realtime", "label": "Онлайн-графики (реалтайм)", "hint": "Дорогой ресурс рыночных данных"},
     {"id": "ai_lab",          "label": "AI Lab (исследования)"},
     {"id": "ai_pro_models",   "label": "Pro-модели ИИ", "hint": "Дорогие облачные модели"},
+    {"id": "ai_automation",   "label": "Ограниченная фоновая работа агентов", "hint": "По отдельному разрешению; план и срок подтверждаются отдельно"},
     {"id": "news",            "label": "Новости и календарь"},
     {"id": "documents",       "label": "Документы"},
     {"id": "personal_nt",     "label": "Свой NinjaTrader"},
@@ -99,7 +100,9 @@ def _feat(*enabled: str) -> Dict[str, bool]:
 
 
 def _feat_all() -> Dict[str, bool]:
-    return {fid: True for fid in _ALL_FEATURE_IDS}
+    # New autonomous work is never silently granted by a legacy all-features
+    # plan, a trial, or owner identity. Existing explicit overrides still apply.
+    return {fid: fid != "ai_automation" for fid in _ALL_FEATURE_IDS}
 
 
 PLANS: Dict[str, Dict[str, Any]] = {
