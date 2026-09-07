@@ -21,7 +21,18 @@
   with its [change record](../changelog/2026-09-06-agent-world-status-presentation-review.md).
   It reworks status counters, Persona occupancy, warning actionability, score
   provenance, System readiness axes, evidence placement and Inspector focus; it
-  runs no CI and changes no flag, migration, route or authority.
+  changes no flag, migration, route or authority. Pushed as draft
+  [PR #283](https://github.com/OMNOM-111/NT-Analyzer/pull/283) (base
+  `codex/agent-world-owner-preview`, review only — #282's base untouched);
+  exact-SHA CI 3/3 PASS on `84115efc`, later commits not yet certified.
+- Separate uncommitted Codex work exists in the `agent-world-mechanisms`
+  worktree (base `45ab4361`): PostgreSQL/RLS repository with migration 0023,
+  Router V2, Execution V2 + Deviation Control, delegation, scheduler and a task
+  lifecycle projection. It was reviewed read-only from a stable hash-verified
+  snapshot and left untouched: 113 passed / 68 skipped in isolation, the 68
+  being the PostgreSQL suite, unrunnable here for want of a server. Its
+  `task_presentation.py` supersedes this branch's phase logic; the merge order
+  and the port list are in the handoff.
 
 ## Completed SF Chat dialog correction — historical 95912cbf verification
 

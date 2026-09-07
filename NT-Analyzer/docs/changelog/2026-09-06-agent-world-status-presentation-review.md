@@ -87,8 +87,10 @@ skipped there and ran and passed here. `python tools/pre_release_check.py`
 PASS with a 544-file bundle, root-level CSP/secrets/Markdown scan OK, and
 `python tools/validate_external_gpt_context.py` OK.
 
-CI was not run: the branch is local and unpushed. Exact-SHA CI must certify
-whichever SHA results from integration.
+Branch pushed; draft PR #283 opened against `codex/agent-world-owner-preview`
+for review only, with #282's base untouched. Exact-SHA CI run 34067167959 is
+3/3 PASS on `84115efc`; commits after it are **not** covered and need a fresh
+run before integration.
 
 ## Release impact
 

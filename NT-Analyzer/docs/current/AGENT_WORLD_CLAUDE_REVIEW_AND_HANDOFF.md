@@ -422,3 +422,226 @@ exists to reproduce. It is the only such link that has ever appeared in
 `python tools/pre_release_check.py` passes with a 544-file bundle. This is why
 that check has to run from `NT-Analyzer/` after the documentation is written,
 not before it.
+
+---
+
+# Part B — second pass: Git/CI closeout, Codex WIP review, isolated Aurora
+
+Everything above describes this branch. This part is kept separate because it
+covers two different things: **B1–B3** are still this branch; **B4** is a
+read-only review of somebody else's uncommitted work and certifies nothing
+about it beyond what is stated there.
+
+## B1. Git and CI
+
+| Item | Value |
+| --- | --- |
+| Branch | `claude/agent-world-review-and-hardening`, pushed to `origin` |
+| Draft PR | [#283](https://github.com/OMNOM-111/NT-Analyzer/pull/283), base `codex/agent-world-owner-preview` **for review only** |
+| CI dispatched | [run 34067167959](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/34067167959) — **3/3 success** (static gates, windows-self-hosted, ubuntu-latest) |
+| SHA that CI certifies | **`84115efc`** |
+| Final SHA of this pass | **`7b7a4a65`** |
+
+**The CI result covers `84115efc` only.** Commits landed after it
+(`c468b14f`, `f589cba2`, `7b7a4a65`, plus this document), so a fresh exact-SHA
+run is required before integration and is not claimed here. The secret scan
+before the push was clean: every hit was the existing redaction helper,
+documentation text, or the fixture that asserts `api_key` is stripped from a
+persona payload. `main`, PR #282's base and the Codex branch were not touched.
+
+## B2. Isolated full-Aurora verification
+
+Run in the real Aurora shell, not a harness.
+
+| Property | Value |
+| --- | --- |
+| Instance | `http://localhost:8801` — `localhost`, so its cookie jar cannot touch the owner's `127.0.0.1:8765` session |
+| Code | this branch |
+| Data root | fresh, created for this run; **the owner's data root was never opened** |
+| Owner identity | synthetic id `990000001`, its own `ws_owner_training_cc4a3af5ad8c`; no owner key or cookie copied, Auth and Device Confirmation not bypassed |
+| Data | synthetic records created through the real API and the real `ModelService` with a stubbed executor; **no provider was called** |
+| Queue | its own; empty at start, so its worker had nothing to execute |
+| Local 8765 | untouched and not restarted |
+
+The seed deliberately produced phases the owner's live workspace does not
+contain, because those are the ones the counters have to tell apart: 4 done,
+1 awaiting-review, 1 cancelled, across 3 personas and 2 connections.
+
+Verified in the shell: Обзор reading Выполняется 0 / Ожидают проверки 1 /
+Завершено 4 / Команда 3 / Требуют внимания 1 above a panel headed **«Ожидают
+проверки»**; Работа showing human stages, the phase in place of a bar for
+unfinished work, 100 % only for completed, and the new «Требуют внимания»
+filter; Агенты showing two chips, the class of check on every score and NEW
+where the sample is short; System showing eight components across four
+readiness axes with Execution V2, Router and scheduling as «Запланировано /
+Реализовано: Нет»; refresh re-reading without losing the view; 0 clipped
+elements at 1490 px; and Escape closing the inspector **after a re-render** and
+returning focus to the card that opened it.
+
+Two defects were found by doing this in the real shell rather than a harness,
+and both are fixed in `7b7a4a65`: the agent chip called a review «ждут
+решения», and the compatibility agent row carried neither availability nor
+occupancy. Both now have regressions.
+
+**Not covered:** this verifies *this branch*, not a merged build. SF Chat was
+reachable but its end-to-end flow was not re-driven, because that needs a
+provider call.
+
+## B3. The hidden-tab boot defect
+
+Reproduced on 8765 and 8801: `buildShell` schedules the authenticated start
+only through `requestAnimationFrame`, which a browser does not run for a hidden
+document, so a page opened in a background tab sits on its skeleton with
+`CURRENT_AUTH` null until the tab is focused. It self-heals on focus.
+
+**Not fixed here.** `ui.js` currently has uncommitted changes in the
+`codex/agent-world-mechanisms` worktree, so it already has an active editor and
+the single-owner condition is not met by this reviewer. Handed over in
+`tests/test_aurora_shell_boot_visibility.py` with the reproduction, the expected
+one-line change, an xfail that flips when it lands, and a standing test that a
+frame and a timeout racing to start the shell must start it exactly once — so
+the fix cannot arrive as a double boot that runs the auth exchange twice.
+
+## B4. Review of the Codex work-in-progress — read-only
+
+**Nothing was committed, stashed, reset, cleaned, renamed, moved or edited in
+`agent-world-mechanisms`.** The findings below are bound to the hashes in the
+snapshot record and describe that content only; the worktree was not re-read
+afterwards and this section is not refreshed as it changes.
+
+Snapshot: `scratchpad/codex-wip-review/SNAPSHOT.json`, taken 2026-09-06T23:58:24Z,
+branch `codex/agent-world-mechanisms`, HEAD `45ab4361` — the same base as this
+branch. 0 staged, 15 unstaged, 18 untracked; 33 files copied and hash-verified,
+0 excluded. Re-hashing after the copy showed **no file changed during the
+snapshot**, so it is stable. Untracked files are listed explicitly because a
+`git diff` would not contain them, and only source, tests, docs and migrations
+were copied — no database, cookie, secret or runtime artefact.
+
+Tests ran against a separate tree built by extracting `45ab4361` with
+`git archive` and overlaying the snapshot, so no git state was created anywhere.
+
+### Readiness, one row per mechanism
+
+These five states are deliberately not collapsed into "ready".
+
+| Mechanism | Code exists | Wired to call sites | Covered by tests | End-to-end verified | Enabled in runtime |
+| --- | --- | --- | --- | --- | --- |
+| Execution V2 + Deviation Control | yes | yes — `execution_v2.enabled/is_managed/prepare` on task actions | **46 passed** | not attempted | no — `AI_EXECUTION_V2` default off |
+| Router V2 | yes | yes — reads Agent World evaluations | **20 passed** | not attempted | no — `AI_ROUTER_V2` default off |
+| Delegation | yes | yes — via `automation_authority` | **21 passed** | not attempted | no — `AI_DELEGATION_V2` default off |
+| Scheduler | yes | yes — `schedule_create/queue/tick/step` | **25 passed** | not attempted | no — `AI_SCHEDULER_V1` default off |
+| PostgreSQL/RLS repository | yes | yes — repository selection in `domain_gateway` | **1 passed, 68 skipped** | **no** | no |
+| `task_presentation` / `task_review` | yes | server yes; page partially | **no dedicated tests** | no | reached through the overview projection |
+
+Totals in isolation: **113 passed, 68 skipped**. Every one of the 68 skips is
+the PostgreSQL suite.
+
+### Findings
+
+1. **The PostgreSQL adapter is the least-verified mechanism and cannot be
+   verified on this machine.** 68 of its 69 cases need a real server. There is
+   no PostgreSQL, Docker or Podman here — only the `psycopg` driver — so the
+   migration, the RLS policies and the outbox/idempotency behaviour have never
+   executed. This is the largest open risk in that delta and needs either a
+   local server or an isolated DSN.
+2. **Its RLS coverage reads as complete on inspection.** Migration 0023 creates
+   ten `sf_aw_*` tables and applies `ENABLE` + `FORCE ROW LEVEL SECURITY` and
+   `REVOKE ALL … FROM PUBLIC, stratforge_app` to all ten by name in a loop, with
+   twelve explicit policies plus a looped owned-row policy. An earlier count of
+   "2 RLS statements" was mine and was wrong — it counted the loop lines, not
+   their effect.
+3. **Flags are ordered and default off**: `AI_ROUTER_V2 → AI_TASK_GRAPH_V2`,
+   `AI_DELEGATION_V2 → AI_EXECUTION_V2`, `AI_SCHEDULER_V1 → AI_EXECUTION_V2`,
+   `AI_EXECUTION_V2 → AI_TASK_GRAPH_V2`, every flag `default: False`.
+4. **Delegation carries real limits**: bounded depth, per-parent fan-out, a
+   cycle/forward-reference guard, a repeated-ancestor-identity guard, and a
+   budget authority reference.
+5. **The scheduler rechecks authority per step** (`schedule_fresh_authority_required`,
+   then a named authority call for create/queue/tick/step) with bounded attempts
+   and timeout. `automation_authority` fails closed on a disabled workspace,
+   an inactive subject, a revoked session, a revoked or expired device, and a
+   revoked approval.
+6. **Router V2 is not a duplicate of the AI Lab router, and my earlier note
+   overstated it.** Absence of an import proves nothing; the actual path is what
+   matters. `router_v2._observations` reads Agent World's own
+   `EntityKind.EVALUATION` records for one exact task class, guards
+   `self_scored is not False`, and counts a retry of the same input as one
+   observation. `ai_lab/agent_router.py` ranks the owner's global registry for
+   staff roles through `ai_ratings.rank_agents`. **Different data, different
+   scope — genuinely different mechanisms.** What overlaps is the algorithm
+   shape: gate candidates, rank, explore. Reusing that shape is worth
+   considering; recorded as a suggestion, not a defect.
+7. **`task_presentation.py` and `task_review.py` are the newest and least
+   covered** — written the same morning, no dedicated tests, and the page
+   consumes only `display_status`, `display_title` and `human_review` while the
+   server also offers `status_label`, `needs_attention`, `result_received`,
+   `verified_automatically` and `acceptance_not_recorded`. The UI integration is
+   incomplete relative to the model behind it.
+
+### The overlap, and which state logic should survive
+
+Both branches independently built a task state projection. They must not both
+land.
+
+| Concern | This branch (`presentation.py`) | Codex (`task_presentation.py`) |
+| --- | --- | --- |
+| States | 6 phases | 12 display states |
+| Result received vs accepted | **absent** — `succeeded` becomes «Завершено» | `result_received` «приёмка не зафиксирована», distinct from `completed` |
+| Automatic verification | absent | `verified_automatically`, and `human_review: not_required` for `connection_exact` / `court_vote` |
+| Human acceptance record | absent | `task_review.py`: immutable, bound to task revision and a source fingerprint, `quality_claim: False`, never execution authority |
+| Waiting for a result vs running | folded into `executing` | `waiting_result` separate |
+| Waiting for a decision | `awaiting_decision` | `blocked` «Приостановлено: нужно решение» |
+| Counters | 6 disjoint plus attention | richer, plus `results_received` / `provider_results_received` / `application_results_received` / `acceptance_not_recorded` |
+
+**Recommendation: keep Codex's state model and retire this branch's phase
+logic.** It is a strict superset, and it already answers the question raised in
+review — an automatic format check must not mean the whole result is accepted
+or that execution is permitted. `presentation.py` has no such distinction and
+would regress it.
+
+What should be **ported from this branch onto that model**, because Codex's
+does not cover it:
+
+- human stage labels, plus the machine-key-versus-written-text rule that stops
+  the NinjaTrader and Desktop written stages being replaced by a placeholder;
+- honest `progress_pct` — a number only where one was measured;
+- attention `reason` / `action_hint` / `since`, and the route to the items a
+  truncated list hides;
+- agent `availability` / `occupancy` / `open_review` / `open_decision`, on both
+  the domain and the compatibility rows;
+- the System four-axis readiness component;
+- `technicalSplit` — digests, JSON and bare links into details, evidence kept;
+- the Inspector focus restore and its regressions;
+- the Persona face, and the connection stating the Persona it points at;
+- the boot-visibility hand-over in B3.
+
+Already covered by Codex, so **do not port**: the task phase/status vocabulary
+itself, and the counters derived from it.
+
+### Baseline statements that must be re-scoped on merge
+
+`tests/test_agent_world_storage_scope.py` describes the reviewed baseline —
+41 PostgreSQL cases in four suites, 22 migrations, one SQLite repository. Two of
+its assertions **fail against the Codex tree**, by design, each carrying the
+instruction to replace the expectation with checks of the new contract rather
+than revert the implementation. Verified both ways: 16 pass at this baseline;
+2 fail with that message against a tree that has the adapter. The migration
+count and the "no Agent World PostgreSQL" statement are a dated snapshot, never
+a prohibition.
+
+## B5. Recommended merge order
+
+1. Codex checkpoints its own WIP so it stops being uncommitted.
+2. One integrator is named — GPT/Codex — and owns `ui.js`, `domain_gateway.py`,
+   `live_gateway.py`, `model_service.py` and `ai-command-center.js` for the merge.
+3. An integration branch takes the mechanisms first, then this branch's
+   presentation, focus and identity fixes ported onto Codex's state model per
+   the table above.
+4. Re-scope the baseline storage statements to the new contract.
+5. Apply the boot-visibility fix with its latch test.
+6. Full regression plus a browser pass on the merged build.
+7. Only then update Local 8765.
+
+Not done and not authorised in this pass: merge to main, changing PR #282's
+base, pushing to a Codex branch, switching or restarting Local 8765, Canary or
+Production deployment, real orders, budget increases.
