@@ -9884,6 +9884,12 @@
     return 'task';
   }
   function orchFulfillmentOf(row) {
+    // A completed transport/action is not an owner's acceptance. Historical
+    // feedback stays on the message; Agent World uses its canonical review.
+    if (orchAgentWorldTaskId(row)) {
+      const review = row._awTask?.human_review?.status;
+      return review === 'accepted' ? 'done' : review === 'rejected' ? 'failed' : 'unset';
+    }
     const raw = String(row.fulfillment || '').trim();
     if (ORCH_FULFILL_LABELS[raw]) return raw;
     const kind = orchInferKind(row);
@@ -9926,6 +9932,53 @@
     blocked: ['Нужно внимание', 'blocked'], error: ['Ошибка', 'blocked'],
     completed: ['', 'done'], confirmed_connected: ['', 'done'],
   };
+  function orchAgentWorldTaskId(row) {
+    if (row?.source !== 'agent_world_local' || row.role !== 'assistant') return '';
+    const id = (row.actions || []).find(action => action?.source_kind === 'real_model_response')?.task_id;
+    return /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(String(id || '')) ? id : '';
+  }
+  async function orchAgentWorldViews(messages, cid) {
+    if (typeof API.http.aiControlCenterTask !== 'function') return messages;
+    const last = new Map();
+    messages.forEach((row, index) => { const id = orchAgentWorldTaskId(row); if (id) last.set(id, index); });
+    const views = new Map(), entries = Array.from(last.entries()).slice(-20);
+    for (let offset = 0; offset < entries.length; offset += 4) {
+      await Promise.all(entries.slice(offset, offset + 4).map(async ([id, index]) => {
+        try {
+          const response = await API.http.aiControlCenterTask(id), task = response.task || response;
+          if (task.id === id && task.conversation_id === cid && task.source_kind === 'real_model_response') views.set(index, task);
+        } catch (_) { /* Unavailable current state must never become a PASS. */ }
+      }));
+      if (ORCH.currentId !== cid) return messages;
+    }
+    return messages.map((row, index) => ({ ...row, _awTask: views.get(index) || null,
+      _awLatest: last.get(orchAgentWorldTaskId(row)) === index }));
+  }
+  function orchAgentWorldCard(row) {
+    const id = orchAgentWorldTaskId(row);
+    if (!id || !row._awLatest) return '';
+    const task = row._awTask;
+    if (!task) return '<div class="orch-aw-task">Текущее состояние задачи недоступно. Проверка не считается завершённой.</div>';
+    const actions = Array.isArray(task.actions) ? task.actions : [];
+    const review = task.human_review || {};
+    return `<section class="orch-aw-task" data-aw-chat-task="${esc(id)}" data-aw-state="${esc(task.display_status)}"><strong>${esc(task.display_title || 'Задача Agent World')}</strong><p>${esc(task.display_status_label || task.status_label || 'Состояние не получено')}</p><p>${esc(task.result_label || '')}</p><small>Автоматическая проверка: ${esc({ passed: 'пройдена', failed: 'не пройдена', pending: 'ожидается' }[task.verification_status] || 'не получена')}. Приёмка владельцем — отдельное решение.</small>${actions.includes('review_result') && review.status === 'pending' ? `<div class="orch-aw-actions"><button type="button" class="btn sm" data-aw-chat-review="accept" data-aw-task-id="${esc(id)}">Проверено: принять</button><button type="button" class="btn sm" data-aw-chat-review="reject" data-aw-task-id="${esc(id)}">Проверено: отклонить</button></div>` : ''}<a class="btn sm" href="/ui/ai-command-center.html#tab=work&task=${encodeURIComponent(id)}">Задача, история и действия</a></section>`;
+  }
+  function wireOrchAgentWorld(container, messages, cid) {
+    qsa('[data-aw-chat-review]', container).forEach(button => button.addEventListener('click', async () => {
+      const task = messages.find(row => row._awTask?.id === button.dataset.awTaskId)?._awTask;
+      if (!task || ORCH.currentId !== cid) return;
+      const decision = button.dataset.awChatReview;
+      const confirmed = await confirmDialog('Решение сохранится только для этого результата. Оно не разрешает дальнейшие действия и не оценивает профессиональное качество модели.', { title: decision === 'accept' ? 'Принять проверенный результат?' : 'Отклонить проверенный результат?', confirmLabel: 'Сохранить решение' });
+      if (!confirmed || ORCH.currentId !== cid) return;
+      button.disabled = true;
+      try {
+        await API.http.aiControlCenterDomainAction('tasks', task.id, 'review_result', { expected_revision: task.revision, idempotency_key: window.crypto.randomUUID(), payload: { decision, comment: '', source_sha256: task.human_review.source_sha256 } });
+        window.dispatchEvent(new CustomEvent('agent-world-updated'));
+        await orchLoadMessages(cid);
+      } catch (error) { reportError(error); }
+      finally { button.disabled = false; }
+    }));
+  }
   function orchAgentWorldReportUrl(row) {
     if (row?.source !== 'agent_world_local' || row?.role !== 'assistant') return '';
     for (const action of Array.isArray(row.actions) ? row.actions : []) {
@@ -9954,6 +10007,7 @@
   }
   function orchActionsHtml(row, isUser) {
     if (isUser || !Array.isArray(row.actions) || !row.actions.length) return '';
+    if (orchAgentWorldTaskId(row)) return orchAgentWorldCard(row);
     // Progress rows stay informative while unfinished; terminal «Выполнено»
     // lives in the footer marks instead of repeating above every bubble.
     const items = row.actions.filter(action => action && typeof action === 'object').slice(0, 8).map(action => {
@@ -9990,7 +10044,7 @@
     const kindLabel = ORCH_KIND_LABELS[kind] || kind;
     const fulfillLabel = ORCH_FULFILL_LABELS[fulfillment] || fulfillment;
     const isInformational = kind === 'informational';
-    const showMarks = !isInformational && (kind !== 'chat' || fulfillment === 'done' || fulfillment === 'failed');
+    const showMarks = !orchAgentWorldTaskId(row) && !isInformational && (kind !== 'chat' || fulfillment === 'done' || fulfillment === 'failed');
     const agentRef = row.agent_id || row.agent_name || row.domain_agent || 'vitek';
     const agentLabel = String(row.agent_name || agentRef || 'Витёк');
     const title = String(row.agent_title || '').trim();
@@ -10044,6 +10098,7 @@
   // Shown only while the verdict is genuinely open: a task or a report that
   // nobody has marked done or failed yet. Plain chat never asks for one.
   function orchAwaitHtml(row) {
+    if (orchAgentWorldTaskId(row)) return '';
     if (!row || row.role === 'user' || !row.message_id) return '';
     const kind = orchInferKind(row);
     if (kind === 'chat' || kind === 'informational') return '';
@@ -10094,7 +10149,9 @@
     const model = String(row.model || '').trim();
     const provider = String(row.provider || '').trim();
     const head = isUser ? '' : `<div class="orch-msg-card-head"><span class="orch-msg-author">${esc(agentLabel)}</span>${model ? `<span class="orch-msg-model">модель: ${esc(model)}${provider ? ` (${esc(provider)})` : ''}</span>` : ''}${orchAwaitHtml(row)}</div>`;
-    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}">${face}<div class="orch-msg-stack">${head}<div class="orch-msg-body">${esc(row.content || '')}</div>${media}${actions}${footer}</div></div>`;
+    const technical = orchAgentWorldTaskId(row) && (String(row.content || '').length > 500 || /^\s*[\[{]/.test(row.content || ''));
+    const body = technical ? `<details class="orch-msg-body orch-aw-details"><summary>Полное сообщение и данные результата</summary><pre>${esc(row.content || '')}</pre></details>` : `<div class="orch-msg-body">${esc(row.content || '')}</div>`;
+    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}">${face}<div class="orch-msg-stack">${head}${body}${media}${actions}${footer}</div></div>`;
   }
   function orchStopFeedbackVoice() {
     const voice = ORCH.feedbackVoice;
@@ -10344,12 +10401,13 @@
       if (!silent) { renderError(box, e, () => orchLoadMessages(cid)); return false; }
       return false;
     }
+    if (!human) messages = await orchAgentWorldViews(messages, cid);
     if (ORCH.currentId !== cid) return;
     const signature = JSON.stringify(messages.map(row => [
       row.message_id, row.timestamp_utc, row.content, row.rating,
       row.feedback_comment, row.feedback_timestamp_utc, row.model, row.provider,
       row.agent_name, row.actions, row.fulfillment, row.message_kind, row.participation_chain,
-      row.sender_profile_id, row.attachments,
+      row.sender_profile_id, row.attachments, row._awTask, row._awLatest,
     ]));
     if (silent && signature === ORCH.messagesSignature) return;
     if (silent && (ORCH.feedbackVoice || qsa('.orch-feedback-text', box).some(ta => ta.dataset.dirty === '1'))) return;
@@ -10365,6 +10423,7 @@
     if (!human) {
       wireOrchFeedback(box);
       wireAgentFaces(box);
+      wireOrchAgentWorld(box, messages, cid);
     }
     if (!silent || atBottom) box.scrollTop = box.scrollHeight;
     if (human && ORCH.open && ORCH.currentId === cid) {

@@ -7,6 +7,8 @@ authority. The normal router remains unchanged while this opt-in is absent.
 from __future__ import annotations
 
 import os
+import hashlib
+import json
 import re
 import threading
 from uuid import UUID
@@ -18,6 +20,9 @@ from .states import ContractError
 
 PREFIX = "/api/ai-control-center/"
 WORKSPACES_ENV = "STRATFORGE_AGENT_WORLD_LOCAL_WORKSPACES"
+MECHANISMS_ENV = "STRATFORGE_AGENT_WORLD_LOCAL_MECHANISMS"
+_MECHANISM_FLAGS = frozenset({Flag.AI_ROUTER_SHADOW_V2, Flag.AI_ROUTER_V2,
+    Flag.AI_EXECUTION_V2, Flag.AI_DELEGATION_V2, Flag.AI_SCHEDULER_V1})
 _FLAGS = (Flag.AI_CONTROL_CENTER_READ_MODEL, Flag.AI_COMMAND_CENTER_UI, Flag.AI_TASK_GRAPH_V2,
           Flag.AI_EVALUATION_SHADOW, Flag.AI_MEMORY_V2, Flag.AI_CONSENSUS_V2, Flag.AI_COURT_V1, Flag.AI_SOCIAL_PUBLISH_V1)
 _LOCK = threading.RLock()
@@ -74,19 +79,56 @@ def _fresh(scope: dict) -> tuple[RequestContext, dict]:
 def flag_snapshot(context: RequestContext) -> FlagSnapshot:
     if not configured(context.scope.workspace_id):
         raise ContractError("agent_world_local_disabled")
-    key = (str(runtime_env.data_root()), context.scope, context.user_uuid)
+    configured_mechanisms = mechanism_configuration(context.scope.workspace_id)
+    extra = tuple(flag for flag in Flag if flag.value in configured_mechanisms["flags"])
+    enabled_flags = (*_FLAGS, *extra)
+    revision = "owner-domains-v1" if not extra else "local-mechanisms-" + hashlib.sha256(
+        json.dumps([flag.value for flag in enabled_flags]).encode()).hexdigest()[:16]
+    # Configuration changes, including removal, must invalidate an old opt-in.
+    key = (str(runtime_env.data_root()), context.scope, context.user_uuid, revision)
     with _LOCK:
         if key not in _SNAPSHOTS:
             reference = audit_events.record(str(context.user_uuid), "agent_world.local_flags_activated", "agent_world",
-                                            workspace_id=context.scope.workspace_id, resource_id="owner-domains-v1",
-                                            details={"flags": [flag.value for flag in _FLAGS], "synthetic": False})
+                                            workspace_id=context.scope.workspace_id, resource_id=revision,
+                                            details={"flags": [flag.value for flag in enabled_flags], "synthetic": False})
             if len(_SNAPSHOTS) >= 256:
                 _SNAPSHOTS.clear()
-            _SNAPSHOTS[key] = FlagSnapshot(revision="owner-domains-v1", audit_ref=UUID(reference.removeprefix("aud_")),
+            _SNAPSHOTS[key] = FlagSnapshot(revision=revision, audit_ref=UUID(reference.removeprefix("aud_")),
                                           rules=tuple(FlagRule(environment=Environment.DEVELOPMENT, flag=flag, enabled=True,
                                                                workspace_id=workspace)
-                                                      for flag in _FLAGS for workspace in (None, context.scope.workspace_id)))
+                                                      for flag in enabled_flags for workspace in (None, context.scope.workspace_id)))
         return _SNAPSHOTS[key]
+
+
+def mechanism_configuration(workspace_id):
+    """Trusted server opt-ins only; one exact Development/workspace registry.
+
+    Format: {"environment":"development","flags":{"AI_EXECUTION_V2":["ws_example"]}}.
+    No wildcard, inherited environment, implicit dependency activation or UI
+    mutation exists. An invalid document disables every *new* mechanism, while
+    leaving the already approved Local functionality untouched.
+    """
+    empty = {"status": "disabled", "flags": [], "reason_code": "not_configured"}
+    raw = os.environ.get(MECHANISMS_ENV, "").strip()
+    if not raw or not configured(workspace_id):
+        return empty
+    try:
+        value = json.loads(raw)
+        if (type(value) is not dict or set(value) != {"environment", "flags"}
+                or value["environment"] != Environment.DEVELOPMENT.value
+                or type(value["flags"]) is not dict):
+            raise ValueError()
+        configured_names = {flag.value for flag in _MECHANISM_FLAGS}
+        for name, ids in value["flags"].items():
+            if (name not in configured_names or type(ids) is not list or not ids
+                    or len(ids) != len(set(ids)) or any(type(item) is not str
+                        or not re.fullmatch(r"ws_[A-Za-z0-9_-]{3,93}", item) for item in ids)):
+                raise ValueError()
+        names = sorted(name for name, ids in value["flags"].items() if workspace_id in ids)
+        return {"status": "configured" if names else "disabled", "flags": names,
+                "reason_code": "explicit_server_opt_in" if names else "workspace_not_opted_in"}
+    except (ValueError, TypeError):
+        return {"status": "invalid", "flags": [], "reason_code": "invalid_server_configuration"}
 
 
 def access(scope: dict) -> dict:

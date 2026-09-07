@@ -1,8 +1,9 @@
-"""One immutable, server-side flag registry; no loader or mutation endpoint.
+"""One immutable, server-side flag registry; no browser mutation endpoint.
 
 A deployment gate AND an exact workspace opt-in are required. Configuration
 must come from trusted server composition, with an existing audit reference.
-The future loader verifies that audit record. Flags never authorize actions.
+The Local composition records its exact opt-ins before publishing a snapshot.
+Flags never authorize actions.
 """
 from __future__ import annotations
 
@@ -20,6 +21,9 @@ class Flag(str, Enum):
     AI_CONTROL_CENTER_READ_MODEL = "AI_CONTROL_CENTER_READ_MODEL"
     AI_TASK_GRAPH_V2 = "AI_TASK_GRAPH_V2"
     AI_ROUTER_SHADOW_V2 = "AI_ROUTER_SHADOW_V2"
+    AI_ROUTER_V2 = "AI_ROUTER_V2"
+    AI_DELEGATION_V2 = "AI_DELEGATION_V2"
+    AI_SCHEDULER_V1 = "AI_SCHEDULER_V1"
     AI_EVALUATION_SHADOW = "AI_EVALUATION_SHADOW"
     AI_CONSENSUS_V2 = "AI_CONSENSUS_V2"
     AI_COURT_V1 = "AI_COURT_V1"
@@ -41,6 +45,9 @@ REGISTRY = MappingProxyType({
         (Flag.AI_COMMAND_CENTER_UI, (Flag.AI_CONTROL_CENTER_READ_MODEL,)),
         (Flag.AI_TASK_GRAPH_V2, (Flag.AI_CONTROL_CENTER_READ_MODEL,)),
         (Flag.AI_ROUTER_SHADOW_V2, (Flag.AI_TASK_GRAPH_V2,)),
+        (Flag.AI_ROUTER_V2, (Flag.AI_TASK_GRAPH_V2,)),
+        (Flag.AI_DELEGATION_V2, (Flag.AI_EXECUTION_V2,)),
+        (Flag.AI_SCHEDULER_V1, (Flag.AI_EXECUTION_V2,)),
         (Flag.AI_EVALUATION_SHADOW, (Flag.AI_TASK_GRAPH_V2,)),
         (Flag.AI_CONSENSUS_V2, (Flag.AI_TASK_GRAPH_V2,)),
         (Flag.AI_COURT_V1, (Flag.AI_CONSENSUS_V2,)),

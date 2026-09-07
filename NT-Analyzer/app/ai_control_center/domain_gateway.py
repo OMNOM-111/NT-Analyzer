@@ -21,7 +21,7 @@ from .flags import Flag, REGISTRY, resolve
 from .states import ContractError, EntityKind
 
 DOMAINS = frozenset({"personas", "memory", "projects", "routines", "calendar", "decisions", "court",
-                     "models", "model_tasks", "experiments", "system", "tasks", "publications"})
+                     "models", "model_tasks", "experiments", "system", "tasks", "publications", "automation", "router"})
 
 
 def access(scope, *, read_only=False):
@@ -70,8 +70,18 @@ def access(scope, *, read_only=False):
     # The callback revalidates on mutations/transmission. Do not call it here
     # recursively; the constructor above itself already checks live authority.
     return {"context": context, "chat_scope": normalized, "admit": admit,
+            "refresh": lambda **kw: access(normalized, read_only=kw.get("read_only", read_only)),
             "source_scope": {"workspace_id": workspace["workspace_id"], "user_id": uid, "allow_legacy": False},
             "snapshot": live_gateway.flag_snapshot(context), "read_only": read_only}
+
+
+def refresh_authority(authorized, *, read_only=None):
+    mode = authorized.get("read_only", False) if read_only is None else read_only
+    if callable(authorized.get("refresh")):
+        return authorized["refresh"](read_only=mode)
+    if authorized.get("automation") or authorized["context"].actor.kind != ActorKind.HUMAN:
+        raise ContractError("automation_refresh_required")
+    return access(authorized["chat_scope"], read_only=mode)
 
 
 def from_handler(handler, *, read_only=False):
@@ -98,7 +108,7 @@ def domain_admission(authorized, domain, action="read"):
         required = Flag.AI_COURT_V1
     def admit():
         authorized["admit"]()
-        current = access(authorized["chat_scope"], read_only=authorized.get("read_only", False))
+        current = refresh_authority(authorized)
         if not resolve(required, scope=current["context"].scope, snapshot=current["snapshot"]).enabled:
             raise ContractError("agent_world_domain_disabled")
     admit()
@@ -107,6 +117,19 @@ def domain_admission(authorized, domain, action="read"):
 
 def repository(authorized):
     authorized["admit"]()
+    backend = os.environ.get("STRATFORGE_AGENT_WORLD_STORAGE", "sqlite").strip().lower()
+    if backend == "postgres":
+        from ..production_storage.core import PostgresClient
+        from .postgres_repository import PostgresAgentWorldRepository
+        dsn = os.environ.get("STRATFORGE_AGENT_WORLD_DATABASE_URL", "")
+        if not dsn:
+            raise ContractError("agent_world_postgres_not_configured")
+        # Explicit composition only. No inherited Production DSN, migration,
+        # schema creation, copying of owner data, or SQLite fallback on error.
+        return PostgresAgentWorldRepository(PostgresClient(dsn, production=False),
+            environment=authorized["context"].scope.environment, read_only=authorized.get("read_only", False))
+    if backend != "sqlite":
+        raise ContractError("agent_world_storage_backend_invalid")
     from .sqlite_repository import SQLiteAgentWorldRepository
     return SQLiteAgentWorldRepository(runtime_env.data_path("ai_lab", "agent-world.sqlite3"),
                                       read_only=authorized.get("read_only", False))
@@ -120,7 +143,7 @@ def _model_admit(authorized, context, operation, estimate):
         return
     if authorized.get("read_only"):
         raise ContractError("model_history_read_only")
-    current = access(authorized["chat_scope"])
+    current = refresh_authority(authorized, read_only=False)
     if not current["chat_scope"]["capabilities"].get("ai_pro_models"):
         raise ContractError("model_capability_required")
     if not ai_budgets.check_budget(context.scope.workspace_id, estimate).get("ok"):
@@ -129,7 +152,7 @@ def _model_admit(authorized, context, operation, estimate):
 
 def owner_binding(authorized, registry_id):
     authorized["admit"]()
-    current = access(authorized["chat_scope"], read_only=authorized.get("read_only", False))
+    current = refresh_authority(authorized)
     if not current["chat_scope"].get("is_owner") or not current["chat_scope"].get("uses_owner_runtime"):
         raise ContractError("model_owner_binding_denied")
     if not isinstance(registry_id, str) or not re.fullmatch(r"AGT-[A-Z0-9]{12}", registry_id):
@@ -164,11 +187,19 @@ def enqueue_model(authorized, *, context, task_id):
     if context != authorized["context"]:
         raise ContractError("model_context_required")
     from .. import worker_router
+    from . import execution_v2
+    service = models(authorized)
+    managed = execution_v2.enabled(authorized) or execution_v2.is_managed(service, context, task_id)
+    if managed:
+        execution_v2.prepare(authorized, service, task_id)
     job_id = "wj_aw_model_" + UUID(str(task_id)).hex
     payload = {"task_id": str(task_id), "scope": authorized["chat_scope"]}
+    if authorized.get("automation"):
+        payload.update(automation_controller_id=authorized["automation_controller_id"],
+                       automation_grant_ref=authorized["automation_grant_ref"])
     try:
         return worker_router.enqueue("agent_world_model", payload, user_id=authorized["source_scope"]["user_id"],
-            workspace_id=context.scope.workspace_id, job_id=job_id, max_attempts=1, timeout_sec=180, priority=55)
+            workspace_id=context.scope.workspace_id, job_id=job_id, max_attempts=3 if managed else 1, timeout_sec=180, priority=55)
     except sqlite3.IntegrityError:
         old = worker_router.get(job_id, workspace_id=context.scope.workspace_id)
         if not old or old.get("kind") != "agent_world_model" or old.get("payload") != payload:
@@ -183,12 +214,24 @@ def models(authorized, repo=None):
         if context != authorized["context"]:
             raise ContractError("model_context_required")
         return owner_binding(authorized, profile.get("existing_registry_id"))["id"]
-    return ModelService(repo or repository(authorized),
+    service = ModelService(repo or repository(authorized),
+        mechanism_authorized=authorized,
         chat_scope=authorized["chat_scope"],
         admit=lambda context, operation, estimate: _model_admit(authorized, context, operation, estimate),
         enqueue=lambda **kw: enqueue_model(authorized, **kw),
         executor=ModelExecutor(budget_limits=_private_limits, owner_binding=bind),
         allowed_origins=tuple(item.strip() for item in os.environ.get("STRATFORGE_AGENT_WORLD_MODEL_ORIGINS", "").split(",") if item.strip()))
+    from . import automation_authority
+    service.mechanism_admit = lambda **kw: automation_authority.admit(authorized, service, **kw)
+    def admission(context, operation, estimate=0.0):
+        _model_admit(authorized, context, operation, estimate)
+        if authorized.get("automation") and operation != "read":
+            from .contracts import EntityRef
+            service.mechanism_admit(context=context,
+                controller=EntityRef(kind=EntityKind.TASK, entity_id=UUID(authorized["automation_controller_id"]), revision=1, scope=context.scope),
+                grant_ref=authorized["automation_grant_ref"], operation=operation, estimated_cost_usd=estimate)
+    service.admit = admission
+    return service
 
 
 def history_models(authorized):
@@ -215,6 +258,37 @@ def _model_source(job):
     if job.get("worker_job_id", job.get("id")) != identity:
         raise ContractError("model_delivery_source_invalid")
     return payload, scope
+
+
+def worker_authority(job, *, read_only=False):
+    """Scope comes from the durable job; automation also needs a sealed child."""
+    from .. import worker_router
+    from . import automation_authority
+    payload = job.get("payload") or {}
+    if payload.get("phase") == "delivery":
+        source = worker_router.get(payload.get("source_worker_job_id"), workspace_id=str(job.get("workspace_id") or "")) or {}
+        source_payload, scope = _model_source(source)
+        if scope != payload.get("scope"):
+            raise ContractError("model_delivery_scope_invalid")
+    else:
+        source_payload, scope = payload, payload.get("scope") or {}
+    coordination = source_payload.get("phase") in {"delegation_step", "scheduler_occurrence", "automation_watch"}
+    controller_id = source_payload.get("controller_id") if coordination else source_payload.get("automation_controller_id")
+    reference = source_payload.get("grant_ref") if coordination else source_payload.get("automation_grant_ref")
+    if bool(controller_id) != bool(reference):
+        raise ContractError("automation_worker_authority_missing")
+    if not controller_id:
+        if coordination:
+            raise ContractError("automation_worker_authority_missing")
+        return access(scope, read_only=read_only)
+    authorized = automation_authority.access(scope, controller_id=controller_id, grant_ref=reference, read_only=read_only)
+    if not coordination:
+        service = history_models(authorized) if read_only else models(authorized)
+        task = service._get(authorized["context"], EntityKind.TASK, source_payload.get("task_id"))
+        packet = service._json(authorized["context"], task.checkpoint).get("delegation") or {}
+        if packet.get("controller_id") != str(controller_id) or packet.get("grant_ref") != reference:
+            raise ContractError("automation_child_scope_mismatch")
+    return authorized
 
 
 def _delivery_job_id(task_id, event_id):
@@ -280,7 +354,7 @@ def reconcile_model_deliveries(rows):
             continue
         try:
             payload, scope = _model_source(row)
-            authorized = access(scope, read_only=True)
+            authorized = worker_authority(row, read_only=True)
             authorized["admit"]()
             queued = enqueue_model_delivery(authorized, history_models(authorized), payload["task_id"])
             recovered += int(bool(queued and queued.get("status") == "queued"))
@@ -377,6 +451,9 @@ def list_domain(authorized, domain, *, identity=None, limit=50, cursor=None):
     if domain == "system":
         return system(authorized)
     model_service = models(authorized)
+    if domain in {"automation", "router"}:
+        from . import mechanism_gateway
+        return mechanism_gateway.read(authorized, model_service, domain, identity=identity, limit=limit, cursor=cursor)
     if domain == "publications":
         from .repositories import PageRequest
         service, allowed = social(authorized, model_service.repository), social_admission(authorized)
@@ -503,6 +580,8 @@ def enrich_overview(authorized, base=None):
     configured_models = model_service.models(context=context)["items"]
     people = domains(authorized, model_service.repository).list(context=context, admit=authorized["admit"], domain="personas")["items"]
     tasks, folded = _application_workflows(list(base.get("tasks") or []), model_rows)
+    from . import task_presentation
+    tasks = [row if row.get("display_status") else task_presentation.project(row) for row in tasks]
     tasks.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
     from .application_roles import ROLES
     assignments = {}
@@ -539,32 +618,39 @@ def enrich_overview(authorized, base=None):
             evaluation = active_observations[0]
         role_spec = ROLES.get(person.get("application_role"), {})
         legacy = legacy_agents.get(role_spec.get("legacy_id")) if aliases.get(role_spec.get("legacy_id")) == person["id"] else None
+        personal_tasks = [row for row in tasks if (row.get("lead") or {}).get("id") == person["id"]]
+        personal_counts = task_presentation.counters(personal_tasks)
         agents.append({"id": person["id"], "display_name": person.get("title") or person.get("name"),
+            "avatar_key": role_spec.get("legacy_id", ""),
+            "persona_profile": {key: person.get(key) for key in ("description", "style", "voice_label") if person.get(key)},
             "application_role": person.get("application_role", ""),
-            "role": role_spec.get("label", "Персона · роль не назначена"), "status": "working" if any(row["status"] in {"ready", "running", "waiting"} for row in mine) else person["status"],
+            "role": role_spec.get("label", "Персона · роль не назначена"),
+            "persona_status": person["status"],
+            "status": "working" if personal_counts["active_tasks"] else "awaiting_review" if personal_counts["awaiting_review"] else "warning" if personal_counts["failed_tasks"] else "free" if person["status"] == "active" else person["status"],
+            "task_counts": personal_counts,
             "synthetic": False, "models": bound, "model_observations": observations,
             "application_observations": application_observations,
-            "tasks_completed": sum(row["status"] == "succeeded" for row in mine),
+            "tasks_completed": personal_counts["completed_tasks"],
             "task_ids": [row["id"] for row in tasks if (row.get("lead") or {}).get("id") == person["id"]], "evaluation": evaluation,
             "compatibility_history": {"label": "История исходного Local-исполнителя; не оценка модели", "source": legacy} if legacy else None})
-    model_outcomes = [{"task_id": row["id"], "title": row["title"], "summary": row.get("result_text") or row.get("summary"),
+    model_outcomes = [{"task_id": row["id"], "title": row.get("display_title", row["title"]),
+                       "summary": row.get("result_label"),
+                       "display_status": row.get("display_status"), "display_status_label": row.get("display_status_label"),
                        "status": row["status"], "source_kind": "real_model_response", "synthetic": False,
                        "application_result": row.get("application_result"), "source_job_id": row.get("source_job_id"),
                        "artifact": next((item for item in row.get("artifacts", [])
                                          if item.get("mime_type") == "image/png"), None),
                        "created_at": row["updated_at"]} for row in model_rows if row["status"] in {"succeeded", "failed", "review", "blocked", "cancelled"}]
     costs = [row["cost_usd"] for row in model_rows if isinstance(row.get("cost_usd"), (int, float))]
-    completed = sum(row["status"] == "succeeded" for row in tasks)
-    active = sum(row["status"] in {"queued", "ready", "running", "waiting"} for row in tasks)
-    attention = [row for row in tasks if row["status"] in {"review", "blocked", "failed"}]
+    counts = task_presentation.counters(tasks)
+    attention = [row for row in tasks if row.get("needs_attention")]
     return {**base, "enabled": True, "status": "IN DEVELOPMENT", "tasks": tasks, "agents": agents,
         "outcomes": model_outcomes + [row for row in base.get("outcomes") or [] if row.get("task_id") not in folded],
-        "stats": {**base.get("stats", {}), "tasks_total": len(tasks), "active_tasks": active, "running": active,
-                  "completed": completed, "completed_tasks": completed, "agents": len(agents), "attention": len(attention),
-                  "failed": len(attention), "evaluations": sum(len(row.get("evaluations") or []) for row in model_rows),
+        "stats": {**base.get("stats", {}), **counts, "agents": len(agents),
+                  "evaluations": sum(len(row.get("evaluations") or []) for row in model_rows),
                   "artifacts": sum(row.get("evidence_count", 0) for row in tasks),
                   "paid_calls": sum(cost > 0 for cost in costs), "cost_usd": round(sum(costs), 8) if costs else None},
-        "activity": [{"title": row["title"], "summary": row["title"] + " · " + row["status"], "task_id": row["id"], "time": row["updated_at"]} for row in tasks[:8]],
+        "activity": [{"title": row.get("display_title", row["title"]), "summary": row.get("display_title", row["title"]) + " · " + row.get("display_status_label", row["status"]), "task_id": row["id"], "time": row["updated_at"]} for row in tasks[:8]],
         "attention": attention, "scope": {"environment": "development", "workspace_id": context.scope.workspace_id, "synthetic": False},
         "capabilities": {"can_run_demo": False, "can_view_models": True, "can_call_models": can_models, "can_view_system": True},
         "flags": system(authorized)["flags"],
@@ -584,6 +670,10 @@ def mutate(authorized, domain, identity, action, body):
         raise ContractError("invalid_idempotency_key")
     context, service = authorized["context"], models(authorized)
     admit = domain_admission(authorized, domain, action)
+    if domain in {"automation", "router"}:
+        from . import mechanism_gateway
+        return mechanism_gateway.mutate(authorized, service, domain, identity, action, payload,
+            expected_revision=body.get("expected_revision"), idempotency_key=key)
     if domain == "models":
         if identity == "new" and action == "connect":
             return service.connect(context=context, payload=payload, idempotency_key=key)
@@ -600,6 +690,10 @@ def mutate(authorized, domain, identity, action, body):
             raise ContractError("invalid_domain_request")
         from . import result_handoff
         return result_handoff.start(authorized, service, identity, payload["target_model_id"], key)
+    elif domain in {"model_tasks", "tasks"} and action == "review_result":
+        from . import task_review
+        return task_review.submit(service, context=context, task_id=identity, payload=payload,
+                                  expected_revision=body.get("expected_revision"), idempotency_key=key)
     elif domain in {"model_tasks", "tasks"} and action == "cancel":
         if set(payload) - {"reason"}:
             raise ContractError("invalid_domain_request")
@@ -658,9 +752,10 @@ def execute_worker(job, cancelled, heartbeat):
         raise ContractError("model_worker_scope_required")
     delivery = job.get("kind") == "agent_world_model" and payload.get("phase") == "delivery"
     followup_delivery = job.get("kind") == "agent_world_followup" and payload.get("phase") == "chat_delivery"
-    if payload.get("phase") and not (delivery or followup_delivery):
+    coordination = job.get("kind") == "agent_world_followup" and payload.get("phase") in {"delegation_step", "scheduler_occurrence", "automation_watch"}
+    if payload.get("phase") and not (delivery or followup_delivery or coordination):
         raise ContractError("model_worker_phase_invalid")
-    authorized = access(scope, read_only=True) if delivery else access(scope)
+    authorized = worker_authority(job, read_only=delivery)
     authorized["admit"]()
     if cancelled():
         raise ContractError("model_cancelled")
@@ -688,6 +783,13 @@ def execute_worker(job, cancelled, heartbeat):
     if followup_delivery:
         from . import followup_chat
         return followup_chat.execute(authorized, job, cancelled, heartbeat)
+    if coordination:
+        from . import delegation, scheduler
+        service = models(authorized)
+        if payload["phase"] == "automation_watch":
+            from . import mechanism_gateway
+            return mechanism_gateway.execute_watch(authorized, service, job, cancelled, heartbeat)
+        return (delegation if payload["phase"] == "delegation_step" else scheduler).execute(authorized, service, job, cancelled, heartbeat)
     if job["kind"] == "agent_world_followup":
         request = payload.get("request") or {}
         if request.get("automation_enabled") is not False or request.get("manual_review_required") is not True:
@@ -696,14 +798,18 @@ def execute_worker(job, cancelled, heartbeat):
         return {"ok": True, "status": "awaiting_manual_action", "item_id": request.get("id"),
                 "title": request.get("title"), "automation_enabled": False, "execution_performed": False}
     service = models(authorized)
-    result = service.execute(context=authorized["context"], task_id=payload["task_id"], cancelled=cancelled)
+    from . import execution_v2
+    managed = execution_v2.is_managed(service, authorized["context"], payload["task_id"])
+    result = execution_v2.execute(authorized, service, job, cancelled, heartbeat) if managed else service.execute(context=authorized["context"], task_id=payload["task_id"], cancelled=cancelled)
     heartbeat()
     from . import model_chat, application_chat
-    application_chat.finish_dispatch(authorized, service, result)
+    if not managed:
+        application_chat.finish_dispatch(authorized, service, result)
+    execution_v2.observe(authorized, service, payload["task_id"])
     # Only the claimed delivery phase appends a final model/application report.
     # The source executor and Chief monitor enqueue it, never race its append.
     # If interrupted even before enqueue, the existing worker's scan recovers it.
-    history = access(scope, read_only=True)
+    history = refresh_authority(authorized, read_only=True)
     history_service = history_models(history)
     enqueue_model_delivery(history, history_service, payload["task_id"])
     return {"ok": True, "task_id": payload["task_id"], "status": result["status"]}

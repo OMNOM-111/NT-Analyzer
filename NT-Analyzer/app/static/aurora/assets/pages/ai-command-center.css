@@ -246,3 +246,17 @@
 @media (max-width: 440px) { .aw-team { grid-template-columns: 1fr; } .aw-agent-mini-top { align-items: flex-start; } .aw-detail-grid { grid-template-columns: 1fr; } .aw-header-actions .btn { font-size: 11px; } }
 @media (max-width: 720px) { .aw-domain-grid, .aw-form-grid, .aw-choice-list { grid-template-columns: 1fr; } .aw-domain-launcher { gap: 5px; } .aw-domain-launcher button { font-size: 10px; padding: 7px 8px; } .aw-domain-card-head { flex-wrap: wrap; } .aw-form-field:has(textarea), .aw-form-field:has(.aw-choice-list) { grid-column: auto; } }
 @media (prefers-reduced-motion: reduce) { .aw-skeleton { animation: none; } .aw-task-card { transition: none; } }
+/* Dense status information remains inside the approved three-column shell. */
+.aw-rollup { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.aw-technical { margin: 12px 0; min-width: 0; }
+.aw-technical summary { cursor: pointer; color: var(--tx-2); font-size: 12px; padding: 8px 0; }
+.aw-technical pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; max-height: 360px; overflow: auto; }
+.aw-inspector, .aw-inspector > *, .aw-profile-head > div, .aw-agent-card-top > div { min-width: 0; max-width: 100%; }
+.aw-inspector .aw-actions { flex-wrap: wrap; }
+.aw-inspector .aw-actions .btn { max-width: 100%; white-space: normal; }
+.aw-rating-mini { max-width: 120px; overflow-wrap: anywhere; text-align: right; }
+.aw-rating-mini strong { font-size: 12px; }
+.aw-agent-score > strong { font-size: 19px; overflow-wrap: anywhere; }
+.aw-inspector .aw-tabs { overflow-x: auto; flex-wrap: wrap; }
+.aw-table td { overflow-wrap: anywhere; }
+@media (max-width: 720px) { .aw-rollup { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
