@@ -34,8 +34,16 @@ def project(task: dict, *, evaluation=None, human_review=None) -> dict:
     failed_check = isinstance(evaluation, dict) and evaluation.get("passed") is False
     # A verified plan is a provider response, not the requested report/PNG.
     application_required = bool(task.get("application_request")) or task.get("task_class") in {"backtest_spec", "chart_spec"}
+    # Rows from the existing NinjaTrader and Desktop adapters are not model
+    # tasks: they carry no provider receipt or evaluation, and their own
+    # executor already verified them. Judging them by the model-result fields
+    # would leave a finished report or snapshot reported as still waiting.
+    model_task = (task.get("source_kind") == "real_model_response"
+                  or "provider_result_received" in task or bool(task.get("evaluation_id"))
+                  or bool(task.get("application_request")))
     provider_result = (task.get("provider_result_received") is True
-                       if "provider_result_received" in task else bool(task.get("evaluation_id")))
+                       if "provider_result_received" in task
+                       else bool(task.get("evaluation_id")) or not model_task)
     application = task.get("application_result")
     application_result = (isinstance(application, dict) and application.get("verified") is True
                           and bool(application.get("artifact_ids")) and bool(task.get("application_evaluation_id")))
@@ -55,8 +63,9 @@ def project(task: dict, *, evaluation=None, human_review=None) -> dict:
         if application_required and not application_result or execution_status and execution_status != "succeeded":
             display = "waiting_result"
         else:
-            automatic = (task.get("task_class") in {"connection_exact", "court_vote"}
-                         and result and isinstance(evaluation, dict) and evaluation.get("passed") is True)
+            automatic = (result and not model_task) or (
+                task.get("task_class") in {"connection_exact", "court_vote"}
+                and result and isinstance(evaluation, dict) and evaluation.get("passed") is True)
             display = {"pending": "awaiting_review", "accepted": "completed", "rejected": "rejected"}.get(
                 review.get("status"), "verified_automatically" if automatic else "result_received" if result else "waiting_result")
     elif raw in {"queued", "ready"}:

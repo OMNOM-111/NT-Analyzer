@@ -196,7 +196,14 @@ def test_actual_handler_overview_projects_real_canonical_report_and_desktop_sour
     assert result["enabled"] is True and result["scope"] == {"environment": "development", "workspace_id": WORKSPACE, "synthetic": False}
     assert result["capabilities"]["can_run_demo"] is False
     assert set(result) >= {"stats", "agents", "tasks", "outcomes", "attention", "activity", "flags", "limitations"}
-    assert result["stats"]["completed_tasks"] == 2 and result["stats"]["active_tasks"] == 0
+    # Both adapter rows are finished, and neither is active. They are counted as
+    # verified_automatically rather than "accepted by you": the existing
+    # NinjaTrader and Desktop executors verified them, no owner signed them off.
+    # Before the projection fix they read as waiting_result, i.e. still running.
+    assert result["stats"]["verified_automatically"] == 2
+    assert result["stats"]["results_received"] == 2
+    assert result["stats"]["active_tasks"] == 0
+    assert result["stats"]["completed_tasks"] == 0
     assert {task["id"] for task in result["tasks"]} == {http_live.own["task_id"], http_live.chart_id}
     assert {value["source_kind"] for value in result["outcomes"]} == {"ninjatrader_report", "desktop_chart"}
     assert all(value["synthetic"] is False for value in result["outcomes"])

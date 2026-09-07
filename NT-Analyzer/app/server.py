@@ -3009,8 +3009,14 @@ class Handler(BaseHTTPRequestHandler):
             # account row is bootstrapped.  Permission lookup then returns a
             # fail-closed empty record even though the request is already
             # authenticated as owner.  Owner parity is authoritative here.
+            # Owner parity, with one deliberate exception: ai_automation is what
+            # background agent work checks before it may write, and it is granted
+            # by an explicit override rather than by being the owner. A blanket
+            # grant here would hand the local owner the one permission the rest
+            # of the stack withholds.
             context["capabilities"] = {
-                capability_id: True for capability_id in permissions.CAPABILITY_IDS
+                capability_id: capability_id != "ai_automation"
+                for capability_id in permissions.CAPABILITY_IDS
             }
             context["admin_capabilities"] = {
                 capability_id: True for capability_id in permissions.ADMIN_CAPABILITY_IDS
