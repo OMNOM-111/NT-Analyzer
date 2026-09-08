@@ -515,6 +515,7 @@ class ModelService:
         proof = self._put(context, {**evaluation, "task_id": str(task.header.entity_id),
             "model_id": str(model.header.entity_id), "receipt": _wire(receipt_ref),
             "actual_model": receipt.get("actual_model"), "provider": model.provider_key,
+            "executor": receipt.get("executor"), "external_call": receipt.get("external_call"),
             "latency_ms": receipt.get("latency_ms"), "cost_usd": receipt.get("cost_usd")})
         policy, correlation = task.header.policy, task.header.correlation_id
         role = self._get(context, EntityKind.AGENT_ROLE, task.role.entity_id)
@@ -653,10 +654,18 @@ class ModelService:
         provider_request_id = result.get("request_id")
         if provider_request_id is not None:
             c.require_token(provider_request_id, limit=120)
+        # Who actually answered, and whether anything left this machine. An
+        # executor that computes locally must not be readable as the
+        # connection's provider having replied.
+        executor = result.get("executor")
+        if executor is not None:
+            c.require_text(executor, limit=180)
+        external_call = result.get("external_call")
         return {"schema_version": 1, "source": "provider_response", "synthetic": False,
             "task_id": checkpoint["task_id"], "request_sha256": checkpoint["request_sha256"],
             "request_id": checkpoint["task_id"], "response": response, "actual_model": actual_model,
-            "provider_request_id": provider_request_id,
+            "provider_request_id": provider_request_id, "executor": executor,
+            "external_call": external_call if type(external_call) is bool else None,
             "latency_ms": round(latency * 1000, 3), "cost_usd": cost,
             "cost_estimated": result.get("cost_estimated") is True if cost is not None else None,
             "observed_at": _now().isoformat(), **tokens}
@@ -841,6 +850,7 @@ class ModelService:
         task_dto["progress_pct"] = presentation.progress_pct(task_dto["display_status"])
         return {"task": task_dto, **task_dto, "result_text": result_text,
             "actual_model": receipt.get("actual_model"), "evaluation": evidence,
+            "executor": receipt.get("executor"), "external_call": receipt.get("external_call"),
             "application_evaluation": application_evaluation,
             "evaluations": ([evidence] if evidence else []) + ([application_evaluation] if application_evaluation else []),
             "artifacts": artifacts,

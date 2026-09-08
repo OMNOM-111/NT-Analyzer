@@ -906,3 +906,44 @@ def test_connection_reports_the_persona_it_points_at_beside_its_own_label(setup)
     assert detail["persona_id"] and detail["provider_account_id"]
     assert detail["persona_id"] != detail["provider_account_id"] != detail["id"]
     assert detail["model"] == "deepseek-v4-flash" and detail["provider"] == "deepseek"
+
+
+def test_a_local_answer_is_not_attributed_to_the_connection_provider(setup):
+    """`executor` and `external_call` survive into what a reader is shown.
+
+    An executor that answers locally reports `external_call: False`. If that is
+    dropped, the task detail shows only the connection's provider beside the
+    answer, and a result produced without any call reads as one the provider
+    returned.
+    """
+    service, ctx, _payload, calls, *_ = setup
+    model = connected(setup)
+    calls.clear()
+    service.executor = lambda **kw: response(
+        actual_model="agent-world-local-test-executor-v1",
+        executor="agent-world-local-test-executor-v1",
+        provider="local_test_executor", external_call=False, paid_call=False,
+        cost_usd=0.0, cost_known=True)
+
+    pending = task(setup, model, key="local-executor-attribution")
+    result = service.execute(context=ctx, task_id=pending["id"])
+    assert result["status"] == "succeeded"
+
+    detail = service.task_detail(context=ctx, task_id=pending["id"])
+    assert detail["actual_model"] == "agent-world-local-test-executor-v1"
+    assert detail["executor"] == "agent-world-local-test-executor-v1"
+    assert detail["external_call"] is False
+    # The connection is still what it is; the answer is not claimed for it.
+    assert detail["fields"]["provider"] == "deepseek"
+
+
+def test_a_real_provider_answer_carries_no_local_executor(setup):
+    """The ordinary path is unchanged: nothing to report, nothing reported."""
+    service, ctx, *_ = setup
+    model = connected(setup)
+    pending = task(setup, model, key="ordinary-provider-attribution")
+    service.execute(context=ctx, task_id=pending["id"])
+    detail = service.task_detail(context=ctx, task_id=pending["id"])
+    assert detail["actual_model"] == "served-model"
+    assert detail["executor"] is None
+    assert detail["external_call"] is None
