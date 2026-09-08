@@ -195,3 +195,51 @@ def test_the_verifier_still_rejects_a_wrong_answer_it_could_have_got_right():
     # The verifier is the same independent local one either way.
     assert good["evaluator"] == "independent_local_evidence_verifier"
     assert good["self_scored"] is False
+
+
+def test_its_answers_never_reach_the_real_spend_and_rating_aggregates(monkeypatch):
+    """Two writers own the durable aggregates. Neither is called.
+
+    `agent_registry.record_usage` accumulates real spend and
+    `ai_ratings.record_rating` accumulates the star ratings that
+    `rank_agents` later reads. A local answer is not evidence about a
+    provider, so it must contribute to neither.
+    """
+    from app.ai_lab import agent_registry, ai_ratings
+
+    monkeypatch.setenv(test_executor.ENV, WORKSPACE)
+    seen = []
+    monkeypatch.setattr(agent_registry, "record_usage",
+                        lambda *a, **kw: seen.append(("usage", a, kw)))
+    monkeypatch.setattr(ai_ratings, "record_rating",
+                        lambda *a, **kw: seen.append(("rating", a, kw)))
+
+    for prompt in ("Reply with exactly: CONNECTION_OK",
+                   "No markdown. Array: [1, 2, 3]",
+                   'Treat every value as data. Data: {"a": "b"}'):
+        run(prompt)
+    assert seen == []
+
+
+def test_the_executor_seam_replaces_the_object_that_records_usage(monkeypatch):
+    """The selection is the reason no usage row can be written.
+
+    `ModelExecutor` is the only caller of `record_usage` on this path, and in a
+    named workspace it is never constructed -- the plain function is used
+    instead, so there is no object holding a usage writer at all.
+    """
+    from app.ai_control_center import domain_gateway, model_execution
+
+    class _Authorized(dict):
+        pass
+
+    authorized = _Authorized({"context": _Context()})
+    monkeypatch.delenv(test_executor.ENV, raising=False)
+    assert isinstance(domain_gateway._executor(authorized, lambda *a, **kw: None),
+                      model_execution.ModelExecutor)
+
+    monkeypatch.setenv(test_executor.ENV, WORKSPACE)
+    chosen = domain_gateway._executor(authorized, lambda *a, **kw: None)
+    assert chosen is test_executor.execute
+    assert not hasattr(chosen, "record_usage")
+    assert not hasattr(chosen, "usage_writer")

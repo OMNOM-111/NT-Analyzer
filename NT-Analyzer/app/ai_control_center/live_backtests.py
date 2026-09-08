@@ -274,7 +274,9 @@ class LiveBacktestService:
     def _verification(self, job_id, status, path, job):
         reasons, checksums, result, trades = [], {}, {}, {}
         if status not in _TERMINAL:
-            return {"passed": False, "state": "pending", "reasons": [], "source_checksums": {}}, result, trades
+            # Nothing has been read yet, so nothing about the origin is refuted.
+            return ({"passed": False, "state": "pending", "reasons": [], "source_checksums": {},
+                     "synthetic": False, "source_confirmed": True}, result, trades)
         filename = "error.json" if status == "failed" else "result.json"
         try:
             result, checksums[filename], _ = self._source(path, filename)
@@ -331,9 +333,16 @@ class LiveBacktestService:
         except (ContractError, TypeError, AttributeError) as exc:
             reasons.append(getattr(exc, "code", "live_backtest_result_structure_invalid"))
         state = "verified" if status == "done" and not reasons else "rejected" if status == "done" else status
+        # Provenance is a finding, not a folder. Content that claims NinjaTrader
+        # and fails that exact check is not described as a NinjaTrader result
+        # anywhere downstream -- the reason it was refused would otherwise be
+        # contradicted by the sentence printed beside it. A genuine run whose
+        # evidence is merely damaged keeps its confirmed origin.
+        source_confirmed = "ninjatrader_source_required" not in reasons
         return {"passed": state == "verified", "state": state, "reasons": list(dict.fromkeys(reasons)),
                 "source_checksums": checksums, "source_kind": "ninjatrader_report",
-                "result_sha256": checksums.get(filename), "synthetic": False,
+                "result_sha256": checksums.get(filename), "synthetic": not source_confirmed,
+                "source_confirmed": source_confirmed,
                 "model_quality_assessed": False}, result, trades
 
     def get(self, *, context, source_scope, chat_scope, admit, job_id):
@@ -384,27 +393,34 @@ class LiveBacktestService:
                      + ". Profit Factor отчёта: " + str(metrics.get("profit_factor_after_commission", metrics.get("profit_factor", "не указан"))) + ".")
         if verification["reasons"]:
             text += "\nПроверка исходных файлов не пройдена: " + ", ".join(verification["reasons"]) + "."
-        text += "\nОригинальный отчёт: " + report_url + "\nЭто результат NinjaTrader; оценка качества LLM не выполнялась."
+        text += "\nОригинальный отчёт: " + report_url
+        text += ("\nЭто результат NinjaTrader; оценка качества LLM не выполнялась."
+                 if verification.get("source_confirmed", True) else
+                 "\nПроисхождение не подтверждено: содержимое не описывает запуск NinjaTrader "
+                 "и результатом NinjaTrader не считается. Оценка качества LLM не выполнялась.")
         updated = summary.get("finished_at_utc") or summary.get("heartbeat_at_utc") or job.get("created_at_utc")
         task = {"id": marker["task_id"], "task_id": marker["task_id"], "title": title, "status": mapped,
                 "stage": stage, "source_status": status, "progress_pct": 100 if status in _TERMINAL else None,
                 "lead": dict(_PERSONA), "participants": [dict(_PERSONA)], "created_at": job.get("created_at_utc"),
                 "updated_at": updated, "summary": stage, "task_class": "ninjatrader_historical_backtest",
-                "synthetic": False, "source": "ninjatrader", "source_kind": "ninjatrader_report", "executor": "NinjaTrader Strategy Analyzer",
+                "synthetic": verification["synthetic"], "source_confirmed": verification.get("source_confirmed", True),
+                "source": "ninjatrader", "source_kind": "ninjatrader_report", "executor": "NinjaTrader Strategy Analyzer",
                 "source_job_id": job_id, "report_url": report_url, "evidence_count": len(verification["source_checksums"]),
                 "cost_usd": None, "paid_calls": 0, "observed_score_pct": None,
                 "correlation_id": marker.get("correlation_id"), "conversation_id": marker.get("conversation_id"), "dependencies": []}
         artifacts = [{"id": job_id + ":" + filename, "title": "NinjaTrader · " + filename, "mime_type": "application/json",
-                      "sha256": digest, "synthetic": False, "source_kind": "ninjatrader_report",
+                      "sha256": digest, "synthetic": verification["synthetic"], "source_kind": "ninjatrader_report",
+                      "source_confirmed": verification.get("source_confirmed", True),
                       "url": "/api/jobs/" + job_id + ({"trades.json": "/trades", "bars.json": "/bars"}.get(filename, "")),
                       "summary": "SHA256 относится к исходному файлу; API отдаёт существующее представление отчёта."}
                      for filename, digest in verification["source_checksums"].items()]
         activity = [{"type": "ninjatrader.job_submitted", "title": "Задание опубликовано в существующую очередь NinjaTrader",
-                     "time": task["created_at"], "synthetic": False},
-                    {"type": "ninjatrader." + status, "title": stage, "time": updated, "synthetic": False}]
+                     "time": task["created_at"], "synthetic": verification["synthetic"]},
+                    {"type": "ninjatrader." + status, "title": stage, "time": updated,
+                     "synthetic": verification["synthetic"]}]
         return {"task": task, "task_id": marker["task_id"], "activity": activity, "timeline": activity,
                 "contributions": [{"persona": dict(_PERSONA), "status": "accepted" if verification["passed"] else "submitted",
-                                   "summary": stage, "synthetic": False}] if status in _TERMINAL else [],
+                                   "summary": stage, "synthetic": verification["synthetic"]}] if status in _TERMINAL else [],
                 "outcomes": [{"status": verification["state"], "summary": stage}] if status in _TERMINAL else [],
                 "evaluations": [verification] if status in _TERMINAL else [], "verification": verification,
                 "artifacts": artifacts, "decisions": [], "result_text": text,
