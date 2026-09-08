@@ -103,7 +103,7 @@ this check.
 
 Full detail, including the implemented / API connected / user scenario verified /
 blocker table, is Part D of
-[the review and handoff](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md).
+`docs/current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md`.
 
 ## Not done
 

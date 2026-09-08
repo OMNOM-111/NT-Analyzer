@@ -1,5 +1,26 @@
 # Agent World — implementation status
 
+## Active unified integration intake — 2026-09-08
+
+Current branch: `codex/agent-world-unified-acceptance`, based on the complete
+`claude/agent-world-integration` source `f0bafe8ea46653827bc836afcb2197964390cf08`.
+The preserved late handoff includes Parts C/D/E and the withdrawn fixture claims.
+See the [intake manifest](../changelog/2026-09-08-agent-world-integration-takeover.md).
+Both earlier mechanisms and review branches are already ancestors; do not repeat
+their integration. Canonical status: **IN DEVELOPMENT**. Full acceptance remains
+open for functional gaps as well as separate owner-dependent real scenarios.
+The 4537/110 full result covers `92436698`, not this latest executable state.
+
+Root is the sole integrator. Original worktrees and owner Local 8765 remain
+untouched; read-only health confirms code `2b6d0112`. The old isolated URLs below
+are historical launch receipts, not a claim of a currently available test server.
+Next: short checkpoint gates, then isolated full-Aurora acceptance and remaining
+non-trading delegation/Persona/connection/memory/automation work.
+
+**Sections below are preserved dated receipts pending consolidation.** Part E
+supersedes Part D/C on PostgreSQL runtime, automation and provenance. Their
+superseded statements must not be treated as today's implementation gaps.
+
 Canonical program status: `IN DEVELOPMENT`. This is the single current handoff.
 The owner authorized continued implementation through an integrated clickable
 Local review, not only two E2E demonstrations. `LOCAL VISUAL REVIEW AVAILABLE: YES`
@@ -35,6 +56,52 @@ Nothing in this set closes any programme-level item. Separate ordinary-user
 registration and key, multi-user sharing and revocation, and permanent Social
 publication remain unverified, `OWNER ACCEPTANCE READY` remains **NO**, and
 Local 8765 was not switched, not restarted and not read.
+
+## Provenance, delegation and PostgreSQL at runtime — 2026-09-07
+
+Three claims this document made are now different, and one of them is a
+withdrawal.
+
+**Withdrawn.** The live browser evidence of an automatically verified
+NinjaTrader backtest on the isolated instance is **not valid evidence of a real
+result**. The fixture behind it declared `execution_source: "ninjatrader"` with
+no test marker, so the verifier accepted it as a real run; the verifier behaved
+correctly and the fixture was dishonest. Both seeded reports are now marked as
+test artifacts and are refused with `ninjatrader_source_required`. The
+intact-versus-damaged distinction they were meant to illustrate is unaffected —
+it is pinned by tests that build their own evidence. Full record in Part E1 of
+the [review and handoff](AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md).
+
+**PostgreSQL is no longer only a test-suite claim.** A second instance was run
+end to end with `STRATFORGE_AGENT_WORLD_STORAGE=postgres` against the disposable
+database: work created through the normal API, executed by its own worker,
+persisted, read back unchanged after a restart, with 29 records / 83 revisions /
+65 events / 28 artifacts visible to the unprivileged application role and none
+of them reachable from another workspace. No SQLite Agent World file is ever
+created in that data root. The sentence above — "no instance has yet been run
+with `STRATFORGE_AGENT_WORLD_STORAGE=postgres`" — no longer holds.
+
+**Delegation is a functional gap, not only an external dependency.** The
+delegated-work graph is implemented and pinned (three levels, typed
+dependencies, one provider call per node, a collected controller view), but its
+root is hard-wired to a verified *application* result: `delegation._seal_node`
+requires an `application_request` checkpoint and an `application_evaluation`
+outcome for `parent_index == -1`. Delegating from an ordinary verified
+non-trading task is refused with `handoff_verified_source_required`. Adding a
+second root kind is a change to a security-sensitive contract and has not been
+made. The trading-facts path stays blocked on a permitted real NinjaTrader
+result and its guard was not weakened.
+
+Two provenance defects were fixed along the way: a report that failed the
+NinjaTrader source check was still described as a NinjaTrader result in the
+message, the task, its artifacts, its activity and its contribution; and a
+locally computed answer was attributed to the connection's provider in the task
+inspector. Both now follow the finding rather than the configuration.
+
+`LOCAL VISUAL REVIEW AVAILABLE`: **YES** — `http://localhost:8802` (SQLite) and
+`http://localhost:8803` (PostgreSQL), each with its own data root, synthetic
+owner id and queue. `OWNER ACCEPTANCE READY`: **NO**. Local 8765 was not
+switched, not restarted and not verified.
 
 ## Integration branch — merged mechanisms, 2026-09-07
 

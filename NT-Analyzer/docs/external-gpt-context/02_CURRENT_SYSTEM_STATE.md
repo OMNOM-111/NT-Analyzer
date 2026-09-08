@@ -17,6 +17,19 @@
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
+## Active integration — 2026-09-08
+
+Agent World source is now `codex/agent-world-unified-acceptance`, from combined
+`f0bafe8ea46653827bc836afcb2197964390cf08` plus preserved late Claude documents.
+See the [intake manifest](../changelog/2026-09-08-agent-world-integration-takeover.md).
+Mechanisms/review are already integrated. Status remains IN DEVELOPMENT: ordinary
+non-trading delegation root and other full-program gaps remain; latest full
+4537/110 result is historical code `92436698`, not the new source. Part E's
+PostgreSQL runtime evidence and fixture-claim withdrawal are retained separately.
+Local 8765 still serves `2b6d0112`, without an activation. The inherited metadata
+and snapshot describe earlier Local/deployment evidence, not today's integration
+HEAD. No new release/Production verification, provider call or budget is authorized.
+
 ## New mechanisms WIP checkpoint — 2026-09-06
 
 Saved WIP source: `f9b9444524aa497781fe3de7254d1bfb0e3b062c` (37 files;

@@ -133,7 +133,7 @@ gate, DSN restriction or database protection was weakened to get there.
 ## Verification
 
 Full detail, with the browser evidence and the four separated statuses, is in
-Part C of [the review and handoff](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md).
+Part C of `docs/current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md`.
 
 ## Not done
 

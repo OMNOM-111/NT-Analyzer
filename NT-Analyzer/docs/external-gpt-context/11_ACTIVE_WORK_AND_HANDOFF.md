@@ -37,6 +37,20 @@
   `db85773f` and the two that differ are changelogs, so the review binds to
   that commit.
 
+## Resume point — 2026-09-08
+
+Continue in `codex/agent-world-unified-acceptance` from combined source
+`f0bafe8ea46653827bc836afcb2197964390cf08`, not from the old mechanisms branch.
+The [intake manifest](../changelog/2026-09-08-agent-world-integration-takeover.md)
+accounts for both executors, the stable five-file documentation delta, excluded
+runtime state and the already ported 73 flag cases. Root owns shared integration
+files. Original worktrees, PR bases and Local 8765 are unchanged.
+Next: preserve checkpoint, reproduce isolated full-Aurora/runtime acceptance,
+then finish the non-trading delegation root and other canonical program gaps.
+Keep real/synthetic evidence separate and Part E's withdrawn claims visible.
+The dated snapshot is historical; its old missing-mechanism/UI-freeze
+instructions do not override the owner's new sole-integrator mandate.
+
 ## New mechanisms WIP checkpoint — 2026-09-06
 
 Saved WIP source: `f9b9444524aa497781fe3de7254d1bfb0e3b062c` (37 files;

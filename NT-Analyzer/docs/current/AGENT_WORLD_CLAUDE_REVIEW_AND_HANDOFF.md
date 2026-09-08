@@ -1302,3 +1302,461 @@ answers those routes; whether delegation should gain a domain surface or stay
 out of the API; and whether the `ai_automation` capability deserves a control in
 the panel rather than only an owner route. None of them blocks the branch; all
 three change what a user can reach.
+
+# Part E — a correction, the provenance boundary, and PostgreSQL at runtime
+
+## E1. Withdrawn: the live "automatically verified" backtest evidence
+
+**What was claimed.** Part C6 presented a live table read from the DOM of the
+isolated instance, in which one of two seeded backtests showed a 100% progress
+bar and the status «Автоматическая проверка завершена». The surrounding text
+offered the pair as a live demonstration that *evidence*, not task type, decides
+the outcome, and the counters quoted alongside it («Результаты 7», «Ждут
+проверки 3») counted those two rows.
+
+**Why it is not valid evidence of a NinjaTrader result.** The seeded fixture's
+`result.json` carried `source.execution_source: "ninjatrader"` and no test
+marker. The verifier therefore did what it is supposed to do with a report that
+says it came from NinjaTrader and is internally consistent: it verified it. The
+verifier was not wrong; the fixture was dishonest about its origin, and my
+report repeated the fixture's claim.
+
+**What replaces it.** Both seeded reports were re-marked at the source —
+`execution_source: "isolated_test_report"`, `synthetic: true`, and a note saying
+NinjaTrader did not run. Read back through the normal API on the current code:
+
+| Task | Status | `verification.reasons` |
+| --- | --- | --- |
+| `ae38c30a` (was reported as verified) | `awaiting_review` | `["ninjatrader_source_required"]` |
+| `d39f2e70` (damaged evidence) | `awaiting_review` | `["ninjatrader_source_required", "historical_bars_sha_mismatch"]` |
+
+So the specific row-level claims of C6 for the two backtests are withdrawn,
+and the counter figures quoted with them go with it. There is now **no live
+evidence of a verified NinjaTrader result on this branch**, and there will not
+be one until a permitted real run exists (E5).
+
+**What remains valid, and is independent of those two rows.** The intact-versus-
+damaged distinction never rested on the live fixtures; it is pinned by tests
+that construct the evidence themselves:
+
+| Still valid | Where |
+| --- | --- |
+| A `done` job is not verified unless every artifact matches — 13 separate mutations, each with its own reason code | `test_done_is_not_verified_without_matching_real_artifacts` |
+| A completed report verifies actual sources and invents no score | `test_completed_report_verifies_actual_sources_with_no_invented_score` |
+| A genuine run with damaged evidence keeps its confirmed origin and still fails | `test_a_real_run_with_damaged_evidence_keeps_its_confirmed_origin` (new) |
+| One projection basis; a row with no result is never reported as complete | `test_agent_world_status_presentation` (11 cases) |
+| Accept/reject over the API with `expected_revision` CAS, no double-apply | `test_agent_world_manual_review` (7 cases) |
+
+The C6 statements about *presentation* — metric and panel heading reading the
+same field, no raw enum rendered as a sentence, no `<progress>` element on a row
+without a result — are also unaffected: they were about rows of every kind, and
+they are pinned by tests rather than by those two fixtures.
+
+### Where else those two results were used
+
+Both task ids and both job ids were searched across the whole isolated data
+root, and every `sf_aw_`/`aw_` table of its Agent World store.
+
+| Surface | Found? | Action |
+| --- | --- | --- |
+| Agent World store — evaluations, decisions, outcomes, contributions, executions | **no** — 0 rows in `aw_records`, `aw_revisions`, `aw_events` | nothing to correct |
+| Ratings (`star_ratings.json`), `rank_agents` aggregates | **no** — this instance has no ratings registry at all | nothing to correct |
+| Court, memory, knowledge cards, chief reports, postmortems | **no** — those registries are empty in this instance | nothing to correct |
+| Delegation | **no** — no controller or node ever referenced them | nothing to correct |
+| Orchestrator conversation `AW-adapter-review` | **yes** — 4 messages | corrected by the ordinary mechanism, below |
+| Conversation index `work_state` | **yes** | recomputed to `blocked` by the ordinary mechanism |
+| `reports/report_numbers.json` | **yes** — display numbers 1 and 2 | asserts nothing about verification; left as is |
+
+The conversation correction was made **by the system, not by editing history**.
+Re-marking the reports caused the projection to recompute; messages [2] and [3]
+were appended carrying the refusal reasons, and the conversation's `work_state`
+became `blocked` with `work_detail` naming `ninjatrader_source_required`. The
+earlier message [1] — «Отчёт проверен» — is still there, superseded rather than
+erased, which is what an audit trail is for.
+
+No owner data was touched. Both instances used their own disposable roots under
+the scratchpad; nothing in this session writes to the project's `data/`
+directory, and the modifications standing there were already recorded in this
+session's opening `git status`.
+
+## E2. Why the unmarked fixture passed, and the defect that came with it
+
+### The boundary
+
+The fixture was written **directly into the trusted store**: the seeding script
+moved the job folder to `jobs/done/<job_id>/` and wrote `result.json`,
+`bars.json` and `trades.json` beside it. That is filesystem access to the
+server's data root — the same class of access the local NinjaTrader bridge has,
+and by construction the same class of access as the process serving the API.
+
+It is **not** reachable through an ordinary user or model entry. Probed live on
+the isolated instance, as the owner, with a valid CSRF token and session:
+
+| Attempt | Result |
+| --- | --- |
+| `POST /api/connector/v1/commands/result` with a forged `execution_source: ninjatrader` result | `401 invalid_session` |
+| `POST /api/jobs/import` | `404` |
+| `POST /api/reports/import` | `404` |
+| `POST /api/backtests/import` | `404` |
+| `POST /api/jobs/<id>/result` | `404` |
+
+The one ingress that exists requires a Connector **device** session token from
+an enrolled installation, a command that belongs to that installation *and*
+workspace, and a matching idempotency key — `connector_protocol.submit_result`
+checks all four before anything is written. There is no import or upload route.
+
+So this is a documented boundary, not an unauthenticated bypass, and the fixture
+was fixed rather than a vulnerability declared. What follows is what was
+genuinely wrong.
+
+### The defect: provenance was asserted, not concluded
+
+Content that claimed NinjaTrader and failed **exactly that check** was still
+described as a NinjaTrader result everywhere downstream. The refusal and the
+label sat in the same view and contradicted each other:
+
+```
+Проверка исходных файлов не пройдена: ninjatrader_source_required.
+Это результат NinjaTrader; оценка качества LLM не выполнялась.   ← asserted anyway
+```
+
+and the task, its artifacts, its activity entries and its contribution all
+carried a hard-coded `synthetic: False`.
+
+Fixed in `63a5f899`. `LiveBacktestService._verification` now returns
+`source_confirmed`, false exactly when `ninjatrader_source_required` is among
+the reasons, and `synthetic` follows it. The message, the task DTO, the
+artifacts, the activity and the contribution all read that one finding. On the
+live instance the same two reports now say:
+
+```
+Проверка исходных файлов не пройдена: ninjatrader_source_required.
+Происхождение не подтверждено: содержимое не описывает запуск NinjaTrader
+и результатом NinjaTrader не считается. Оценка качества LLM не выполнялась.
+```
+
+with `task.synthetic: true`, `task.source_confirmed: false`, and every artifact
+marked `synthetic: true`.
+
+Damaged evidence and a refuted origin stay **separate findings**: a genuine
+NinjaTrader run whose bars no longer match their fingerprint keeps
+`source_confirmed: true` and still fails with `historical_bars_sha_mismatch`.
+No existing guard was relaxed — `ninjatrader_source_required` fires on exactly
+the conditions it did before.
+
+Pinned by six new cases in `tests/test_agent_world_live_backtests.py`
+(63 in that file, was 57).
+
+### The test executor's outputs, not just its imports
+
+Having no rating imports is a structural argument; these check the behaviour.
+Two functions own the durable aggregates — `agent_registry.record_usage`
+(spend) and `ai_ratings.record_rating` (the star ratings `rank_agents` reads).
+Both were replaced with spies while the executor answered its three rubrics:
+neither was called. And the reason is structural: `ModelExecutor` is the only
+caller of `record_usage` on this path, and in a named workspace
+`domain_gateway._executor` returns the plain function instead, so no object
+holding a usage writer is ever constructed.
+
+`tests/test_agent_world_local_test_executor.py` — 21 cases, was 19.
+
+### A second attribution defect, found while checking the first
+
+The task inspector's «Исполнитель и происхождение результата» block showed:
+
+```
+Запрошенная модель      deepseek-v4-flash
+Model ID от провайдера  agent-world-local-test-executor-v1
+Провайдер               deepseek
+```
+
+for an answer computed on this machine with no call of any kind. A reader had
+no way to tell that from DeepSeek having replied — which is exactly the claim
+this whole pass exists to prevent, and it is the reason a passing connection
+check must never be read as the provider being reachable.
+
+The receipt already knew better: `test_executor.execute` returns `executor` and
+`external_call: False`. `ModelService._clean_receipt` dropped both, so nothing
+downstream could distinguish the two cases.
+
+Fixed in `f0bafe8e`. Both fields survive into the receipt, the evaluation proof
+and the task detail, and the page now reads:
+
+```
+Провайдер          deepseek — не вызывался
+Ответ получен от   agent-world-local-test-executor-v1
+
+Ответ вычислен локально: внешнее обращение не выполнялось, поэтому этот
+результат ничего не говорит о доступности провайдера.
+```
+
+No admission, verification or `synthetic` semantics were changed — this is
+about what the same result is reported as. Two cases pin it: a local answer
+keeps the connection's provider on the connection while refusing to claim the
+answer for it, and an ordinary provider answer reports no local executor at all.
+
+### An operational defect found in my own harness
+
+While checking the fix above, a task ran on the isolated instance and produced a
+receipt **without** the new fields, on a process that demonstrably had the new
+code. The cause was the launcher, not the application: the worker is a spawned
+subprocess that re-imports `__main__`, and `run_isolated_8802.py` started the
+server by `exec`-ing another launcher's source through a *relative* path. After
+the server's `chdir`, the child could not find that file, so **no worker
+started** — and the queue was being served by an orphaned worker left over from
+an earlier instance, running that instance's older code.
+
+Three such orphans were alive at once, from instances stopped hours earlier, all
+still polling the data roots they were started against. They have been stopped,
+and both launchers are now real modules with no `exec`.
+
+This does not change any finding already recorded, because every one of them
+rests either on an HTTP read served by the current process or on a run made
+while that instance's own worker was live. It is recorded because it is exactly
+the kind of thing that quietly turns a verification into a fiction, and because
+anyone reproducing this build should start it with the launchers as they now
+stand rather than the earlier ones.
+
+## E3. Coordinator and delegation, as separate statuses
+
+### The Coordinator commissioning new work — through the normal entry
+
+SF Chat, with nothing to start from: «Толик, запусти бэктест AWRegisteredStrategy
+на MNQ 09-26, 5m, с 2026-08-24 по 2026-08-29, Period=5».
+
+| Step | State | Evidence |
+| --- | --- | --- |
+| New commission created | **yes** | `POST /api/ai-lab/orchestrator/message` → 200; new task `ba23b0e7`, `task_class: backtest_spec` |
+| Specialist chosen | **yes** | selected by `application_role`; refused `application_model_selection_ambiguous` while two connections sat on one persona |
+| Plan checked | **yes** | the server composed the specification, validated it again and did not trust the model's echo |
+| Job queued | **yes** | `awnt_9315fdc67d0c96759ef87a73f8ffcb73822a6dd92f6d28d3`, into the existing queue — no second queue |
+| Execution awaited | **yes** | `stage: awaiting_application` |
+| Verified result received | **no** | the marked test report is refused: `ninjatrader_source_required` → the plan task ends `failed / application_backtest_unverified` |
+| Onward handoff and collection checked | **no** | never reached — there is no verified source to hand on |
+
+One `backtest_spec` task on one specialist. That is a commissioning path, not a
+delegated-work graph, and the matrix below does not treat it as one.
+
+### The delegated-work graph: implemented, but it has only one kind of root
+
+The graph itself exists and is pinned:
+`test_explicit_three_level_chain_uses_real_claims_typed_dependencies_and_outcomes`
+builds three nodes at depths 1/2/3, each a real task carrying a typed dependency
+on its parent and the root's correlation id, each reaching `succeeded`, exactly
+one provider call per node, collected into a controller view that records
+`human_accepted: False` and `professional_quality_assessed: False`. The whole
+suite is 21 cases, all passing. Interior nodes are ordinary non-trading work —
+`_verified` requires `rubric_key == "extract_facts"`.
+
+**The gap is the root, and it is a functional gap, not an external dependency.**
+`delegation._seal_node` for `parent_index == -1` requires the root task's
+checkpoint to carry an `application_request` and its outcome to carry an
+`application_evaluation`; `result_handoff._seal` refuses the same condition with
+`handoff_verified_source_required`. There is no entry that roots a graph at an
+ordinary verified model task, or at an Intent/Task the Coordinator commissioned.
+
+Demonstrated live rather than only read: delegating from a **verified,
+non-trading** `json_arithmetic` task on the isolated instance —
+
+```
+POST …/domains/automation/{task}/delegate  →  403 handoff_verified_source_required
+```
+
+So on safe non-trading work the existing contract does **not** support the
+general scenario, and the reason is a missing root kind in the code. Adding one
+means a second root with its own equally strict evidence rule inside
+`delegation`/`result_handoff` — a change to a security-sensitive contract that
+this pass does not make, and that must not be done by loosening the existing
+rule.
+
+For trading facts specifically, `ninjatrader_source_required` stays as it is.
+The positive path stays **blocked** until a permitted real result exists; no
+attempt was made to obtain a PASS by changing a synthetic report's origin.
+
+### The commissioned job cannot surprise the owner's NinjaTrader
+
+| Check | Result |
+| --- | --- |
+| Where the job lives | only in the isolated data root, `…/scratchpad/aurora-integration-data/jobs/` |
+| Its state | `done` — terminal |
+| Jobs waiting to be executed on this instance | **0** in `queued`, `running`, `pending` (3 in `done`, 0 elsewhere) |
+| Connector devices enrolled on this instance | **none** — no installation record exists |
+| The instance's whole connector audit log | one line: my own probe, refused `401 invalid_session` |
+| The owner's queue and port 8765 | not used, not read for work, not switched, not restarted |
+
+A Connector reaches jobs through the server it is enrolled against. Nothing is
+enrolled here, and there is nothing queued to hand out.
+
+## E4. PostgreSQL as the runtime store, on its own instance
+
+A second instance was started on port **8803** with its own data root
+(`aurora-pg-data`) and `STRATFORGE_AGENT_WORLD_STORAGE=postgres` pointed at the
+disposable database `aw_disposable_b089c29ad967` on `127.0.0.1:56306`. The
+owner's Local on 8765 and the SQLite instance on 8802 were untouched. No DSN or
+credential appears in any log, report or commit.
+
+| Step | Result |
+| --- | --- |
+| Instance starts on `postgres` storage | yes — `agent world storage: postgres`, own data root, own worker |
+| Persona and connection created through the normal API | `4a1de275`, `7c4bc3f5` |
+| Connection check run as an ordinary task | `7c8c0063` → `verified_automatically`, `connected=true` |
+| Safe non-trading task executed by the worker | `37756e34` `json_arithmetic` → `awaiting_review`, every verifier check passed, `cost_usd 0.0` |
+| Result persisted with its independent evaluation | yes — 1 evaluation, `actual_model: agent-world-local-test-executor-v1` |
+| Instance stopped and restarted | yes — new process, empty caches |
+| History read back after restart | same task, same status, same result text; connection still `connected/active`; persona still `active`; both tasks in the overview |
+| Rows actually in PostgreSQL | `sf_aw_records` 29, `sf_aw_revisions` 83, `sf_aw_events` 65, `sf_aw_artifacts` 28, `sf_aw_meta` 1 — read back as the application role |
+| Hidden SQLite fallback | **none** — `ai_lab/agent-world.sqlite3` never appears in that data root, before or after the restart |
+| Application role privileges | `stratforge_app`, `rolsuper=false`, `rolbypassrls=false` |
+
+Cross-workspace, read back with exactly the session settings the real
+transaction sets (`service_scope`, `workspace_id`, `aw_environment`,
+`aw_user_uuid`):
+
+| Attempt as the application role | Result |
+| --- | --- |
+| Scoped to its own workspace | 29 / 83 / 65 / 28 rows visible |
+| Scoped to `ws_someone_elses_workspace_0001` | **0 rows** in every table |
+| Scope cleared entirely | **0 rows** — clearing does not widen the view |
+| Insert a row for a foreign workspace | refused: `InsufficientPrivilege — new row violates row-level security policy for table "sf_aw_events"` |
+
+The API layer never accepts a client-supplied workspace at all: the scope is
+derived server-side from the session and checked with
+`workspaces.require_workspace_writer`, so there is no request shape in which a
+foreign workspace can be named.
+
+**Selection is explicit and has no fallback**, now pinned rather than asserted:
+an unset backend gives SQLite; `postgres` without a DSN raises
+`agent_world_postgres_not_configured`; `mysql`, `sqlite3`, `POSTGRESQL`, `none`
+and `memory` each raise `agent_world_storage_backend_invalid`; a configured DSN
+produces the PostgreSQL repository and never the SQLite one. Falling back would
+be the worst available outcome — the instance would keep answering, from a
+different database than the operator configured, with nothing in the response to
+say so.
+
+No guard was relaxed to combine the local test executor with PostgreSQL storage:
+the executor's own conditions (Development, not a preview sandbox, an exactly
+named workspace) are unchanged, and the storage mode is an independent
+environment variable.
+
+## E5. What a real NinjaTrader check would need, at minimum
+
+Either would close it; neither is done without your say-so.
+
+1. **An existing result that already fits the scope.** A completed run of a
+   registered strategy whose `job.json` matches the request the plan produced —
+   instrument, timeframe, period, execution settings and final parameters — with
+   `bars.json`, `trades.json` and an intact `historical_data_fingerprint`. It
+   must be verified *in the workspace that owns it*: copying an owner result
+   into the synthetic workspace under a substituted owner or origin is exactly
+   the falsification this whole part is about, and would invalidate the check it
+   was meant to prove.
+2. **One permitted run.** A single backtest on a machine you nominate, of a
+   strategy you nominate, dispatched from an instance you nominate. Cheap,
+   non-trading, and it produces the one artifact the verifier cannot be given
+   any other way.
+
+Until one of those exists, the verified-facts handoff stays blocked, and so does
+the delegation path that begins with it. The working Connector is not
+reconfigured for this without separate agreement.
+
+## E6. Where each mechanism stands now
+
+Same four columns as D5, and the same rule: «пользовательский сценарий
+проверен» means it was walked end to end on the isolated instance, not that a
+test passed. Rows unchanged since D5 are marked *(as D5)*.
+
+| Mechanism | Реализован | API подключён | Пользовательский сценарий проверен | Остаётся blocker |
+| --- | --- | --- | --- | --- |
+| Task lifecycle projection | yes | yes | yes *(as D5)* | — |
+| Manual human review | yes | yes | yes *(as D5)* | — |
+| Evidence integrity on acceptance | yes | yes | yes *(as D5)* | — |
+| Source provenance marking | **yes (new)** | yes | **yes** — refused report marked along the whole path: artifact → verification → task → message | — |
+| Automation management in the panel | yes | yes | yes — grant → routine consent → schedule → stop; three conditions shown apart | — |
+| Scheduler | yes | yes | yes — self-started by the worker, verified result, stop confirmed | no provider result: this instance has no approved external connection |
+| Router V2 | yes | yes | yes — positive (2 eligible, the routed model received the call) and negative (ceiling → `blocked`) | no real external comparison was made or claimed |
+| Execution V2 / Deviation | yes | yes | partly *(as D5)* | no live external provider execution |
+| **Coordinator commissions new work** | yes | yes | **partly** — request → specialist → plan → queued; stops at the source check | needs one permitted real result (E5) |
+| **Delegated-work graph** | **partly** — the graph is implemented and pinned; it has only one kind of root | yes — `delegate` exists and refuses correctly | **no** | **functional gap:** no root for an ordinary verified task or a commissioned Intent/Task. Separately, no verified trading source |
+| PostgreSQL / RLS repository | yes | yes | **yes (new)** — an instance ran on it: create, execute, persist, restart, read back, cross-workspace refusal | — |
+| Local test executor | yes | n/a — not a user surface | yes — off by default, one named workspace, outputs reach no real aggregate | it attests the test connection, never a provider |
+| `mechanism_gateway` | no — exists nowhere | adapter stands in | n/a | yes — owned by GPT/Codex |
+| Hidden-tab boot | yes | n/a | yes *(as D5)* | — |
+
+Two things this matrix deliberately does **not** say. It does not treat
+"verified facts were handed over" as "the delegated-work graph is implemented" —
+the handover never happened, and the graph has a root it cannot yet reach. And
+it does not count anything a synthetic run touched as a real user connection or
+a real model evaluation: the executor's answers are excluded from every durable
+aggregate by construction, and that exclusion is now pinned by tests.
+
+### Programme items this set does not close
+
+Unchanged and still open: separate ordinary-user registration and key,
+multi-user sharing and revocation, permanent Social publication, real external
+model connections, real model evaluations, and owner acceptance of the whole
+programme. `OWNER ACCEPTANCE READY` remains **NO**. Local 8765 is untouched —
+not switched, not restarted; the only contact with it this pass was one
+read-only `GET /api/auth/status` to confirm it is still up.
+
+## E7. The isolated build, and two routes through it
+
+**Address:** `http://localhost:8802/ui/ai-command-center.html` — SQLite storage,
+the workspace `ws_owner_training_cc4a3af5ad8c`, the local test executor on.
+Start it with `scratchpad/run_isolated_8802.py`, which writes down every opt-in
+it applies.
+
+**PostgreSQL instance:** `http://localhost:8803/ui/ai-command-center.html` —
+same code, own data root, Agent World storage on the disposable database.
+Start it with `scratchpad/launch_aurora_pg.py`.
+
+### Route 1 — automation: allow, configure, get a result, stop
+
+1. AI Центр → drawer **Рутины** → tab **Автоматизация**.
+   «Условия автоматизации» shows the three conditions as three separate facts:
+   `ai_automation`, the schedule mechanism, and per-routine consent. The button
+   grants or revokes the capability, and only for an owner — an ordinary user
+   is told the owner decides, with no control offered.
+2. Drawer **Рутины** → a routine card. Consent is recorded per routine and
+   shown on the card («Принято»), with «Отклонить» to withdraw it; accepting a
+   routine does not switch automation on, and «Предложить рутину» only proposes
+   one.
+3. Back in **Автоматизация**: each grant card names what it authorises, whether
+   it is operational *right now*, its expiry, its per-call ceiling and the
+   device mode. «Расписания» below shows each run with its outcome.
+4. «Отменить» on a schedule stops it; the next occurrence does not run.
+
+### Route 2 — a composite task, its parts, and the grounds of the checks
+
+1. AI Центр → tab **Работа** → filter «Бэктест».
+   Both rows read `Задача · SYNTHETIC` and «Ожидает вашей проверки».
+2. Open a row. The inspector shows the badge «SYNTHETIC · локальный
+   обработчик», the sentence «Автоматическая проверка исходных файлов не
+   пройдена, поэтому принять этот результат нельзя», the block «Проверяемый
+   результат → Отклонено», and the artifact `NinjaTrader · job.json` itself
+   marked SYNTHETIC. The tabs **Evidence**, **Оценка** and **Артефакты** carry
+   the reasons and the SHA-256 of each source file.
+3. Filter «Арифметика» for the model tasks that did produce verified results:
+   the inspector's **Оценка** tab lists each check by key with its own
+   pass/fail, and the receipt names `agent-world-local-test-executor-v1` rather
+   than the connection's model — so a test observation can never be mistaken
+   for a provider's.
+
+A genuine multi-node delegated graph is **not** on this route, because it
+cannot be created yet — see E3.
+
+### Screenshots
+
+Captured from the running instance with a real browser, in
+`scratchpad/shots/`:
+
+| File | What it shows |
+| --- | --- |
+| `01-overview.png` | the overview: counters and panels agreeing on one basis |
+| `02-work-table-backtests.png` | both backtests as `Задача · SYNTHETIC`, «Ожидает вашей проверки», cost «не начислено» |
+| `03-backtest-inspector.png` | the refusal, the SYNTHETIC badge, «Отклонено», the marked artifact |
+| `04-work-table-model-tasks.png` | the model tasks and their states |
+| `05-model-task-inspector.png` | a verified model result with its checks |
+| `06-routines-drawer.png` | routines and their per-routine consent |
+| `07-automation-drawer.png` | the three conditions, the owner-only control, the grants and schedules |
+| `08-models-drawer.png` | connections and whether each was confirmed by an actual answer |
+| `09-executor-attribution.png` | «Провайдер: deepseek — не вызывался», «Ответ получен от: agent-world-local-test-executor-v1» |
