@@ -422,34 +422,61 @@ def guarded_preview_panels(http_preview, active, monkeypatch):
     return SimpleNamespace(request=http_preview, root=active["root"])
 
 
-def test_known_preview_domain_gets_are_explanatory_disabled_without_files_or_local_data(guarded_preview_panels):
+def _assert_no_preview_domain_records(root):
+    # Explicit manual CRUD now has its own isolated ledger. Opening its schema
+    # is not a seed, grant, model call or mutation of a user's domain records.
+    import sqlite3
+    path = root / "agent-world.sqlite3"
+    if path.exists():
+        with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as connection:
+            for table in ("aw_records", "aw_revisions", "aw_events", "aw_outbox", "aw_mutations", "aw_inbox", "aw_artifacts"):
+                assert connection.execute("SELECT COUNT(*) FROM " + table).fetchone()[0] == 0
+
+
+def test_preview_manual_domains_are_empty_and_execution_domains_remain_disabled(guarded_preview_panels):
+    from app.ai_control_center.preview_domains import SUPPORTED
     preview = guarded_preview_panels
     before = {str(path.relative_to(preview.root)) for path in preview.root.rglob("*") if path.is_file()}
     for domain in PREVIEW_DOMAINS:
         status, result = preview.request(gateway.PREFIX + "domains/" + domain)
         assert status == 200, (domain, result)
-        assert result["enabled"] is False and result["synthetic"] is True
-        assert result["status"] == "EXTERNAL BLOCKED"
-        assert result["items"] == result["actions"] == result["source_candidates"] == []
-        assert result["limitations"] and "Exit Preview" in result["message"]
+        assert result["synthetic"] is True
+        if domain in SUPPORTED:
+            assert result["enabled"] is True and result["items"] == []
+            assert result["capabilities"]["can_create"] is True
+            assert not result["capabilities"]["can_accept_suggestion"]
+        elif domain == "system":
+            assert result["enabled"] is True and len(result["items"]) == 1
+            assert result["items"][0]["actions"] == []
+            assert not result["capabilities"]["can_seed_preview_dataset"]
+            assert result["mechanisms"]["worker"] == "not_started"
+        else:
+            assert result["enabled"] is False and result["status"] == "EXTERNAL BLOCKED"
+            assert result["items"] == result["actions"] == result["source_candidates"] == []
+            assert result["limitations"] and result["message"]
         assert result["flags"]["AI_SOCIAL_PUBLISH_V1"] is False
         for owner_data in (USER_UUID, WORKSPACE, CONVERSATION, CHART_CONVERSATION):
             assert owner_data not in json.dumps(result)
-    assert not (preview.root / "agent-world.sqlite3").exists()
-    assert {str(path.relative_to(preview.root)) for path in preview.root.rglob("*") if path.is_file()} == before
+    _assert_no_preview_domain_records(preview.root)
+    added = {str(path.relative_to(preview.root)) for path in preview.root.rglob("*") if path.is_file()} - before
+    assert added <= {"agent-world.sqlite3", "agent-world.sqlite3-wal", "agent-world.sqlite3-shm"}
 
 
 @pytest.mark.parametrize("route", [
     "domains/models/new/connect", "domains/models/new/bind_existing", "domains/personas/new/create",
     "domains/memory/new/create", "domains/publications/new/prepare", "domains/publications/new/publish",
 ])
-def test_preview_real_domain_posts_are_forbidden_before_storage_or_external_effects(guarded_preview_panels, route):
+def test_preview_external_posts_denied_and_empty_manual_crud_is_invalid_without_records(guarded_preview_panels, route):
     preview = guarded_preview_panels
     before = {str(path.relative_to(preview.root)) for path in preview.root.rglob("*") if path.is_file()}
     status, result = preview.request(gateway.PREFIX + route, {"payload": {}, "idempotency_key": "preview-real-domain-denied"})
-    assert status in {403, 404}, result
-    assert not (preview.root / "agent-world.sqlite3").exists()
-    assert {str(path.relative_to(preview.root)) for path in preview.root.rglob("*") if path.is_file()} == before
+    if route in {"domains/personas/new/create", "domains/memory/new/create"}:
+        assert status == 409 and result["code"] == "invalid_domain_fields", result
+    else:
+        assert status == 403 and result["code"] == "agent_world_preview_domain_disabled", result
+    _assert_no_preview_domain_records(preview.root)
+    added = {str(path.relative_to(preview.root)) for path in preview.root.rglob("*") if path.is_file()} - before
+    assert added <= {"agent-world.sqlite3", "agent-world.sqlite3-wal", "agent-world.sqlite3-shm"}
 
 
 @pytest.mark.parametrize("suffix", ["models", "memory", "publications"])

@@ -1167,7 +1167,7 @@ _INFORMATIONAL_RATING_WEIGHT = 0.0001  # one hundredth of one percent
 _FULFILLMENT_AUTO_HOURS = 24
 _OPEN_ACTION_STATUSES = {
     "queued", "running", "in_progress", "approval_required",
-    "needs_input", "waiting_review",
+    "needs_input", "waiting_review", "awaiting_review",
 }
 _FAILED_ACTION_STATUSES = {"error", "blocked"}
 _TASK_ACTION_NAMES = {
@@ -1185,6 +1185,14 @@ def _agent_public_profile(agent_name: str = "", agent_id: str = "") -> Dict[str,
     """Resolve a visible job title for the message footer / participation chain."""
     from . import domain_agents
     key = str(agent_id or "").strip().lower()
+    try:
+        persona_id = str(uuid.UUID(key))
+    except (ValueError, TypeError, AttributeError):
+        persona_id = ""
+    if persona_id:
+        # A persisted Persona identity cannot be replaced by a legacy alias
+        # just because its owner chose the same visible name.
+        return {"agent_id": persona_id, "agent_name": str(agent_name or "").strip(), "title": ""}
     if key in domain_agents.PERSONAS:
         profile = domain_agents.PERSONAS[key]
         return {
@@ -1547,6 +1555,36 @@ def conversation_messages(conversation_id: str, limit: int = 200,
     return _read_conversation(limit, path=path, scope=scope)
 
 
+def conversation_message_for_speech(conversation_id: str, message_id: str,
+                                    *, scope: Dict[str, Any]) -> Dict[str, Any]:
+    """Read one saved assistant message without migration, ratings or writes.
+
+    The caller supplies an authenticated scope and validates its Persona/voice
+    authority. Speech never takes replacement text from the browser.
+    """
+    import copy
+    info = _normalize_conversation_scope(scope)
+    cid = _safe_conversation_id(conversation_id)
+    if (not info or not isinstance(conversation_id, str) or cid != conversation_id
+            or not isinstance(message_id, str) or not message_id or len(message_id) > 128):
+        raise ChiefAgentError("Сообщение для озвучивания не найдено.")
+    base = _conversations_index_path().parent
+    private_root = base / "orchestrator_scopes" / str(info["scope_id"])
+    if cid == DEFAULT_CONVERSATION_ID:
+        path = base / "orchestrator_workspace_system" / str(info["workspace_id"]) / "default.jsonl"
+        if not path.is_file():
+            path = private_root / "default.jsonl"
+    else:
+        path = private_root / "conversations" / f"{cid}.jsonl"
+    with _LOCK:
+        if path.is_symlink() or path.resolve() != path.absolute():
+            raise ChiefAgentError("Сообщение для озвучивания не найдено.")
+        rows = [row for row in read_jsonl(path) if row.get("message_id") == message_id]
+        if len(rows) != 1 or rows[0].get("role") != "assistant":
+            raise ChiefAgentError("Сообщение для озвучивания не найдено.")
+        return copy.deepcopy(rows[0])
+
+
 _RATING_ROLE_ALIASES = {
     "management": "chief_agent", "manager": "chief_agent",
     "secretary": "chief_agent", "deputy": "chief_agent",
@@ -1575,6 +1613,14 @@ def _rating_event_id(row: Dict[str, Any]) -> str:
     return f"message_rating:{workspace}:{message}"[:300]
 
 
+def _is_agent_world_message(row: Dict[str, Any]) -> bool:
+    """Ledger projections never acquire a second review or rating authority."""
+    return (str(row.get("source") or "").startswith("agent_world_") or any(
+        isinstance(action, dict) and str(action.get("name") or action.get("action") or "").startswith("agent_world_")
+        for action in (row.get("actions") or [])
+    ))
+
+
 def _record_message_rating(
     row: Dict[str, Any],
     score: int,
@@ -1582,6 +1628,8 @@ def _record_message_rating(
     source: str,
     weight: float = 1.0,
 ) -> None:
+    if _is_agent_world_message(row):
+        return
     from . import ai_ratings
 
     event_id = _rating_event_id(row)
@@ -1610,6 +1658,8 @@ def _record_message_rating(
 
 def _apply_fulfillment_side_effects(row: Dict[str, Any], fulfillment: str) -> None:
     """Slightly lower the visible rating when a task auto-fails without owner marks."""
+    if _is_agent_world_message(row):
+        return
     if fulfillment != "failed":
         return
     if row.get("feedback_source") == "owner" and row.get("rating") in {1, 2, 3}:
@@ -1641,6 +1691,9 @@ def _apply_auto_fulfillment(path: Path) -> None:
         changed = False
         for row in rows:
             if not isinstance(row, dict) or row.get("role") != "assistant":
+                continue
+            if _is_agent_world_message(row):
+                # Elapsed time is not a Task/Evaluation/human-review event.
                 continue
             fulfillment = str(row.get("fulfillment") or "unset")
             if fulfillment not in {"", "unset"}:
@@ -1694,6 +1747,8 @@ def set_message_fulfillment(conversation_id: str, message_id: str, fulfillment: 
                 continue
             if row.get("role") != "assistant":
                 raise ChiefAgentError("Отмечать можно только ответы Orchestrator.")
+            if _is_agent_world_message(row):
+                raise ChiefAgentError("Результат Agent World проверяется в карточке задачи. Отметка чата не заменяет проверку.")
             if str(row.get("message_kind") or "") == "informational":
                 raise ChiefAgentError("Информационные уведомления подтверждаются автоматически.")
             row["fulfillment"] = clean
@@ -1985,7 +2040,15 @@ def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery
     verification = envelope.get("verification") or {}
     status = str(envelope.get("status") or ("completed" if verification.get("passed") is True else "blocked"))
     sealed_kind = source_kind in {"synthetic_model_response", "bounded_delegation_result"}
-    if not sealed_kind and (envelope.get("synthetic") is not False or source_kind not in {"ninjatrader_report", "desktop_chart", "real_model_response"}):
+    origin_correction = source_kind == "ninjatrader_report" and envelope.get("synthetic") is True
+    if origin_correction:
+        from ..ai_control_center.live_backtests import validate_rejected_envelope
+        from ..ai_control_center.states import ContractError
+        try:
+            validate_rejected_envelope(authorized, envelope)
+        except ContractError:
+            raise ChiefAgentError("Отклонённый отчёт не соответствует сохранённому источнику.") from None
+    if not sealed_kind and not origin_correction and (envelope.get("synthetic") is not False or source_kind not in {"ninjatrader_report", "desktop_chart", "real_model_response"}):
         raise ChiefAgentError("Требуется реальный источник Agent World.")
     if status in {"completed", "verified_automatically"} and verification.get("passed") is not True:
         raise ChiefAgentError("Результат ещё не проверен.")
@@ -2005,6 +2068,7 @@ def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery
                 agent_id=str(envelope.get("agent_id") or ""), agent_name=str(envelope.get("agent_name") or ""),
                 model=(str(envelope.get("actual_model") or "model pending") if source_kind in {"real_model_response", "synthetic_model_response"} else
                        "Проверенная передача фактов · не оценка модели" if source_kind == "bounded_delegation_result" else
+                       "Отклонённый отчёт · источник не подтверждён" if origin_correction else
                        "NinjaTrader historical backtest" if envelope["source_kind"] == "ninjatrader_report" else "Desktop chart capture"),
                 provider=str(envelope.get("provider") or "local execution"), message_kind="task" if pending else "report",
                 fulfillment="unset" if pending or awaiting_review else "done" if status == "completed" or automatic else "failed",
@@ -2012,7 +2076,7 @@ def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery
                           "source_job_id": envelope.get("source_job_id"), "command_id": envelope.get("command_id"),
                           "source_kind": envelope["source_kind"], "synthetic": envelope.get("synthetic") is True,
                           "verification": verification,
-                          **{field: envelope[field] for field in ("executor", "external_call", "provenance") if field in envelope},
+                          **{field: envelope[field] for field in ("executor", "external_call", "provenance", "source_confirmed") if field in envelope},
                           **{field: envelope[field] for field in ("intent_id", "model_id", "contribution_id", "execution_id", "outcome_id", "evaluation_id", "correlation_id",
                               "plan_evaluation_id", "plan_execution_id", "plan_outcome_id", "application_evaluation_id", "application_execution_id", "application_outcome_id", "report_url") if envelope.get(field)}}],
                 attachments=envelope.get("attachments"), participation_chain=envelope.get("participation_chain", []), path=path, scope=scope,
@@ -2147,6 +2211,8 @@ def rate_message(conversation_id: str, message_id: str, rating: Any,
                 continue
             if row.get("role") != "assistant":
                 raise ChiefAgentError("Оценивать можно только ответы Orchestrator.")
+            if _is_agent_world_message(row):
+                raise ChiefAgentError("Оцените результат Agent World в карточке задачи: источник, класс работы и проверка сохраняются отдельно.")
             if str(row.get("message_kind") or "") == "informational":
                 raise ChiefAgentError("Информационные уведомления не требуют ручной оценки.")
             row["rating"] = score
@@ -2183,6 +2249,8 @@ def rate_message(conversation_id: str, message_id: str, rating: Any,
 
 def _record_informational_auto_rating(row: Dict[str, Any]) -> None:
     """Give completed operational notices a negligible positive routing signal once."""
+    if _is_agent_world_message(row):
+        return
     if row.get("informational_rating_recorded"):
         return
     try:

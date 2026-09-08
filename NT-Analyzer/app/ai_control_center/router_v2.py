@@ -18,8 +18,10 @@ from .states import ContractError, EntityKind
 
 
 VERSION = "agent-world-router-v2.1"
-PREVIEW_VERSION = "agent-world-routing-preview-v1"
-APPLIED_VERSION = "agent-world-routing-applied-v1"
+PREVIEW_VERSION = "agent-world-routing-preview-v2"
+APPLIED_VERSION = "agent-world-routing-applied-v2"
+_LEGACY_PREVIEW_VERSION = "agent-world-routing-preview-v1"
+_LEGACY_APPLIED_VERSION = "agent-world-routing-applied-v1"
 _CLASSES = frozenset({"json_arithmetic", "extract_facts", "backtest_spec", "chart_spec"})
 
 
@@ -228,24 +230,56 @@ def _snapshot(context, value):
     return c.SnapshotRef(scope=context.scope, artifact_id=_uuid(value["artifact_id"]), sha256=value["sha256"])
 
 
-def _source_ref(context, value):
+def _entity_ref(context, value, kind):
     from .model_service import _uuid
     if (type(value) is not dict or set(value) != {"kind", "entity_id", "revision", "scope"}
-            or value.get("kind") != "task" or value.get("scope") != c.primitive(context.scope)):
+            or value.get("kind") != kind.value or value.get("scope") != c.primitive(context.scope)):
         raise ContractError("routing_source_invalid")
-    return c.EntityRef(kind=EntityKind.TASK, entity_id=_uuid(value["entity_id"]),
+    return c.EntityRef(kind=kind, entity_id=_uuid(value["entity_id"]),
                        revision=value["revision"], scope=context.scope)
+
+
+def _speaking_record(service, context, source, checkpoint, identity, *, current=False):
+    """The request's speaker is independent of the selected connection Persona.
+
+    Historical reads use exact revisions; only new admission/transmit compares
+    current authority. No request payload can supply a substitute Persona/role.
+    """
+    if type(identity) is not dict or set(identity) != {"persona_ref", "persona_name", "role_ref"}:
+        raise ContractError("routing_speaking_identity_invalid")
+    persona_ref = _entity_ref(context, identity["persona_ref"], EntityKind.PERSONA)
+    role_ref = _entity_ref(context, identity["role_ref"], EntityKind.AGENT_ROLE)
+    if str(persona_ref.entity_id) != checkpoint.get("persona_id") or role_ref != source.role:
+        raise ContractError("routing_speaking_identity_invalid")
+    records = []
+    for reference in (persona_ref, role_ref):
+        record = service.repository.get_revision(context=context, kind=reference.kind,
+            entity_id=reference.entity_id, revision=reference.revision)
+        if (record is None or record.ref() != reference or record.header.owner_user_uuid != context.user_uuid
+                or record.status != "active"):
+            raise ContractError("routing_speaking_identity_invalid")
+        if current and service._get(context, reference.kind, reference.entity_id).ref() != reference:
+            raise ContractError("routing_speaking_identity_changed")
+        records.append(record)
+    persona, role = records
+    name = checkpoint.get("persona_name") or persona.display_name
+    if identity["persona_name"] != name or type(name) is not str:
+        raise ContractError("routing_speaking_identity_invalid")
+    return persona, role
 
 
 def _preview_record(service, context, reference):
     reference = _snapshot(context, reference)
     saved = service._json(context, reference)
-    if (set(saved) != {"version", "scope", "user_uuid", "source_task", "source_checkpoint",
-                      "source_request_sha256", "request", "decision", "selection_sha256"}
-            or saved["version"] != PREVIEW_VERSION or saved["scope"] != c.primitive(context.scope)
+    keys = {"version", "scope", "user_uuid", "source_task", "source_checkpoint",
+            "source_request_sha256", "request", "decision", "selection_sha256"}
+    if saved.get("version") == PREVIEW_VERSION:
+        keys.add("speaking_identity")
+    if (set(saved) != keys or saved["version"] not in {PREVIEW_VERSION, _LEGACY_PREVIEW_VERSION}
+            or saved["scope"] != c.primitive(context.scope)
             or saved["user_uuid"] != str(context.user_uuid)):
         raise ContractError("routing_preview_invalid")
-    source_ref = _source_ref(context, saved["source_task"])
+    source_ref = _entity_ref(context, saved["source_task"], EntityKind.TASK)
     source = service.repository.get_revision(context=context, kind=EntityKind.TASK,
         entity_id=source_ref.entity_id, revision=source_ref.revision)
     if (source is None or source.ref() != source_ref or source.header.owner_user_uuid != context.user_uuid
@@ -266,26 +300,36 @@ def _preview_record(service, context, reference):
             or decision.get("legacy_model_id") != request.get("current_model_id")
             or decision.get("constraints") != {key: request.get(key) for key in ("max_cost_usd", "max_latency_ms")}):
         raise ContractError("routing_preview_invalid")
+    if saved["version"] == PREVIEW_VERSION:
+        _speaking_record(service, context, source, checkpoint, saved["speaking_identity"])
     return reference, saved, source, checkpoint
 
 
 def record_preview(authorized, service, task, checkpoint, request, decision):
     context = _gate(authorized, "shadow")
+    persona = service._get(context, EntityKind.PERSONA, checkpoint.get("persona_id"))
+    speaking = {"persona_ref": c.primitive(persona.ref()),
+        "persona_name": checkpoint.get("persona_name") or persona.display_name, "role_ref": c.primitive(task.role)}
+    _speaking_record(service, context, task, checkpoint, speaking, current=True)
     saved = {"version": PREVIEW_VERSION, "scope": c.primitive(context.scope), "user_uuid": str(context.user_uuid),
         "source_task": c.primitive(task.ref()), "source_checkpoint": c.primitive(task.checkpoint),
         "source_request_sha256": checkpoint["request_sha256"], "request": request,
-        "decision": decision, "selection_sha256": selection_fingerprint(decision)}
+        "decision": decision, "selection_sha256": selection_fingerprint(decision), "speaking_identity": speaking}
     reference = service._put(context, saved)
     return {"preview_ref": c.primitive(reference), "source_revision": task.header.revision,
         "source_request_sha256": checkpoint["request_sha256"], "selection_sha256": saved["selection_sha256"],
-        "requires_explicit_apply": True, "creates_new_task": True}
+        "requires_explicit_apply": True, "creates_new_task": True,
+        "preview_version": PREVIEW_VERSION, "speaking_identity": speaking}
 
 
 def _fresh_choice(authorized, service, saved, *, quote):
     context = _gate(authorized, "active")
+    if saved["version"] != PREVIEW_VERSION:
+        raise ContractError("routing_fresh_identity_preview_required")
     source = service._get(context, EntityKind.TASK, saved["source_task"]["entity_id"])
     if c.primitive(source.ref()) != saved["source_task"] or c.primitive(source.checkpoint) != saved["source_checkpoint"]:
         raise ContractError("routing_source_changed")
+    _speaking_record(service, context, source, service._json(context, source.checkpoint), saved["speaking_identity"], current=True)
     fresh = select(authorized, service, {**saved["request"], "mode": "active"}, quote=quote)
     if (fresh["status"] != "selected" or not fresh["effective_model_id"]
             or selection_fingerprint(fresh) != saved["selection_sha256"]):
@@ -299,9 +343,10 @@ class RoutedTaskPacket:
     preview_ref: c.SnapshotRef
     decision_ref: c.SnapshotRef
     task_id: UUID
+    version: str = APPLIED_VERSION
 
     def wire(self):
-        return {"version": APPLIED_VERSION, "preview_ref": c.primitive(self.preview_ref),
+        return {"version": self.version, "preview_ref": c.primitive(self.preview_ref),
                 "decision_ref": c.primitive(self.decision_ref), "task_id": str(self.task_id)}
 
 
@@ -310,13 +355,17 @@ def _packet(service, context, value):
     if isinstance(value, RoutedTaskPacket):
         packet = value
     else:
-        if type(value) is not dict or set(value) != {"version", "preview_ref", "decision_ref", "task_id"} or value.get("version") != APPLIED_VERSION:
+        if (type(value) is not dict or set(value) != {"version", "preview_ref", "decision_ref", "task_id"}
+                or value.get("version") not in {APPLIED_VERSION, _LEGACY_APPLIED_VERSION}):
             raise ContractError("routing_packet_invalid")
         packet = RoutedTaskPacket(preview_ref=_snapshot(context, value["preview_ref"]),
-            decision_ref=_snapshot(context, value["decision_ref"]), task_id=_uuid(value["task_id"]))
+            decision_ref=_snapshot(context, value["decision_ref"]), task_id=_uuid(value["task_id"]), version=value["version"])
     _, saved, source, checkpoint = _preview_record(service, context, packet.preview_ref)
+    if (packet.version not in {APPLIED_VERSION, _LEGACY_APPLIED_VERSION}
+            or (packet.version == APPLIED_VERSION) != (saved["version"] == PREVIEW_VERSION)):
+        raise ContractError("routing_packet_invalid")
     proof = service._json(context, _snapshot(context, packet.decision_ref))
-    expected = {"version": APPLIED_VERSION, "preview_ref": c.primitive(packet.preview_ref),
+    expected = {"version": packet.version, "preview_ref": c.primitive(packet.preview_ref),
                 "task_id": str(packet.task_id), "selection_sha256": saved["selection_sha256"],
                 "selected_model_id": saved["decision"]["selected_model_id"], "permission_granted": False}
     if proof != expected or saved["decision"]["status"] != "selected" or not proof["selected_model_id"]:
@@ -367,8 +416,38 @@ def validate_constructor(service, context, packet, *, model_id, spec, conversati
     return packet.wire()
 
 
+def speaking_assignment(service, context, packet):
+    """Private constructor hook, resolved solely from the issued source packet."""
+    if not isinstance(packet, RoutedTaskPacket):
+        raise ContractError("routing_server_packet_required")
+    _, saved, source, checkpoint = _packet(service, context, packet)
+    if saved["version"] != PREVIEW_VERSION:
+        raise ContractError("routing_fresh_identity_preview_required")
+    identity = saved["speaking_identity"]
+    persona, role = _speaking_record(service, context, source, checkpoint, identity, current=True)
+    return persona, role, identity
+
+
+def validate_assignment(service, context, task, checkpoint):
+    """Read-only immutable speaker/executor binding, including receipt replay."""
+    packet, saved, source, original = _packet(service, context, checkpoint.get("routing"))
+    if packet.task_id != task.header.entity_id:
+        raise ContractError("routing_request_mismatch")
+    if saved["version"] == PREVIEW_VERSION:
+        identity = saved["speaking_identity"]
+        selected = next((row for row in saved["decision"]["candidates"]
+                         if row["model_id"] == saved["decision"]["selected_model_id"]), {})
+        if (checkpoint.get("speaking_identity") != identity
+                or checkpoint.get("persona_id") != identity["persona_ref"]["entity_id"]
+                or checkpoint.get("persona_name") != identity["persona_name"]
+                or c.primitive(task.role) != identity["role_ref"]
+                or checkpoint.get("executor_persona_id") != selected.get("persona_id")):
+            raise ContractError("routing_speaking_assignment_changed")
+    return packet, saved, source, original
+
+
 def validate_execution(service, context, task, checkpoint):
-    packet, saved, _, source = _packet(service, context, checkpoint.get("routing"))
+    packet, saved, _, source = validate_assignment(service, context, task, checkpoint)
     if (packet.task_id != task.header.entity_id or checkpoint.get("model_id") != saved["decision"]["selected_model_id"]
             or checkpoint.get("spec") != source["spec"] or checkpoint.get("conversation_id") != source.get("conversation_id")
             or checkpoint.get("message_id") != source.get("message_id")):
@@ -385,7 +464,7 @@ def actual_choice(service, context, task, checkpoint):
     chosen = str(checkpoint.get("model_id") or "")
     if not checkpoint.get("routing"):
         return {"model_id": chosen, "decided_by": "request", "routing_applied": False}
-    packet, saved, _, source = _packet(service, context, checkpoint["routing"])
+    packet, saved, _, source = validate_assignment(service, context, task, checkpoint)
     if (packet.task_id != task.header.entity_id or chosen != saved["decision"]["selected_model_id"]
             or checkpoint.get("spec") != source["spec"]):
         raise ContractError("routing_request_mismatch")
@@ -398,5 +477,8 @@ def actual_choice(service, context, task, checkpoint):
         "preview_ref": c.primitive(packet.preview_ref), "decision_ref": c.primitive(packet.decision_ref),
         "selection_sha256": saved["selection_sha256"], "policy_version": saved["decision"]["policy_version"],
         "actual_model": receipt.get("actual_model"), "executor": receipt.get("executor"),
+        "speaking_identity": saved.get("speaking_identity"),
+        "speaking_persona_id": checkpoint.get("persona_id"), "executor_persona_id": checkpoint.get("executor_persona_id"),
+        "persona_preserved": True if saved["version"] == PREVIEW_VERSION else None,
         "external_call": receipt.get("external_call"), "execution_observed": bool(receipt),
         **(receipt_provenance(receipt) if receipt else {"synthetic": None, "source_kind": None})}

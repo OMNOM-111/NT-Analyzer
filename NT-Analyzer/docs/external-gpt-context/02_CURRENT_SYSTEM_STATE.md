@@ -19,6 +19,22 @@
 
 ## Active integration — 2026-09-08
 
+Shared checkpoint `a03ec82b686a9f6f05c056fe5a500ecbdb3babac` is pushed (65 files,
+584-file artifact gate PASS), not owner acceptance. Its detached full regression
+is separate from subsequent fixes. Disposable tests confirmed a bounded
+authenticated Connector-to-job binding gap; exact dispatch/scope/path validation
+and source-bound synthetic corrections are described in the
+[boundary record](../changelog/2026-09-08-agent-world-trusted-report-boundary.md).
+Neither the protected owner data nor its historical real report was changed.
+
+Exact-a03 detached full regression finished at 5124 PASS / 12 FAIL / 112 SKIP,
+legacy runner 13/13 PASS; 68 Agent World PG, 41 legacy PG and 3 platform skips
+are not PostgreSQL evidence. Later Chat-review and Router-Persona changes are
+recorded separately: ledger review cannot be replaced by message stars/timers,
+and the speaking Persona is not the selected executor identity. Their focused
+receipts do not replace the next integrated full/browser pass. See the single
+program matrix and scoped changelogs below.
+
 Core checkpoint `13573bf76bae2dbad4f9efc4f6893d0bcb4d5406` is preserved on
 draft PR #285. The subsequent shared API/worker/Chat/UI delta connects bounded
 Coordinator reviews, Persona, Process Intelligence and explicit Preview data.

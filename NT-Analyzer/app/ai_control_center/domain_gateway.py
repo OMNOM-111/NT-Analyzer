@@ -990,8 +990,10 @@ def speak_persona(authorized, identity, body):
     """An explicit speech gesture; persisted Persona settings, never caller credentials."""
     if (authorized.get("read_only") or type(body) is not dict
             or set(body) != {"payload", "expected_revision", "idempotency_key"}
-            or type(body["payload"]) is not dict or set(body["payload"]) != {"text"}
-            or type(body["payload"]["text"]) is not str
+            or type(body["payload"]) is not dict
+            or not (set(body["payload"]) == {"text"} and type(body["payload"]["text"]) is str
+                    or set(body["payload"]) == {"conversation_id", "message_id"}
+                    and all(type(value) is str for value in body["payload"].values()))
             or type(body["expected_revision"]) is not int
             or type(body["idempotency_key"]) is not str or not 8 <= len(body["idempotency_key"]) <= 120):
         raise ContractError("invalid_domain_request")
@@ -1002,8 +1004,9 @@ def speak_persona(authorized, identity, body):
         fresh["admit"]()
         return (fresh["context"] == context and fresh["chat_scope"] == scope
                 and scope.get("is_owner") is True and scope.get("uses_owner_runtime") is True)
-    return persona_voice.speak(domains(authorized, models(authorized).repository), context=authorized["context"], admit=admit,
-        persona_id=identity, text=body["payload"]["text"], scope=authorized["chat_scope"],
+    operation = persona_voice.speak if "text" in body["payload"] else persona_voice.speak_reply
+    return operation(domains(authorized, models(authorized).repository), context=authorized["context"], admit=admit,
+        persona_id=identity, **body["payload"], scope=authorized["chat_scope"],
         expected_revision=body["expected_revision"], authorize_server_tts=owner_tts)
 
 

@@ -7,7 +7,9 @@ selected only after fresh, scoped admission. A speaking WEBM is not lip-sync.
 from __future__ import annotations
 
 from copy import deepcopy
+import hashlib
 import math
+import re
 
 from ..ai_lab import agent_tts
 from . import contracts as c
@@ -124,4 +126,50 @@ def speak(service, *, context, admit, persona_id, text, scope, expected_revision
         voice_gender=view["voice_gender"], text=cleaned, local_voice_only=True,
         requested_voice_mode=view["voice_mode"], owner_tts_authorized=owner_tts,
         voice_fallback_reason="own_tts_connection_required" if view["voice_mode"] == "existing_tts" and not owner_tts else None)
+    return result
+
+
+def speak_reply(service, *, context, admit, persona_id, conversation_id, message_id, scope,
+                expected_revision=None, authorize_server_tts=None):
+    """Read an existing own assistant reply, not caller text or instructions.
+
+    The message owns the stable Persona UUID; its executor/model is irrelevant.
+    Reading it never acknowledges a task, applies fulfillment or edits history.
+    """
+    from ..ai_lab import chief_agent
+    if (not isinstance(context, c.RequestContext) or context.actor.kind != c.ActorKind.HUMAN
+            or type(scope) is not dict or str(scope.get("user_uuid")) != str(context.user_uuid)
+            or scope.get("workspace_id") != context.scope.workspace_id or not callable(admit)
+            or type(conversation_id) is not str or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", conversation_id)
+            or type(message_id) is not str or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,120}", message_id)):
+        raise ContractError("persona_voice_message_scope_invalid")
+    # Admission and Persona ownership precede even the scoped message lookup.
+    item = service.get(context=context, admit=admit, domain="personas", entity_id=persona_id)
+    if type(expected_revision) is not int or item["revision"] != expected_revision:
+        raise ContractError("persona_voice_revision_changed")
+
+    def stored_reply():
+        try:
+            row = chief_agent.conversation_message_for_speech(conversation_id, message_id, scope=scope)
+        except chief_agent.ChiefAgentError:
+            raise ContractError("persona_voice_message_unavailable") from None
+        if (row.get("role") != "assistant" or row.get("message_id") != message_id
+                or row.get("agent_id") != item["id"] or type(row.get("content")) is not str
+                or not row["content"].strip()):
+            raise ContractError("persona_voice_message_mismatch")
+        return row["content"]
+
+    content = stored_reply()
+    fingerprint = hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+    def fresh_admission():
+        admit()
+        if hashlib.sha256(stored_reply().encode("utf-8")).hexdigest() != fingerprint:
+            raise ContractError("persona_voice_message_changed")
+
+    result = speak(service, context=context, admit=fresh_admission, persona_id=item["id"],
+        text=content, scope=scope, expected_revision=expected_revision,
+        authorize_server_tts=authorize_server_tts)
+    result["speech_source"] = {"kind": "sf_chat_message", "conversation_id": conversation_id,
+        "message_id": message_id, "persona_id": item["id"], "source_sha256": fingerprint}
     return result

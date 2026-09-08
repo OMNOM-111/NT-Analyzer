@@ -12,9 +12,12 @@ The target architecture and owner's visual references are unchanged.
 - Combined intake: `f0bafe8ea46653827bc836afcb2197964390cf08`.
   Intake checkpoint: `1409553a46d0dffa7ef329b28029d93f68b405d7`.
   Preserved core checkpoint: `13573bf76bae2dbad4f9efc4f6893d0bcb4d5406`.
-- The commit containing this status preserves the subsequent shared integration.
-  Its exact identity is obtained with `git rev-parse HEAD`; no self-referential
-  SHA or final release is invented. Final exact-code regression/browser is pending.
+- Shared integration checkpoint: `a03ec82b686a9f6f05c056fe5a500ecbdb3babac`
+  (65 files, clean, pushed). Root static/context and 584-file bundle PASS.
+  Detached full regression: **5124 passed / 12 failed / 112 skipped**, 3187.56 s;
+  legacy runner **13/13 PASS**. These results apply to that checkpoint, not WIP.
+  Later report-binding/Persona continuity corrections are separate changes;
+  final exact-code regression/browser is pending.
 - Protected owner Local: **http://127.0.0.1:8765/ui/ai-command-center.html**,
   code `2b6d0112bef88c5bfb73970de64ec5518443e56b`,
   build `dev-0.10.0-beta.96-2b6d0112bef8`. Not switched or restarted.
@@ -75,6 +78,25 @@ All rows remain `IN DEVELOPMENT` until the integrated gates below close.
   work instead of changing its executor.
 - A verified result, delivery to Chat, a human review, a Court decision and
   permission for later execution are separate events.
+- A later disposable test confirmed a distinct authenticated Connector-to-job
+  binding defect, not an anonymous/model upload. The current correction binds
+  stored commands to exact server dispatch and canonical safe paths, preserves
+  history on collisions and appends exact source-bound origin corrections.
+  Expanded boundary/live/Preview/application regression: 206 PASS, 135.48 s;
+  boundary/Connector/live-backtest including cancel: 208 PASS, 27.49 s. See the
+  [boundary record](../changelog/2026-09-08-agent-world-trusted-report-boundary.md).
+- The a03 full run's 112 skips are **68 Agent World PostgreSQL**, **41 legacy
+  PostgreSQL**, and **3 platform-dependent** cases. Its 12 failures are one
+  stale application-origin expectation, seven Preview-contract expectations
+  and four incomplete Persona read-model test doubles. Corrections preserve
+  validation/isolation/history assertions; final full rerun remains required.
+- [Chat review boundary](../changelog/2026-09-08-agent-world-chat-review-boundary.md):
+  a timer, legacy message stars or fulfillment marks cannot accept/rate an
+  Agent World Task. Prior marks remain historical. Boundary + Chief: 132 PASS.
+- [Router Persona preservation](../changelog/2026-09-08-agent-world-router-persona-preservation.md):
+  source Persona/Role are pinned independently of the selected executor;
+  preview/apply/transmit recheck current revisions. 201 scoped PASS, 21 Persona
+  role/history PASS; this is transport-double evidence, not a real model call.
 
 ## Ownership, checkpoint and next operation
 

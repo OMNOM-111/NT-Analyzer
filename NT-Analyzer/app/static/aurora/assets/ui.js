@@ -222,7 +222,7 @@
 
   const BRAND_MARK = 'brand/stratforge-mark.png';
   // Staff faces: one webm per agent. Paused frame = avatar; hover/typing = play.
-  // Orchestrator message faces also TTS the message body (see agentSpeakFromFace).
+  // Chat speech is an explicit message action; hovering never starts audio.
   // Masters: `/Agents/<Имя>/`; served: `assets/agents/<id>/speaking.webm`.
   // Crop tuned per source framing (verified via tools/_avatar_preview.py).
   const AGENT_AVATAR_IDS = {
@@ -274,15 +274,28 @@
     const loop = !!(opts && opts.loop) || face.classList.contains('speaking');
     video.loop = loop;
     face.classList.add('playing');
-    const start = () => { video.play().catch(() => {}); };
+    const start = () => {
+      if (!face.isConnected || agentFaceReduceMotion()
+          || (!face.classList.contains('playing') && !face.classList.contains('speaking'))) return;
+      video.play().catch(() => {});
+    };
     if (video.readyState >= 2) start();
     else video.addEventListener('loadeddata', start, { once: true });
   }
-  // Hover TTS for Orchestrator message faces: loop webm while reading the
-  // message body via OpenAI Speech (or browser speechSynthesis fallback).
+  // Legacy transport helpers remain compatible; SF Chat binds only the
+  // explicit, scoped PersonaAudio action below, never this old hover path.
   const AGENT_SPEAK = { gen: 0, timer: null, audio: null, url: null, face: null, utter: null };
   const AGENT_SPEAK_HOVER_MS = 350;
+  const ORCH_SPEECH = { generation: 0, controller: null, module: null, message: '', button: null, status: null };
   function agentSpeakStop() {
+    ORCH_SPEECH.generation += 1;
+    if (ORCH_SPEECH.controller) ORCH_SPEECH.controller.stop();
+    if (ORCH_SPEECH.message) orchSpeechState({state: 'stopped'});
+    ORCH_SPEECH.message = '';
+    if (ORCH_SPEECH.button && ORCH_SPEECH.button.isConnected) {
+      ORCH_SPEECH.button.disabled = false; ORCH_SPEECH.button.textContent = 'Озвучить';
+      ORCH_SPEECH.button.setAttribute('aria-pressed', 'false');
+    }
     AGENT_SPEAK.gen += 1;
     if (AGENT_SPEAK.timer) { clearTimeout(AGENT_SPEAK.timer); AGENT_SPEAK.timer = null; }
     if (AGENT_SPEAK.audio) {
@@ -446,20 +459,13 @@
       });
       face.addEventListener('mouseenter', () => {
         if (face.classList.contains('speaking')) return;
-        if (face.classList.contains('orch-msg-face')) {
-          agentSpeakFromFace(face);
-          return;
-        }
+        if (face.classList.contains('orch-msg-face')) return;
         if (agentFaceReduceMotion()) return;
         agentFacePlay(face, { loop: false });
       });
       face.addEventListener('mouseleave', () => {
         if (face.classList.contains('speaking')) return;
-        if (face.classList.contains('orch-msg-face')) {
-          if (AGENT_SPEAK.face === face || AGENT_SPEAK.timer) agentSpeakStop();
-          else agentFacePause(face);
-          return;
-        }
+        if (face.classList.contains('orch-msg-face')) return;
         agentFacePause(face);
       });
       if (face.classList.contains('speaking')) agentFacePlay(face, { loop: true });
@@ -9048,6 +9054,7 @@
     try { return localStorage.getItem(ORCH_KEY) || 'default'; } catch (e) { return 'default'; }
   }
   function orchSaveCurrentId(cid) {
+    if (ORCH.currentId !== String(cid || '')) agentSpeakStop();
     ORCH.currentId = String(cid || '');
     try {
       if (ORCH.currentId) localStorage.setItem(ORCH_KEY, ORCH.currentId);
@@ -9401,6 +9408,7 @@
     return openOrchestrator(options || {});
   }
   function orchRenderAuthRequired(panel) {
+    agentSpeakStop();
     const root = panel || qs('#orch-panel');
     if (!root) return;
     ORCH.loadError = { status: 401, message: 'Требуется вход через Telegram.' };
@@ -9849,8 +9857,13 @@
       await orchLoadMessages(ORCH.currentId);
     });
   }
+  function orchIsAgentWorldMessage(row) {
+    if (!row || row.role === 'user' || row.sender_type === 'human' || row.sender_profile_id) return false;
+    return String(row.source || '').startsWith('agent_world_') || (Array.isArray(row.actions) && row.actions.some(action =>
+      String(action?.name || action?.action || '').startsWith('agent_world_')));
+  }
   function orchRatingHtml(row, isUser) {
-    if (isUser || !row.message_id) return '';
+    if (isUser || !row.message_id || orchIsAgentWorldMessage(row)) return '';
     const rating = Number(row.rating || 0);
     const comment = String(row.feedback_comment || '');
     const hasComment = !!comment.trim();
@@ -9895,7 +9908,7 @@
   function orchFulfillmentOf(row) {
     // A completed transport/action is not an owner's acceptance. Historical
     // feedback stays on the message; Agent World uses its canonical review.
-    if (orchAgentWorldTaskId(row)) {
+    if (orchIsAgentWorldMessage(row)) {
       const review = row._awTask?.human_review?.status;
       return review === 'accepted' ? 'done' : review === 'rejected' ? 'failed' : 'unset';
     }
@@ -9963,6 +9976,115 @@
     return messages.map((row, index) => ({ ...row, _awTask: views.get(index) || null,
       _awLatest: last.get(orchAgentWorldTaskId(row)) === index }));
   }
+  function orchPersonaId(row) {
+    if (!row || row.role !== 'assistant' || row.sender_type === 'human' || row.sender_profile_id) return '';
+    const id = String(row.agent_id || '');
+    return /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id) ? id : '';
+  }
+  async function orchPersonaViews(messages, cid) {
+    const found = new Map(), ids = [...new Set(messages.map(orchPersonaId).filter(Boolean))];
+    if (typeof API.http.aiControlCenterDomainItem === 'function') {
+      for (let offset = 0; offset < ids.length; offset += 4) {
+        await Promise.all(ids.slice(offset, offset + 4).map(async id => {
+          try {
+            const response = await API.http.aiControlCenterDomainItem('personas', id), item = response.item || response;
+            if (item.id === id && Number.isInteger(item.revision) && item.presentation) found.set(id, item);
+          } catch (_) { /* A deleted/foreign/revoked Persona never becomes Vitek or inherits a provider voice. */ }
+        }));
+        if (ORCH.currentId !== cid) return messages;
+      }
+    }
+    return messages.map(row => ({...row, _persona: found.get(orchPersonaId(row)) || null}));
+  }
+  function orchSpeechPersona(row) {
+    if (orchPersonaId(row)) return row._persona || null;
+    const ref = String(row.agent_id || row.agent_name || '').toLowerCase();
+    const face = AGENT_AVATAR_IDS[ref];
+    if (!face) return null;
+    // Historical staff replies retain their assets. Without a persisted Persona
+    // voice they explicitly use a local device preset, never owner credentials.
+    return {id: 'legacy-' + face, revision: 1, title: row.agent_name || ref,
+      presentation: {resolved_voice_profile_id: face, voice_mode: 'browser',
+        voice_label: 'Голос устройства', voice_gender: face === 'marina' ? 'female' : 'male',
+        voice_speed: 1, voice_language: 'ru-RU', animation_mode: 'auto'}};
+  }
+  function orchSpeechHtml(row) {
+    if (row.role !== 'assistant' || row.sender_type === 'human' || row.sender_profile_id || !row.message_id || !row.content) return '';
+    const persona = orchSpeechPersona(row), configured = persona?.presentation?.resolved_voice_profile_id;
+    const available = !!configured && (!orchPersonaId(row) || ['active', 'draft'].includes(persona.status));
+    const hint = orchPersonaId(row) ? (available ? 'Озвучить сохранённый ответ голосом персоны' : 'Персона или её голос недоступны. История сохранена.')
+      : 'Исторический ответ: локальный голос устройства, без подключения провайдера';
+    return `<div class="orch-msg-meta"><button type="button" class="btn sm ghost" data-orch-speech="${esc(row.message_id)}" aria-pressed="false" title="${esc(hint)}" ${available ? '' : 'disabled'}>Озвучить</button> <span data-orch-speech-status role="status" aria-live="polite">${available ? '' : esc(hint)}</span></div>`;
+  }
+  function orchLoadPersonaAudio() {
+    if (window.PersonaAudio?.create) return Promise.resolve(window.PersonaAudio);
+    if (ORCH_SPEECH.module) return ORCH_SPEECH.module;
+    ORCH_SPEECH.module = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      let done = false;
+      const finish = error => {
+        if (done) return; done = true; clearTimeout(timer);
+        script.onload = script.onerror = null;
+        if (error || !window.PersonaAudio?.create) { ORCH_SPEECH.module = null; script.remove(); reject(Error('speech_module_unavailable')); }
+        else resolve(window.PersonaAudio);
+      };
+      const timer = setTimeout(() => finish(true), 10000);
+      script.src = '/ui/assets/persona-audio.js?v=20260908-agent-world-persona-chat1';
+      script.async = true; script.onload = () => finish(false); script.onerror = () => finish(true);
+      document.head.appendChild(script);
+    });
+    return ORCH_SPEECH.module;
+  }
+  function orchSpeechState(view) {
+    const button = ORCH_SPEECH.button, status = ORCH_SPEECH.status;
+    if (button && button.isConnected) {
+      button.disabled = false;
+      button.textContent = ['preparing', 'speaking'].includes(view.state) ? 'Остановить' : 'Озвучить';
+      button.setAttribute('aria-pressed', ['preparing', 'speaking'].includes(view.state) ? 'true' : 'false');
+    }
+    if (status && status.isConnected) {
+      const mode = view.mode === 'server' ? 'Подключённый голос' : 'Локальный голос устройства';
+      status.textContent = view.state === 'preparing' ? 'Проверка сообщения и голоса…'
+        : view.state === 'speaking' ? `${mode}${view.voice ? ': ' + view.voice : ''}. ${view.animation === 'speaking_loop' ? 'Анимация речи, без синхронизации фонем.' : 'Статичный аватар.'}`
+        : view.state === 'finished' ? 'Озвучивание завершено.' : view.state === 'stopped' ? 'Озвучивание остановлено.'
+        : view.state === 'text_fallback' ? 'Звук недоступен или доступ не подтверждён. Ответ доступен текстом.' : '';
+    }
+    if (!['preparing', 'speaking'].includes(view.state)) ORCH_SPEECH.message = '';
+  }
+  function wireOrchSpeech(container, messages, cid) {
+    qsa('[data-orch-speech]', container).forEach(button => button.addEventListener('click', async () => {
+      if (ORCH.currentId !== cid || !ORCH.open) return;
+      const id = button.dataset.orchSpeech, row = messages.find(item => item.message_id === id);
+      const persona = row && orchSpeechPersona(row);
+      if (!persona || !row.content) return;
+      if (ORCH_SPEECH.message === id) { agentSpeakStop(); return; }
+      agentSpeakStop();
+      const generation = ORCH_SPEECH.generation;
+      ORCH_SPEECH.message = id; ORCH_SPEECH.button = button;
+      ORCH_SPEECH.status = button.parentElement?.querySelector('[data-orch-speech-status]');
+      orchSpeechState({state: 'preparing'});
+      try {
+        const module = await orchLoadPersonaAudio();
+        if (generation !== ORCH_SPEECH.generation || ORCH.currentId !== cid || !ORCH.open || !button.isConnected) return;
+        if (!ORCH_SPEECH.controller) ORCH_SPEECH.controller = module.create({host: window,
+          playFace: agentFacePlay, pauseFace: agentFacePause, reducedMotion: agentFaceReduceMotion, onState: orchSpeechState,
+          requestSpeech: request => {
+            if (!request.message_ref) return {fallback: 'browser', text: request.text, reason: 'legacy_local_device_preset'};
+            if (!API.http.aiControlCenterPersonaSpeak || API.config.offline) return Promise.reject({status: 403});
+            return API.http.aiControlCenterPersonaSpeak(request.persona_id, {payload: request.message_ref,
+              expected_revision: request.expected_revision, idempotency_key: window.crypto.randomUUID()});
+          }});
+        const face = button.closest('.orch-msg')?.querySelector('.orch-msg-face');
+        await ORCH_SPEECH.controller.play({persona, text: row.content, face, userInitiated: true,
+          ...(orchPersonaId(row) ? {message_ref: {conversation_id: cid, message_id: id}} : {})});
+      } catch (_) {
+        if (generation === ORCH_SPEECH.generation) orchSpeechState({state: 'text_fallback'});
+      }
+    }));
+  }
+  window.addEventListener('pagehide', agentSpeakStop);
+  window.addEventListener('hashchange', agentSpeakStop);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) agentSpeakStop(); });
   function orchAgentWorldCard(row) {
     const id = orchAgentWorldTaskId(row);
     if (!id || !row._awLatest) return '';
@@ -10048,6 +10170,17 @@
   }
   function orchFooterHtml(row, isUser) {
     if (isUser || !row.message_id) return orchRatingHtml(row, isUser);
+    if (orchIsAgentWorldMessage(row)) {
+      const taskId = orchAgentWorldTaskId(row), review = row._awTask?.human_review?.status;
+      const reviewLabel = {accepted: 'Результат принят', rejected: 'Результат отклонён', pending: 'Ожидается проверка результата'}[review]
+        || 'Статус проверки — в карточке задачи';
+      const oldRating = Number(row.rating || 0), oldComment = String(row.feedback_comment || '');
+      const oldFulfillment = ORCH_FULFILL_LABELS[row.fulfillment] || '';
+      return `<details class="orch-msg-footer"><summary class="orch-msg-tools-summary"><span class="orch-msg-tools-label">··· Детали ответа</span><time>${esc(orchFmtTime(row.timestamp_utc))}</time></summary>
+        <div class="orch-msg-footer-panel"><p>${esc(reviewLabel)}. Решение принимается только через проверку конкретного результата Agent World.</p>
+        ${oldRating || oldComment || oldFulfillment ? `<details><summary>Исторические отметки SF Chat — не приёмка задачи</summary>${oldRating ? `<p>Прежняя оценка сообщения: ${esc(oldRating)} из 3, не оценка профессионального качества.</p>` : ''}${oldComment ? `<p>${esc(oldComment)}</p>` : ''}${oldFulfillment ? `<p>Прежняя отметка: ${esc(oldFulfillment)}.</p>` : ''}</details>` : ''}
+        <a class="btn sm" href="/ui/ai-command-center.html#tab=work${taskId ? '&task=' + encodeURIComponent(taskId) : ''}">Задача, результат и история</a></div></details>`;
+    }
     const kind = orchInferKind(row);
     const fulfillment = orchFulfillmentOf(row);
     const kindLabel = ORCH_KIND_LABELS[kind] || kind;
@@ -10055,7 +10188,7 @@
     const isInformational = kind === 'informational';
     const showMarks = !orchAgentWorldTaskId(row) && !isInformational && (kind !== 'chat' || fulfillment === 'done' || fulfillment === 'failed');
     const agentRef = row.agent_id || row.agent_name || row.domain_agent || 'vitek';
-    const agentLabel = String(row.agent_name || agentRef || 'Витёк');
+    const agentLabel = String(row.agent_name || (orchPersonaId(row) ? row._persona?.title || 'AI-помощник' : agentRef) || 'Витёк');
     const title = String(row.agent_title || '').trim();
     const model = String(row.model || '').trim();
     const provider = String(row.provider || '').trim();
@@ -10107,7 +10240,7 @@
   // Shown only while the verdict is genuinely open: a task or a report that
   // nobody has marked done or failed yet. Plain chat never asks for one.
   function orchAwaitHtml(row) {
-    if (orchAgentWorldTaskId(row)) return '';
+    if (orchIsAgentWorldMessage(row)) return '';
     if (!row || row.role === 'user' || !row.message_id) return '';
     const kind = orchInferKind(row);
     if (kind === 'chat' || kind === 'informational') return '';
@@ -10140,7 +10273,7 @@
       ? (row.actor_is_owner ? String(row.actor_name || 'Вы') : String(row.actor_name || row.user_name || row.user_id || 'Пользователь'))
       : '';
     const agentRef = row.agent_id || row.agent_name || row.domain_agent || 'vitek';
-    const agentLabel = String(row.agent_name || agentRef || 'Витёк');
+    const agentLabel = String(row.agent_name || (orchPersonaId(row) ? row._persona?.title || 'AI-помощник' : agentRef) || 'Витёк');
     const meta = isUser
       ? [esc(actor), orchFmtTime(row.timestamp_utc)].filter(Boolean).join(' · ')
       : '';
@@ -10149,7 +10282,10 @@
       ? (meta ? `<div class="orch-msg-meta">${meta}</div>` : '')
       : orchFooterHtml(row, isUser);
     const media = orchAttachmentsHtml(row);
-    const face = isUser ? '' : agentAvatarHtml(agentRef, {
+    const personaId = orchPersonaId(row), persona = row._persona;
+    const faceRef = personaId ? persona?.avatar_key : agentRef;
+    const face = isUser ? '' : personaId && !AGENT_AVATAR_IDS[faceRef]
+      ? `<span class="orch-human-face" title="${esc(agentLabel)} · AI-помощник">${esc(agentLabel.slice(0, 1))}</span>` : agentAvatarHtml(faceRef, {
       label: agentLabel, cls: 'orch-msg-face', messageId: row.message_id || '',
     });
     // The answer wears its own header (who answered, on which model) and, while
@@ -10160,7 +10296,7 @@
     const head = isUser ? '' : `<div class="orch-msg-card-head"><span class="orch-msg-author">${esc(agentLabel)}</span>${model ? `<span class="orch-msg-model">модель: ${esc(model)}${provider ? ` (${esc(provider)})` : ''}</span>` : ''}${orchAwaitHtml(row)}</div>`;
     const technical = orchAgentWorldTaskId(row) && (String(row.content || '').length > 500 || /^\s*[\[{]/.test(row.content || ''));
     const body = technical ? `<details class="orch-msg-body orch-aw-details"><summary>Полное сообщение и данные результата</summary><pre>${esc(row.content || '')}</pre></details>` : `<div class="orch-msg-body">${esc(row.content || '')}</div>`;
-    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}">${face}<div class="orch-msg-stack">${head}${body}${media}${actions}${footer}</div></div>`;
+    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}"${personaId ? ` data-persona-id="${esc(personaId)}"` : ''}>${face}<div class="orch-msg-stack">${head}${body}${media}${actions}${footer}${orchSpeechHtml(row)}</div></div>`;
   }
   function orchStopFeedbackVoice() {
     const voice = ORCH.feedbackVoice;
@@ -10410,18 +10546,22 @@
       if (!silent) { renderError(box, e, () => orchLoadMessages(cid)); return false; }
       return false;
     }
-    if (!human) messages = await orchAgentWorldViews(messages, cid);
+    if (!human) {
+      messages = await orchAgentWorldViews(messages, cid);
+      messages = await orchPersonaViews(messages, cid);
+    }
     if (ORCH.currentId !== cid) return;
     const signature = JSON.stringify(messages.map(row => [
       row.message_id, row.timestamp_utc, row.content, row.rating,
       row.feedback_comment, row.feedback_timestamp_utc, row.model, row.provider,
       row.agent_name, row.actions, row.fulfillment, row.message_kind, row.participation_chain,
-      row.sender_profile_id, row.attachments, row._awTask, row._awLatest,
+      row.sender_profile_id, row.attachments, row._awTask, row._awLatest, row._persona,
     ]));
     if (silent && signature === ORCH.messagesSignature) return;
     if (silent && (ORCH.feedbackVoice || qsa('.orch-feedback-text', box).some(ta => ta.dataset.dirty === '1'))) return;
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
     orchStopFeedbackVoice();
+    agentSpeakStop();
     box.innerHTML = messages.length ? orchMessagesHtml(messages) : (human
       ? '<div class="empty-state">Личная переписка начнётся с первого сообщения.</div>'
       : '<div class="empty-state">Начните диалог: например «Разработай простую стратегию максимально быстро».</div>');
@@ -10433,6 +10573,7 @@
       wireOrchFeedback(box);
       wireAgentFaces(box);
       wireOrchAgentWorld(box, messages, cid);
+      wireOrchSpeech(box, messages, cid);
     }
     if (!silent || atBottom) box.scrollTop = box.scrollHeight;
     if (human && ORCH.open && ORCH.currentId === cid) {

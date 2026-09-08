@@ -157,6 +157,8 @@ def _scope(service, context, task_id, approved):
             or checkpoint.get("application_request") != approved.get("application_request")
             or checkpoint.get("delegation") != approved.get("delegation")
             or checkpoint.get("routing") != approved.get("routing")
+            or checkpoint.get("speaking_identity") != approved.get("speaking_identity")
+            or checkpoint.get("executor_persona_id") != approved.get("executor_persona_id")
             or c.primitive(task.dependencies) != approved["dependencies"]
             or c.primitive(task.role) != approved["role"]
             or task.header.policy.sha256 != approved["task_policy_sha256"]
@@ -178,6 +180,9 @@ def _scope(service, context, task_id, approved):
     if checkpoint.get("delegation"):
         from .delegation import validate_execution
         validate_execution(service, context, task, checkpoint)
+    if checkpoint.get("routing"):
+        from .router_v2 import validate_assignment
+        validate_assignment(service, context, task, checkpoint)
     return task, checkpoint
 
 
@@ -236,6 +241,9 @@ def prepare(authorized, service, task_id):
             "connection_sha256": digest(connection), "model_id": checkpoint["model_id"],
             "application_request": checkpoint.get("application_request"), "delegation": origin,
             **({"routing": checkpoint["routing"]} if "routing" in checkpoint else {}),
+            **({"speaking_identity": checkpoint["speaking_identity"],
+                "executor_persona_id": checkpoint.get("executor_persona_id")}
+               if "speaking_identity" in checkpoint else {}),
             "delegation_sha256": digest(origin) if origin else None, "deadline": intent.deadline.isoformat(),
             "max_output_tokens": 512, "worker_job_id": job_id,
             "commands": ["bounded_model_text"] + ([checkpoint["application_request"]["kind"]] if checkpoint.get("application_request") else [])}
@@ -468,7 +476,17 @@ def observe(authorized, service, task_id):
             scope_matches = (checkpoint.get("request_sha256") == approved["request_sha256"]
                 and digest(_request(checkpoint)) == approved["request_sha256"]
                 and checkpoint.get("application_request") == approved.get("application_request")
-                and checkpoint.get("delegation") == approved.get("delegation"))
+                and checkpoint.get("delegation") == approved.get("delegation")
+                and checkpoint.get("routing") == approved.get("routing")
+                and checkpoint.get("speaking_identity") == approved.get("speaking_identity")
+                and checkpoint.get("executor_persona_id") == approved.get("executor_persona_id")
+                and c.primitive(task.role) == approved["role"])
+            if scope_matches and checkpoint.get("routing"):
+                from .router_v2 import validate_assignment
+                try:
+                    validate_assignment(service, context, task, checkpoint)
+                except ContractError:
+                    scope_matches = False
             reason = deviations.inspect_provider(approved, receipt, check_test_executor_enabled=False) if scope_matches else "approved_scope_changed"
             result = None
             if not reason:

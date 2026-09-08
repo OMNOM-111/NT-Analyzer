@@ -488,17 +488,27 @@ class ModelService:
             if model.status != "active" or account.status != "active" or persona.status != "active":
                 raise ContractError("model_connection_inactive")
             policy = self._put(context, _POLICY)
-            role = self._ensure(context, c.AgentRole, _id(context, "role:model-response"),
-                _id(context, "role:model-response"), policy, role_key="model_response",
-                responsibilities=self._put(context, {"tools": [], "duty": "bounded verified text response"}),
-                capability_ceiling=("ai_pro_models",), autonomy_ceiling=c.Autonomy.ADVICE)
-            role = self._walk(context, role, "active")
+            speaking_identity = None
+            if _routing is not None:
+                # Selecting another connection is not selecting another speaker.
+                # Only the server-issued source packet may preserve this binding.
+                from .router_v2 import speaking_assignment
+                persona, role, speaking_identity = speaking_assignment(self, context, _routing)
+            else:
+                role = self._ensure(context, c.AgentRole, _id(context, "role:model-response"),
+                    _id(context, "role:model-response"), policy, role_key="model_response",
+                    responsibilities=self._put(context, {"tools": [], "duty": "bounded verified text response"}),
+                    capability_ceiling=("ai_pro_models",), autonomy_ceiling=c.Autonomy.ADVICE)
+                role = self._walk(context, role, "active")
             from . import test_executor
             goal = {"source": "real_model_task", **identity, "request_sha256": digest(identity),
-                    "persona_id": profile["persona_id"], "persona_name": persona.display_name,
+                    "persona_id": str(persona.header.entity_id),
+                    "persona_name": speaking_identity["persona_name"] if speaking_identity else persona.display_name,
                     "provider_account_id": profile["provider_account_id"], "task_id": str(task_id),
                     "correlation_id": str(correlation), "synthetic": False,
                     "test_executor_request": test_executor.enabled(context.scope.workspace_id)}
+            if speaking_identity is not None:
+                goal.update(speaking_identity=speaking_identity, executor_persona_id=profile["persona_id"])
             if spec["rubric_key"] in {"backtest_spec", "chart_spec"}:
                 goal["application_request"] = {"kind": spec["rubric_key"].removesuffix("_spec"),
                     "spec": spec["input"], "request_sha256": digest(spec["input"])}
@@ -772,6 +782,8 @@ class ModelService:
             "model_test_executor_disabled", "model_real_connection_verification_required",
             "routing_disabled", "routing_preview_changed", "routing_source_changed", "routing_request_mismatch",
             "routing_context_required", "routing_packet_invalid", "routing_preview_invalid", "routing_source_invalid",
+            "routing_speaking_identity_changed", "routing_speaking_identity_invalid", "routing_speaking_assignment_changed",
+            "routing_fresh_identity_preview_required",
             "model_budget_exhausted", "model_key_invalid", "model_endpoint_unavailable", "model_not_found",
             "model_provider_response_invalid", "model_provider_latency_invalid", "model_provider_cost_invalid",
             "model_pricing_unavailable", "model_access_denied", "model_cancelled",
@@ -829,6 +841,9 @@ class ModelService:
         checkpoint = self._json(context, task.checkpoint)
         if checkpoint.get("source") != "real_model_task":
             raise ContractError("model_task_not_found")
+        if checkpoint.get("routing"):
+            from .router_v2 import validate_assignment
+            validate_assignment(self, context, task, checkpoint)
         model = self._get(context, EntityKind.MODEL, checkpoint["model_id"])
         model_profile = self._json(context, model.profile)
         receipt = self._json(context, checkpoint["receipt"]) if checkpoint.get("receipt") else {}
@@ -865,6 +880,9 @@ class ModelService:
             "actions": ["cancel"] if task.status in _ACTIVE else [],
             "task_class_label": presentation.rubric_label(rubric_key),
             "progress_pct": presentation.progress_pct(task.status)}
+        if checkpoint.get("speaking_identity"):
+            task_dto.update(speaking_identity=checkpoint["speaking_identity"],
+                            executor_persona_id=checkpoint.get("executor_persona_id"))
         if checkpoint.get("application_cancel_request"):
             task_dto["actions"] = []
         task_dto["application_dispatch"] = checkpoint.get("application_dispatch")

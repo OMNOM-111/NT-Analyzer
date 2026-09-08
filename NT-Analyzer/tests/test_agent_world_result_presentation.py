@@ -19,6 +19,10 @@ def chat_render(row):
     message = "function orchMessageHtml(" + source.split("function orchMessageHtml(", 1)[1].split("function orchStopFeedbackVoice(", 1)[0]
     script = ("const esc=require(" + json.dumps(str(SCRIPT)) + ").esc;"
         "const ORCH_ACTION_LABELS={}, ORCH_ACTION_STATES={completed:['','done']},ORCH={};"
+        # The shared helper slice now registers speech lifecycle cleanup. This
+        # render-only port may register handlers, but must never play any audio.
+        "const window={addEventListener(){}},document={addEventListener(){}},AGENT_AVATAR_IDS={};"
+        "const agentSpeakStop=()=>{throw Error('render-only test must not execute speech')};"
         "const orchFmtTime=()=>'',orchFooterHtml=()=>'',agentAvatarHtml=()=>'',orchAwaitHtml=()=>'';"
         + helpers + message + "const row=" + json.dumps(row) + ";"
         "const before=JSON.stringify(row); const html=orchMessageHtml(row);"

@@ -1774,3 +1774,36 @@ Captured from the running instance with a real browser, in
 | `07-automation-drawer.png` | the three conditions, the owner-only control, the grants and schedules |
 | `08-models-drawer.png` | connections and whether each was confirmed by an actual answer |
 | `09-executor-attribution.png` | «Провайдер: deepseek — не вызывался», «Ответ получен от: agent-world-local-test-executor-v1» |
+
+---
+
+## Part F — unified continuation after the preserved review
+
+Parts C/D/E and their screenshots remain historical receipts. Current status
+is only [AGENT_WORLD_IMPLEMENTATION_STATUS.md](AGENT_WORLD_IMPLEMENTATION_STATUS.md).
+The combined task branch is `codex/agent-world-unified-acceptance`, draft PR #285.
+Shared checkpoint `a03ec82b686a9f6f05c056fe5a500ecbdb3babac` preserved 65 files;
+root static/context and the 584-file bundle passed before commit. Its detached
+full run is 5124 PASS / 12 FAIL / 112 SKIP; legacy 13/13 PASS. Later code is a
+separate checkpoint and does not inherit a full PASS from this run.
+
+The earlier manually written report fixtures are not ordinary browser/model
+uploads. A subsequent disposable authenticated-Connector test did reproduce a
+different server-dispatch binding defect. The
+[scoped correction](../changelog/2026-09-08-agent-world-trusted-report-boundary.md)
+binds the stored command to its canonical job and source workspace before
+settlement; rejected origin corrections append to Chat instead of erasing the
+old history. 208 boundary/Connector/live-backtest tests pass. No real device,
+owner job or the genuine historical owner report was altered.
+
+The new bounded Coordinator has an actual multi-node worker/Chat test with
+numeric-summary and verified fact transfer; E3's earlier absence is therefore
+historical, not the current implementation status. This remains a limited
+non-trading contract, not a general planner. Persona voice now has a scoped
+saved-message path; Router pins original speaking identity independently of
+the chosen executor. Legacy Chat timers/ratings cannot accept an Agent World
+Task. Scoped changelogs and the current matrix retain all remaining gates.
+
+Protected Local 8765 remains `2b6d0112`, untouched. Final isolated Aurora and
+fresh disposable PostgreSQL acceptance still require the exact final saved
+source. No merge, release or deployment has occurred; design is not accepted.

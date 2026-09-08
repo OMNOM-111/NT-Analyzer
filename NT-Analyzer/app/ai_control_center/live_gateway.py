@@ -200,7 +200,8 @@ def overview(authorized: dict) -> dict:
         if task["source_status"] in {"done", "failed", "cancelled"}:
             detail = service.get(**service_args(authorized), job_id=task["source_job_id"])
             outcomes.append({"task_id": task["id"], "title": task["title"], "summary": detail["result_text"],
-                             "status": task["status"], "source_kind": "ninjatrader_report", "synthetic": False,
+                             "status": task["status"], "source_kind": "ninjatrader_report", "synthetic": task["synthetic"],
+                             "source_confirmed": task.get("source_confirmed", True),
                              "source_job_id": task["source_job_id"], "created_at": task["updated_at"]})
     for item in chart_details:
         task = item["task"]

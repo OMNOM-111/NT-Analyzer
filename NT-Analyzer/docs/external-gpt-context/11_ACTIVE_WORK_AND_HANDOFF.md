@@ -14,6 +14,21 @@
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
+- Shared checkpoint: `a03ec82b686a9f6f05c056fe5a500ecbdb3babac`, pushed to PR #285,
+  clean at preservation; mandatory static/context/artifact checks passed.
+  Subsequent scoped work covers canonical Connector result binding, rejected
+  origin correction, Persona voice in saved SF Chat messages and preservation
+  of the speaking Persona across Router executor changes. See the
+  [boundary record](../changelog/2026-09-08-agent-world-trusted-report-boundary.md).
+  Detached exact-a03 full: 5124 PASS / 12 FAIL / 112 SKIP; legacy 13/13 PASS.
+  Skips separate 68 Agent World PostgreSQL, 41 legacy PostgreSQL and 3 platform
+  cases. Later fixes preserve scoped provenance/isolation assertions; final
+  integrated full/browser remains pending. The
+  [Chat review boundary](../changelog/2026-09-08-agent-world-chat-review-boundary.md)
+  prevents timer/message stars from accepting a Task; the
+  [Router identity contract](../changelog/2026-09-08-agent-world-router-persona-preservation.md)
+  preserves speaking Persona separately from executor. No flag/Local/Production
+  activation occurred.
 - Current preserved core: `13573bf76bae2dbad4f9efc4f6893d0bcb4d5406`, draft
   PR #285 on `codex/agent-world-unified-acceptance`. The subsequent shared
   API/worker/Chat/UI delta and remaining gates are in the

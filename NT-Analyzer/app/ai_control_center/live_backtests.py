@@ -429,7 +429,8 @@ class LiveBacktestService:
                            "trades_available": trades.get("total"),
                            "trades_source": {"kind": "canonical_trades_json", "complete": verification["passed"],
                                              "sha256": verification["source_checksums"].get("trades.json"),
-                                             "total": trades.get("total")}, "synthetic": False}, "report_url": report_url}
+                                             "total": trades.get("total")}, "synthetic": verification["synthetic"],
+                           "source_confirmed": verification.get("source_confirmed", True)}, "report_url": report_url}
 
     def _job_ids(self, context, source):
         offset = 0
@@ -496,11 +497,7 @@ class LiveBacktestService:
             if not detail or detail["task"]["source_status"] not in _TERMINAL:
                 continue
             verification = detail["verification"]
-            evidence_sha = _sha(_canonical([detail["task"]["source_status"], verification]))
-            envelope = {"request_id": "aw.nt." + job_id + "." + evidence_sha, "conversation_id": detail["task"]["conversation_id"],
-                        "scope": dict(chat_scope), "text": detail["result_text"], "agent_id": "tolik", "agent_name": "Толик",
-                        "task_id": detail["task_id"], "source_job_id": job_id, "report_url": detail["report_url"],
-                        "verification": verification, "synthetic": False, "source_kind": "ninjatrader_report"}
+            envelope = completion_envelope(detail, chat_scope)
             self._access(context, source_scope, chat_scope, admit)
             try:
                 response = publish(envelope)
@@ -510,3 +507,32 @@ class LiveBacktestService:
             except Exception:
                 errors.append({"job_id": job_id, "code": "live_backtest_publication_failed"})
         return {"items": delivered, "delivered": len(delivered), "errors": errors}
+
+
+def completion_envelope(detail, chat_scope):
+    """One source-bound projection for normal delivery and origin corrections."""
+    verification = detail["verification"]
+    job_id = detail["task"]["source_job_id"]
+    evidence_sha = _sha(_canonical([detail["task"]["source_status"], verification]))
+    # Append the corrected provenance rather than silently rewriting a message
+    # from an older projection with the same underlying report checksum.
+    suffix = ".origin-v2" if verification.get("source_confirmed") is False else ""
+    return {"request_id": "aw.nt." + job_id + "." + evidence_sha + suffix,
+            "conversation_id": detail["task"]["conversation_id"], "scope": dict(chat_scope),
+            "text": detail["result_text"], "agent_id": "tolik", "agent_name": "Толик",
+            "task_id": detail["task_id"], "source_job_id": job_id, "report_url": detail["report_url"],
+            "verification": verification, "synthetic": verification["synthetic"],
+            "source_confirmed": verification.get("source_confirmed", True), "source_kind": "ninjatrader_report"}
+
+
+def validate_rejected_envelope(authorized, envelope):
+    """Allow only an exact correction from the current scoped canonical report."""
+    args = {key: authorized[key] for key in ("context", "source_scope", "chat_scope", "admit")}
+    detail = LiveBacktestService().get(**args, job_id=str(envelope.get("source_job_id") or ""))
+    if (not detail or detail["task"]["source_status"] not in _TERMINAL
+            or detail["verification"].get("passed") is not False
+            or detail["verification"].get("source_confirmed") is not False
+            or detail["verification"].get("synthetic") is not True
+            or completion_envelope(detail, args["chat_scope"]) != envelope):
+        raise ContractError("live_backtest_origin_correction_mismatch")
+    return detail
