@@ -1,10 +1,5 @@
 """Minimal domain adapter over the mechanisms that are already implemented.
 
-`domain_gateway` dispatches the `automation` and `router` domains, and the
-`automation_watch` worker phase, to a `mechanism_gateway` module that exists in
-no branch of this repository. Until its author lands it those two routes are
-registered and permanently unavailable, which is honest but useless.
-
 This adapter connects them to the services that *are* implemented --
 `automation_authority`, `scheduler` and `router_v2`. It is an adapter, not a
 mechanism: it creates no second router, no second scheduler and no second
@@ -20,8 +15,7 @@ Two rules shape the surface:
   * an operation this adapter does not support is named in `limitations`
     rather than answered as if it worked.
 
-`domain_gateway._mechanism_gateway()` prefers a real `mechanism_gateway` when
-one appears, so this file is replaced by that module rather than merged with it.
+The bounded Coordinator is another adapter over these same stores and grants.
 """
 from __future__ import annotations
 
@@ -35,7 +29,8 @@ from .states import ContractError, EntityKind
 # Operations a caller may ask for, per domain. Anything else is a contract
 # error rather than a silent no-op.
 ACTIONS = {
-    "automation": frozenset({"propose", "enable", "cancel", "revoke", "delegate", "reconcile"}),
+    "automation": frozenset({"propose", "enable", "cancel", "revoke", "delegate", "reconcile",
+        "preview_delegation", "commission", "preview_commission", "approve_commission"}),
     "router": frozenset({"preview", "apply"}),
 }
 
@@ -47,6 +42,8 @@ LIMITATIONS = {
         " отдельной очереди у этого домена нет.",
         "Разрешение ai_automation выдаётся и отзывается владельцем отдельно,"
         " существующим маршрутом POST /api/auth/users/{user_id}/permission.",
+        "Координатор ограничен числовой сводкой и передачей проверенных фактов;"
+        " эти операции не являются профессиональной оценкой модели.",
     ],
     "router": [
         "Предпросмотр всегда теневой и ничего не отправляет. Применение решения"
@@ -201,6 +198,7 @@ def read(authorized, service, domain, *, identity=None, limit=50, cursor=None):
     context = authorized["context"]
     capabilities = authorized["chat_scope"].get("capabilities") or {}
     if domain == "automation":
+        from . import coordinator, delegation
         grants = _grants(service, context)
         if identity:
             grants = [row for row in grants if row["controller_id"] == str(identity)]
@@ -213,13 +211,24 @@ def read(authorized, service, domain, *, identity=None, limit=50, cursor=None):
                  "can_manage": scope.get("is_owner") is True,
                  "user_id": scope.get("user_id"),
                  "route": "/api/auth/users/{user_id}/permission"}
+        commissions, graphs = [], []
+        for task in service._all(context, EntityKind.TASK):
+            if identity and str(task.header.entity_id) != str(identity):
+                continue
+            checkpoint = service._json(context, task.checkpoint) if task.checkpoint else {}
+            if checkpoint.get("source") == coordinator.SOURCE and len(commissions) < limit:
+                commissions.append(coordinator.projection(authorized, service, task.header.entity_id))
+            elif checkpoint.get("source") == delegation.SOURCE and len(graphs) < limit:
+                graphs.append(delegation.projection(authorized, service, task.header.entity_id))
+        flags = _flags(authorized, _AUTOMATION_FLAGS)
         return {"enabled": True, "items": grants[:limit], "next_cursor": None,
                 "schedules": _schedules(authorized, service, grants),
+                "commissions": commissions, "delegations": graphs,
                 "capabilities": {"ai_automation": granted},
                 "capability_admin": admin,
                 "capability_route": "POST /api/auth/users/{user_id}/permission",
-                "flags": _flags(authorized, _AUTOMATION_FLAGS),
-                "actions": ["propose"] if granted else [],
+                "flags": flags,
+                "actions": (["propose"] if granted else []) + (["commission"] if flags.get("AI_DELEGATION_V2") else []),
                 "limitations": list(LIMITATIONS["automation"]), "synthetic": False}
 
     flags = _flags(authorized, _ROUTER_FLAGS)
@@ -285,11 +294,29 @@ def mutate(authorized, service, domain, identity, action, payload, *, expected_r
         if action == "apply":
             return _apply(authorized, service, identity, payload, idempotency_key)
         return _preview(authorized, service, identity, payload)
-    from . import automation_authority, delegation, scheduler
+    from . import automation_authority, coordinator, delegation, scheduler
+    if action == "commission":
+        return coordinator.commission(authorized, service, payload, idempotency_key)
+    if action == "preview_commission":
+        return coordinator.preview(authorized, service, identity)
+    if action == "approve_commission":
+        return coordinator.approve(authorized, service, identity, payload)
+    if action == "preview_delegation":
+        from .model_evaluation import digest
+        proposed = delegation.propose(authorized, service, identity, payload.get("target_model_ids"),
+            payload.get("max_depth", 3), idempotency_key, parent_indices=payload.get("parent_indices"))
+        return {**proposed, "approved": False, "dispatches": 0,
+            "approved_plan_sha256": digest(automation_authority.normalized_plan(proposed["plan"]))}
     if action == "revoke":
         reference = delegation.snapshot(context, payload.get("grant_ref"))
         return automation_authority.revoke(authorized, service, reference)
     if action == "cancel":
+        task = service._get(context, EntityKind.TASK, identity)
+        checkpoint = service._json(context, task.checkpoint)
+        if checkpoint.get("source") == coordinator.SOURCE:
+            return coordinator.cancel(authorized, service, identity)
+        if checkpoint.get("source") == delegation.SOURCE:
+            return delegation.cancel(authorized, service, identity)
         return scheduler.cancel(authorized, service, identity)
     if action == "reconcile":
         return delegation.reconcile(authorized, service, identity)
@@ -369,11 +396,18 @@ def _delegate(authorized, service, source_task_id, payload, idempotency_key):
     parents = payload.get("parent_indices")
     proposed = delegation.propose(authorized, service, source_task_id, targets, depth,
                                   idempotency_key, parent_indices=parents)
+    if proposed["plan"].get("root_kind") == "verified_model_data":
+        if (payload.get("approved_plan_sha256") != digest(normalized_plan(proposed["plan"]))
+                or not payload.get("expires_at")):
+            raise ContractError("coordinator_explicit_approval_required")
+        expiry = payload["expires_at"]
+    else:
+        expiry = (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
     grant = automation_authority.approve(
         authorized, service,
         proposal={"controller_id": proposed["controller_id"], "plan": proposed["plan"]},
         kind="delegation",
-        expires_at=(datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat(),
+        expires_at=expiry,
         max_call_cost_usd=payload.get("max_call_cost_usd", 0.0),
         approved_plan_sha256=digest(normalized_plan(proposed["plan"])),
         idempotency_key=idempotency_key)

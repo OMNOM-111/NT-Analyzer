@@ -14,6 +14,14 @@
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
+- Current integration checkpoint after `1409553a`: draft PR #285 on
+  `codex/agent-world-unified-acceptance`. Bounded Coordinator/reviews, Persona,
+  Process Intelligence and registration-expiry cores are preserved; shared
+  hooks remain in progress. New isolated PostgreSQL evidence is 69 Agent World
+  plus 41 legacy PASS and separately hash-bound API/worker/restart/RLS acceptance,
+  not a new full-regression PASS. See the
+  [takeover record](../changelog/2026-09-08-agent-world-integration-takeover.md).
+  Local 8765 and original worktrees are unchanged; localhost:8804 is isolated QA.
 - Independent review pass (not merged): `claude/agent-world-review-and-hardening`,
   local and unpushed, base `45ab4361`, HEAD `c865db2248a12f6927d077dc31efe8b05c02426e`.
   Findings, deliberate non-changes and the exact next operation are in

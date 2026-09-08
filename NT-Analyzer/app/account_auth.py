@@ -4885,17 +4885,28 @@ def complete_registration(
         )
 
     if provider == "email":
-        out = verify_email_auth(
-            cid,
-            code=str(code or ""),
-            profile={
-                "first_name": clean_first,
-                "last_name": clean_last,
-                "accept_terms": True,
-            },
-            ip=ip, user_agent=user_agent, api_call=api_call,
-            owner_chat_id=owner_chat_id, device_credential=device_credential,
-        )
+        try:
+            out = verify_email_auth(
+                cid,
+                code=str(code or ""),
+                profile={
+                    "first_name": clean_first,
+                    "last_name": clean_last,
+                    "accept_terms": True,
+                },
+                ip=ip, user_agent=user_agent, api_call=api_call,
+                owner_chat_id=owner_chat_id, device_credential=device_credential,
+            )
+        except AccountAuthError as exc:
+            if exc.status == 410:
+                # Match the staged-provider contract: the final screen can
+                # return to verification instead of retrying a spent proof.
+                # Do not refresh the OTP TTL or consume/accept anything here.
+                raise AccountAuthError(
+                    "Код подтверждения e-mail истёк или уже использован. Запросите новый код.",
+                    410, code="registration_expired",
+                ) from exc
+            raise
     else:
         out = complete_profile(
             cid,

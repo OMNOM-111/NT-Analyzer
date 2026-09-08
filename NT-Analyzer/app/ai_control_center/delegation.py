@@ -196,6 +196,8 @@ def _child_key(controller_id, index):
 
 
 def _verified(service, context, identity):
+    # A status/score alone is not enough for a child to unlock descendants.
+    result_handoff.verified_model_data(service, context, identity, allow_dependent=True)
     task = service._get(context, EntityKind.TASK, identity)
     checkpoint = service._json(context, task.checkpoint)
     outcome = service._get(context, EntityKind.OUTCOME, _id(context, "outcome:" + str(identity)))
@@ -213,6 +215,9 @@ def _verified(service, context, identity):
 
 
 def _seal_node(service, context, control, plan, index):
+    if plan.get("coordinator_id"):
+        from .coordinator import validate_plan_link
+        validate_plan_link(service, context, plan)
     if type(index) is not int or not 0 <= index < len(plan["nodes"]):
         raise ContractError("delegation_node_invalid")
     node = plan["nodes"][index]
@@ -223,18 +228,25 @@ def _seal_node(service, context, control, plan, index):
         # Initial human ingress derived these allowlisted facts. A later
         # authenticated service validates the immutable evidence, never forges
         # a Human context to call the legacy one-click handoff entry point.
-        from .social_publication import SocialPublicationService
         checkpoint = service._json(context, root.checkpoint)
         sealed = plan["root_source"]
-        outcome, _ = SocialPublicationService(service.repository)._outcome(context, sealed["source_outcome_id"])
-        if (root.status != "succeeded" or checkpoint.get("source") != "real_model_task"
-                or checkpoint.get("synthetic") is not False or not checkpoint.get("application_request")
-                or checkpoint.get("conversation_id") != plan["conversation_id"]
-                or checkpoint.get("message_id") != plan["source_message_id"]
-                or outcome.verification.sha256 != sealed["source_proof_sha256"]
-                or sorted(ref.sha256 for ref in outcome.evidence) != sealed["artifact_hashes"]
-                or digest(sealed["facts"]) != sealed["facts_sha256"]):
-            raise ContractError("delegation_root_evidence_changed")
+        if plan.get("root_kind") == result_handoff.DATA_KIND:
+            fresh = result_handoff.verified_model_data(service, context, root.header.entity_id)
+            if fresh != sealed:
+                raise ContractError("delegation_root_evidence_changed")
+        else:
+            # Application/NinjaTrader/PNG verification is deliberately not
+            # routed through the non-trading data verifier or relaxed here.
+            from .social_publication import SocialPublicationService
+            outcome, _ = SocialPublicationService(service.repository)._outcome(context, sealed["source_outcome_id"])
+            if (root.status != "succeeded" or checkpoint.get("source") != "real_model_task"
+                    or checkpoint.get("synthetic") is not False or not checkpoint.get("application_request")
+                    or checkpoint.get("conversation_id") != plan["conversation_id"]
+                    or checkpoint.get("message_id") != plan["source_message_id"]
+                    or outcome.verification.sha256 != sealed["source_proof_sha256"]
+                    or sorted(ref.sha256 for ref in outcome.evidence) != sealed["artifact_hashes"]
+                    or digest(sealed["facts"]) != sealed["facts_sha256"]):
+                raise ContractError("delegation_root_evidence_changed")
         parent, facts, outcome_id = root, sealed["facts"], sealed["source_outcome_id"]
     else:
         parent, checkpoint, outcome = _verified(service, context, _child_id(context, control.header.entity_id, node["parent_index"]))
@@ -256,7 +268,7 @@ def _seal_node(service, context, control, plan, index):
         "target_model_id": node["model_id"], "target_persona_id": node["persona_id"],
         "conversation_id": plan["conversation_id"], "source_message_id": plan["source_message_id"],
         "grant_ref": plan["grant_ref"], "facts": facts, "facts_sha256": digest(facts),
-        "synthetic": False, "limitation": result_handoff.LIMITATION}
+        "synthetic": False, "limitation": result_handoff.DATA_LIMITATION if plan.get("root_kind") == result_handoff.DATA_KIND else result_handoff.LIMITATION}
     return SealedDelegation(control.ref(), (parent.ref(),), control.header.correlation_id, json_bytes(packet))
 
 
@@ -316,7 +328,7 @@ def _queue(authorized, service, control, plan, index):
         return old
 
 
-def propose(authorized, service, source_task_id, target_model_ids, max_depth, idempotency_key, *, parent_indices=None):
+def propose(authorized, service, source_task_id, target_model_ids, max_depth, idempotency_key, *, parent_indices=None, commission_id=None):
     """Read-only exact proposal; it is neither approval nor a queued action."""
     context = gate(authorized, "AI_DELEGATION_V2")
     if context.actor.kind != c.ActorKind.HUMAN:
@@ -325,17 +337,35 @@ def propose(authorized, service, source_task_id, target_model_ids, max_depth, id
     identity = _id(context, "delegation:" + key)
     if type(target_model_ids) is not list or not target_model_ids:
         raise ContractError("delegation_targets_required")
-    source = result_handoff._seal(service, context, source_task_id, target_model_ids[0]).wire()
+    root = service._get(context, EntityKind.TASK, source_task_id)
+    checkpoint = service._json(context, root.checkpoint)
+    data_root = not checkpoint.get("application_request")
+    source = (result_handoff.verified_model_data(service, context, source_task_id) if data_root
+              else result_handoff._seal(service, context, source_task_id, target_model_ids[0]).wire())
+    result_handoff._source_message(authorized, source)
     plan = {"version": VERSION, "root_task": source["parent_task"], "root_source": {key: source[key] for key in
         ("source_outcome_id", "source_evaluation_id", "source_proof_sha256", "artifact_hashes", "facts", "facts_sha256")},
         "nodes": _graph(target_model_ids, parent_indices, max_depth, source["source_persona_id"], service, context),
         "max_depth": max_depth, "conversation_id": source["conversation_id"], "source_message_id": source["source_message_id"],
         "synthetic": False}
+    if data_root:
+        plan.update(root_kind=result_handoff.DATA_KIND, root_source=source)
+        for node in plan["nodes"]:
+            node.update(operation="verify_fact_transfer", role="fact_transfer_checker",
+                operation_label="Проверка точности передачи фактов", produces_new_analysis=False)
+    if commission_id is not None:
+        from . import coordinator
+        control, checkpoint, _ = controller(service, context, commission_id, coordinator.SOURCE)
+        if identity != _id(context, "delegation:" + _key(coordinator._graph_key(control.header.entity_id))):
+            raise ContractError("coordinator_plan_changed")
+        plan.update(coordinator_id=str(control.header.entity_id), coordinator_plan_sha256=checkpoint["plan_sha256"])
+        coordinator.validate_plan_link(service, context, plan)
     return {"controller_id": str(identity), "plan": plan}
 
 
-def start(authorized, service, source_task_id, target_model_ids, max_depth, idempotency_key, *, grant_ref, parent_indices=None):
-    proposed = propose(authorized, service, source_task_id, target_model_ids, max_depth, idempotency_key, parent_indices=parent_indices)
+def start(authorized, service, source_task_id, target_model_ids, max_depth, idempotency_key, *, grant_ref, parent_indices=None, commission_id=None):
+    proposed = propose(authorized, service, source_task_id, target_model_ids, max_depth, idempotency_key,
+        parent_indices=parent_indices, commission_id=commission_id)
     context = authorized["context"]
     identity = _uuid(proposed["controller_id"])
     plan = {**proposed["plan"], "grant_ref": c.primitive(snapshot(context, grant_ref))}
@@ -353,6 +383,9 @@ def reconcile(authorized, service, identity):
     context = gate(authorized, "AI_DELEGATION_V2")
     control, _, plan = controller(service, context, identity)
     if control.status in {"cancelled", "failed", "blocked", "review", "succeeded"}:
+        if plan.get("coordinator_id") and control.status == "review":
+            from .coordinator import synchronize
+            synchronize(authorized, service, identity)
         return projection(authorized, service, identity)
     authority(service, context, control.ref(), plan["grant_ref"], "delegation_reconcile")
     verified, stopped = [], False
@@ -366,7 +399,10 @@ def reconcile(authorized, service, identity):
             stopped = True
         if child is not None:
             if child.status == "succeeded":
-                _, _, outcome = _verified(service, context, child_id)
+                _, checkpoint, outcome = _verified(service, context, child_id)
+                fresh = _seal_node(service, context, control, plan, node["index"])
+                if checkpoint.get("delegation") != fresh.wire() or child.dependencies != fresh.dependencies:
+                    raise ContractError("delegation_lineage_invalid")
                 verified.append(outcome)
             elif child.status in {"blocked", "cancelled", "failed", "review"}:
                 stopped = True
@@ -381,8 +417,12 @@ def reconcile(authorized, service, identity):
     elif len(verified) == len(plan["nodes"]):
         control = service._walk(context, control, "ready", "running")
         evidence = tuple(outcome.verification for outcome in verified)
+        contributions = [_contribution(service, context, row.task.entity_id) for row in verified]
         proof = service._put(context, {"source": SOURCE, "plan_sha256": digest(plan), "child_outcomes": [c.primitive(row.ref()) for row in verified],
-            "verified_fact_transfer": True, "human_accepted": False, "professional_quality_assessed": False, "synthetic": False})
+            "verified_fact_transfer": True, "human_accepted": False, "professional_quality_assessed": False, "synthetic": False,
+            "root_kind": plan.get("root_kind", "application_result"), "root_source": plan["root_source"],
+            "contributions": contributions, "provenance": _provenance(plan, contributions),
+            "facts": plan["root_source"]["facts"], "produces_new_analysis": False})
         outcome = service._ensure(context, c.Outcome, _id(context, "delegation-outcome:" + str(identity)), control.header.correlation_id,
             control.header.policy, task=control.ref(), evidence=evidence, execution=None)
         if outcome.status == "pending": service._change(context, outcome, "verified", verification=proof)
@@ -390,6 +430,9 @@ def reconcile(authorized, service, identity):
     else:
         for index in ready_nodes:
             _queue(authorized, service, control, plan, index)
+    if plan.get("coordinator_id"):
+        from .coordinator import synchronize
+        synchronize(authorized, service, identity)
     return projection(authorized, service, identity)
 
 
@@ -439,6 +482,29 @@ def execute(authorized, service, job, cancelled, heartbeat):
             "node_index": index, "human_accepted": False, "synthetic": False}
 
 
+def _contribution(service, context, identity):
+    proof = result_handoff.verified_model_data(service, context, identity, allow_dependent=True)
+    return {"task_id": str(identity), "operation": "verify_fact_transfer", "role": "fact_transfer_checker",
+        "operation_label": "Проверка точности передачи фактов", "produces_new_analysis": False,
+        "contribution_id": proof["source_contribution_id"], "evaluation_id": proof["source_evaluation_id"],
+        "outcome_id": proof["source_outcome_id"], "proof_sha256": proof["source_proof_sha256"],
+        "checks": proof["checks"], "provenance": proof["provenance"], "facts_sha256": proof["facts_sha256"],
+        "task_class": proof["task_class"], "model_id": proof["source_model_id"], "persona_id": proof["source_persona_id"],
+        "human_accepted": False, "professional_quality_assessed": False}
+
+
+def _provenance(plan, contributions):
+    rows = [row["provenance"] for row in contributions]
+    if plan["root_source"].get("provenance"):
+        rows = [plan["root_source"]["provenance"], *rows]
+    modes = sorted({row["mode"] for row in rows})
+    return {"mode": modes[0] if len(modes) == 1 else "mixed", "modes": modes,
+        "local_test_receipts": sum(row["mode"] == "local_test_executor" for row in rows),
+        "provider_receipts": sum(row["mode"] == "provider_receipt" for row in rows),
+        "confirmed_external_receipts": sum(row.get("live_provider_confirmed") is True for row in rows),
+        "professional_quality_assessed": False, "rating_effect": "none"}
+
+
 def projection(authorized, service, identity):
     authorized["admit"]()
     context = authorized["context"]
@@ -449,12 +515,37 @@ def projection(authorized, service, identity):
         task = service.repository.get(context=context, kind=EntityKind.TASK, entity_id=identity)
         job = worker_router.get("wj_aw_delegate_" + control.header.entity_id.hex + "_" + str(node["index"]), workspace_id=context.scope.workspace_id)
         child_job = worker_router.get("wj_aw_model_" + identity.hex, workspace_id=context.scope.workspace_id)
-        nodes.append({**node, "task_id": str(identity), "status": task.status if task else "pending_dependency",
-            "coordination_job_status": job.get("status") if job else None, "model_job_status": child_job.get("status") if child_job else None})
-    return {"id": str(control.header.entity_id), "status": control.status, "source": SOURCE, "nodes": nodes,
+        item = {**node, "task_id": str(identity), "status": task.status if task else "pending_dependency",
+            "coordination_job_status": job.get("status") if job else None, "model_job_status": child_job.get("status") if child_job else None}
+        if task:
+            checkpoint = service._json(context, task.checkpoint)
+            item.update(task_class=checkpoint.get("spec", {}).get("rubric_key"), error_code=checkpoint.get("error_code"))
+        if task and task.status == "succeeded":
+            try:
+                item["contribution"] = _contribution(service, context, identity)
+            except ContractError as error:
+                # Preserve the failed evidence in history instead of making a
+                # successful-looking aggregate from incomplete contributions.
+                item["contribution_error"] = error.code
+        nodes.append(item)
+    outcome = service.repository.get(context=context, kind=EntityKind.OUTCOME,
+        entity_id=_id(context, "delegation-outcome:" + str(control.header.entity_id)))
+    result = service._json(context, outcome.verification) if outcome and outcome.status == "verified" else None
+    from . import task_review
+    review = (task_review.aggregate_projection(authorized, service, control) if outcome else
+        {"status": "not_required", "task_revision": control.header.revision, "required_reviews": [], "quality_claim": False})
+    review_state = ("awaiting_required_reviews" if review.get("blocked_reason") == "delegation_required_reviews_pending" else
+        "awaiting_review" if review["status"] == "pending" else review["status"] if outcome else "not_ready")
+    return {"id": str(control.header.entity_id), "revision": control.header.revision,
+        "status": control.status, "source": SOURCE, "nodes": nodes,
         "root_task": plan["root_task"], "plan_sha256": digest(plan), "conversation_id": plan["conversation_id"],
         "max_depth": plan["max_depth"], "max_fanout": MAX_FANOUT, "total_node_limit": MAX_TOTAL,
-        "human_accepted": False, "professional_quality_assessed": False, "synthetic": False}
+        "human_accepted": review["status"] == "accepted", "human_review": review,
+        "actions": ["review_result"] if review["status"] == "pending" else [],
+        "professional_quality_assessed": False, "synthetic": False,
+        "root_kind": plan.get("root_kind", "application_result"), "result": result,
+        "outcome_id": str(outcome.header.entity_id) if outcome else None,
+        "review_state": review_state}
 
 
 def cancel(authorized, service, identity):

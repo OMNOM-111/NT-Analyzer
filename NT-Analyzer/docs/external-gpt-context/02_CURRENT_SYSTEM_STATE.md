@@ -19,6 +19,15 @@
 
 ## Active integration — 2026-09-08
 
+Core checkpoint after `1409553a` is on draft PR #285: Coordinator/review,
+Persona presentation, Process Intelligence and e-mail-expiry recovery are
+preserved while shared API/Chat/UI integration remains **IN DEVELOPMENT**.
+Fresh PostgreSQL evidence is separately 69 Agent World PASS, 41 legacy PASS,
+and API/worker/restart/RLS acceptance bound to its recorded application hash;
+it is not final full-regression evidence. `localhost:8804` is isolated QA with
+fresh synthetic data, not a replacement for protected Local 8765. Details and
+remaining checks: [takeover record](../changelog/2026-09-08-agent-world-integration-takeover.md).
+
 Agent World source is now `codex/agent-world-unified-acceptance`, from combined
 `f0bafe8ea46653827bc836afcb2197964390cf08` plus preserved late Claude documents.
 See the [intake manifest](../changelog/2026-09-08-agent-world-integration-takeover.md).

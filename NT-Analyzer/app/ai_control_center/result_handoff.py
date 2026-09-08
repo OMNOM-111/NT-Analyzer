@@ -13,12 +13,106 @@ import math
 from uuid import UUID
 
 from . import contracts as c
-from .model_evaluation import digest, json_bytes, prepare
+from .model_evaluation import digest, evaluate, json_bytes, prepare
 from .states import ContractError, EntityKind
 
 
 LIMITATION = "Проверяется только точность передачи фактов; это не анализ изображения, стратегии или прибыльности."
 _KIND = "verified_application_fact_handoff"
+DATA_KIND = "verified_model_data"
+DATA_LIMITATION = ("Проверены ограниченные данные и точность их передачи. Это не новый аналитический вывод, "
+                  "не профессиональная оценка модели и не приёмка владельцем.")
+
+
+def verified_model_data(service, context, task_id, *, allow_dependent=False):
+    """Re-read typed immutable non-trading evidence, without application fallback.
+
+    The ordinary model verifier is repeated against the saved receipt; a green
+    DTO, status, score or supplied JSON is never a root. This read also works
+    under the exact approved service actor, without impersonating a Human.
+    """
+    from .model_service import _id, _wire
+    service._access(context, "read")
+    task = service._get(context, EntityKind.TASK, task_id)
+    checkpoint = service._json(context, task.checkpoint)
+    spec = checkpoint.get("spec") or {}
+    if (task.status != "succeeded" or checkpoint.get("source") != "real_model_task"
+            or checkpoint.get("synthetic") is not False or checkpoint.get("application_request")
+            or spec.get("rubric_key") not in {"json_arithmetic", "extract_facts"}
+            or not checkpoint.get("receipt") or checkpoint.get("error_code")
+            or checkpoint.get("handoff")
+            or (not allow_dependent and (task.dependencies or checkpoint.get("delegation")))):
+        raise ContractError("handoff_verified_data_required")
+    if allow_dependent and task.dependencies and not checkpoint.get("delegation"):
+        raise ContractError("handoff_data_lineage_invalid")
+    if not checkpoint.get("conversation_id") or not checkpoint.get("message_id"):
+        raise ContractError("handoff_source_chat_required")
+    canonical = prepare(spec["rubric_key"], json_bytes(spec["input"]).decode() if spec["rubric_key"] == "json_arithmetic"
+                        else "\n".join(key + "=" + value for key, value in spec["input"].items()))
+    if spec != canonical:
+        raise ContractError("handoff_data_spec_changed")
+    identity = {key: checkpoint.get(key) for key in ("model_id", "spec", "conversation_id", "message_id",
+                                                    "comparison_id", "comparison_title")}
+    for key in ("delegation", "comparison_spec"):
+        if key in checkpoint: identity[key] = checkpoint[key]
+    if digest(identity) != checkpoint.get("request_sha256") or checkpoint.get("task_id") != str(task.header.entity_id):
+        raise ContractError("handoff_data_request_changed")
+    receipt = service._json(context, checkpoint["receipt"])
+    if (receipt.get("source") != "provider_response" or receipt.get("synthetic") is not False
+            or receipt.get("task_id") != str(task.header.entity_id)
+            or receipt.get("request_sha256") != checkpoint["request_sha256"]):
+        raise ContractError("handoff_data_receipt_changed")
+    outcome = service._get(context, EntityKind.OUTCOME, _id(context, "outcome:" + str(task.header.entity_id)))
+    evaluation = service._get(context, EntityKind.EVALUATION, _id(context, "evaluation:" + str(task.header.entity_id)))
+    contribution = service._get(context, EntityKind.CONTRIBUTION, _id(context, "contribution:" + str(task.header.entity_id)))
+    execution = service._execution(context, task.header.entity_id)
+    proof = service._json(context, outcome.verification)
+    checked = evaluate(spec, receipt.get("response"))
+    if (outcome.status != "verified" or contribution.status != "accepted" or execution.status != "succeeded"
+            or checked["passed"] is not True or any(proof.get(key) != value for key, value in checked.items())
+            or proof.get("task_id") != str(task.header.entity_id) or proof.get("model_id") != checkpoint["model_id"]
+            or proof.get("receipt") != checkpoint["receipt"]
+            or any(proof.get(key) != receipt.get(key) for key in ("actual_model", "executor", "external_call"))
+            or evaluation.rubric_key != spec["rubric_key"] or evaluation.evidence != outcome.verification
+            or evaluation.outcome != outcome.ref() or evaluation.model.entity_id != UUID(checkpoint["model_id"])
+            or contribution.task != outcome.task or evaluation.task != outcome.task
+            or outcome.task.entity_id != task.header.entity_id or contribution.role != task.role
+            or outcome.execution != execution.ref() or execution.receipt != contribution.result
+            or _wire(contribution.result) != checkpoint["receipt"]
+            or outcome.evidence != (contribution.result, outcome.verification)
+            or contribution.evidence != outcome.evidence):
+        raise ContractError("handoff_data_evidence_changed")
+    # Resolve historical refs through the same private repository/RLS boundary.
+    for ref in (outcome.task, contribution.role, evaluation.model):
+        saved = service.repository.get_revision(context=context, kind=ref.kind, entity_id=ref.entity_id, revision=ref.revision)
+        if saved is None or saved.ref() != ref or saved.header.owner_user_uuid != context.user_uuid:
+            raise ContractError("handoff_data_lineage_invalid")
+    from . import execution_v2, test_executor
+    if execution_v2.is_managed(service, context, task.header.entity_id):
+        managed = execution_v2.projection(service, context, task.header.entity_id)
+        if managed["status"] != "succeeded" or managed["deviation_count"]:
+            raise ContractError("handoff_data_execution_unverified")
+    local = receipt.get("executor") == test_executor.EXECUTOR
+    if local and (receipt.get("external_call") is not False or receipt.get("actual_model") != test_executor.EXECUTOR):
+        raise ContractError("handoff_data_executor_mismatch")
+    # Historical reads do not require the test executor to remain enabled.
+    # Its provenance remains local even after a workspace changes its mode.
+    provenance = {"mode": "local_test_executor" if local else "provider_receipt",
+        "executor": receipt.get("executor"), "actual_model": receipt.get("actual_model"),
+        "external_call": receipt.get("external_call"), "live_provider_confirmed": receipt.get("external_call") is True and not local,
+        "professional_quality_assessed": False}
+    answer = json.loads(receipt["response"])
+    facts = {key: str(value) for key, value in answer.items()}
+    facts = prepare("extract_facts", "\n".join(key + "=" + value for key, value in facts.items()))["input"]
+    return {"kind": DATA_KIND, "parent_task": c.primitive(task.ref()),
+        "correlation_id": str(task.header.correlation_id), "source_model_id": checkpoint["model_id"],
+        "source_persona_id": checkpoint["persona_id"], "source_outcome_id": str(outcome.header.entity_id),
+        "source_evaluation_id": str(evaluation.header.entity_id), "source_contribution_id": str(contribution.header.entity_id),
+        "source_proof_sha256": outcome.verification.sha256, "artifact_hashes": sorted(ref.sha256 for ref in outcome.evidence),
+        "receipt": checkpoint["receipt"], "input_sha256": checked["input_sha256"], "response_sha256": checked["response_sha256"],
+        "task_class": spec["rubric_key"], "checks": checked["checks"], "provenance": provenance,
+        "conversation_id": checkpoint["conversation_id"], "source_message_id": checkpoint["message_id"],
+        "facts": facts, "facts_sha256": digest(facts), "synthetic": False, "limitation": DATA_LIMITATION}
 
 
 @dataclass(frozen=True)

@@ -86,6 +86,47 @@ Original Claude/Codex worktrees and PR #282/#283/#284 are preserved.
 
 ## Next operation and remaining work
 
+### Core preservation checkpoint after intake `1409553a`
+
+Draft integration PR: [#285](https://github.com/OMNOM-111/NT-Analyzer/pull/285),
+base `codex/agent-world-owner-preview`. Original PR bases are unchanged.
+The commit containing this section preserves the following isolated core work;
+it remains **IN DEVELOPMENT**, before shared API/Chat/UI integration:
+
+- Bounded non-trading Coordinator, strict verified-data handoff, multilevel
+  delegation and separate human reviews for source, children and aggregate.
+  Earlier core focused run: 77 PASS. Coordinator/manual-review regression:
+  30 PASS; the final small CAS hardening still requires its exact-code rerun.
+  Strict NinjaTrader source verification was not replaced by model assertions.
+- Persona partial-update preservation, voice/presentation contracts and safe
+  browser-audio controller: 57 focused PASS. No audible browser or paid TTS
+  acceptance is claimed. Generic speaking clips are not phoneme lip-sync.
+- Process Intelligence over verified scoped work, durable dedup/cooldown and
+  explicit suggestion/acceptance: 28 PASS. API/UI integration is still pending;
+  no automation is enabled by creating a suggestion.
+- E-mail registration expired/used challenge now exposes the existing
+  `registration_expired` recovery contract: 72 focused PASS. Consent, TTL and
+  replay protection are unchanged. Final browser rerun is pending.
+- Disposable PostgreSQL: 69 Agent World cases and 41 legacy cases passed
+  separately, zero skips. Actual application/API/worker/restart/RLS acceptance
+  passed on the earlier frozen 214-file application WIP hash documented in
+  the [runtime receipt](2026-09-08-agent-world-postgres-unified-acceptance.md).
+  It does not certify subsequently added code. Harness checks: 42 PASS.
+
+The current full-Aurora QA instance is `http://localhost:8804/` with fresh,
+isolated synthetic owner data. It is not a replacement for Local 8765. Browser
+observations include explicit Google registration, QR confirmation, permanent
+first-device trust, unknown-client OTP and session-only access. E-mail expiry
+was observed and remains a negative-path receipt, not a positive-flow PASS.
+All of these observations precede the final shared integration. No full pytest
+result is claimed for this core checkpoint.
+
+Only named source, tests and canonical change records are staged. Ignored test
+databases, logs, receipts and launchers remain outside Git. Subsequent model
+provenance, shared API/worker/Chat wiring and UI work are a separate delta.
+Next operation: finish these shared hooks, then rerun focused/browser/runtime
+gates on one exact source identity before the final full regression.
+
 1. Preserve this intake checkpoint with exact staging and short mandatory gates.
 2. Reuse and inspect the existing disposable launchers, repositories and test
    executor. Run one full Aurora instance on an isolated address and fresh data;

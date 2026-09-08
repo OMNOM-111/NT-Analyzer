@@ -14,8 +14,16 @@ The 4537/110 full result covers `92436698`, not this latest executable state.
 Root is the sole integrator. Original worktrees and owner Local 8765 remain
 untouched; read-only health confirms code `2b6d0112`. The old isolated URLs below
 are historical launch receipts, not a claim of a currently available test server.
-Next: short checkpoint gates, then isolated full-Aurora acceptance and remaining
-non-trading delegation/Persona/connection/memory/automation work.
+The integration task is published as draft PR #285. Core work after intake
+`1409553a` is preserved separately: Coordinator/delegation review, Persona
+presentation, Process Intelligence and e-mail-expiry recovery. Shared API,
+worker, SF Chat and UI hooks are still being integrated; these cores are not
+declared end-to-end complete. Fresh PostgreSQL evidence is 69 Agent World +
+41 legacy PASS, separately from actual API/worker/restart/RLS acceptance on its
+recorded application hash. None of it upgrades the old full regression to a
+new full PASS. Exact scope and remaining checks are in the intake change record.
+Next: shared integration in the isolated Aurora on localhost:8804, then exact
+code browser/runtime and full regression. Local 8765 remains unchanged.
 
 **Sections below are preserved dated receipts pending consolidation.** Part E
 supersedes Part D/C on PostgreSQL runtime, automation and provenance. Their

@@ -119,22 +119,31 @@ def main() -> int:
         "max_connections = 40\n"
         + ("ssl = on\nssl_cert_file = 'server.crt'\nssl_key_file = 'server.key'\n" if tls else ""),
         encoding="utf-8")
-    run([str(binaries / "pg_ctl.exe"), "-D", str(data), "-l", str(workdir / "pg.log"),
-         "-w", "-o", f"-p {port}", "start"])
+    # A detached postgres child may inherit Python's capture pipes on Windows,
+    # leaving communicate() waiting forever after pg_ctl has already exited.
+    # The server has its own -l log; no pipe needs to survive this launcher.
+    subprocess.run([str(binaries / "pg_ctl.exe"), "-D", str(data), "-l", str(workdir / "pg.log"),
+                    "-w", "-o", f"-p {port}", "start"], check=True,
+                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                   stderr=subprocess.DEVNULL, timeout=60,
+                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
 
     database = "aw_disposable_" + secrets.token_hex(6)
     admin_pw, app_pw = password(), password()
-    env = dict(os.environ, PGPASSWORD=superpw)
+    import psycopg
+    from psycopg import sql
 
-    def psql(dbname: str, statement: str) -> None:
-        run([str(binaries / "psql.exe"), "-h", "127.0.0.1", "-p", str(port), "-U", "pgboot",
-             "-d", dbname, "-v", "ON_ERROR_STOP=1", "-X", "-q", "-c", statement], env=env)
+    def psql(dbname: str, statement) -> None:
+        # CREATE ROLE cannot use bind parameters. sql.Literal handles quoting
+        # in-process without putting either password into a process argv.
+        with psycopg.connect(host="127.0.0.1", port=port, user="pgboot", password=superpw,
+                dbname=dbname, sslmode="require" if tls else "disable", autocommit=True) as connection:
+            connection.execute(statement)
 
-    psql("postgres", f"CREATE ROLE aw_test_admin LOGIN CREATEDB PASSWORD '{admin_pw}'")
+    psql("postgres", sql.SQL("CREATE ROLE aw_test_admin LOGIN CREATEDB PASSWORD {}").format(sql.Literal(admin_pw)))
     # NOBYPASSRLS is the point of the exercise: the suite proves that a
     # workspace-scoped session cannot read another workspace's rows.
-    psql("postgres", "CREATE ROLE stratforge_app LOGIN NOSUPERUSER NOCREATEDB "
-                     f"NOBYPASSRLS PASSWORD '{app_pw}'")
+    psql("postgres", sql.SQL("CREATE ROLE stratforge_app LOGIN NOSUPERUSER NOCREATEDB NOBYPASSRLS PASSWORD {}").format(sql.Literal(app_pw)))
     psql("postgres", f'CREATE DATABASE "{database}" OWNER aw_test_admin')
     psql("postgres", f'GRANT CONNECT ON DATABASE "{database}" TO stratforge_app')
     psql(database, "GRANT USAGE, CREATE ON SCHEMA public TO aw_test_admin")
