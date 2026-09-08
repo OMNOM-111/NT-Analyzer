@@ -8,21 +8,23 @@
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
 - Current program delta: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. Full-program/owner acceptance remains open.
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
-- Active branch: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; both dependencies remain open
+- Protected Local branch snapshot: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; active unified source is PR #285 below
 - Version: `0.10.0-beta.96`, `pre_release`; clean `2b6d0112` active on Local 8765, no Canary/Production promotion
 - Integration state: scoped model/domain/Chat/NT/Desktop, real fact handoff, manual discussion, separate application observations, Consensus and Court verified; owner-dependent and full-program work remain
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
-- Current integration checkpoint after `1409553a`: draft PR #285 on
-  `codex/agent-world-unified-acceptance`. Bounded Coordinator/reviews, Persona,
-  Process Intelligence and registration-expiry cores are preserved; shared
-  hooks remain in progress. New isolated PostgreSQL evidence is 69 Agent World
+- Current preserved core: `13573bf76bae2dbad4f9efc4f6893d0bcb4d5406`, draft
+  PR #285 on `codex/agent-world-unified-acceptance`. The subsequent shared
+  API/worker/Chat/UI delta and remaining gates are in the
+  [shared checkpoint](../changelog/2026-09-08-agent-world-shared-integration-checkpoint.md)
+  and single [program matrix](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
+  New isolated PostgreSQL evidence is 69 Agent World
   plus 41 legacy PASS and separately hash-bound API/worker/restart/RLS acceptance,
   not a new full-regression PASS. See the
   [takeover record](../changelog/2026-09-08-agent-world-integration-takeover.md).
   Local 8765 and original worktrees are unchanged; localhost:8804 is isolated QA.
-- Independent review pass (not merged): `claude/agent-world-review-and-hardening`,
+- Historical independent review snapshot (already included in the unified source): `claude/agent-world-review-and-hardening`,
   local and unpushed, base `45ab4361`, HEAD `c865db2248a12f6927d077dc31efe8b05c02426e`.
   Findings, deliberate non-changes and the exact next operation are in
   [AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md)
@@ -33,7 +35,7 @@
   [PR #283](https://github.com/OMNOM-111/NT-Analyzer/pull/283) (base
   `codex/agent-world-owner-preview`, review only — #282's base untouched);
   exact-SHA CI 3/3 PASS on `84115efc`, later commits not yet certified.
-- Separate uncommitted Codex work exists in the `agent-world-mechanisms`
+- Historical intake receipt: separate uncommitted work existed in the `agent-world-mechanisms`
   worktree (base `45ab4361`): PostgreSQL/RLS repository with migration 0023,
   Router V2, Execution V2 + Deviation Control, delegation, scheduler and a task
   lifecycle projection. It was reviewed read-only from a stable hash-verified
@@ -53,8 +55,10 @@ The [intake manifest](../changelog/2026-09-08-agent-world-integration-takeover.m
 accounts for both executors, the stable five-file documentation delta, excluded
 runtime state and the already ported 73 flag cases. Root owns shared integration
 files. Original worktrees, PR bases and Local 8765 are unchanged.
-Next: preserve checkpoint, reproduce isolated full-Aurora/runtime acceptance,
-then finish the non-trading delegation root and other canonical program gaps.
+Next: freeze/save shared integration after short mandatory gates, restart only
+isolated 8804, then exact-code full-Aurora/browser/regression/PG acceptance.
+The new numeric-summary/delegation root already has normal-queue/Chat evidence;
+do not implement it again. Close current remaining gates from the matrix.
 Keep real/synthetic evidence separate and Part E's withdrawn claims visible.
 The dated snapshot is historical; its old missing-mechanism/UI-freeze
 instructions do not override the owner's new sole-integrator mandate.

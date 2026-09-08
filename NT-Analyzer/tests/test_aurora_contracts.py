@@ -158,7 +158,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260904-agent-world4"}, versions
+    assert set(versions.values()) == {"20260908-agent-world-unified1"}, versions
 
 
 def test_every_aurora_page_uses_current_theme_cache_version():
@@ -292,7 +292,7 @@ def test_every_aurora_page_uses_current_ui_cache_version():
             continue
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
     assert versions
-    assert set(versions.values()) == {"20260905-agent-world-followup"}, versions
+    assert set(versions.values()) == {"20260908-agent-world-unified1"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():

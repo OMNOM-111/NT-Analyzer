@@ -149,7 +149,8 @@ def _aggregate_snapshot(authorized, service, task):
                 raise ContractError("delegation_root_source_changed")
             elif plan.get("root_kind") == result_handoff.DATA_KIND:
                 entry["source"] = result_handoff.verified_model_data(service, context, identity)
-                if entry["source"] != plan["root_source"]: raise ContractError("delegation_root_evidence_changed")
+                if not result_handoff.same_data_source(plan["root_source"], entry["source"]):
+                    raise ContractError("delegation_root_evidence_changed")
         except ContractError as error:
             entry["blocked_reason"] = error.code
             errors.append(error.code)
@@ -164,13 +165,14 @@ def _aggregate_snapshot(authorized, service, task):
                 raise ContractError("coordinator_connection_changed")
         if len(child_outcomes) != len(plan["nodes"]) or result is None:
             raise ContractError("delegation_result_unverified")
+        provenance = delegation._provenance(plan, contributions)
         expected = {"source": delegation.SOURCE, "plan_sha256": digest(plan),
             "child_outcomes": [c.primitive(row.ref()) for row in child_outcomes], "verified_fact_transfer": True,
-            "human_accepted": False, "professional_quality_assessed": False, "synthetic": False,
+            "human_accepted": False, "professional_quality_assessed": False, "synthetic": bool(provenance["local_test_receipts"]),
             "root_kind": plan.get("root_kind", "application_result"), "root_source": plan["root_source"],
-            "contributions": contributions, "provenance": delegation._provenance(plan, contributions),
+            "contributions": contributions, "provenance": provenance,
             "facts": plan["root_source"]["facts"], "produces_new_analysis": False}
-        if (result != expected or outcome.task.entity_id != control.header.entity_id
+        if (not delegation._same_result(result, expected) or outcome.task.entity_id != control.header.entity_id
                 or outcome.evidence != tuple(row.verification for row in child_outcomes) or outcome.execution is not None):
             raise ContractError("delegation_result_changed")
         historical = service.repository.get_revision(context=context, kind=EntityKind.TASK,

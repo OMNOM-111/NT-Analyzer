@@ -197,13 +197,13 @@ def _child_key(controller_id, index):
 
 def _verified(service, context, identity):
     # A status/score alone is not enough for a child to unlock descendants.
-    result_handoff.verified_model_data(service, context, identity, allow_dependent=True)
+    data = result_handoff.verified_model_data(service, context, identity, allow_dependent=True)
     task = service._get(context, EntityKind.TASK, identity)
     checkpoint = service._json(context, task.checkpoint)
     outcome = service._get(context, EntityKind.OUTCOME, _id(context, "outcome:" + str(identity)))
     proof = service._json(context, outcome.verification)
     if (task.status != "succeeded" or outcome.status != "verified" or proof.get("passed") is not True
-            or proof.get("synthetic") is not False or proof.get("self_scored") is not False
+            or proof.get("synthetic") not in {False, data["synthetic"]} or proof.get("self_scored") is not False
             or proof.get("evaluator") != "independent_local_evidence_verifier"
             or checkpoint.get("synthetic") is not False or checkpoint.get("source") != "real_model_task"
             or checkpoint.get("spec", {}).get("rubric_key") != "extract_facts"
@@ -232,7 +232,7 @@ def _seal_node(service, context, control, plan, index):
         sealed = plan["root_source"]
         if plan.get("root_kind") == result_handoff.DATA_KIND:
             fresh = result_handoff.verified_model_data(service, context, root.header.entity_id)
-            if fresh != sealed:
+            if not result_handoff.same_data_source(sealed, fresh):
                 raise ContractError("delegation_root_evidence_changed")
         else:
             # Application/NinjaTrader/PNG verification is deliberately not
@@ -280,6 +280,7 @@ def validate_constructor(service, context, value, *, model_id, spec, conversatio
         from .scheduler import validate_constructor as validate_schedule
         return validate_schedule(service, context, value, model_id=model_id, spec=spec, conversation_id=conversation_id)
     control, _, plan = controller(service, context, value.controller.entity_id)
+    result_handoff.admit_data_source(context, plan["root_source"])
     authorized = getattr(service, "mechanism_authorized", None)
     if not isinstance(authorized, dict) or authorized.get("context") != context:
         raise ContractError("delegation_fresh_authority_required")
@@ -291,6 +292,7 @@ def validate_constructor(service, context, value, *, model_id, spec, conversatio
             or str(model_id) != packet["target_model_id"] or conversation_id != packet["conversation_id"]
             or spec != prepare("extract_facts", "\n".join(key + "=" + item for key, item in packet["facts"].items()))):
         raise ContractError("delegation_source_changed")
+    _admit_sources(service, context, control, plan, packet["node_index"])
     authority(service, context, control.ref(), plan["grant_ref"], "delegation_step", str(model_id))
     result_handoff._source_message({"context": context, "chat_scope": service.chat_scope}, packet)
     return packet
@@ -313,7 +315,17 @@ def validate_execution(service, context, task, checkpoint):
         spec=checkpoint["spec"], conversation_id=checkpoint["conversation_id"])
 
 
+def _admit_sources(service, context, control, plan, index):
+    result_handoff.admit_data_source(context, plan["root_source"])
+    parent = plan["nodes"][index]["parent_index"]
+    if parent != -1:
+        source = result_handoff.verified_model_data(service, context,
+            _child_id(context, control.header.entity_id, parent), allow_dependent=True)
+        result_handoff.admit_data_source(context, source)
+
+
 def _queue(authorized, service, control, plan, index):
+    _admit_sources(service, authorized["context"], control, plan, index)
     authority(service, authorized["context"], control.ref(), plan["grant_ref"], "delegation_queue", plan["nodes"][index]["model_id"])
     identity = "wj_aw_delegate_" + control.header.entity_id.hex + "_" + str(index)
     payload = {"phase": PHASE, "scope": subject(authorized), "controller_id": str(control.header.entity_id),
@@ -342,6 +354,7 @@ def propose(authorized, service, source_task_id, target_model_ids, max_depth, id
     data_root = not checkpoint.get("application_request")
     source = (result_handoff.verified_model_data(service, context, source_task_id) if data_root
               else result_handoff._seal(service, context, source_task_id, target_model_ids[0]).wire())
+    result_handoff.admit_data_source(context, source)
     result_handoff._source_message(authorized, source)
     plan = {"version": VERSION, "root_task": source["parent_task"], "root_source": {key: source[key] for key in
         ("source_outcome_id", "source_evaluation_id", "source_proof_sha256", "artifact_hashes", "facts", "facts_sha256")},
@@ -388,6 +401,7 @@ def reconcile(authorized, service, identity):
             synchronize(authorized, service, identity)
         return projection(authorized, service, identity)
     authority(service, context, control.ref(), plan["grant_ref"], "delegation_reconcile")
+    result_handoff.admit_data_source(context, plan["root_source"])
     verified, stopped = [], False
     ready_nodes = []
     for node in plan["nodes"]:
@@ -418,10 +432,12 @@ def reconcile(authorized, service, identity):
         control = service._walk(context, control, "ready", "running")
         evidence = tuple(outcome.verification for outcome in verified)
         contributions = [_contribution(service, context, row.task.entity_id) for row in verified]
+        provenance = _provenance(plan, contributions)
         proof = service._put(context, {"source": SOURCE, "plan_sha256": digest(plan), "child_outcomes": [c.primitive(row.ref()) for row in verified],
-            "verified_fact_transfer": True, "human_accepted": False, "professional_quality_assessed": False, "synthetic": False,
+            "verified_fact_transfer": True, "human_accepted": False, "professional_quality_assessed": False,
+            "synthetic": bool(provenance["local_test_receipts"]),
             "root_kind": plan.get("root_kind", "application_result"), "root_source": plan["root_source"],
-            "contributions": contributions, "provenance": _provenance(plan, contributions),
+            "contributions": contributions, "provenance": provenance,
             "facts": plan["root_source"]["facts"], "produces_new_analysis": False})
         outcome = service._ensure(context, c.Outcome, _id(context, "delegation-outcome:" + str(identity)), control.header.correlation_id,
             control.header.policy, task=control.ref(), evidence=evidence, execution=None)
@@ -447,6 +463,7 @@ def execute(authorized, service, job, cancelled, heartbeat):
     heartbeat()
     _claim(authorized, job)
     control, _, plan = controller(service, context, payload["controller_id"])
+    result_handoff.admit_data_source(context, plan["root_source"])
     if cancelled() or control.status in {"cancelled", "failed", "blocked", "succeeded"}:
         raise ContractError("delegation_cancelled_or_stopped")
     if payload["plan_sha256"] != digest(plan) or payload["grant_ref"] != plan["grant_ref"]:
@@ -490,7 +507,32 @@ def _contribution(service, context, identity):
         "outcome_id": proof["source_outcome_id"], "proof_sha256": proof["source_proof_sha256"],
         "checks": proof["checks"], "provenance": proof["provenance"], "facts_sha256": proof["facts_sha256"],
         "task_class": proof["task_class"], "model_id": proof["source_model_id"], "persona_id": proof["source_persona_id"],
-        "human_accepted": False, "professional_quality_assessed": False}
+        "synthetic": proof["synthetic"], "human_accepted": False, "professional_quality_assessed": False}
+
+
+def _same_contributions(saved, current):
+    """Compatibility for the missing historical local marker only."""
+    if not isinstance(saved, list) or len(saved) != len(current): return False
+    for old, new in zip(saved, current):
+        if old == new: continue
+        if (not isinstance(old, dict) or "synthetic" in old or {**old, "synthetic": new["synthetic"]} != new):
+            return False
+    return True
+
+
+def _result_synthetic(result):
+    return bool((result or {}).get("synthetic") is True or ((result or {}).get("provenance") or {}).get("local_test_receipts"))
+
+
+def _same_result(saved, expected):
+    if not isinstance(saved, dict): return False
+    normalized = dict(saved)
+    if not _same_contributions(saved.get("contributions"), expected["contributions"]): return False
+    normalized["contributions"] = expected["contributions"]
+    if (saved.get("synthetic") is False and expected["synthetic"] is True
+            and all("synthetic" not in row for row in saved["contributions"])):
+        normalized["synthetic"] = True
+    return normalized == expected
 
 
 def _provenance(plan, contributions):
@@ -520,6 +562,11 @@ def projection(authorized, service, identity):
         if task:
             checkpoint = service._json(context, task.checkpoint)
             item.update(task_class=checkpoint.get("spec", {}).get("rubric_key"), error_code=checkpoint.get("error_code"))
+            role = service.repository.get_revision(context=context, kind=EntityKind.AGENT_ROLE,
+                entity_id=task.role.entity_id, revision=task.role.revision)
+            if role is None: raise ContractError("delegation_role_missing")
+            item.update(operation_role=node.get("role", "fact_transfer_checker"),
+                agent_role_key=role.role_key, agent_role_ref=c.primitive(role.ref()))
         if task and task.status == "succeeded":
             try:
                 item["contribution"] = _contribution(service, context, identity)
@@ -542,7 +589,8 @@ def projection(authorized, service, identity):
         "max_depth": plan["max_depth"], "max_fanout": MAX_FANOUT, "total_node_limit": MAX_TOTAL,
         "human_accepted": review["status"] == "accepted", "human_review": review,
         "actions": ["review_result"] if review["status"] == "pending" else [],
-        "professional_quality_assessed": False, "synthetic": False,
+        "professional_quality_assessed": False, "synthetic": _result_synthetic(result) or bool(plan["root_source"].get("synthetic") or
+            (plan["root_source"].get("provenance") or {}).get("mode") == "local_test_executor"),
         "root_kind": plan.get("root_kind", "application_result"), "result": result,
         "outcome_id": str(outcome.header.entity_id) if outcome else None,
         "review_state": review_state}

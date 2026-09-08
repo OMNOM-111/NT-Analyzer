@@ -7,7 +7,7 @@ No finished graph, fabricated application report or pre-approved grant is seeded
 from datetime import datetime, timedelta, timezone
 import json
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -108,11 +108,14 @@ def test_new_goal_api_real_grant_worker_three_levels_contributions_and_local_pro
     assert graph["result"]["provenance"]["confirmed_external_receipts"] == 0
     assert graph["result"]["provenance"]["provider_receipts"] == 0
     assert graph["result"]["human_accepted"] is False
+    assert graph["synthetic"] is True and graph["result"]["synthetic"] is True
     assert len({row["contribution_id"] for row in graph["result"]["contributions"]}) == 3
     parent = env.service._get(context, EntityKind.TASK, view["root_task_id"])
     for node in graph["nodes"]:
         contribution = node["contribution"]
         assert contribution["operation"] == "verify_fact_transfer"
+        assert contribution["synthetic"] is True
+        assert node["operation_role"] == "fact_transfer_checker" and node["agent_role_key"] == "model_response"
         assert contribution["produces_new_analysis"] is False and all(check["passed"] for check in contribution["checks"])
         child = env.service._get(context, EntityKind.TASK, node["task_id"])
         assert child.dependencies == (parent.ref(),) and child.header.correlation_id == parent.header.correlation_id
@@ -125,6 +128,7 @@ def test_new_goal_api_real_grant_worker_three_levels_contributions_and_local_pro
     saved = coordinator.completion(env.authorized, env.service, graph["id"])
     assert saved["envelope"]["status"] == "awaiting_review"
     assert saved["envelope"]["source_kind"] == "bounded_delegation_result"
+    assert saved["envelope"]["synthetic"] is True and saved["envelope"]["verification"]["synthetic"] is True
     assert "Локальных тестовых ответов: 4" in saved["envelope"]["text"]
     history = domain_gateway.access(env.world.scope, read_only=True)
     assert coordinator.validate_history_envelope(history, saved["envelope"]) == saved
@@ -428,3 +432,143 @@ def test_current_truth_change_marks_review_stale_and_preserves_immutable_decisio
     assert env.service._get(env.context, EntityKind.EVALUATION, record.header.entity_id) == record
     assert env.service._json(env.context, record.evidence)["source_sha256"] == accepted["human_review"]["source_sha256"]
     with pytest.raises(ContractError, match="task_review_"): review_result(env, stale)
+
+
+def test_test_executor_opt_in_is_for_new_work_not_historical_receipts(scenario, monkeypatch):
+    env = scenario
+    view = root_ready(env)
+    task = env.service._get(env.context, EntityKind.TASK, view["root_task_id"])
+    checkpoint = env.service._json(env.context, task.checkpoint)
+    receipt = env.service._json(env.context, checkpoint["receipt"])
+    assert receipt["source"] == "local_test_executor" and receipt["synthetic"] is True
+    assert checkpoint["synthetic"] is False  # real server-created task, not a Preview task
+    monkeypatch.setenv(test_executor.ENV, "")
+    history = domain_gateway.access(env.world.scope, read_only=True)
+    service = domain_gateway.history_models(history)
+    proof = result_handoff.verified_model_data(service, history["context"], view["root_task_id"])
+    assert proof["synthetic"] is True and proof["provenance"]["live_provider_confirmed"] is False
+    assert coordinator.projection(history, service, view["id"])["root_synthetic"] is True
+    with pytest.raises(ContractError, match="test_workspace_opt_in_required"):
+        request(env, "preview_commission", view["id"], {})
+    assert coordinator.projection(history, service, view["id"])["graph"] is None
+
+
+@pytest.mark.parametrize("change", [
+    {"executor": "untrusted-name", "actual_model": "untrusted-name"},
+    {"executor": None}, {"external_call": True}, {"request_sha256": "0" * 64},
+    {"source": "provider_response"}, {"cost_usd": 0.01}, {"paid_call": True}])
+def test_arbitrary_synthetic_or_changed_receipt_never_becomes_a_data_root(scenario, monkeypatch, change):
+    env = scenario
+    view = root_ready(env)
+    task = env.service._get(env.context, EntityKind.TASK, view["root_task_id"])
+    checkpoint = env.service._json(env.context, task.checkpoint)
+    read = env.service._json
+    original = read(env.context, checkpoint["receipt"])
+    monkeypatch.setattr(env.service, "_json", lambda context, ref: {**original, **change}
+        if ref == checkpoint["receipt"] else read(context, ref))
+    with pytest.raises(ContractError, match="handoff_data_"):
+        result_handoff.verified_model_data(env.service, env.context, view["root_task_id"])
+
+
+def test_historical_named_local_false_marker_is_projected_without_rewriting(scenario, monkeypatch):
+    env = scenario
+    # Emulate the previous producer on a normal new isolated request. No ready
+    # graph, completed state or source receipt is inserted directly into DB.
+    from app.ai_control_center.model_service import ModelService
+    clean = ModelService._clean_receipt
+    def legacy_receipt(*args, **kwargs):
+        receipt = clean(*args, **kwargs)
+        receipt = {**receipt, "source": "provider_response", "synthetic": False}
+        receipt.pop("source_kind", None)
+        return receipt
+    monkeypatch.setattr(ModelService, "_clean_receipt", staticmethod(legacy_receipt))
+    view = root_ready(env)
+    task = env.service._get(env.context, EntityKind.TASK, view["root_task_id"])
+    checkpoint = env.service._json(env.context, task.checkpoint)
+    original = env.service._json(env.context, checkpoint["receipt"])
+    proof = result_handoff.verified_model_data(env.service, env.context, view["root_task_id"])
+    assert original["synthetic"] is False and proof["synthetic"] is True
+    old = {**proof, "synthetic": False}
+    assert result_handoff.same_data_source(old, proof)
+    assert not result_handoff.same_data_source({**old, "facts_sha256": "0" * 64}, proof)
+    assert env.service._json(env.context, checkpoint["receipt"]) == original
+
+
+def _events(env):
+    from app.ai_control_center.repositories import PageRequest
+    cursor, rows = None, []
+    while True:
+        page = env.service.repository.events.list(context=env.context, page=PageRequest(limit=100, cursor=cursor))
+        rows.extend(page.items)
+        if not page.next_cursor: return rows
+        cursor = page.next_cursor
+
+
+def test_related_completion_is_read_only_and_ack_uses_a_real_scoped_event(scenario, monkeypatch):
+    env = scenario
+    _, _, _, started = approved(env)
+    graph = finish(env, started["graph"]["id"])
+    root = env.service.task_detail(context=env.context, task_id=graph["root_task"]["entity_id"])
+    reviewed = review_result(env, root)
+    events = _events(env)
+    tasks = {row.ref() for row in env.service._all(env.context, EntityKind.TASK)}
+    saved = coordinator.related_completions(env.authorized, env.service, root["id"])
+    assert saved["blocked"] == [] and len(saved["deliveries"]) == 1
+    completion = saved["deliveries"][0]
+    review_event = next(event for event in events if event.subject.entity_id == UUID(reviewed["human_review"]["evaluation_id"]))
+    assert UUID(completion["event_id"]) == review_event.event_id
+    assert events == _events(env) and tasks == {row.ref() for row in env.service._all(env.context, EntityKind.TASK)}
+    assert coordinator.related_completions(env.authorized, env.service, graph["id"]) == saved
+    monkeypatch.setattr(chief_agent, "report_agent_world_live_update", lambda *a, **kw: {"ok": True})
+    values = {key: completion[key] for key in ("task_id", "event_id", "checkpoint_sha256")}
+    with pytest.raises(ContractError, match="coordinator_delivery_unconfirmed"):
+        coordinator.deliver(env.authorized, env.service, **values, events=SimpleNamespace(acknowledge=lambda **kw: False))
+    result = coordinator.deliver(env.authorized, env.service, **values, events=env.service.repository.events)
+    assert result["status"] == "delivered"
+    assert env.service.repository.events.is_acknowledged(context=env.context,
+        consumer=coordinator.delivery_consumer(graph["id"]), event_id=review_event.event_id)
+    assert not env.service.repository.events.is_acknowledged(context=env.context,
+        consumer=coordinator.delivery_consumer(uuid4()), event_id=review_event.event_id)
+    assert coordinator.deliver(env.authorized, env.service, **values, events=env.service.repository.events)["replayed"] is True
+
+
+def test_two_graphs_share_root_review_event_but_not_chat_delivery_identity(scenario):
+    env = scenario
+    root = root_ready(env)
+    graphs = []
+    for index in (1, 2):
+        key = "coordinator-separate-approved-graph-" + str(index)
+        payload = {"target_model_ids": [env.models[index]["id"]], "max_depth": 1}
+        proposed = request(env, "preview_delegation", root["root_task_id"], payload, key=key)
+        approved_graph = request(env, "delegate", root["root_task_id"], {
+            **payload, "approved_plan_sha256": proposed["approved_plan_sha256"],
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(),
+            "max_call_cost_usd": 0.0}, key=key)
+        graphs.append(finish(env, approved_graph["id"]))
+    detail = env.service.task_detail(context=env.context, task_id=root["root_task_id"])
+    reviewed = review_result(env, detail)
+    matches = coordinator.related_completions(env.authorized, env.service, root["root_task_id"])
+    assert matches["blocked"] == [] and len(matches["deliveries"]) == 2
+    deliveries = matches["deliveries"]
+    review_event = next(event for event in _events(env)
+        if event.subject.entity_id == UUID(reviewed["human_review"]["evaluation_id"]))
+    assert {UUID(row["event_id"]) for row in deliveries} == {review_event.event_id}
+    assert len({row["envelope"]["request_id"] for row in deliveries}) == 2
+    assert len({row["envelope"]["conversation_id"] for row in deliveries}) == 1
+    message_ids = set()
+    for row in deliveries:
+        result = coordinator.deliver(env.authorized, env.service,
+            **{key: row[key] for key in ("task_id", "event_id", "checkpoint_sha256")},
+            events=env.service.repository.events)
+        assert result["status"] == "delivered" and result["replayed"] is False
+        assert env.service.repository.events.is_acknowledged(context=env.context,
+            consumer=coordinator.delivery_consumer(row["task_id"]), event_id=review_event.event_id)
+        messages = chief_agent.read_jsonl(chief_agent._conversation_file(
+            row["envelope"]["conversation_id"], scope=env.authorized["chat_scope"]))
+        message = next(message for message in messages
+            if message.get("request_id") == chief_agent._agent_world_request_key(row["envelope"]["request_id"]))
+        assert message["actions"][0]["task_id"] == row["task_id"]
+        assert message["actions"][0]["status"] == "awaiting_review"
+        assert message["actions"][0]["synthetic"] is True
+        message_ids.add(message["message_id"])
+    assert len(message_ids) == 2

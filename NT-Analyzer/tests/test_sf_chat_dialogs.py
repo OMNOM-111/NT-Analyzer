@@ -71,7 +71,8 @@ def test_shared_shell_cache_and_dialog_style_are_shipped_together():
     for page in AURORA.glob("*.html"):
         html = page.read_text(encoding="utf-8")
         if 'src="assets/ui.js?' in html:
-            assert 'src="assets/ui.js?v=20260905-agent-world-followup"' in html, page.name
+            assert 'src="assets/ui.js?v=20260908-agent-world-unified1"' in html, page.name
+            assert 'src="assets/api.js?v=20260908-agent-world-unified1"' in html, page.name
             assert 'href="assets/theme.css?v=20260905-app-dialogs"' in html, page.name
     css = (AURORA / "assets/theme.css").read_text(encoding="utf-8")
     assert ".app-dialog::backdrop" in css and ".app-dialog :focus-visible" in css

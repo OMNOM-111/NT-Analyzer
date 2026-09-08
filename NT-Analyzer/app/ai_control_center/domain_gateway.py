@@ -282,7 +282,7 @@ def worker_authority(job, *, read_only=False):
     from .. import worker_router
     from . import automation_authority
     payload = job.get("payload") or {}
-    if payload.get("phase") == "delivery":
+    if payload.get("phase") in {"delivery", "coordinator_delivery", "coordinator_continue"}:
         source = worker_router.get(payload.get("source_worker_job_id"), workspace_id=str(job.get("workspace_id") or "")) or {}
         source_payload, scope = _model_source(source)
         if scope != payload.get("scope"):
@@ -292,6 +292,12 @@ def worker_authority(job, *, read_only=False):
     coordination = source_payload.get("phase") in {"delegation_step", "scheduler_occurrence", "automation_watch"}
     controller_id = source_payload.get("controller_id") if coordination else source_payload.get("automation_controller_id")
     reference = source_payload.get("grant_ref") if coordination else source_payload.get("automation_grant_ref")
+    aggregate_delivery = payload.get("phase") == "coordinator_delivery" and (
+        payload.get("automation_controller_id") or payload.get("automation_grant_ref"))
+    if aggregate_delivery:
+        if not read_only or payload.get("automation_controller_id") != payload.get("task_id"):
+            raise ContractError("automation_delivery_scope_invalid")
+        controller_id, reference = payload.get("automation_controller_id"), payload.get("automation_grant_ref")
     if bool(controller_id) != bool(reference):
         raise ContractError("automation_worker_authority_missing")
     if not controller_id:
@@ -299,7 +305,13 @@ def worker_authority(job, *, read_only=False):
             raise ContractError("automation_worker_authority_missing")
         return access(scope, read_only=read_only)
     authorized = automation_authority.access(scope, controller_id=controller_id, grant_ref=reference, read_only=read_only)
-    if not coordination:
+    if aggregate_delivery:
+        from . import delegation
+        service = history_models(authorized)
+        _, _, plan = delegation.controller(service, authorized["context"], controller_id)
+        if plan.get("grant_ref") != reference or plan.get("root_task", {}).get("entity_id") != source_payload.get("task_id"):
+            raise ContractError("automation_delivery_scope_invalid")
+    elif not coordination:
         service = history_models(authorized) if read_only else models(authorized)
         task = service._get(authorized["context"], EntityKind.TASK, source_payload.get("task_id"))
         packet = service._json(authorized["context"], task.checkpoint).get("delegation") or {}
@@ -321,15 +333,66 @@ def _require_delivery_claim(job):
     current = worker_router.get(job.get("worker_job_id", job.get("id")),
                                 workspace_id=str(job.get("workspace_id") or "")) or {}
     now = time.time()
+    try:
+        live = all(math.isfinite(float(current.get(key) or 0)) and float(current.get(key) or 0) > now
+                   for key in ("locked_until", "deadline_at"))
+    except (TypeError, ValueError):
+        live = False
     if (job.get("status") != "running" or not job.get("worker_id")
+            or job.get("kind") != "agent_world_model" or type(job.get("attempts")) is not int or job["attempts"] < 1
             or current.get("status") != "running" or current.get("kind") != "agent_world_model"
             or current.get("worker_id") != job.get("worker_id")
             or current.get("attempts") != job.get("attempts")
             or current.get("payload") != job.get("payload")
             or str(current.get("user_id")) != str(job.get("user_id"))
-            or current.get("cancel_requested") or float(current.get("locked_until") or 0) <= now
-            or float(current.get("deadline_at") or 0) <= now):
+            or str(current.get("workspace_id")) != str(job.get("workspace_id"))
+            or current.get("cancel_requested") or job.get("cancel_requested") or not live):
         raise ContractError("model_delivery_claim_required")
+
+
+def history_delivery_authority(job):
+    """Chief-only ingress from an exact claimed delivery, never a browser flag.
+
+    A service actor keeps its existing grant-backed history access instead of
+    impersonating a browser session. The caller still has to validate the exact
+    saved completion and original user message before appending anything.
+    """
+    from . import coordinator_delivery, followup_chat
+    if type(job) is not dict or type(job.get("payload")) is not dict:
+        raise ContractError("model_delivery_job_required")
+    payload = job["payload"]
+    expected = {"phase", "scope", "source_worker_job_id", "task_id", "event_id", "checkpoint_sha256"}
+    phase = payload.get("phase")
+    if phase == "coordinator_delivery" and (payload.get("automation_controller_id") or payload.get("automation_grant_ref")):
+        expected |= {"automation_controller_id", "automation_grant_ref"}
+    if phase not in {"delivery", "coordinator_delivery"} or set(payload) != expected:
+        raise ContractError("model_delivery_job_required")
+    kind = "agent_world_model" if phase == "delivery" else "agent_world_followup"
+    identity = (_delivery_job_id(payload["task_id"], payload["event_id"]) if phase == "delivery"
+        else coordinator_delivery._identity(phase, payload["task_id"], payload["event_id"]))
+    if job.get("kind") != kind or job.get("worker_job_id", job.get("id")) != identity:
+        raise ContractError("model_delivery_identity_invalid")
+    authorized = worker_authority(job, read_only=True)
+    if (str(job.get("workspace_id")) != authorized["context"].scope.workspace_id
+            or str(job.get("user_id")) != str(authorized["source_scope"]["user_id"])
+            or str((payload.get("scope") or {}).get("user_uuid")) != str(authorized["context"].user_uuid)):
+        raise ContractError("model_delivery_scope_invalid")
+    def admitted():
+        current = worker_authority(job, read_only=True)
+        if current["context"] != authorized["context"] or current["chat_scope"] != authorized["chat_scope"]:
+            raise ContractError("model_delivery_scope_invalid")
+        current["admit"]()
+        if phase == "delivery":
+            from .. import worker_router
+            source, scope = _model_source(worker_router.get(payload["source_worker_job_id"],
+                workspace_id=current["context"].scope.workspace_id) or {})
+            if source.get("task_id") != payload["task_id"] or scope != payload["scope"]:
+                raise ContractError("model_delivery_scope_invalid")
+            _require_delivery_claim(job)
+        else:
+            followup_chat._claim(current, job)
+    admitted()
+    return {**authorized, "admit": admitted}
 
 
 def enqueue_model_delivery(authorized, service, task_id):
@@ -375,6 +438,12 @@ def reconcile_model_deliveries(rows):
             authorized["admit"]()
             queued = enqueue_model_delivery(authorized, history_models(authorized), payload["task_id"])
             recovered += int(bool(queued and queued.get("status") == "queued"))
+            from . import coordinator_delivery
+            continued = coordinator_delivery.enqueue_continuation(authorized, payload["task_id"])
+            recovered += int(bool(continued and continued.get("status") == "queued"))
+            related = coordinator_delivery.related(authorized, payload["task_id"])
+            recovered += len(related["queued"])
+            denied += len(related["blocked"])
         except Exception:
             # A revoked/foreign scope or unavailable receipt is not permission
             # to repair domain state. Only bounded counts leave this selector.
@@ -481,42 +550,74 @@ def _component(identity, title, summary, *, implemented, enabled, mode, availabl
 
 def system(authorized):
     authorized["admit"]()
-    flags = {flag.value: resolve(flag, scope=authorized["context"].scope, snapshot=authorized["snapshot"]).enabled for flag in REGISTRY}
+    from .flags import current_snapshot
+    from .repositories import PageRequest
+    from .. import worker_router
+    context = authorized["context"]
+    snapshot = current_snapshot(authorized)
+    flags = {flag.value: resolve(flag, scope=context.scope, snapshot=snapshot).enabled for flag in REGISTRY}
+    configured_storage = os.environ.get("STRATFORGE_AGENT_WORLD_STORAGE", "sqlite").strip().lower()
+    storage_mode = {"postgres": "PostgreSQL выбран; соединение не подтверждено", "sqlite": "SQLite выбран; чтение не подтверждено"}.get(configured_storage, "недопустимый режим хранилища")
+    storage_available = False
+    storage_error = None
+    try:
+        store = repository({**authorized, "read_only": True})
+        store.list(context=context, kind=EntityKind.PERSONA, page=PageRequest(limit=1))
+        storage_mode = "PostgreSQL · scoped RLS" if store.__class__.__name__ == "PostgresAgentWorldRepository" else "Development SQLite WAL"
+        storage_available = True
+    except Exception as exc:
+        storage_error = exc.code if isinstance(exc, ContractError) else "agent_world_storage_unavailable"
+    try:
+        worker = worker_router.status()
+        worker_available = worker.get("process_alive") is True
+    except Exception:
+        worker_available = False
+    execute = flags[Flag.AI_EXECUTION_V2.value]
+    delegate = flags[Flag.AI_DELEGATION_V2.value]
+    schedule = flags[Flag.AI_SCHEDULER_V1.value]
+    router = flags[Flag.AI_ROUTER_V2.value]
+    shadow = flags[Flag.AI_ROUTER_SHADOW_V2.value]
     return {"enabled": True, "items": [
-        _component("scope", "Рабочая область", authorized["context"].scope.workspace_id,
-                   implemented=True, enabled=True, mode="development", available=True),
+        _component("scope", "Рабочая область", context.scope.workspace_id,
+                   implemented=True, enabled=True, mode=context.scope.environment.value, available=True),
         _component("storage", "Хранилище",
                    "Изоляция владельца и workspace · неизменяемые revisions/evidence",
-                   implemented=True, enabled=True, mode="Development SQLite WAL", available=True,
-                   note="PostgreSQL/RLS адаптер Agent World не реализован; этот путь не обслуживает Canary/Production."),
+                   implemented=True, enabled=True, mode=storage_mode, available=storage_available,
+                   note="Режим подтверждён чтением через выбранный repository. RLS и восстановление проверяются отдельными тестами; SQLite не является доказательством PostgreSQL. Нет автоматического fallback."),
         _component("worker", "Исполнение",
                    "Повторный dispatch модели после неопределённого ответа запрещён",
                    implemented=True, enabled=True,
-                   mode="существующий Local worker и очередь NinjaTrader", available=True,
-                   note="Работает исходный исполнитель. Это не готовность Execution V2."),
+                   mode="существующий worker; отдельный процесс" if worker_available else "фоновый процесс не подтверждён этим сервером", available=worker_available,
+                   note="Это наблюдение supervisor этого сервера, не readiness всех механизмов или внешнего NinjaTrader."),
         _component("execution_v2", "Execution Engine V2 · Deviation Control",
                    "Новый движок исполнения с контролем отклонений",
-                   implemented=False, enabled=False,
-                   mode="не обслуживает запросы", available=False,
-                   note="Не реализован. Зелёный статус соседнего исполнителя его не заменяет."),
+                   implemented=True, enabled=execute,
+                   mode="V2 для новых разрешённых задач" if execute else "выключен; legacy-путь новых задач", available=execute and storage_available and worker_available,
+                   note="Исторические V2-задачи сохраняют receipts. Флаг не выдаёт прав и не доказывает результат конкретного исполнения."),
         _component("router", "Маршрутизация ваших подключений (Router)",
                    "Выбор вашей модели по классу задачи и наблюдаемой точности",
-                   implemented=False, enabled=False,
-                   mode="модель для каждого задания выбираете явно", available=False,
-                   note="Наблюдаемые оценки AI Центра не влияют ни на один выбор. Отдельная маршрутизация штатных ролей AI Lab — другой механизм и другие данные."),
+                   implemented=True, enabled=router or shadow,
+                   mode="активный выбор после подтверждения" if router else "shadow: предпросмотр без запуска" if shadow else "выключен; явный выбор подключения", available=(router or shadow) and storage_available,
+                   note="Выбор по классу и происхождению наблюдений. Проверки test executor не являются качеством реальной модели."),
+        _component("delegation", "Ограниченное делегирование",
+                   "Координатор, отдельные вклады и ручная приёмка общего результата",
+                   implemented=True, enabled=delegate,
+                   mode="до трёх уровней по явному разрешению" if delegate else "выключено", available=delegate and storage_available and worker_available,
+                   note="Только предусмотренные ограниченные операции. Не универсальный автономный планировщик."),
         _component("schedule", "Автономное расписание",
                    "Запуск принятых рутин по наступлении срока",
-                   implemented=False, enabled=False,
-                   mode="только ручной разбор", available=False,
-                   note="Принятая рутина не включает фоновое исполнение."),
+                   implemented=True, enabled=schedule,
+                   mode="штатный scanner по разрешённым расписаниям" if schedule else "выключено; ручной разбор", available=schedule and storage_available and worker_available,
+                   note="Для каждого запуска нужны актуальные capability, grant, устройство, срок и бюджет. Принятие рутины само по себе не разрешает запуск."),
         _component("budgets", "Бюджет",
                    "Owner connections: существующие лимиты. Новые private paid connections: требуется ранее согласованный бюджет; free endpoints без расходов.",
                    implemented=True, enabled=True,
                    mode="существующие лимиты владельца", available=True),
         _component("external", "Внешние действия",
-                   "Торговые ордера, Telegram mirror, автоматическое исполнение Court/routines",
+                   "Торговые ордера, Telegram mirror, автоматическое исполнение решений Court",
                    implemented=True, enabled=False, mode="выключены", available=False)],
-        "flags": flags, "capabilities": authorized["chat_scope"]["capabilities"], "actions": [], "limitations": []}
+        "flags": flags, "capabilities": authorized["chat_scope"]["capabilities"], "actions": [],
+        "storage_error_code": storage_error, "limitations": []}
 
 
 def _followup_projection(authorized, service, domain, row):
@@ -583,6 +684,53 @@ def projected_task(row):
     return result
 
 
+def _aggregate_detail(authorized, service, record):
+    from . import delegation, task_presentation
+    context = authorized["context"]
+    checkpoint = service._json(context, record.checkpoint)
+    if checkpoint.get("source") != delegation.SOURCE:
+        return None
+    graph = delegation.projection(authorized, service, str(record.header.entity_id))
+    root = service._get(context, EntityKind.TASK, graph["root_task"]["entity_id"])
+    root_checkpoint = service._json(context, root.checkpoint)
+    persona = service._get(context, EntityKind.PERSONA, root_checkpoint["persona_id"])
+    result = graph.get("result") or {}
+    facts = result.get("facts") or {}
+    evaluation = {"passed": True, "operation": "verified_fact_transfer", "professional_quality_assessed": False} if result else None
+    task = task_presentation.project({"id": str(record.header.entity_id), "revision": record.header.revision,
+        "title": "Общий результат Координатора", "status": record.status,
+        "source_kind": "bounded_delegation_result", "task_class": "verified_fact_transfer",
+        "synthetic": graph["synthetic"], "conversation_id": graph["conversation_id"],
+        "persona_id": str(persona.header.entity_id), "lead": {"id": str(persona.header.entity_id), "display_name": persona.display_name},
+        "updated_at": record.header.updated_at.isoformat(), "created_at": record.header.created_at.isoformat(),
+        "aggregate_result_received": bool(result), "actions": graph["actions"], "human_review": graph["human_review"],
+        "review_state": graph["review_state"], "outcome_id": graph.get("outcome_id"),
+        "limitations": ["Это проверка передачи фактов между узлами, не оценка профессионального качества модели."]},
+        evaluation=evaluation, human_review=graph["human_review"])
+    return {**task, "task": projected_task(task), "graph": graph, "evaluation": evaluation,
+        "result_text": "; ".join(str(key) + " = " + str(value) for key, value in facts.items()),
+        "artifacts": [], "contributions": result.get("contributions", []), "provenance": result.get("provenance", {})}
+
+
+def task_detail(authorized, identity, service=None):
+    # Reuse the ordinary facade's injected repository/composition. Read-only
+    # admission still rejects every execution/mutation operation on this service.
+    service = service or models(authorized)
+    record = service._get(authorized["context"], EntityKind.TASK, identity)
+    return _aggregate_detail(authorized, service, record) or service.task_detail(context=authorized["context"], task_id=identity)
+
+
+def _aggregate_tasks(authorized, service):
+    rows = []
+    for record in service._all(authorized["context"], EntityKind.TASK):
+        if record.header.owner_user_uuid != authorized["context"].user_uuid:
+            continue
+        item = _aggregate_detail(authorized, service, record)
+        if item:
+            rows.append(item)
+    return rows
+
+
 def list_domain(authorized, domain, *, identity=None, limit=50, cursor=None):
     if domain not in DOMAINS:
         raise ContractError("unknown_domain")
@@ -626,7 +774,15 @@ def list_domain(authorized, domain, *, identity=None, limit=50, cursor=None):
             result.update(owner_bindings=candidates, actions=result["actions"] + ["bind_existing"])
         return result
     if domain in {"model_tasks", "tasks"}:
-        return model_service.task_detail(context=context, task_id=identity) if identity else model_service.tasks(context=context)
+        if identity:
+            return task_detail(authorized, identity, model_service)
+        result = model_service.tasks(context=context)
+        aggregates = _aggregate_tasks(authorized, model_service)
+        result["total"] = result["total"] + len(aggregates)
+        result["items"] = sorted([*result["items"], *aggregates],
+            key=lambda row: str(row.get("updated_at") or ""), reverse=True)[:100]
+        result["truncated"] = result["total"] > len(result["items"])
+        return result
     if domain == "experiments":
         result = model_service.experiments(context=context)
         if identity:
@@ -637,8 +793,14 @@ def list_domain(authorized, domain, *, identity=None, limit=50, cursor=None):
         return _followup_projection(authorized, service, domain,
             service.get(context=context, admit=admit, domain=domain, entity_id=identity))
     result = service.list(context=context, admit=admit, domain=domain, limit=limit, cursor=cursor)
+    if domain == "personas":
+        from . import persona_voice
+        result["presentation_catalog"] = persona_voice.catalog()
     if domain in {"routines", "calendar"}:
         result["items"] = [_followup_projection(authorized, service, domain, row) for row in result["items"]]
+        from .process_intelligence import ProcessIntelligence
+        result["process_intelligence"] = ProcessIntelligence(service, model_service).analyze(context=context, admit=admit)
+        result["process_intelligence"]["candidates"] = [row for row in result["process_intelligence"]["candidates"] if row["domain"] == domain]
     result["actions"] = ["create"] if result["capabilities"].get("can_create") else []
     if domain in {"decisions", "routines"}:
         result["evidence_candidates"] = service.evidence_candidates(context=context, admit=admit)
@@ -667,7 +829,7 @@ def history_projection(authorized, result, *, domain=""):
         if not isinstance(value, dict):
             return value
         return {key: [] if key in {"actions", "allowed_actions", "owner_bindings"} else
-                False if key.startswith("can_") and key not in {"can_view_models", "can_view_system"} else project(item)
+                False if key == "execution_available" or key.startswith("can_") and key not in {"can_view_models", "can_view_system"} else project(item)
                 for key, item in value.items()}
     if blocked or (model_domain and model_blocked):
         return project(result)
@@ -719,6 +881,7 @@ def enrich_overview(authorized, base=None):
     configured_models = model_service.models(context=context)["items"]
     people = domains(authorized, model_service.repository).list(context=context, admit=authorized["admit"], domain="personas")["items"]
     tasks, folded = _application_workflows(list(base.get("tasks") or []), model_rows)
+    tasks += [row["task"] for row in _aggregate_tasks(authorized, model_service)]
     from . import task_presentation
     tasks = [projected_task(row) for row in tasks]
     tasks.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
@@ -760,8 +923,8 @@ def enrich_overview(authorized, base=None):
         personal_tasks = [row for row in tasks if (row.get("lead") or {}).get("id") == person["id"]]
         personal_counts = task_presentation.counters(personal_tasks)
         agents.append({"id": person["id"], "display_name": person.get("title") or person.get("name"),
-            "avatar_key": role_spec.get("legacy_id", ""),
             "persona_profile": {key: person.get(key) for key in ("description", "style", "voice_label") if person.get(key)},
+            "presentation": person.get("presentation", {}),
             "application_role": person.get("application_role", ""),
             "avatar_key": presentation.avatar_key(person.get("avatar_key", "")),
             "role": role_spec.get("label", "Персона · роль не назначена"),
@@ -782,7 +945,8 @@ def enrich_overview(authorized, base=None):
     model_outcomes = [{"task_id": row["id"], "title": row.get("display_title", row["title"]),
                        "summary": row.get("result_label"),
                        "display_status": row.get("display_status"), "display_status_label": row.get("display_status_label"),
-                       "status": row["status"], "source_kind": "real_model_response", "synthetic": False,
+                       "status": row["status"], "source_kind": row.get("source_kind", "real_model_response"),
+                       "synthetic": row.get("synthetic") is True,
                        "application_result": row.get("application_result"), "source_job_id": row.get("source_job_id"),
                        "artifact": next((item for item in row.get("artifacts", [])
                                          if item.get("mime_type") == "image/png"), None),
@@ -819,7 +983,28 @@ def enrich_overview(authorized, base=None):
         "flags": system(authorized)["flags"],
         "limitations": ["Локальная разработка; не Canary/Production release.",
                         "Оценки — независимые проверки конкретных результатов, не прибыльность и не общая квалификация модели. NEW до трёх разных входов.",
-                        "Court не исполняет решения. Router/Execution V2 и автоматический запуск routines выключены."]}
+                        "Court не исполняет решения. Фактические режимы Router, Execution V2 и расписаний показаны в System; наличие worker не означает их включение."]}
+
+
+def speak_persona(authorized, identity, body):
+    """An explicit speech gesture; persisted Persona settings, never caller credentials."""
+    if (authorized.get("read_only") or type(body) is not dict
+            or set(body) != {"payload", "expected_revision", "idempotency_key"}
+            or type(body["payload"]) is not dict or set(body["payload"]) != {"text"}
+            or type(body["payload"]["text"]) is not str
+            or type(body["expected_revision"]) is not int
+            or type(body["idempotency_key"]) is not str or not 8 <= len(body["idempotency_key"]) <= 120):
+        raise ContractError("invalid_domain_request")
+    from . import persona_voice
+    admit = domain_admission(authorized, "personas", "speak")
+    def owner_tts(context, scope):
+        fresh = refresh_authority(authorized, read_only=False)
+        fresh["admit"]()
+        return (fresh["context"] == context and fresh["chat_scope"] == scope
+                and scope.get("is_owner") is True and scope.get("uses_owner_runtime") is True)
+    return persona_voice.speak(domains(authorized, models(authorized).repository), context=authorized["context"], admit=admit,
+        persona_id=identity, text=body["payload"]["text"], scope=authorized["chat_scope"],
+        expected_revision=body["expected_revision"], authorize_server_tts=owner_tts)
 
 
 def mutate(authorized, domain, identity, action, body):
@@ -854,8 +1039,26 @@ def mutate(authorized, domain, identity, action, body):
         return result_handoff.start(authorized, service, identity, payload["target_model_id"], key)
     elif domain in {"model_tasks", "tasks"} and action == "review_result":
         from . import task_review
-        return task_review.submit(service, context=context, task_id=identity, payload=payload,
-                                  expected_revision=body.get("expected_revision"), idempotency_key=key)
+        result = task_review.submit(service, context=context, task_id=identity, payload=payload,
+                                    expected_revision=body.get("expected_revision"), idempotency_key=key)
+        # The decision is already persisted. A delivery problem must not turn
+        # it into a failed review or silently replay any provider execution.
+        from . import coordinator_delivery
+        problems = []
+        try:
+            history = refresh_authority(authorized, read_only=True)
+            if service._json(context, service._get(context, EntityKind.TASK, identity).checkpoint).get("source") == "real_model_task":
+                enqueue_model_delivery(history, history_models(history), identity)
+            delivery_result = coordinator_delivery.related(history, identity)
+            problems.extend(delivery_result["blocked"])
+        except ContractError as exc:
+            problems.append({"task_id": identity, "error_code": exc.code})
+        except Exception:
+            # The review itself committed before notification handling. Keep
+            # transport/storage diagnostics non-secret and let normal recovery
+            # replay only delivery, never the provider or the human decision.
+            problems.append({"task_id": identity, "error_code": "review_delivery_pending"})
+        return {**result, "chat_delivery": {"status": "pending" if problems else "queued_or_delivered", "problems": problems}}
     elif domain in {"model_tasks", "tasks"} and action == "cancel":
         if set(payload) - {"reason"}:
             raise ContractError("invalid_domain_request")
@@ -880,6 +1083,16 @@ def mutate(authorized, domain, identity, action, body):
                 expected_revision=body.get("expected_revision"), idempotency_key=key, **payload)
     elif domain not in {"models", "model_tasks", "tasks", "experiments", "system", "publications"}:
         domain_service = domains(authorized, service.repository)
+        if domain in {"routines", "calendar"} and action in {"propose", "accept"}:
+            from .process_intelligence import ProcessIntelligence
+            process = ProcessIntelligence(domain_service, service)
+            if action == "propose":
+                if set(payload) != {"source_sha256"}:
+                    raise ContractError("invalid_domain_request")
+                return process.propose(context=context, admit=admit, domain=domain,
+                    candidate_id=identity, source_sha256=payload["source_sha256"])
+            process.validate_suggestion(context=context, admit=admit, domain=domain,
+                entity_id=identity, expected_revision=body.get("expected_revision"))
         if domain in {"routines", "calendar"} and action == "open_chat" and identity != "new":
             if payload:
                 raise ContractError("invalid_domain_request")
@@ -914,10 +1127,11 @@ def execute_worker(job, cancelled, heartbeat):
         raise ContractError("model_worker_scope_required")
     delivery = job.get("kind") == "agent_world_model" and payload.get("phase") == "delivery"
     followup_delivery = job.get("kind") == "agent_world_followup" and payload.get("phase") == "chat_delivery"
+    coordinator_phase = job.get("kind") == "agent_world_followup" and payload.get("phase") in {"coordinator_delivery", "coordinator_continue"}
     coordination = job.get("kind") == "agent_world_followup" and payload.get("phase") in {"delegation_step", "scheduler_occurrence", "automation_watch"}
-    if payload.get("phase") and not (delivery or followup_delivery or coordination):
+    if payload.get("phase") and not (delivery or followup_delivery or coordination or coordinator_phase):
         raise ContractError("model_worker_phase_invalid")
-    authorized = worker_authority(job, read_only=delivery)
+    authorized = worker_authority(job, read_only=delivery or payload.get("phase") == "coordinator_delivery")
     authorized["admit"]()
     if cancelled():
         raise ContractError("model_cancelled")
@@ -941,10 +1155,14 @@ def execute_worker(job, cancelled, heartbeat):
         # no provider/queue and retains fresh read-only auth/flags admission.
         events = repository({**authorized, "read_only": False}).events
         return model_chat.deliver(authorized, history_models(authorized), task_id=payload["task_id"],
-            event_id=payload["event_id"], checkpoint_sha256=payload.get("checkpoint_sha256"), events=events)
+            event_id=payload["event_id"], checkpoint_sha256=payload.get("checkpoint_sha256"), events=events,
+            delivery_job=job)
     if followup_delivery:
         from . import followup_chat
         return followup_chat.execute(authorized, job, cancelled, heartbeat)
+    if coordinator_phase:
+        from . import coordinator_delivery
+        return coordinator_delivery.execute(authorized, job, cancelled, heartbeat)
     if coordination:
         from . import delegation, scheduler
         service = models(authorized)
@@ -973,4 +1191,12 @@ def execute_worker(job, cancelled, heartbeat):
     history = refresh_authority(authorized, read_only=True)
     history_service = history_models(history)
     enqueue_model_delivery(history, history_service, payload["task_id"])
-    return {"ok": True, "task_id": payload["task_id"], "status": result["status"]}
+    from . import coordinator_delivery
+    try:
+        queued = coordinator_delivery.enqueue_continuation(history, payload["task_id"])
+        continuation = {"status": "queued" if queued else "not_required"}
+    except Exception as exc:
+        # Saved in the existing source-job result; recovery can enqueue the
+        # separate idempotent phase. Never retry the provider for this failure.
+        continuation = {"status": "pending", "error_code": getattr(exc, "code", "coordinator_enqueue_unavailable")}
+    return {"ok": True, "task_id": payload["task_id"], "status": result["status"], "continuation": continuation}

@@ -577,7 +577,7 @@ def run_domain_ui(scenario: str):
       const http={
         async aiControlCenterOverview(){calls.push({method:'overview'});return state;},
         async aiControlCenterTasks(){return {items:[task]};},
-        async aiControlCenterTask(id){calls.push({method:'task',id});return {task};},
+        async aiControlCenterTask(id){calls.push({method:'task',id});return {...response,task};},
         async aiControlCenterDomain(domain,params){calls.push({method:'list',domain,params});if(!domains[domain])throw {status:404};return JSON.parse(JSON.stringify(domains[domain]));},
         async aiControlCenterDomainItem(domain,id){calls.push({method:'detail',domain,id});const item=domains[domain].items.find(item=>item.id===id);if(!item)throw {status:404};return JSON.parse(JSON.stringify(item));},
         async aiControlCenterDomainAction(domain,id,action,body){calls.push({method:'post',domain,id,action,body:JSON.parse(JSON.stringify(body))});if(failPost)throw {status:500,message:'leaked credential must-not-render-error-secret'};
@@ -671,13 +671,15 @@ def test_external_model_task_requires_manual_consent_then_renders_actual_respons
       await submit(form({rubric_key:'connection_exact'},false));
       const before=calls.filter(call=>call.method==='post').length;
       await submit(form({rubric_key:'connection_exact'},true));
-      return {shown,before,posts:calls.filter(call=>call.method==='post'),html:drawer.innerHTML};
+      const resultHtml=drawer.innerHTML;
+      await click({awDetailTab:'evaluations'});
+      return {shown,before,posts:calls.filter(call=>call.method==='post'),resultHtml,html:drawer.innerHTML};
     """)
     assert 'name="confirmation" required' in result["shown"]
     assert result["before"] == 0
     assert len(result["posts"]) == 1
     assert result["posts"][0]["body"]["payload"] == {"rubric_key": "connection_exact"}
-    assert "ACTUAL_RESPONSE" in result["html"]
+    assert "ACTUAL_RESPONSE" in result["resultHtml"]
     assert "independent_local_evidence_verifier" in result["html"]
     assert "exact_response" in result["html"]
     assert "RESPONSE SHA256" in result["html"]

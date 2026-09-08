@@ -19,9 +19,15 @@
 
 ## Active integration — 2026-09-08
 
-Core checkpoint after `1409553a` is on draft PR #285: Coordinator/review,
-Persona presentation, Process Intelligence and e-mail-expiry recovery are
-preserved while shared API/Chat/UI integration remains **IN DEVELOPMENT**.
+Core checkpoint `13573bf76bae2dbad4f9efc4f6893d0bcb4d5406` is preserved on
+draft PR #285. The subsequent shared API/worker/Chat/UI delta connects bounded
+Coordinator reviews, Persona, Process Intelligence and explicit Preview data.
+Router choices and queued test-executor origin are now pinned. System and
+task counts report the actual mechanism/result state, not old implementation
+assumptions. Status remains **IN DEVELOPMENT** pending exact-code integrated
+browser/full/runtime gates. See the
+[shared checkpoint](../changelog/2026-09-08-agent-world-shared-integration-checkpoint.md)
+and the single [program matrix](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 Fresh PostgreSQL evidence is separately 69 Agent World PASS, 41 legacy PASS,
 and API/worker/restart/RLS acceptance bound to its recorded application hash;
 it is not final full-regression evidence. `localhost:8804` is isolated QA with
@@ -31,15 +37,16 @@ remaining checks: [takeover record](../changelog/2026-09-08-agent-world-integrat
 Agent World source is now `codex/agent-world-unified-acceptance`, from combined
 `f0bafe8ea46653827bc836afcb2197964390cf08` plus preserved late Claude documents.
 See the [intake manifest](../changelog/2026-09-08-agent-world-integration-takeover.md).
-Mechanisms/review are already integrated. Status remains IN DEVELOPMENT: ordinary
-non-trading delegation root and other full-program gaps remain; latest full
+Mechanisms/review are already integrated. The non-trading root/worker/Chat
+route has focused evidence; ordinary SERVICE delivery and Router hardening
+have separate scoped repeats. Latest full
 4537/110 result is historical code `92436698`, not the new source. Part E's
 PostgreSQL runtime evidence and fixture-claim withdrawal are retained separately.
 Local 8765 still serves `2b6d0112`, without an activation. The inherited metadata
 and snapshot describe earlier Local/deployment evidence, not today's integration
 HEAD. No new release/Production verification, provider call or budget is authorized.
 
-## New mechanisms WIP checkpoint — 2026-09-06
+## Historical mechanisms WIP checkpoint — 2026-09-06
 
 Saved WIP source: `f9b9444524aa497781fe3de7254d1bfb0e3b062c` (37 files;
 clean worktree after commit). Short static/secret/context/diff and 556-file
@@ -195,7 +202,7 @@ on ef4006eb; actual historical bars are not labelled LIVE.
 
 | Subsystem | Status | Current fact | Remaining limit |
 | --- | --- | --- | --- |
-| Agent World | `IN DEVELOPMENT` | Three tabs plus drawers, clean 2b6d0112 active; real NT/PNG, typed Anna fact handoff, separate application observations and manual routine/calendar SF Chat delivery verified; earlier Consensus/Court and private Memory/project evidence retained | Multi-user Memory, permanent Social publication, ordinary own-key and owner acceptance pending. General recursive delegation, Agent World PG adapter, Router/Execution V2 and autonomous routine scheduler not implemented |
+| Agent World | `IN DEVELOPMENT` | Protected Local stays on 2b6d0112; unified PR #285 implements PG/RLS, bounded Coordinator, Router/Execution, scheduler, Persona and Process Intelligence, with distinct scoped receipts | Exact-code integrated browser/full/runtime gates and owner acceptance pending; own key, real external results and permanent owner Social publication remain separate. See the canonical program matrix, not historical missing-mechanism statements |
 | Auth / owner identity | `BETA` in Unified Local | `0.10.0-beta.96` has one three-step registration contract for Telegram, Google and e-mail, a stable StratForge handle shared by profile/SF Social/SF Chat, final clickwrap consent and the existing shared environment-routed provider architecture. Owner Preview uses the same state transitions with sandbox-only synthetic credentials | Not present in the deployed beta.87 artifact; live real-provider acceptance and immutable Canary/Production promotion remain separate gates |
 | Device confirmation / trusted access | `BETA` in Unified Local | Every new unknown human browser/app access starts as a two-minute pending session. The first freshly authenticated device can choose permanent trust or current-session-only without a redundant second OTP; later unknown clients still use confirmed Telegram or verified e-mail. Machine → Client → Session grouping remains proof-based | Integrated and browser-verified in Local beta.96, but not present in deployed beta.87; real-provider acceptance and release promotion remain separate gates |
 | Legacy UI / Telegram Mini App | `DEPRECATED` | Merged main serves Aurora only; legacy UI, Mini App, remote-access and tunnel routes fail with HTTP 410. Classic assets are available only in a separate localhost read-only Legacy Viewer. Telegram `/start` uses a normal URL button | beta.87 is live in Canary and Production; historical snapshots remain until owner review |

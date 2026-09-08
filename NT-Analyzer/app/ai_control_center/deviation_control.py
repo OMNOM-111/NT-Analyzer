@@ -7,7 +7,7 @@ replaces the authoritative application's receipt verifier.
 from __future__ import annotations
 
 from .model_evaluation import digest
-from .model_service import _wire
+from .model_service import _wire, receipt_provenance
 from .states import ContractError
 
 
@@ -40,13 +40,38 @@ def record(service, context, controller, *, reason, phase, expected=None, observ
     return service._put(context, value)
 
 
-def inspect_provider(approved, receipt):
-    """Compare a verified stored response to the exact approved model request."""
-    if (receipt.get("source") != "provider_response"
-            or receipt.get("task_id") != approved["task_id"]
+def inspect_provider(approved, receipt, *, check_test_executor_enabled=True):
+    """Compare a verified stored response to the exact approved model request.
+
+    A local test executor is evidence about the pipeline, not a provider.
+    Only a fresh action checks today's exact-workspace opt-in; receipt-only
+    closeout may inspect saved evidence after the switch is turned off.
+    """
+    if (receipt.get("task_id") != approved["task_id"]
             or receipt.get("request_id") != approved["task_id"]
-            or receipt.get("request_sha256") != approved["request_sha256"]
-            or receipt.get("synthetic") is not False):
+            or receipt.get("request_sha256") != approved["request_sha256"]):
+        return "provider_receipt_mismatch"
+    if receipt_provenance(receipt)["synthetic"]:
+        from . import test_executor
+        task = approved.get("approved_task") or {}
+        scope = task.get("scope") or {}
+        current = (receipt.get("source") == "local_test_executor"
+                   and receipt.get("source_kind") == "synthetic_model_response"
+                   and receipt.get("synthetic") is True)
+        legacy = (receipt.get("source") == "provider_response" and receipt.get("synthetic") is False
+                  and receipt.get("source_kind") in {None, "real_model_response"})
+        cost = receipt.get("cost_usd")
+        if (not (current or legacy) or receipt.get("executor") != test_executor.EXECUTOR
+                or receipt.get("actual_model") != test_executor.EXECUTOR
+                or receipt.get("external_call") is not False or receipt.get("paid_call", False) is not False
+                or type(cost) not in {int, float} or cost != 0
+                or approved.get("environment") != "development" or scope.get("environment") != "development"
+                or not approved.get("workspace_id") or scope.get("workspace_id") != approved["workspace_id"]
+                or task.get("entity_id") != approved["task_id"]):
+            return "provider_receipt_mismatch"
+        if check_test_executor_enabled and not test_executor.enabled(approved["workspace_id"]):
+            return "execution_gate_disabled"
+    elif receipt.get("source") != "provider_response" or receipt.get("synthetic") is not False:
         return "provider_receipt_mismatch"
     output = receipt.get("output_tokens")
     if output is not None and (type(output) is not int or output < 0

@@ -7,7 +7,9 @@ only the existing records and artifacts and never opens a provider connection.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import math
+from uuid import UUID
 
 from . import contracts as c
 from .flags import DISABLED, Flag, current_snapshot, resolve
@@ -16,6 +18,8 @@ from .states import ContractError, EntityKind
 
 
 VERSION = "agent-world-router-v2.1"
+PREVIEW_VERSION = "agent-world-routing-preview-v1"
+APPLIED_VERSION = "agent-world-routing-applied-v1"
 _CLASSES = frozenset({"json_arithmetic", "extract_facts", "backtest_spec", "chart_spec"})
 
 
@@ -89,6 +93,11 @@ def _observations(service, context, model, task_class, now, policy):
                 or receipt.get("request_sha256") != checkpoint.get("request_sha256")
                 or receipt.get("latency_ms") != proof["latency_ms"] or receipt.get("cost_usd") != proof["cost_usd"]):
             continue
+        # Older named-test receipts carried a false marker. Derive their origin
+        # from immutable executor identity; they never qualify a real route.
+        checked = service._validated_evidence(context, source, checkpoint, receipt, record)
+        if checked.get("synthetic") is not False:
+            continue
         # One immutable input is one observation; another retry is not a sample.
         rows.setdefault(proof["input_sha256"], {"ref": c.primitive(record.ref()),
             "latency_ms": proof["latency_ms"], "cost_usd": proof["cost_usd"], "passed": proof["passed"]})
@@ -103,13 +112,14 @@ def select(authorized, service, request, policy=None, *, quote=None, now=None):
     cost_usd and allowed=True, or denies. Missing pricing is never guessed from
     the historical mean. No result grants task, tool or credential access.
     """
-    from datetime import datetime, timezone
     policy = policy or RoutingPolicy()
     if not isinstance(policy, RoutingPolicy) or type(request) is not dict:
         raise ContractError("routing_request_invalid")
     if set(request) != {"mode", "task_class", "candidate_model_ids", "current_model_id", "max_cost_usd", "max_latency_ms"}:
         raise ContractError("routing_request_invalid")
     context = _gate(authorized, request["mode"])
+    from . import test_executor
+    test_mode = test_executor.enabled(context.scope.workspace_id)
     if type(request["task_class"]) is not str or request["task_class"] not in _CLASSES or not _number(request["max_cost_usd"]) or not _number(request["max_latency_ms"], positive=True):
         raise ContractError("routing_constraints_invalid")
     ids = request["candidate_model_ids"]
@@ -127,7 +137,9 @@ def select(authorized, service, request, policy=None, *, quote=None, now=None):
     rows = []
     for identity in model_ids:
         row = {"model_id": str(identity), "eligible": False, "reason_codes": [], "quality_score": None,
-               "quality_effect": "none", "evidence": [], "task_class": request["task_class"]}
+               "quality_effect": "none", "evidence": [], "task_class": request["task_class"],
+               "execution_origin": "local_test_executor" if test_mode else "configured_provider",
+               "execution_synthetic": test_mode}
         try:
             authorized["admit"]()
             model = service._get(context, EntityKind.MODEL, identity)
@@ -146,7 +158,7 @@ def select(authorized, service, request, policy=None, *, quote=None, now=None):
                 external_agent_id=str(model.header.entity_id) if profile["connection_kind"] == "external_agent" else None,
                 identity_revisions={"persona": persona.header.revision, "role": role.header.revision,
                     "provider_account": account.header.revision, "model": model.header.revision})
-            if profile.get("connected") is not True:
+            if service.model_detail(context=context, model_id=identity).get("connected") is not True:
                 raise ContractError("routing_connection_not_verified")
             if not callable(quote):
                 raise ContractError("routing_current_admission_unavailable")
@@ -187,6 +199,204 @@ def select(authorized, service, request, policy=None, *, quote=None, now=None):
         "status": "selected" if selected else "blocked", "candidates": rows,
         "constraints": {key: request[key] for key in ("max_cost_usd", "max_latency_ms")},
         "quality_ranking": False, "dispatch_performed": False, "permission_granted": False,
-        "measured_at": now.isoformat(), "synthetic": False}
+        "measured_at": now.isoformat(), "synthetic": test_mode}
     result["decision_sha256"] = digest(result)
     return result
+
+
+def selection_fingerprint(decision):
+    """Choice/evidence/identity constraints, not a changing wall-clock timestamp."""
+    keys = (
+        "schema_version", "policy_version", "workspace_id", "user_uuid", "task_class",
+        "selected_model_id", "legacy_model_id", "status", "candidates", "constraints",
+        "quality_ranking", "dispatch_performed", "permission_granted", "synthetic")
+    if (type(decision) is not dict or any(key not in decision for key in keys)
+            or type(decision["candidates"]) is not list
+            or any(type(row) is not dict for row in decision["candidates"])):
+        raise ContractError("routing_preview_invalid")
+    return digest({key: decision[key] for key in keys})
+
+
+def _snapshot(context, value):
+    if isinstance(value, c.SnapshotRef):
+        c.require_same_scope(context.scope, value.scope)
+        return value
+    if (type(value) is not dict or set(value) != {"artifact_id", "sha256", "scope"}
+            or value.get("scope") != c.primitive(context.scope)):
+        raise ContractError("routing_preview_reference_required")
+    from .model_service import _uuid
+    return c.SnapshotRef(scope=context.scope, artifact_id=_uuid(value["artifact_id"]), sha256=value["sha256"])
+
+
+def _source_ref(context, value):
+    from .model_service import _uuid
+    if (type(value) is not dict or set(value) != {"kind", "entity_id", "revision", "scope"}
+            or value.get("kind") != "task" or value.get("scope") != c.primitive(context.scope)):
+        raise ContractError("routing_source_invalid")
+    return c.EntityRef(kind=EntityKind.TASK, entity_id=_uuid(value["entity_id"]),
+                       revision=value["revision"], scope=context.scope)
+
+
+def _preview_record(service, context, reference):
+    reference = _snapshot(context, reference)
+    saved = service._json(context, reference)
+    if (set(saved) != {"version", "scope", "user_uuid", "source_task", "source_checkpoint",
+                      "source_request_sha256", "request", "decision", "selection_sha256"}
+            or saved["version"] != PREVIEW_VERSION or saved["scope"] != c.primitive(context.scope)
+            or saved["user_uuid"] != str(context.user_uuid)):
+        raise ContractError("routing_preview_invalid")
+    source_ref = _source_ref(context, saved["source_task"])
+    source = service.repository.get_revision(context=context, kind=EntityKind.TASK,
+        entity_id=source_ref.entity_id, revision=source_ref.revision)
+    if (source is None or source.ref() != source_ref or source.header.owner_user_uuid != context.user_uuid
+            or c.primitive(source.checkpoint) != saved["source_checkpoint"]):
+        raise ContractError("routing_source_invalid")
+    checkpoint = service._json(context, source.checkpoint)
+    decision, request = saved["decision"], saved["request"]
+    if (type(decision) is not dict or type(request) is not dict
+            or decision.get("decision_sha256") != digest({key: value for key, value in decision.items() if key != "decision_sha256"})
+            or saved["selection_sha256"] != selection_fingerprint(decision)
+            or request.get("mode") != "shadow" or decision.get("mode") != "shadow"
+            or decision.get("workspace_id") != context.scope.workspace_id or decision.get("user_uuid") != str(context.user_uuid)
+            or checkpoint.get("source") != "real_model_task" or checkpoint.get("request_sha256") != saved["source_request_sha256"]
+            or checkpoint.get("model_id") != request.get("current_model_id")
+            or checkpoint.get("spec", {}).get("rubric_key") != request.get("task_class")
+            or request.get("task_class") != decision.get("task_class")
+            or request.get("candidate_model_ids") != [row.get("model_id") for row in decision.get("candidates", [])]
+            or decision.get("legacy_model_id") != request.get("current_model_id")
+            or decision.get("constraints") != {key: request.get(key) for key in ("max_cost_usd", "max_latency_ms")}):
+        raise ContractError("routing_preview_invalid")
+    return reference, saved, source, checkpoint
+
+
+def record_preview(authorized, service, task, checkpoint, request, decision):
+    context = _gate(authorized, "shadow")
+    saved = {"version": PREVIEW_VERSION, "scope": c.primitive(context.scope), "user_uuid": str(context.user_uuid),
+        "source_task": c.primitive(task.ref()), "source_checkpoint": c.primitive(task.checkpoint),
+        "source_request_sha256": checkpoint["request_sha256"], "request": request,
+        "decision": decision, "selection_sha256": selection_fingerprint(decision)}
+    reference = service._put(context, saved)
+    return {"preview_ref": c.primitive(reference), "source_revision": task.header.revision,
+        "source_request_sha256": checkpoint["request_sha256"], "selection_sha256": saved["selection_sha256"],
+        "requires_explicit_apply": True, "creates_new_task": True}
+
+
+def _fresh_choice(authorized, service, saved, *, quote):
+    context = _gate(authorized, "active")
+    source = service._get(context, EntityKind.TASK, saved["source_task"]["entity_id"])
+    if c.primitive(source.ref()) != saved["source_task"] or c.primitive(source.checkpoint) != saved["source_checkpoint"]:
+        raise ContractError("routing_source_changed")
+    fresh = select(authorized, service, {**saved["request"], "mode": "active"}, quote=quote)
+    if (fresh["status"] != "selected" or not fresh["effective_model_id"]
+            or selection_fingerprint(fresh) != saved["selection_sha256"]):
+        raise ContractError("routing_preview_changed")
+    return fresh
+
+
+@dataclass(frozen=True, kw_only=True)
+class RoutedTaskPacket:
+    """Server-issued routing link supplied to normal ModelService ingress."""
+    preview_ref: c.SnapshotRef
+    decision_ref: c.SnapshotRef
+    task_id: UUID
+
+    def wire(self):
+        return {"version": APPLIED_VERSION, "preview_ref": c.primitive(self.preview_ref),
+                "decision_ref": c.primitive(self.decision_ref), "task_id": str(self.task_id)}
+
+
+def _packet(service, context, value):
+    from .model_service import _uuid
+    if isinstance(value, RoutedTaskPacket):
+        packet = value
+    else:
+        if type(value) is not dict or set(value) != {"version", "preview_ref", "decision_ref", "task_id"} or value.get("version") != APPLIED_VERSION:
+            raise ContractError("routing_packet_invalid")
+        packet = RoutedTaskPacket(preview_ref=_snapshot(context, value["preview_ref"]),
+            decision_ref=_snapshot(context, value["decision_ref"]), task_id=_uuid(value["task_id"]))
+    _, saved, source, checkpoint = _preview_record(service, context, packet.preview_ref)
+    proof = service._json(context, _snapshot(context, packet.decision_ref))
+    expected = {"version": APPLIED_VERSION, "preview_ref": c.primitive(packet.preview_ref),
+                "task_id": str(packet.task_id), "selection_sha256": saved["selection_sha256"],
+                "selected_model_id": saved["decision"]["selected_model_id"], "permission_granted": False}
+    if proof != expected or saved["decision"]["status"] != "selected" or not proof["selected_model_id"]:
+        raise ContractError("routing_packet_invalid")
+    return packet, saved, source, checkpoint
+
+
+def prepare_apply(authorized, service, source_task_id, payload, expected_revision, idempotency_key, *, quote):
+    from .model_service import _id, _key
+    if type(payload) is not dict or set(payload) != {"preview_ref"}:
+        raise ContractError("routing_explicit_preview_required")
+    context = _gate(authorized, "active")
+    reference, saved, source, checkpoint = _preview_record(service, context, payload["preview_ref"])
+    if str(source.header.entity_id) != str(source_task_id) or type(expected_revision) is not int or expected_revision != source.header.revision:
+        raise ContractError("routing_source_revision_conflict")
+    # Full caller key is hashed before the common 120-character boundary.
+    task_key = "routing-applied-" + _key(idempotency_key)
+    task_id = _id(context, "model-task:" + _key(task_key))
+    existing = service.repository.get(context=context, kind=EntityKind.TASK, entity_id=task_id)
+    if existing is not None:
+        old = service._json(context, existing.checkpoint)
+        packet, recorded, _, _ = _packet(service, context, old.get("routing"))
+        if packet.task_id != task_id or packet.preview_ref != reference:
+            raise ContractError("routing_apply_idempotency_conflict")
+        # Replaying a saved terminal receipt does not re-rank or re-send it.
+        if existing.status not in {"planned", "ready"} or old.get("receipt"):
+            return packet, recorded, checkpoint, task_key, existing
+    _fresh_choice(authorized, service, saved, quote=quote)
+    proof = service._put(context, {"version": APPLIED_VERSION, "preview_ref": c.primitive(reference),
+        "task_id": str(task_id), "selection_sha256": saved["selection_sha256"],
+        "selected_model_id": saved["decision"]["selected_model_id"], "permission_granted": False})
+    packet = RoutedTaskPacket(preview_ref=reference, decision_ref=proof, task_id=task_id)
+    return packet, saved, checkpoint, task_key, None
+
+
+def validate_constructor(service, context, packet, *, model_id, spec, conversation_id, message_id, task_id):
+    if not isinstance(packet, RoutedTaskPacket):
+        raise ContractError("routing_server_packet_required")
+    packet, saved, _, source = _packet(service, context, packet)
+    if (packet.task_id != task_id or str(model_id) != saved["decision"]["selected_model_id"] or spec != source["spec"]
+            or conversation_id != source.get("conversation_id") or message_id != source.get("message_id")):
+        raise ContractError("routing_request_mismatch")
+    from .mechanism_domains import _quote
+    authorized = getattr(service, "mechanism_authorized", None)
+    if not isinstance(authorized, dict) or authorized.get("context") != context:
+        raise ContractError("routing_context_required")
+    _fresh_choice(authorized, service, saved, quote=_quote)
+    return packet.wire()
+
+
+def validate_execution(service, context, task, checkpoint):
+    packet, saved, _, source = _packet(service, context, checkpoint.get("routing"))
+    if (packet.task_id != task.header.entity_id or checkpoint.get("model_id") != saved["decision"]["selected_model_id"]
+            or checkpoint.get("spec") != source["spec"] or checkpoint.get("conversation_id") != source.get("conversation_id")
+            or checkpoint.get("message_id") != source.get("message_id")):
+        raise ContractError("routing_request_mismatch")
+    from .mechanism_domains import _quote
+    authorized = getattr(service, "mechanism_authorized", None)
+    if not isinstance(authorized, dict) or authorized.get("context") != context:
+        raise ContractError("routing_context_required")
+    _fresh_choice(authorized, service, saved, quote=_quote)
+
+
+def actual_choice(service, context, task, checkpoint):
+    """Historical linkage is immutable; current flags never rewrite its origin."""
+    chosen = str(checkpoint.get("model_id") or "")
+    if not checkpoint.get("routing"):
+        return {"model_id": chosen, "decided_by": "request", "routing_applied": False}
+    packet, saved, _, source = _packet(service, context, checkpoint["routing"])
+    if (packet.task_id != task.header.entity_id or chosen != saved["decision"]["selected_model_id"]
+            or checkpoint.get("spec") != source["spec"]):
+        raise ContractError("routing_request_mismatch")
+    receipt = service._json(context, checkpoint["receipt"]) if checkpoint.get("receipt") else {}
+    if receipt and (receipt.get("task_id") != str(task.header.entity_id) or receipt.get("request_sha256") != checkpoint.get("request_sha256")):
+        raise ContractError("routing_receipt_mismatch")
+    from .model_service import receipt_provenance
+    return {"model_id": chosen, "decided_by": "router_v2", "routing_applied": True,
+        "source_task_id": saved["source_task"]["entity_id"], "source_revision": saved["source_task"]["revision"],
+        "preview_ref": c.primitive(packet.preview_ref), "decision_ref": c.primitive(packet.decision_ref),
+        "selection_sha256": saved["selection_sha256"], "policy_version": saved["decision"]["policy_version"],
+        "actual_model": receipt.get("actual_model"), "executor": receipt.get("executor"),
+        "external_call": receipt.get("external_call"), "execution_observed": bool(receipt),
+        **(receipt_provenance(receipt) if receipt else {"synthetic": None, "source_kind": None})}

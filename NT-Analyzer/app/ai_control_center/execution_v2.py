@@ -112,7 +112,7 @@ def _connection(service, context, checkpoint):
 def _request(checkpoint):
     value = {key: checkpoint.get(key) for key in (
         "model_id", "spec", "conversation_id", "message_id", "comparison_id", "comparison_title")}
-    for key in ("handoff", "delegation", "comparison_spec"):
+    for key in ("handoff", "delegation", "comparison_spec", "routing"):
         if key in checkpoint:
             value[key] = checkpoint[key]
     return value
@@ -156,6 +156,7 @@ def _scope(service, context, task_id, approved):
             or digest(_request(checkpoint)) != approved["request_sha256"]
             or checkpoint.get("application_request") != approved.get("application_request")
             or checkpoint.get("delegation") != approved.get("delegation")
+            or checkpoint.get("routing") != approved.get("routing")
             or c.primitive(task.dependencies) != approved["dependencies"]
             or c.primitive(task.role) != approved["role"]
             or task.header.policy.sha256 != approved["task_policy_sha256"]
@@ -234,6 +235,7 @@ def prepare(authorized, service, task_id):
             "decision_revision": decision.header.revision, "decision_approval_sha256": decision.approval.sha256,
             "connection_sha256": digest(connection), "model_id": checkpoint["model_id"],
             "application_request": checkpoint.get("application_request"), "delegation": origin,
+            **({"routing": checkpoint["routing"]} if "routing" in checkpoint else {}),
             "delegation_sha256": digest(origin) if origin else None, "deadline": intent.deadline.isoformat(),
             "max_output_tokens": 512, "worker_job_id": job_id,
             "commands": ["bounded_model_text"] + ([checkpoint["application_request"]["kind"]] if checkpoint.get("application_request") else [])}
@@ -467,7 +469,7 @@ def observe(authorized, service, task_id):
                 and digest(_request(checkpoint)) == approved["request_sha256"]
                 and checkpoint.get("application_request") == approved.get("application_request")
                 and checkpoint.get("delegation") == approved.get("delegation"))
-            reason = deviations.inspect_provider(approved, receipt) if scope_matches else "approved_scope_changed"
+            reason = deviations.inspect_provider(approved, receipt, check_test_executor_enabled=False) if scope_matches else "approved_scope_changed"
             result = None
             if not reason:
                 detail = service.task_detail(context=context, task_id=task_id)

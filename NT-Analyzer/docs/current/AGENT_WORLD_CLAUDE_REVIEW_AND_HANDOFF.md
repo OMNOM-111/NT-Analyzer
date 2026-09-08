@@ -1,5 +1,19 @@
 # Agent World — independent review, fixes and handoff to GPT/Codex
 
+## Unified continuation — 2026-09-08
+
+The original review and all late Parts C/D/E below are preserved. Current
+implementation is now the unified task branch, after core checkpoint
+`13573bf76bae2dbad4f9efc4f6893d0bcb4d5406`; do not resume from the older review
+or mechanisms branches. Shared API/worker/Chat/UI integration, synthetic origin,
+ordinary SERVICE history and source-pinned Router work are recorded in the
+[shared checkpoint](../changelog/2026-09-08-agent-world-shared-integration-checkpoint.md).
+The [program matrix](AGENT_WORLD_IMPLEMENTATION_STATUS.md) is the only current
+status. Earlier unavailable-mechanism claims and old full-test counts below
+remain dated receipts, not today's missing-code list or final-code evidence.
+The withdrawn seeded NinjaTrader claims remain withdrawn. Owner Local 8765
+is unchanged; no merge or deployment has been performed.
+
 Companion to [AGENT_WORLD_IMPLEMENTATION_STATUS.md](AGENT_WORLD_IMPLEMENTATION_STATUS.md),
 which remains the single canonical program status. This document records one
 review pass: what was checked, what was found, what was changed, what was not,

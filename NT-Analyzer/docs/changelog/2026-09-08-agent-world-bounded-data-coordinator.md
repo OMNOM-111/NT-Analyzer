@@ -5,6 +5,9 @@
 Исходный checkout: `codex/agent-world-unified-acceptance`, intake
 `1409553a46d0dffa7ef329b28029d93f68b405d7`.
 Запись относится к следующему незакоммиченному delta; итоговый SHA/PR фиксирует интегратор.
+Первый общий checkpoint после первоначального Coordinator/review slice:
+`13573bf76bae2dbad4f9efc4f6893d0bcb4d5406`. Следующее уточнение provenance/events
+описано отдельно ниже; оно не объявляется автоматически проверенным старым checkpoint.
 
 ## Что изменено и зачем
 
@@ -56,6 +59,20 @@ Root operation — `numeric_summary`. Каждый дочерний operation �
 - Root и дочерние результаты сохраняют executor/actual_model/external_call.
   `local_test_executor`, `provider_receipt` и подтверждённый внешний вызов различимы.
   Наличие provider receipt без `external_call=true` не объявляется live-provider acceptance.
+- Named local test receipts маркируют data source, contribution, aggregate и Chat envelope
+  как `synthetic=true`; условие строгое: оба executor/actual_model равны доверенному
+  серверному test executor, `external_call=false`, известная нулевая стоимость,
+  совпавшие task/request/hash и scoped immutable ссылки. Любой произвольный synthetic
+  payload не становится допустимым root. Scope берётся из Task/artifact, не из payload.
+- Старый неверный `synthetic=false` у доказанного named local executor исправляется
+  только в read-проекции; исходные bytes/история не переписываются. Compatibility
+  сравнение допускает только этот известный marker, а не изменение фактов или ссылок.
+- Новая работа от test source требует действующего exact workspace test opt-in
+  дополнительно к обычным flags/grant/device/budget. Отключение тестового исполнителя
+  не скрывает прежние receipts; оно запрещает новые шаги, которые могли бы уйти реальному provider.
+- Trusted controller/approval plan сохраняет `synthetic=false` как признак настоящего
+  server-created workflow, а не Preview; это не характеристика качества входных результатов.
+  Результаты и source provenance показываются отдельно и остаются synthetic.
 - Тестовый исполнитель по-прежнему включается только точным Development workspace opt-in.
   Ни один защитный/runtime флаг в этой задаче не включался на действующем Local.
 - Cancel прекращает будущие шаги и сохраняет прежние receipts, ошибки и проверки.
@@ -80,13 +97,29 @@ Root operation — `numeric_summary`. Каждый дочерний operation �
   существующую очередь и `delegation.reconcile`, не browser session.
 - Aggregate delivery: `coordinator.completion` / `deliver` / `validate_history_envelope`,
   source `bounded_delegation_result`, status `awaiting_review` → `completed` после явной
-  приёмки. `event_id` меняется вместе с точным review snapshot; повтор неизменного
-  результата идемпотентен. Требуется shared Chief/worker
+  приёмки. После уточнения event contract `event_id` — только существующий scoped
+  UnitOfWork event технического Outcome или последнего relevant human Evaluation /
+  изменённого source record. Выдуманные hash-based event IDs не используются.
+  Дедупликация inbox дополнительно разделена по graph ID, потому что одна root review
+  может относиться к нескольким графам. Chat `request_id` также включает graph ID,
+  чтобы общий root review event не подавлял второй отчёт в той же беседе.
+  `acknowledge=false` без уже существующего ack
+  даёт явную ошибку доставки, не PASS. Требуется shared Chief/worker
   wiring с claim-fenced delivery; итог после такого wiring проверяется интегратором отдельно.
 - Existing `tasks/{graph_id}/review_result` принимает `{decision, comment, source_sha256}`,
   `expected_revision` и `idempotency_key`. Проекция возвращает `human_review`,
   `required_reviews`, `review_state`, доступные actions и прежнее решение отдельно
   от текущего состояния, если доказательства изменились.
+- `coordinator.related_completions(authorized, service, reviewed_task_id)` возвращает
+  `{deliveries, blocked}` по уже существующим собственным root/child/graph связям;
+  не создаёт граф, не согласует его и не запускает/reconcile работу. Shared gateway
+  использует этот read-only helper после явного review.
+- `operation_role=fact_transfer_checker` обозначает функцию узла. Отдельные
+  `agent_role_key=model_response` / `agent_role_ref` показывают фактическую существующую
+  системную роль Task/Contribution; новое имя функции не является новой authority.
+- Чистое изменение environment-флага или течение времени без нового AW event отражается
+  в текущей `stale` проекции; этот slice не выдумывает ради него событие или отдельную
+  durable Chat notification. Историческое сообщение/человеческое решение сохраняется.
 
 ## Проверки
 
@@ -131,6 +164,31 @@ Root operation — `numeric_summary`. Каждый дочерний operation �
   дополнительно проверено: `test_agent_world_coordinator.py -k existing_review_route -x`
   — **1 passed, 22 deselected**, 61.25 с; Python compile пяти owned backend модулей
   и Coordinator tests — **PASS**. Этот повтор не является новым полным regression.
+- Последующее provenance/events уточнение: **5 passed, 26 deselected**, 256.64 с.
+  Проверены новый goal и aggregate acceptance с truthful synthetic, выключение
+  test opt-in только для новых действий, сохранность старого local false marker,
+  read-only related graph scan и подтверждение доставки реальным событием/inbox.
+  Штатный test tick пока дополнительно вызывает `after_model`; этот прогон не заменяет
+  отдельную проверку shared continuation worker без ручного callback.
+- Полный текущий regression handoff/delegation/mechanism после provenance/events delta:
+  `python -m pytest -q tests/test_agent_world_delegation.py
+  tests/test_agent_world_result_handoff.py tests/test_agent_world_mechanism_domains.py -x`
+  — **61 passed**, 270.17 с, без skips. Это новый SQLite-прогон текущего delta;
+  предыдущие числа выше оставлены как история контрольных точек, не суммируются с ним.
+- Полный текущий Coordinator + manual review: `python -m pytest -q
+  tests/test_agent_world_coordinator.py tests/test_agent_world_manual_review.py -x`
+  — **40 passed**, 1036.99 с, без skips. Проверены строгий synthetic receipt reader,
+  paid/cost/external-call отказ, сохранение исторических markers, реальные inbox events
+  и ручная приёмка полного immutable snapshot. Последующий graph-scoped Chat request ID
+  проверен отдельным двухграфовым сценарием ниже; этот небольшой final delta
+  не включён в приведённый полный прогон 40 случаев.
+- Final Chat identity delta: `python -m pytest -q tests/test_agent_world_coordinator.py
+  -k 'two_graphs_share or related_completion' -x` — **2 passed, 32 deselected**, 109.50 с.
+  Два графа созданы через API → отдельные явные grants → существующие workers;
+  одна ручная root review даёт один настоящий event, но два отдельных сообщения SF Chat
+  и два graph-scoped inbox acknowledgements. Chief/storage при этой проверке настоящие
+  disposable механизмы, не заглушки; executor остаётся локальным тестовым.
+  Повторные Python compile owned backend/test файлов и scoped `git diff --check` — **PASS**.
 - PostgreSQL/RLS: эти тесты используют SQLite; они **не** засчитываются как новый
   PostgreSQL PASS. PG acceptance идёт отдельным процессом интегратора.
 

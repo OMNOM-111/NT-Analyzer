@@ -65,6 +65,10 @@ SCENARIOS: Dict[str, Dict[str, str]] = {
         "label": "Новый неподтверждённый доступ",
         "description": "Существующий synthetic user входит из нового browser/client.",
     },
+    "agent_world_operator": {
+        "label": "Синтетический оператор Agent World",
+        "description": "Отдельная тестовая identity для явного наполнения Agent World. Не owner и не повышение прав обычного пользователя.",
+    },
 }
 
 _LOCK = threading.RLock()
@@ -192,6 +196,35 @@ def synthetic_product_access_allowed(context: Dict[str, Any]) -> bool:
             _safe_id(),
         )
     )
+
+
+def synthetic_operator_access_allowed(context: Dict[str, Any]) -> bool:
+    """A distinct, current Preview operator; never a client-provided role grant.
+
+    The caller independently requires the owner-issued control cookie, current
+    authenticated session and confirmed device. The private marker is read from
+    this isolated account store, not exposed through or accepted from auth JSON.
+    This narrow authority only unlocks an explicit Agent World fixture action.
+    """
+    if not synthetic_product_access_allowed(context):
+        return False
+    require_enabled()
+    with _LOCK:
+        if (_STATE.get("scenario") != "agent_world_operator"
+                or not _STATE.get("current_user_uuid") or not _STATE.get("current_session_id")
+                or str(context.get("user_uuid") or "") != _STATE["current_user_uuid"]
+                or str(context.get("session_id") or "") != _STATE["current_session_id"]
+                or context.get("device_confirmation_state") != "active"):
+            return False
+        uid = int(_STATE.get("current_user_id") or 0)
+    if not account_auth.local_session_is_active(context.get("session_id", ""), uid):
+        return False
+    with account_auth._LOCK:
+        user = account_auth._user(account_auth._read_doc(), uid)
+        return bool(user and user.get("is_preview_operator") is True
+                    and user.get("is_preview_user") is True and not user.get("is_owner")
+                    and str(user.get("user_uuid") or "") == str(context.get("user_uuid") or "")
+                    and hmac.compare_digest(str(user.get("preview_sandbox_id") or ""), _safe_id()))
 
 
 def consume_entry_token(value: Any) -> None:
@@ -1438,7 +1471,7 @@ def activate_scenario(scenario: Any, *, device_credential: str) -> Dict[str, Any
 
     generation = int(_STATE.get("generation") or 1)
     registration_credential = (
-        credential if selected in {"active_user", "trusted_device"}
+        credential if selected in {"active_user", "trusted_device", "agent_world_operator"}
         else "preview-known-device-" + secrets.token_urlsafe(18)
     )
     registered = _register_synthetic_user(registration_credential, generation)
@@ -1450,6 +1483,18 @@ def activate_scenario(scenario: Any, *, device_credential: str) -> Dict[str, Any
     approved = _approve_session(str(registered["session_token"]), mode)
     user_id = int(registered["user_id"])
     ensure_synthetic_dataset(user_id)
+    if selected == "agent_world_operator":
+        # Only the newly registered identity gets this private fixture marker.
+        # No existing user is upgraded; is_owner and owner-only permissions stay unchanged.
+        with account_auth._LOCK:
+            doc = account_auth._read_doc()
+            user = account_auth._user(doc, user_id)
+            if (not user or user.get("is_owner") or not user.get("is_preview_user")
+                    or user.get("preview_sandbox_id") != _safe_id()):
+                raise PreviewSandboxError("Synthetic operator identity недоступна.", 409,
+                                          code="preview_operator_identity_required")
+            user["is_preview_operator"] = True
+            account_auth._write_doc(doc)
     token = str(registered["session_token"])
     context = approved.get("context") or {}
     if selected == "pending_access":

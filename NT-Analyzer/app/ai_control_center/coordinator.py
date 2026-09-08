@@ -131,7 +131,7 @@ def approve(authorized, service, coordinator_id, payload):
         plan["max_depth"], key, grant_ref=grant, parent_indices=[node["parent_index"] for node in plan["nodes"]],
         commission_id=control.header.entity_id)
     return {**projection(authorized, service, coordinator_id), "graph": graph, "grant_ref": grant,
-        "approved": True, "human_accepted": False}
+        "approved": True, "human_accepted": graph["human_accepted"]}
 
 
 def synchronize(authorized, service, graph_id):
@@ -153,6 +153,9 @@ def projection(authorized, service, identity):
     control, _, plan = _load(authorized, service, identity)
     context = authorized["context"]
     root = service.repository.get(context=context, kind=EntityKind.TASK, entity_id=_uuid(plan["root_task_id"]))
+    from .model_service import receipt_provenance
+    source = service._json(context, root.checkpoint) if root else {}
+    root_origin = receipt_provenance(service._json(context, source["receipt"]) if source.get("receipt") else {})
     graph_id = _id(context, "delegation:" + _key(_graph_key(control.header.entity_id)))
     graph = service.repository.get(context=context, kind=EntityKind.TASK, entity_id=graph_id)
     view = delegation.projection(authorized, service, graph_id) if graph is not None else None
@@ -165,8 +168,9 @@ def projection(authorized, service, identity):
     return {"id": str(control.header.entity_id), "revision": control.header.revision, "source": SOURCE, "version": VERSION,
         "status": control.status, "stage": state, "goal": plan["goal"], "root_task_id": plan["root_task_id"],
         "root_operation": "numeric_summary", "root_status": root.status if root else "not_created",
+        "root_source_kind": root_origin["source_kind"], "root_synthetic": root_origin["synthetic"],
         "root_model_id": plan["root_model_id"], "root_persona_id": plan["root_persona_id"], "nodes": plan["nodes"],
-        "conversation_id": plan["conversation_id"], "graph": view, "synthetic": False,
+        "conversation_id": plan["conversation_id"], "graph": view, "synthetic": root_origin["synthetic"] or bool(view and view["synthetic"]),
         "actions": actions,
         "human_accepted": bool(view and view["human_accepted"]), "professional_quality_assessed": False, "limitation": LIMITATION}
 
@@ -228,11 +232,12 @@ def completion(authorized, service, controller_id):
     if not result or result.get("plan_sha256") != digest(plan):
         raise ContractError("coordinator_result_unverified")
     actual = [node["contribution"] for node in view["nodes"] if node.get("contribution")]
-    if actual != result.get("contributions") or len(actual) != len(plan["nodes"]):
+    if not delegation._same_contributions(result.get("contributions"), actual) or len(actual) != len(plan["nodes"]):
         raise ContractError("coordinator_result_changed")
     outcome = service._get(context, EntityKind.OUTCOME, view["outcome_id"])
     review = view["human_review"]
-    event = str(uuid5(outcome.header.entity_id, "revision:" + str(outcome.header.revision) + ":review:" + digest(review)))
+    event_record = _completion_event_record(service, context, control, plan, outcome, review)
+    event = str(uuid5(event_record.header.entity_id, f"revision:{event_record.header.revision}"))
     provenance = result["provenance"]
     facts = "; ".join(key + " = " + str(value) for key, value in result["facts"].items())
     required = review.get("required_reviews") or []
@@ -247,19 +252,75 @@ def completion(authorized, service, controller_id):
         + "; ответов с подтверждённым внешним вызовом: " + str(provenance["confirmed_external_receipts"])
         + ".\n" + review_text + " " + LIMITATION)
     envelope = {"scope": authorized["chat_scope"], "conversation_id": plan["conversation_id"],
-        "request_id": "delegation-result:" + event, "source_kind": "bounded_delegation_result", "synthetic": False,
+        "request_id": "delegation-result:" + str(control.header.entity_id) + ":" + event,
+        "source_kind": "bounded_delegation_result", "synthetic": view["synthetic"],
         "task_id": str(control.header.entity_id), "outcome_id": view["outcome_id"],
         "correlation_id": str(control.header.correlation_id), "status": "completed" if view["human_accepted"] else "awaiting_review", "text": text,
         "agent_name": "Координатор", "actual_model": None, "provider": None, "provenance": provenance,
         "verification": {"passed": True, "operation": "verified_fact_transfer", "human_accepted": view["human_accepted"],
+            "synthetic": view["synthetic"],
             "review_state": view["review_state"], "human_review": review,
             "professional_quality_assessed": False, "proof_sha256": outcome.verification.sha256,
             "contributions": actual, "provenance": provenance},
         "attachments": [], "participation_chain": [{"agent_id": item["persona_id"], "model_id": item["model_id"],
             "role": item["role"], "operation": item["operation"], "task_id": item["task_id"],
-            "actual_model": item["provenance"]["actual_model"], "executor": item["provenance"]["executor"]} for item in actual]}
+            "synthetic": item["synthetic"],
+            "operation_role": view["nodes"][index]["operation_role"],
+            "agent_role_key": view["nodes"][index]["agent_role_key"], "agent_role_ref": view["nodes"][index]["agent_role_ref"],
+            "actual_model": item["provenance"]["actual_model"], "executor": item["provenance"]["executor"]} for index, item in enumerate(actual)]}
     return {"task_id": str(control.header.entity_id), "event_id": event, "checkpoint_sha256": control.checkpoint.sha256,
         "message_id": plan["source_message_id"], "envelope": envelope}
+
+
+def _completion_event_record(service, context, control, plan, outcome, review):
+    """Anchor inbox acknowledgement to a real, visible UnitOfWork event."""
+    records = [outcome]
+    for item in [review, *review.get("required_reviews", [])]:
+        if item.get("evaluation_id"):
+            records.append(service._get(context, EntityKind.EVALUATION, item["evaluation_id"]))
+    if review["status"] in {"stale", "blocked"} and review.get("blocked_reason") != "delegation_required_reviews_pending":
+        # Current-truth changes that have a real AW record (e.g. revocation,
+        # disconnect, source update) can emit a distinct durable delivery.
+        records.append(control)
+        if plan.get("coordinator_id"):
+            records.append(service._get(context, EntityKind.TASK, plan["coordinator_id"]))
+        for identity in [plan["root_task"]["entity_id"], *[delegation._child_id(context, control.header.entity_id, node["index"]) for node in plan["nodes"]]]:
+            task = service._get(context, EntityKind.TASK, identity)
+            records.append(task)
+            checkpoint = service._json(context, task.checkpoint)
+            records.append(service._get(context, EntityKind.MODEL, checkpoint["model_id"]))
+        try:
+            from .automation_authority import _load
+            decision, _, _ = _load(service, context, plan["grant_ref"], operational=False)
+            records.append(decision)
+        except ContractError:
+            pass  # the blocked projection retains the reason; never fake an event
+    return max(records, key=lambda record: (record.header.updated_at, record.header.entity_id.hex))
+
+
+def related_completions(authorized, service, reviewed_task_id):
+    """Only read existing scope-owned graphs; never create/reconcile a graph.
+
+    Called after a human review of root, child or aggregate. A broken graph
+    cannot roll back that review or prevent another valid graph's delivery.
+    """
+    authorized["admit"]()
+    context = authorized["context"]
+    reviewed = service._get(context, EntityKind.TASK, reviewed_task_id)
+    deliveries, blocked = [], []
+    for task in service._all(context, EntityKind.TASK):
+        checkpoint = service._json(context, task.checkpoint)
+        if checkpoint.get("source") != delegation.SOURCE: continue
+        try:
+            control, _, plan = delegation.controller(service, context, task.header.entity_id)
+            related = {control.header.entity_id, _uuid(plan["root_task"]["entity_id"])}
+            related.update(delegation._child_id(context, control.header.entity_id, node["index"]) for node in plan["nodes"])
+            if reviewed.header.entity_id not in related: continue
+            saved = completion(authorized, service, control.header.entity_id)
+            if saved is not None: deliveries.append(saved)
+        except ContractError as error:
+            blocked.append({"controller_id": str(task.header.entity_id), "error_code": error.code})
+    return {"deliveries": deliveries, "blocked": blocked}
 
 
 def validate_history_envelope(authorized, envelope):
@@ -273,19 +334,28 @@ def validate_history_envelope(authorized, envelope):
     return saved
 
 
-def deliver(authorized, service, *, task_id, event_id, checkpoint_sha256, events):
+def delivery_consumer(task_id):
+    # A root review event may be shared by multiple approved graphs. Keep each
+    # result's idempotent effect separate in the same existing scoped inbox.
+    return DELIVERY_CONSUMER + "." + _uuid(task_id).hex
+
+
+def deliver(authorized, service, *, task_id, event_id, checkpoint_sha256, events, delivery_job=None):
     from ..ai_lab import chief_agent
     saved = completion(authorized, service, task_id)
     if saved is None or saved["event_id"] != event_id or saved["checkpoint_sha256"] != checkpoint_sha256:
         return {"ok": True, "status": "superseded", "task_id": str(task_id)}
     context, identity = authorized["context"], UUID(event_id)
-    if service.repository.events.is_acknowledged(context=context, consumer=DELIVERY_CONSUMER, event_id=identity):
+    consumer = delivery_consumer(task_id)
+    if service.repository.events.is_acknowledged(context=context, consumer=consumer, event_id=identity):
         return {"ok": True, "status": "delivered", "task_id": str(task_id), "replayed": True}
     authorized["admit"]()
-    result = chief_agent.report_agent_world_live_update(saved["envelope"], history_delivery=True)
+    result = chief_agent.report_agent_world_live_update(saved["envelope"], history_delivery=True, _delivery_job=delivery_job)
     if result.get("ok") is not True: raise ContractError("coordinator_delivery_unconfirmed")
     authorized["admit"]()
-    events.acknowledge(context=context, consumer=DELIVERY_CONSUMER, event_id=identity)
+    acknowledged = events.acknowledge(context=context, consumer=consumer, event_id=identity)
+    if not acknowledged and not service.repository.events.is_acknowledged(context=context, consumer=consumer, event_id=identity):
+        raise ContractError("coordinator_delivery_unconfirmed")
     return {"ok": True, "status": "delivered", "task_id": str(task_id), "replayed": result.get("idempotent_replay") is True}
 
 

@@ -32,6 +32,7 @@ def verified_model_data(service, context, task_id, *, allow_dependent=False):
     under the exact approved service actor, without impersonating a Human.
     """
     from .model_service import _id, _wire
+    from . import test_executor
     service._access(context, "read")
     task = service._get(context, EntityKind.TASK, task_id)
     checkpoint = service._json(context, task.checkpoint)
@@ -53,13 +54,31 @@ def verified_model_data(service, context, task_id, *, allow_dependent=False):
         raise ContractError("handoff_data_spec_changed")
     identity = {key: checkpoint.get(key) for key in ("model_id", "spec", "conversation_id", "message_id",
                                                     "comparison_id", "comparison_title")}
-    for key in ("delegation", "comparison_spec"):
+    for key in ("delegation", "comparison_spec", "routing"):
         if key in checkpoint: identity[key] = checkpoint[key]
     if digest(identity) != checkpoint.get("request_sha256") or checkpoint.get("task_id") != str(task.header.entity_id):
         raise ContractError("handoff_data_request_changed")
+    if checkpoint.get("routing"):
+        from .router_v2 import actual_choice
+        actual_choice(service, context, task, checkpoint)
     receipt = service._json(context, checkpoint["receipt"])
-    if (receipt.get("source") != "provider_response" or receipt.get("synthetic") is not False
-            or receipt.get("task_id") != str(task.header.entity_id)
+    local = receipt.get("executor") == test_executor.EXECUTOR or receipt.get("actual_model") == test_executor.EXECUTOR
+    if local:
+        # Only the named server executor can supply synthetic input to this
+        # bounded path. A caller's arbitrary synthetic marker is never enough.
+        current = (receipt.get("source") == "local_test_executor" and receipt.get("synthetic") is True
+                   and receipt.get("source_kind") == "synthetic_model_response")
+        historical = (receipt.get("source") == "provider_response" and receipt.get("synthetic") is False
+                      and receipt.get("source_kind") is None)
+        if (not (current or historical) or receipt.get("external_call") is not False
+                or receipt.get("paid_call", False) is not False
+                or type(receipt.get("cost_usd")) not in {int, float} or receipt["cost_usd"] != 0
+                or receipt.get("executor") != test_executor.EXECUTOR or receipt.get("actual_model") != test_executor.EXECUTOR):
+            raise ContractError("handoff_data_executor_mismatch")
+    elif (receipt.get("source") != "provider_response" or receipt.get("synthetic") is not False
+            or receipt.get("source_kind") not in {None, "real_model_response"}):
+        raise ContractError("handoff_data_receipt_changed")
+    if (receipt.get("task_id") != str(task.header.entity_id)
             or receipt.get("request_sha256") != checkpoint["request_sha256"]):
         raise ContractError("handoff_data_receipt_changed")
     outcome = service._get(context, EntityKind.OUTCOME, _id(context, "outcome:" + str(task.header.entity_id)))
@@ -68,8 +87,13 @@ def verified_model_data(service, context, task_id, *, allow_dependent=False):
     execution = service._execution(context, task.header.entity_id)
     proof = service._json(context, outcome.verification)
     checked = evaluate(spec, receipt.get("response"))
+    provenance_valid = (proof.get("synthetic") is local and proof.get("source_kind") ==
+                        ("synthetic_model_response" if local else "real_model_response"))
+    if receipt.get("source_kind") is None and receipt.get("synthetic") is False:
+        provenance_valid = provenance_valid or (proof.get("synthetic") is False and proof.get("source_kind") is None)
     if (outcome.status != "verified" or contribution.status != "accepted" or execution.status != "succeeded"
-            or checked["passed"] is not True or any(proof.get(key) != value for key, value in checked.items())
+            or checked["passed"] is not True or any(proof.get(key) != value for key, value in checked.items() if key != "synthetic")
+            or not provenance_valid
             or proof.get("task_id") != str(task.header.entity_id) or proof.get("model_id") != checkpoint["model_id"]
             or proof.get("receipt") != checkpoint["receipt"]
             or any(proof.get(key) != receipt.get(key) for key in ("actual_model", "executor", "external_call"))
@@ -87,14 +111,11 @@ def verified_model_data(service, context, task_id, *, allow_dependent=False):
         saved = service.repository.get_revision(context=context, kind=ref.kind, entity_id=ref.entity_id, revision=ref.revision)
         if saved is None or saved.ref() != ref or saved.header.owner_user_uuid != context.user_uuid:
             raise ContractError("handoff_data_lineage_invalid")
-    from . import execution_v2, test_executor
+    from . import execution_v2
     if execution_v2.is_managed(service, context, task.header.entity_id):
         managed = execution_v2.projection(service, context, task.header.entity_id)
         if managed["status"] != "succeeded" or managed["deviation_count"]:
             raise ContractError("handoff_data_execution_unverified")
-    local = receipt.get("executor") == test_executor.EXECUTOR
-    if local and (receipt.get("external_call") is not False or receipt.get("actual_model") != test_executor.EXECUTOR):
-        raise ContractError("handoff_data_executor_mismatch")
     # Historical reads do not require the test executor to remain enabled.
     # Its provenance remains local even after a workspace changes its mode.
     provenance = {"mode": "local_test_executor" if local else "provider_receipt",
@@ -112,7 +133,26 @@ def verified_model_data(service, context, task_id, *, allow_dependent=False):
         "receipt": checkpoint["receipt"], "input_sha256": checked["input_sha256"], "response_sha256": checked["response_sha256"],
         "task_class": spec["rubric_key"], "checks": checked["checks"], "provenance": provenance,
         "conversation_id": checkpoint["conversation_id"], "source_message_id": checkpoint["message_id"],
-        "facts": facts, "facts_sha256": digest(facts), "synthetic": False, "limitation": DATA_LIMITATION}
+        "facts": facts, "facts_sha256": digest(facts), "synthetic": local, "limitation": DATA_LIMITATION}
+
+
+def same_data_source(saved, current):
+    """Only correct the old known-local false marker; never rewrite its bytes."""
+    from .test_executor import EXECUTOR
+    if saved == current: return True
+    provenance = current.get("provenance") or {}
+    return (saved.get("synthetic") is False and current.get("synthetic") is True
+        and provenance.get("mode") == "local_test_executor" and provenance.get("executor") == EXECUTOR
+        and provenance.get("actual_model") == EXECUTOR and provenance.get("external_call") is False
+        and {**saved, "synthetic": True} == current)
+
+
+def admit_data_source(context, source):
+    """Forward work on saved local-test facts needs today's exact test opt-in."""
+    from . import test_executor
+    if (source.get("synthetic") is True or (source.get("provenance") or {}).get("mode") == "local_test_executor"):
+        if not test_executor.enabled(context.scope.workspace_id):
+            raise ContractError("handoff_test_workspace_opt_in_required")
 
 
 @dataclass(frozen=True)

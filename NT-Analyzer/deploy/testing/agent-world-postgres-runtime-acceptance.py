@@ -511,7 +511,9 @@ def runtime(workdir, port, *, resume=False):
         require(len(restored_detail.get("evaluations", [])) == state["evaluation_count"], "evaluation_lost_after_restart")
         _, models = client.call("/api/ai-control-center/domains/models")
         found = next(row for row in models["items"] if row["id"] == model["id"])
-        require(found.get("connected") and found["status"] == "active", "connection_lost_after_restart")
+        require(found.get("connected") is False and found.get("test_executor_verified") is True
+                and found.get("connection_verification") == "test_executor_only" and found["status"] == "active",
+                "synthetic_connection_provenance_lost_after_restart")
         status, _ = client.call("/api/ai-control-center/domains/models?workspace_id=" + FOREIGN, expected=None)
         require(status in {400, 403, 409}, "client_workspace_override_accepted")
         state["api_foreign_workspace_query_status"] = status

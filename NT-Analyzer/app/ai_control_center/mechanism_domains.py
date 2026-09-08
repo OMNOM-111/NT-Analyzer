@@ -46,10 +46,12 @@ LIMITATIONS = {
         " эти операции не являются профессиональной оценкой модели.",
     ],
     "router": [
-        "Предпросмотр всегда теневой и ничего не отправляет. Применение решения"
-        " требует активного режима и запускает задачу обычным путём.",
+        "Предпросмотр сохраняет только снимок выбора, не отправляет запрос модели."
+        " Явное применение запускает новую задачу с тем же показанным выбором; исходная задача не меняется.",
         "Сравниваются только подключения с нулевой стоимостью вызова:"
         " платного согласованного бюджета для private Development-подключений нет.",
+        "Требуются три различных проверенных входа того же класса; локальные тестовые ответы"
+        " не учитываются. Это выбор по стоимости и задержке, не профессиональный рейтинг.",
     ],
 }
 
@@ -232,7 +234,7 @@ def read(authorized, service, domain, *, identity=None, limit=50, cursor=None):
                 "limitations": list(LIMITATIONS["automation"]), "synthetic": False}
 
     flags = _flags(authorized, _ROUTER_FLAGS)
-    from .router_v2 import RoutingPolicy, _CLASSES
+    from .router_v2 import RoutingPolicy, _CLASSES, actual_choice
     if identity:
         task, checkpoint, task_class = _task_class(service, context, identity)
         chosen = str(checkpoint.get("model_id") or "")
@@ -243,13 +245,13 @@ def read(authorized, service, domain, *, identity=None, limit=50, cursor=None):
                          "revision": task.header.revision},
                 # What actually ran, beside the evidence a decision would rest
                 # on. No decision is computed here: `preview` does that.
-                "actual_choice": {"model_id": chosen, "decided_by": "request",
-                                  "routing_applied": False},
+                "actual_choice": actual_choice(service, context, task, checkpoint),
                 "policy_version": RoutingPolicy().version, "flags": flags,
+                "actions": ["preview"] if flags["AI_ROUTER_SHADOW_V2"] and task_class in _CLASSES else [],
                 "limitations": list(LIMITATIONS["router"]), "synthetic": False}
     return {"enabled": True, "items": [], "next_cursor": None,
             "task_classes": sorted(_CLASSES), "policy_version": RoutingPolicy().version,
-            "flags": flags, "limitations": list(LIMITATIONS["router"]), "synthetic": False}
+            "flags": flags, "actions": [], "limitations": list(LIMITATIONS["router"]), "synthetic": False}
 
 
 def _schedule(payload):
@@ -292,7 +294,7 @@ def mutate(authorized, service, domain, identity, action, payload, *, expected_r
     context = authorized["context"]
     if domain == "router":
         if action == "apply":
-            return _apply(authorized, service, identity, payload, idempotency_key)
+            return _apply(authorized, service, identity, payload, idempotency_key, expected_revision)
         return _preview(authorized, service, identity, payload)
     from . import automation_authority, coordinator, delegation, scheduler
     if action == "commission":
@@ -421,15 +423,19 @@ def _routing_request(authorized, service, identity, payload):
     """The exact request a decision is computed from, built server-side."""
     from .router_v2 import _CLASSES
     context = authorized["context"]
+    if type(payload) is not dict or set(payload) - {"candidate_model_ids", "max_cost_usd", "max_latency_ms"}:
+        raise ContractError("routing_request_invalid")
     if not identity or identity == "new":
         raise ContractError("mechanism_task_required")
     task, checkpoint, task_class = _task_class(service, context, identity)
-    if task_class not in _CLASSES:
+    if task_class not in _CLASSES or checkpoint.get("source") != "real_model_task":
         raise ContractError("routing_task_class_unsupported")
     current = str(checkpoint.get("model_id") or "")
     ids = payload.get("candidate_model_ids")
     if ids is None:
         ids = [row["id"] for row in service.models(context=context)["items"]]
+    if type(ids) is not list:
+        raise ContractError("routing_candidates_invalid")
     if current not in ids:
         ids = [current, *ids]
     return {"mode": "shadow", "task_class": task_class, "candidate_model_ids": list(ids),
@@ -440,43 +446,41 @@ def _routing_request(authorized, service, identity, payload):
 
 def _preview(authorized, service, identity, payload):
     """A shadow decision for one existing task: real ranking, no dispatch."""
-    from .router_v2 import select
-    request, task, _ = _routing_request(authorized, service, identity, payload)
+    from .router_v2 import select, record_preview
+    request, task, checkpoint = _routing_request(authorized, service, identity, payload)
     decision = select(authorized, service, request, quote=_quote)
     current = request["current_model_id"]
     return {**decision, "task_id": str(task.header.entity_id),
             "actual_model_id": current,
             "would_change": decision.get("selected_model_id") not in (None, current),
-            "applied": False, "limitations": list(LIMITATIONS["router"])}
+            "applied": False, **record_preview(authorized, service, task, checkpoint, request, decision),
+            "actions": ["apply"] if decision["status"] == "selected" and _flags(authorized, _ROUTER_FLAGS)["AI_ROUTER_V2"] else [],
+            "limitations": list(LIMITATIONS["router"])}
 
 
-def _apply(authorized, service, identity, payload, idempotency_key):
-    """Follow an active decision: the routed model gets the call, normally.
-
-    The decision is recomputed here rather than accepted from a caller, and it
-    is stored as an artifact so the choice stays auditable after the fact. The
-    task itself is started through the same ingress any other task uses -- this
-    grants nothing and queues nothing of its own.
-    """
-    from .router_v2 import select
+def _apply(authorized, service, identity, payload, idempotency_key, expected_revision):
+    """Apply exactly the shown preview after fresh admission, through normal ingress."""
+    from .router_v2 import prepare_apply, actual_choice
     context = authorized["context"]
-    request, task, checkpoint = _routing_request(authorized, service, identity, payload)
-    decision = select(authorized, service, {**request, "mode": "active"}, quote=_quote)
-    if decision.get("status") != "selected" or not decision.get("effective_model_id"):
-        return {**decision, "task_id": str(task.header.entity_id), "applied": False,
-                "started_task_id": None, "limitations": list(LIMITATIONS["router"])}
-    reference = service._put(context, {"version": "router-decision-record-v1", "decision": decision,
-                                       "source_task_id": str(task.header.entity_id), "synthetic": False})
+    packet, saved, checkpoint, task_key, existing = prepare_apply(
+        authorized, service, identity, payload, expected_revision, idempotency_key, quote=_quote)
+    decision = saved["decision"]
     given = checkpoint["spec"]["input"]
-    started = service.start_task(
-        context=context, model_id=decision["effective_model_id"],
+    started = service.task_detail(context=context, task_id=existing.header.entity_id) if existing is not None else service.start_task(
+        context=context, model_id=decision["selected_model_id"],
         payload={"rubric_key": checkpoint["spec"]["rubric_key"],
                  "input_text": given if isinstance(given, str) else json.dumps(given)},
-        idempotency_key="routing-applied-" + str(idempotency_key),
+        idempotency_key=task_key, _routing=packet,
         conversation_id=checkpoint.get("conversation_id"), message_id=checkpoint.get("message_id"))
-    return {**decision, "task_id": str(task.header.entity_id), "applied": True,
+    created = service._get(context, EntityKind.TASK, started["id"])
+    return {**decision, "mode": "active", "effective_model_id": decision["selected_model_id"],
+            "preview_decision_sha256": decision["decision_sha256"],
+            "task_id": str(identity), "applied": True, "replayed": existing is not None,
             "started_task_id": started["id"], "started_model_id": started.get("model_id"),
-            "decision_ref": c.primitive(reference), "limitations": list(LIMITATIONS["router"])}
+            "started_task_status": started["status"], "selection_sha256": saved["selection_sha256"],
+            "preview_ref": c.primitive(packet.preview_ref), "decision_ref": c.primitive(packet.decision_ref),
+            "actual_choice": actual_choice(service, context, created, service._json(context, created.checkpoint)),
+            "creates_new_task": True, "actions": [], "limitations": list(LIMITATIONS["router"])}
 
 
 def execute_watch(authorized, service, job, cancelled, heartbeat):

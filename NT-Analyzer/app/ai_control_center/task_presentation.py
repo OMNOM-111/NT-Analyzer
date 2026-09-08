@@ -13,6 +13,7 @@ TASK_CLASSES = {
     "backtest_spec": "Подготовка и выполнение бэктеста",
     "chart_spec": "Снимок графика",
     "court_vote": "Независимое заключение Court",
+    "verified_fact_transfer": "Общий результат · проверка передачи фактов",
 }
 STATES = {
     "queued": "В очереди", "running": "Выполняется",
@@ -30,6 +31,7 @@ ATTENTION = frozenset({"awaiting_review", "failed", "blocked", "rejected"})
 def project(task: dict, *, evaluation=None, human_review=None) -> dict:
     """No successful provider call silently becomes an accepted professional task."""
     raw = str(task.get("status") or "unknown")
+    aggregate = task.get("source_kind") == "bounded_delegation_result"
     review = human_review or {"status": "not_required"}
     failed_check = isinstance(evaluation, dict) and evaluation.get("passed") is False
     # A verified plan is a provider response, not the requested report/PNG.
@@ -53,7 +55,9 @@ def project(task: dict, *, evaluation=None, human_review=None) -> dict:
     application = task.get("application_result")
     application_result = (isinstance(application, dict) and application.get("verified") is True
                           and bool(application.get("artifact_ids")) and bool(task.get("application_evaluation_id")))
-    result = application_result if application_required else provider_result
+    result = task.get("aggregate_result_received") is True if aggregate else application_result if application_required else provider_result
+    if aggregate:
+        provider_result = False
     execution = task.get("execution_v2") or {}
     execution_status = execution.get("status")
     execution_blocked = execution_status in {"review", "deviated", "failed", "cancelled"}
@@ -65,6 +69,9 @@ def project(task: dict, *, evaluation=None, human_review=None) -> dict:
         display = "blocked"
     elif execution_blocked:
         display = "blocked"
+    elif aggregate and raw == "review":
+        display = {"accepted": "completed", "rejected": "rejected", "stale": "blocked"}.get(
+            review.get("status"), "blocked" if review.get("status") == "blocked" and review.get("blocked_reason") != "delegation_required_reviews_pending" else "awaiting_review")
     elif raw in {"succeeded", "completed"}:
         if application_required and not application_result or execution_status and execution_status != "succeeded":
             display = "waiting_result"

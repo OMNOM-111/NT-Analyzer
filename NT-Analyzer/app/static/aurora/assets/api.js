@@ -115,7 +115,9 @@
   // Orchestrator avatar TTS: returns either an audio Blob or a JSON fallback
   // signal `{ fallback: "browser" }` when OpenAI Speech is unavailable.
   async function orchestratorSpeak(payload) {
-    const path = '/api/ai-lab/orchestrator/speak';
+    return sendAudio('/api/ai-lab/orchestrator/speak', payload);
+  }
+  async function sendAudio(path, payload) {
     const res = await fetch(path, {
       method: 'POST',
       headers: requestHeaders({
@@ -446,6 +448,7 @@
     aiControlCenterDomain: (domain, q, o) => getJSON('/api/ai-control-center/domains/' + encodeURIComponent(domain) + qs(q), o),
     aiControlCenterDomainItem: (domain, id, o) => getJSON('/api/ai-control-center/domains/' + encodeURIComponent(domain) + '/' + encodeURIComponent(id), o),
     aiControlCenterDomainAction: (domain, id, action, body) => send('/api/ai-control-center/domains/' + encodeURIComponent(domain) + '/' + encodeURIComponent(id) + '/' + encodeURIComponent(action), 'POST', body || {}),
+    aiControlCenterPersonaSpeak: (id, body) => sendAudio('/api/ai-control-center/domains/personas/' + encodeURIComponent(id) + '/speak', body || {}),
     aiControlCenterSection: (section, q, o) => getJSON('/api/ai-control-center/' + encodeURIComponent(section) + qs(q), o),
     aiControlCenterDemoRun: (body) => send('/api/ai-control-center/demo-runs', 'POST', body || {}),
     aiControlCenterTaskChat: (id, body) => send('/api/ai-control-center/tasks/' + encodeURIComponent(id) + '/chat', 'POST', body || {}),

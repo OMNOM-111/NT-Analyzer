@@ -1950,32 +1950,49 @@ def _agent_world_request_key(value: str) -> str:
     return "aw.live." + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery: bool = False) -> Dict[str, Any]:
+def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery: bool = False,
+                                 _delivery_job: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Append/recover a scoped real-result projection; never send Telegram.
 
     The existing jobs or Desktop receipts remain authoritative. No implicit
     quality rating, conversation closing, owner consent or trade is performed.
     """
-    from ..ai_control_center import live_gateway, domain_gateway
-    if history_delivery:
-        from ..ai_control_center import model_chat
-        if envelope.get("source_kind") != "real_model_response":
+    from ..ai_control_center import live_gateway, domain_gateway, model_chat, coordinator
+    source_kind = envelope.get("source_kind")
+    if _delivery_job is not None and not history_delivery:
+        raise ChiefAgentError("Доставка требует сохранённый результат и активное задание очереди.")
+    if history_delivery or source_kind in {"synthetic_model_response", "bounded_delegation_result"}:
+        if source_kind not in {"real_model_response", "synthetic_model_response", "bounded_delegation_result"}:
             raise ChiefAgentError("История требует сохранённый результат модели.")
-        authorized = domain_gateway.access(envelope.get("scope"), read_only=True)
-        model_chat.validate_history_envelope(authorized, envelope)
+        authorized = (domain_gateway.history_delivery_authority(_delivery_job) if _delivery_job is not None
+            else domain_gateway.access(envelope.get("scope"), read_only=True))
+        if source_kind == "bounded_delegation_result":
+            saved = coordinator.validate_history_envelope(authorized, envelope)
+        elif source_kind == "synthetic_model_response":
+            saved = model_chat.validate_synthetic_envelope(authorized, envelope)
+        else:
+            saved = model_chat.validate_history_envelope(authorized, envelope)
+        if _delivery_job is not None:
+            payload = _delivery_job["payload"]
+            if (any(payload.get(key) != saved[key] for key in ("task_id", "event_id", "checkpoint_sha256"))
+                    or (source_kind == "bounded_delegation_result") != (payload["phase"] == "coordinator_delivery")):
+                raise ChiefAgentError("Сохранённый результат не соответствует заданию доставки.")
     else:
-        authorized = (domain_gateway if envelope.get("source_kind") == "real_model_response" else live_gateway).access(envelope.get("scope"))
+        authorized = (domain_gateway if source_kind == "real_model_response" else live_gateway).access(envelope.get("scope"))
     scope = authorized["chat_scope"]
     cid = _safe_conversation_id(envelope.get("conversation_id"))
     key = _agent_world_request_key(envelope.get("request_id"))
     verification = envelope.get("verification") or {}
     status = str(envelope.get("status") or ("completed" if verification.get("passed") is True else "blocked"))
-    if envelope.get("synthetic") is not False or envelope.get("source_kind") not in {"ninjatrader_report", "desktop_chart", "real_model_response"}:
+    sealed_kind = source_kind in {"synthetic_model_response", "bounded_delegation_result"}
+    if not sealed_kind and (envelope.get("synthetic") is not False or source_kind not in {"ninjatrader_report", "desktop_chart", "real_model_response"}):
         raise ChiefAgentError("Требуется реальный источник Agent World.")
-    if status == "completed" and verification.get("passed") is not True:
+    if status in {"completed", "verified_automatically"} and verification.get("passed") is not True:
         raise ChiefAgentError("Результат ещё не проверен.")
     pending = status in {"queued", "running"}
-    state = "in_progress" if pending else "completed" if status == "completed" else "blocked"
+    awaiting_review = status == "awaiting_review"
+    automatic = status == "verified_automatically"
+    state = "in_progress" if pending else "awaiting_owner" if awaiting_review else "completed" if status == "completed" or automatic else "blocked"
     with _LOCK:
         path = _conversation_file(cid, scope=scope)
         projection_rows = read_jsonl(path)
@@ -1986,19 +2003,23 @@ def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery
             message = _append_conversation(
                 "assistant", str(envelope.get("text") or ""), source="agent_world_local", request_id=key,
                 agent_id=str(envelope.get("agent_id") or ""), agent_name=str(envelope.get("agent_name") or ""),
-                model=(str(envelope.get("actual_model") or "model pending") if envelope["source_kind"] == "real_model_response" else
+                model=(str(envelope.get("actual_model") or "model pending") if source_kind in {"real_model_response", "synthetic_model_response"} else
+                       "Проверенная передача фактов · не оценка модели" if source_kind == "bounded_delegation_result" else
                        "NinjaTrader historical backtest" if envelope["source_kind"] == "ninjatrader_report" else "Desktop chart capture"),
                 provider=str(envelope.get("provider") or "local execution"), message_kind="task" if pending else "report",
-                fulfillment="unset" if pending else "done" if status == "completed" else "failed",
+                fulfillment="unset" if pending or awaiting_review else "done" if status == "completed" or automatic else "failed",
                 actions=[{"name": envelope["source_kind"], "status": status, "task_id": envelope.get("task_id"),
                           "source_job_id": envelope.get("source_job_id"), "command_id": envelope.get("command_id"),
-                          "source_kind": envelope["source_kind"], "synthetic": False, "verification": verification,
+                          "source_kind": envelope["source_kind"], "synthetic": envelope.get("synthetic") is True,
+                          "verification": verification,
+                          **{field: envelope[field] for field in ("executor", "external_call", "provenance") if field in envelope},
                           **{field: envelope[field] for field in ("intent_id", "model_id", "contribution_id", "execution_id", "outcome_id", "evaluation_id", "correlation_id",
                               "plan_evaluation_id", "plan_execution_id", "plan_outcome_id", "application_evaluation_id", "application_execution_id", "application_outcome_id", "report_url") if envelope.get(field)}}],
                 attachments=envelope.get("attachments"), participation_chain=envelope.get("participation_chain", []), path=path, scope=scope,
             )
             projection_rows.append(message)
         # Repair an interrupted append/index update on retry as well.
+        authorized["admit"]()
         _touch_conversation(cid, message_count=len(projection_rows), scope=scope)
         latest_tasks = {}
         for row in projection_rows:
@@ -2009,6 +2030,9 @@ def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery
                         latest_tasks[identity] = action.get("status")
         if any(value in {"queued", "running"} for value in latest_tasks.values()):
             state = "in_progress"
+        elif any(value == "awaiting_review" for value in latest_tasks.values()):
+            state = "awaiting_owner"
+        authorized["admit"]()
         _set_conversation_work_state(cid, state, str(message.get("content") or "")[:300], scope=scope)
     return {"ok": True, "conversation_id": cid, "message": message, "reply": message["content"],
             "agent": message["agent_id"], "model": message["model"], "provider": message["provider"],
@@ -2037,7 +2061,8 @@ def run_agent_world_live_request(*, message: str, request_id: str, conversation_
                         identity = action.get("task_id") or action.get("source_job_id") or action.get("command_id") or row.get("request_id")
                         task_states[identity] = action.get("status")
             values = list(task_states.values())
-            state = "in_progress" if any(value in {"queued", "running"} for value in values) else "blocked" if values and values[-1] != "completed" else "completed"
+            state = ("in_progress" if any(value in {"queued", "running"} for value in values) else
+                     "awaiting_owner" if "awaiting_review" in values else "blocked" if values and values[-1] not in {"completed", "verified_automatically"} else "completed")
             _set_conversation_work_state(cid, state, str(existing.get("content") or "")[:300], scope=scope)
             return {"ok": True, "conversation_id": cid, "message": existing, "reply": existing["content"],
                     "agent": existing["agent_id"], "actions": existing["actions"], "idempotent_replay": True}
@@ -4929,7 +4954,11 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
             progress_emitted = True
             on_thinking("Анализирую задачу…")
     scope_info = _normalize_conversation_scope(scope)
-    from ..ai_control_center import live_gateway
+    from ..ai_control_center import live_gateway, coordinator
+    coordinated_turn = coordinator.try_chat(clean, scope=scope, conversation_id=conversation_id,
+                                            request_id=request_key, source=source)
+    if coordinated_turn is not None:
+        return coordinated_turn
     live_turn = live_gateway.try_chat(clean, scope=scope, conversation_id=conversation_id,
                                       request_id=request_key, source=source)
     if live_turn is not None:

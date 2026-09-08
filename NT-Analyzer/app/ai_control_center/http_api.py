@@ -43,21 +43,27 @@ def _handle_get(handler, path: str, qs: dict) -> None:
     try:
         route = path.removeprefix(gateway.PREFIX)
         if route.startswith("domains/"):
-            context = gateway.request_context(handler._remote_context or {}, control_authorized=handler._preview_control_authorized())
-            snapshot = gateway.flag_snapshot(context)
-            if not gateway.resolve(gateway.Flag.AI_CONTROL_CENTER_READ_MODEL, scope=context.scope, snapshot=snapshot).enabled:
-                raise ContractError("agent_world_disabled")
-            if route.count("/") != 1 or route.split("/")[1] not in {
-                    "personas", "models", "model_tasks", "tasks", "decisions", "court", "memory", "experiments",
-                    "projects", "routines", "calendar", "system", "publications"}:
+            from .preview_domains import DOMAINS
+            parts = route.split("/")
+            if len(parts) not in {2, 3} or parts[1] not in DOMAINS:
                 handler._err(404, "Маршрут AI Центра не найден.", code="route_not_found")
                 return
-            note = ("Это изолированный synthetic Preview. Здесь доступны проверочные задачи и их история; "
-                    "полные рабочие инструменты и свои подключения открываются после Exit Preview в Local. "
-                    "Реальные credentials, модели и публикация в SF Social в этом контуре заблокированы.")
-            handler._json(200, {"enabled": False, "items": [], "actions": [], "status": "EXTERNAL BLOCKED",
-                "synthetic": True, "message": note, "limitations": [note], "source_candidates": [],
-                "flags": gateway.enrich({}, context, snapshot)["flags"]})
+            if set(qs) - {"limit", "cursor"}:
+                raise ContractError("invalid_domain_request")
+            service = gateway.domain_service_for(handler)
+            handler._json(200, service.list(parts[1], identity=parts[2] if len(parts) == 3 else None,
+                limit=int((qs.get("limit") or ["50"])[0]), cursor=(qs.get("cursor") or [None])[0]))
+            return
+        if route.startswith("memory-artifacts/") and len(route.split("/")) == 3:
+            parts = route.split("/")
+            item = gateway.domain_service_for(handler).memory_artifact(parts[1], parts[2])
+            if item is None:
+                handler._err(404, "Публикация памяти недоступна или отозвана.", code="memory_artifact_not_found")
+            else:
+                reference, content, media_type = item
+                handler._bytes(200, content, media_type, headers={
+                    "Content-Security-Policy": "default-src 'none'; sandbox", "ETag": '"' + reference.sha256 + '"',
+                    "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
             return
         context, snapshot, service = _open(handler)
         if route == "overview":
@@ -84,7 +90,7 @@ def _handle_get(handler, path: str, qs: dict) -> None:
         elif route in {"decisions", "memory", "experiments", "models", "system"}:
             notes = {
                 "decisions": "Проверки результатов доступны в задачах. Consensus/Court пока выключены: судебных вердиктов здесь нет.",
-                "memory": "Доказательства сохраняются в задаче. Перенос в общую память и routines пока не активирован.",
+                "memory": "Ручная синтетическая память доступна в разделе Память; активация требует отдельной проверки. Автоматическое извлечение из чатов выключено.",
                 "experiments": "Существующие исследования сохранены в совместимом AI Lab. Запуск NinjaTrader в проверочном контуре заблокирован.",
                 "models": "Персона, роль и модель разделены. В этом контуре выполняются локальные проверочные алгоритмы; внешние модели не вызываются.",
                 "system": "Действуют существующие permissions, auth и budget checks. Новый job engine не создаётся. Расчёты короткие и синхронные.",
@@ -175,8 +181,19 @@ def _handle_post(handler, path: str) -> None:
         return
     try:
         if path.removeprefix(gateway.PREFIX).startswith("domains/"):
-            gateway.request_context(handler._remote_context or {}, control_authorized=handler._preview_control_authorized())
-            raise ContractError("agent_world_preview_domain_disabled")
+            parts = path.removeprefix(gateway.PREFIX).split("/")
+            if len(parts) != 4:
+                raise ContractError("invalid_domain_request")
+            service = gateway.domain_service_for(handler)
+            if parts[1] == "personas" and parts[3] == "speak":
+                from ..ai_lab import agent_tts
+                try:
+                    handler._json(200, service.speak(parts[2], body))
+                except agent_tts.AgentTtsError:
+                    handler._err(409, "Голос устройства недоступен; текст и аватар сохранены.", code="persona_voice_unavailable")
+            else:
+                handler._json(200, service.mutate(parts[1], parts[2], parts[3], body))
+            return
         context, snapshot, service = _open(handler)
         permit = gateway.admission(handler, context, snapshot)
         route = path.removeprefix(gateway.PREFIX)
