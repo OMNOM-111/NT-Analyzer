@@ -14,9 +14,10 @@
     model_tasks: { title: 'История моделей', description: 'Фактические ответы и независимые проверки. Неизвестная стоимость не равна нулевой.', create: '' },
     tasks: { title: 'Действия задачи', description: 'Изменение выполняет сервер после повторной проверки прав и состояния.', create: '' },
     experiments: { title: 'Эксперименты', description: 'Одно проверяемое задание для 2–3 моделей. Сравнение строится по фактическим ответам, не по самооценке.', create: 'Сравнить модели' },
+    automation: { title: 'Автоматизация', description: 'Разрешение на автоматизацию, согласие на конкретную рутину и бюджет — три разных условия. Включение расписания не выдаёт прав и не поднимает лимиты.', create: '' },
     system: { title: 'Система', description: 'Доступность, ограничения и состояние текущего рабочего пространства. Чтение не меняет флаги или бюджет.', create: '' },
   });
-  const ACTION_LABELS = Object.freeze({ create: 'Создать', connect: 'Подключить', bind_existing: 'Связать Local-подключение', update: 'Изменить', activate: 'Активировать', suspend: 'Приостановить', archive: 'В архив', promote: 'Продвинуть', publish_to_workspace: 'Опубликовать в workspace', propose_consensus: 'Собрать решение по вкладам', suggest_routine: 'Предложить по результатам', prepare: 'Подготовить снимок', publish: 'Опубликовать в SF Social', revoke: 'Отозвать', version: 'Новая версия', accept: 'Принять', dismiss: 'Отклонить', review: 'Проверить через Court', review_result: 'Проверить полученный результат', withdraw: 'Отозвать решение', test: 'Проверить соединение', task: 'Первое задание', disconnect: 'Отключить', cancel: 'Отменить задачу', retry: 'Новая безопасная попытка', handoff: 'Передать факты агенту', open_chat: 'Открыть ручной разбор в SF Chat' });
+  const ACTION_LABELS = Object.freeze({ create: 'Создать', connect: 'Подключить', bind_existing: 'Связать Local-подключение', update: 'Изменить', activate: 'Активировать', suspend: 'Приостановить', archive: 'В архив', promote: 'Продвинуть', publish_to_workspace: 'Опубликовать в workspace', propose_consensus: 'Собрать решение по вкладам', suggest_routine: 'Предложить по результатам', prepare: 'Подготовить снимок', publish: 'Опубликовать в SF Social', revoke: 'Отозвать разрешение', propose: 'Проверить расписание', enable: 'Включить по расписанию', version: 'Новая версия', accept: 'Принять', dismiss: 'Отклонить', review: 'Проверить через Court', review_result: 'Проверить полученный результат', withdraw: 'Отозвать решение', test: 'Проверить соединение', task: 'Первое задание', disconnect: 'Отключить', cancel: 'Отменить задачу', retry: 'Новая безопасная попытка', handoff: 'Передать факты агенту', open_chat: 'Открыть ручной разбор в SF Chat' });
   const STATUS = {
     running: ['В работе', 'good'], working: ['В работе', 'good'], active: ['Активен', 'good'], healthy: ['Работает', 'good'], succeeded: ['Завершено', 'good'], completed: ['Завершено', 'good'], verified: ['Проверено', 'good'], passed: ['Проверено', 'good'], accepted: ['Принято', 'good'], submitted: ['Вклад записан', 'info'],
     planned: ['Запланировано', 'neutral'], ready: ['В очереди', 'neutral'], queued: ['В очереди', 'neutral'], waiting: ['Ожидает', 'neutral'], pending: ['Ожидает', 'neutral'], free: ['Свободен', 'neutral'], available: ['Свободен', 'neutral'], idle: ['Свободен', 'neutral'],
@@ -155,6 +156,19 @@
       if (action === 'propose_consensus') return domainFormFields(domain, 'create').filter(spec => spec.key !== 'evidence_ids').concat(field('contribution_ids', 'Принятые вклады моделей (минимум два)', 'records', { required: true, minItems: 2, maxItems: 3, source: 'contribution_candidates', hint: 'Выберите 2–3 разные модели с одинаковой меткой входа. Сервер повторно проверит источники. Выбор не создаёт голосов.' }));
       if (action === 'review') return [field('model_ids', 'Три независимых проверяющих', 'models', { required: true, minItems: 3, maxItems: 3, hint: 'Результат сформирует backend по фактическим ответам. Браузер не передаёт голоса.' })];
       if (action === 'create') return [field('title', 'Название решения', 'text', { required: true, max: 160 }), field('proposal', 'Предложение', 'textarea', { required: true, max: 12000 }), field('evidence_ids', 'Доказательства', 'evidence', { required: true, minItems: 1, maxItems: 20, hint: 'Только собственные JSON-артефакты. Выберите сохранённый источник либо укажите известный UUID.' }), field('risk', 'Уровень риска', 'select', { required: true, options: [['low', 'Низкий'], ['moderate', 'Умеренный'], ['high', 'Высокий'], ['critical', 'Критический']] }), field('trigger', 'Причина проверки', 'select', { required: true, options: [['requested_review', 'Запрошена проверка'], ['high_risk', 'Высокий риск'], ['conflict', 'Конфликт'], ['low_confidence', 'Низкая уверенность'], ['budget_exceeded', 'Превышение бюджета']] })];
+    }
+    if (domain === 'automation') {
+      if (!['propose', 'enable'].includes(action)) return [];
+      return [field('source_task_id', 'Повторяемый запрос (задача из SF Chat)', 'model', { required: true, hint: 'Расписание повторяет запрос, который вы уже делали. Укажите UUID задачи, созданной вашим сообщением в SF Chat.' }),
+        field('model_id', 'Подключение, которое будет отвечать', 'model', { required: true }),
+        rubricField(),
+        field('input_text', 'Входные данные', 'textarea', { max: 4000, hint: 'Те же ограниченные проверки, что и в разовой задаче. Секреты не отправляйте.' }),
+        field('local_start', 'Первый запуск', 'datetime-local', { required: true }),
+        field('occurrences', 'Сколько раз выполнить', 'number', { required: true, min: 1, max: 10 }),
+        field('interval_minutes', 'Интервал между запусками (минуты, 0 — один раз)', 'number', { required: true, min: 0, max: 525600 }),
+        field('grace_minutes', 'Допустимое опоздание (минуты)', 'number', { required: true, min: 1, max: 1440, hint: 'Пропущенный запуск записывается как пропущенный, а не выполняется позже.' }),
+        field('grant_hours', 'Срок разрешения (часы)', 'number', { required: true, min: 1, max: 720, hint: 'Расписание не может пережить это разрешение. По истечении новые запуски прекращаются.' }),
+        field('max_call_cost_usd', 'Потолок стоимости одного вызова (USD)', 'text', { required: true, max: 12, hint: 'Отдельное условие от разрешения. Существующий бюджет рабочего пространства этим не увеличивается.' })];
     }
     if (domain === 'routines' && action === 'suggest_routine') return [field('title', 'Название предложения', 'text', { required: true, max: 160 }), field('interval_minutes', 'Интервал (минуты)', 'number', { required: true, min: 5, max: 525600 }), field('outcome_ids', 'Проверенные результаты (минимум два)', 'records', { required: true, minItems: 2, maxItems: 20, source: 'outcome_candidates', hint: 'Предложение опирается на сохранённые успешные результаты. Автоматическое исполнение не включается.' })];
     if (domain === 'projects' && action === 'version') return [field('notes', 'Что изменилось', 'textarea', { required: true, max: 6000 }), field('parameters', 'Параметры версии (JSON-объект)', 'json', { required: true, max: 12000 })];
@@ -629,6 +643,16 @@
       let body;
       if (data.enabled !== true) body = empty('Раздел не разрешён в текущем контексте', 'Функция не удалена из плана. Сервер не разрешил её использование; проверьте ограничения ниже.');
       else body = items(data).length ? `<div class="aw-domain-grid">${items(data).map(domainItemCard).join('')}</div>` : smallEmpty('Сохранённых записей пока нет. Новые записи появятся только после подтверждённого действия.');
+      if (key === 'automation') {
+        const admin = data.capability_admin || {}, granted = admin.granted === true;
+        // Three separate conditions, shown as three separate facts.
+        const control = admin.can_manage === true
+          ? `<div class="aw-actions"><button class="btn${granted ? '' : ' primary'}" data-aw-capability="${granted ? 'revoke' : 'grant'}" data-aw-capability-user="${esc(admin.user_id)}">${granted ? 'Отозвать разрешение на автоматизацию' : 'Выдать разрешение на автоматизацию'}</button></div>`
+          : `<p class="aw-note">Разрешение выдаёт владелец рабочего пространства. Самостоятельно повысить свои права здесь нельзя.</p>`;
+        body = `<section class="aw-detail-section"><h3>Условия автоматизации</h3><dl class="aw-detail-grid"><div><dt>Разрешение ai_automation</dt><dd>${badge(granted ? 'active' : 'disabled')}</dd></div><div><dt>Механизм расписаний</dt><dd>${badge(data.flags?.AI_SCHEDULER_V1 ? 'active' : 'disabled')}</dd></div><div><dt>Согласие на рутину</dt><dd>Отдельное действие для каждой записи</dd></div></dl>${control}</section>` + body;
+        const schedules = rows(data.schedules);
+        if (schedules.length) body += `<section class="aw-detail-section"><h3>Расписания</h3><div class="aw-domain-grid">${schedules.map(row => `<article class="aw-domain-card"><h4>${esc(String(row.id || '').slice(0, 8))}</h4><div class="aw-inline">${badge(row.status)}${row.grant_status ? badge(row.grant_status) : ''}</div><p class="aw-text">${esc(rows(row.occurrences).map(item => (item.status || '') + ' · ' + date(item.due_at)).join(' | ') || 'Запусков ещё не было.')}</p><div class="aw-actions">${allowedDomainActions(data, row).map(action => `<button class="btn" data-aw-domain-action="${action}" data-aw-entity="${esc(row.id)}">${esc(actionLabel(action))}</button>`).join('')}</div></article>`).join('')}</div></section>`;
+      }
       if (key === 'system') {
         const flags = flagRows(data.flags);
         if (flags.length) body += `<section class="aw-detail-section"><h3>Серверные флаги</h3><div class="aw-flag-list">${flags.map(flag => `<div class="aw-flag"><code>${esc(flag.name)}</code>${badge(flag.enabled ? 'active' : 'disabled')}</div>`).join('')}</div></section>`;
@@ -636,6 +660,23 @@
       }
       openDrawer(meta.title, `${domainNav(key)}<div class="aw-domain-heading"><div><h2>${esc(meta.title)}</h2><p>${esc(meta.description)}</p></div><div class="aw-actions">${create}<button class="btn" data-aw-domain-refresh>Обновить</button></div></div>${history}${domainLimitations(data)}${body}${data.next_cursor ? '<button class="btn" data-aw-domain-more>Показать ещё</button>' : ''}`);
     }
+    async function changeAutomationCapability(mode, userId) {
+      // The account store is the only authority here: it accepts this call from
+      // the owner alone, and refuses it for everyone else regardless of what
+      // the page renders.
+      if (mutationBusy || !['grant', 'revoke'].includes(mode) || !/^[0-9]{1,20}$/.test(String(userId || ''))) return;
+      mutationBusy = true;
+      try {
+        await API.authUserPermission(userId, 'ai_automation', mode === 'grant' ? true : null);
+      } catch (error) {
+        if (error?.name !== 'AbortError') openDrawer(DOMAINS.automation.title, domainNav('automation') + readError(error));
+        mutationBusy = false;
+        return;
+      }
+      mutationBusy = false;
+      await openDomain('automation');
+    }
+
     async function openDomain(key, append) {
       if (!knownDomain(key) || overview?.enabled !== true || mutationBusy) return;
       const request = ++detailGeneration;
@@ -908,6 +949,7 @@
       else if (target.dataset.awDomain) openDomain(target.dataset.awDomain);
       else if (target.dataset.awDomainItem) openDomainItem(target.dataset.awDomainItem);
       else if (target.dataset.awDomainAction) openDomainAction(target.dataset.awDomainAction, target.dataset.awEntity || 'new');
+      else if (target.dataset.awCapability) changeAutomationCapability(target.dataset.awCapability, target.dataset.awCapabilityUser);
       else if (target.hasAttribute('data-aw-domain-refresh')) openDomain(domainState?.key);
       else if (target.hasAttribute('data-aw-domain-more')) openDomain(domainState?.key, true);
       else if (target.dataset.awModelTask) { openDomain('model_tasks').then(() => openDomainItem(target.dataset.awModelTask)); }

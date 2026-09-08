@@ -209,8 +209,23 @@ def enqueue_model(authorized, *, context, task_id):
         return old
 
 
-def models(authorized, repo=None):
+def _executor(authorized, bind):
+    """The provider transport, or a named workspace's local test executor.
+
+    A private connection cannot point at a loopback stub -- the transport
+    refuses any non-global address, deliberately -- so an end-to-end run in an
+    isolated instance needs this seam instead. It is off unless an operator
+    named that exact workspace, it exists only in Development, and it changes
+    nothing else: the same admissions, budget, grant and verifier apply.
+    """
     from .model_execution import ModelExecutor
+    from . import test_executor
+    if test_executor.enabled(authorized["context"].scope.workspace_id):
+        return test_executor.execute
+    return ModelExecutor(budget_limits=_private_limits, owner_binding=bind)
+
+
+def models(authorized, repo=None):
     from .model_service import ModelService
     def bind(context, model, profile):
         if context != authorized["context"]:
@@ -221,7 +236,7 @@ def models(authorized, repo=None):
         chat_scope=authorized["chat_scope"],
         admit=lambda context, operation, estimate: _model_admit(authorized, context, operation, estimate),
         enqueue=lambda **kw: enqueue_model(authorized, **kw),
-        executor=ModelExecutor(budget_limits=_private_limits, owner_binding=bind),
+        executor=_executor(authorized, bind),
         allowed_origins=tuple(item.strip() for item in os.environ.get("STRATFORGE_AGENT_WORLD_MODEL_ORIGINS", "").split(",") if item.strip()))
     from . import automation_authority
     service.mechanism_admit = lambda **kw: automation_authority.admit(authorized, service, **kw)

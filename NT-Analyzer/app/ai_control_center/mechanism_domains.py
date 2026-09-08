@@ -198,11 +198,22 @@ def read(authorized, service, domain, *, identity=None, limit=50, cursor=None):
         grants = _grants(service, context)
         if identity:
             grants = [row for row in grants if row["controller_id"] == str(identity)]
+        scope = authorized["chat_scope"]
+        granted = capabilities.get("ai_automation") is True
+        # Only the owner may change a capability, and the account store enforces
+        # that independently. The panel is told whether to offer the control at
+        # all so an ordinary user is never shown a way to raise their own rights.
+        admin = {"capability": "ai_automation", "granted": granted,
+                 "can_manage": scope.get("is_owner") is True,
+                 "user_id": scope.get("user_id"),
+                 "route": "/api/auth/users/{user_id}/permission"}
         return {"enabled": True, "items": grants[:limit], "next_cursor": None,
                 "schedules": _schedules(authorized, service, grants),
-                "capabilities": {"ai_automation": capabilities.get("ai_automation") is True},
+                "capabilities": {"ai_automation": granted},
+                "capability_admin": admin,
                 "capability_route": "POST /api/auth/users/{user_id}/permission",
                 "flags": _flags(authorized, _AUTOMATION_FLAGS),
+                "actions": ["propose"] if granted else [],
                 "limitations": list(LIMITATIONS["automation"]), "synthetic": False}
 
     flags = _flags(authorized, _ROUTER_FLAGS)
@@ -224,6 +235,30 @@ def read(authorized, service, domain, *, identity=None, limit=50, cursor=None):
     return {"enabled": True, "items": [], "next_cursor": None,
             "task_classes": sorted(_CLASSES), "policy_version": RoutingPolicy().version,
             "flags": flags, "limitations": list(LIMITATIONS["router"]), "synthetic": False}
+
+
+def _schedule(payload):
+    """Accept the scheduler's own shape, or the plain fields a form sends.
+
+    The browser should not have to know how a schedule is encoded, and it is
+    never trusted with one: every value is re-checked by
+    `scheduler.occurrence_times` before anything is proposed.
+    """
+    given = payload.get("schedule")
+    if isinstance(given, dict):
+        return given
+    start = str(payload.get("local_start") or "").strip()
+    if not start:
+        raise ContractError("mechanism_payload_incomplete")
+    try:
+        occurrences = int(payload.get("occurrences") or 1)
+        minutes = int(payload.get("interval_minutes") or 0)
+        grace = int(payload.get("grace_minutes") or 15)
+    except (TypeError, ValueError):
+        raise ContractError("mechanism_payload_incomplete") from None
+    return {"local_start": start[:19], "timezone": str(payload.get("timezone") or "UTC"),
+            "interval_seconds": minutes * 60, "occurrences": occurrences,
+            "grace_seconds": grace * 60}
 
 
 def _require(payload, *names):
@@ -251,7 +286,11 @@ def mutate(authorized, service, domain, identity, action, payload, *, expected_r
 
     from . import domain_gateway
     domain_service = domain_gateway.domains(authorized, service.repository)
-    model_id, schedule, spec = _require(payload, "model_id", "schedule", "payload")
+    model_id, = _require(payload, "model_id")
+    schedule = _schedule(payload)
+    spec = payload.get("payload") if isinstance(payload.get("payload"), dict) else {
+        "rubric_key": str(payload.get("rubric_key") or "extract_facts"),
+        "input_text": str(payload.get("input_text") or "")}
     source_domain = str(payload.get("source_domain") or "routines")
     conversation_id, message_id = payload.get("conversation_id"), payload.get("message_id")
     if not conversation_id or not message_id:
