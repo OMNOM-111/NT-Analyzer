@@ -25,7 +25,7 @@
     blocked: ['Заблокировано', 'warning'], paused: ['На паузе', 'warning'], warning: ['Внимание', 'warning'],
     failed: ['Ошибка', 'error'], rejected: ['Отклонено', 'error'], error: ['Ошибка', 'error'], cancelled: ['Отменено', 'neutral'],
     disabled: ['Выключено', 'neutral'], new: ['NEW · мало данных', 'neutral'], insufficient: ['NEW · мало данных', 'neutral'], info: ['Событие', 'info'],
-    draft: ['Черновик', 'neutral'], proposed: ['Предложено', 'review'], approved: ['Одобрено', 'good'], promoted: ['Подтверждено', 'good'], revoked: ['Отозвано', 'warning'], expired: ['Истёк срок', 'neutral'], archived: ['В архиве', 'neutral'], retired: ['Выведено из работы', 'neutral'], suspended: ['Приостановлено', 'warning'], connected: ['Подключено', 'good'], disconnected: ['Отключено', 'neutral'], scheduled: ['Запланировано', 'neutral'], cancelled_requested: ['Отмена запрошена', 'warning'], cancel_requested: ['Отмена запрошена', 'warning'], review_required: ['Нужна проверка', 'review'], external_blocked: ['Внешний blocker', 'warning'], unavailable: ['Недоступно', 'warning'], exhausted: ['Лимит исчерпан', 'warning'], approve: ['За', 'good'], reject: ['Против', 'error'], abstain: ['Воздержался', 'neutral'],
+    draft: ['Черновик', 'neutral'], proposed: ['Предложено', 'review'], approved: ['Одобрено', 'good'], superseded: ['Заменено', 'neutral'], promoted: ['Подтверждено', 'good'], revoked: ['Отозвано', 'warning'], expired: ['Истёк срок', 'neutral'], archived: ['В архиве', 'neutral'], retired: ['Выведено из работы', 'neutral'], suspended: ['Приостановлено', 'warning'], connected: ['Подключено', 'good'], disconnected: ['Отключено', 'neutral'], scheduled: ['Запланировано', 'neutral'], cancelled_requested: ['Отмена запрошена', 'warning'], cancel_requested: ['Отмена запрошена', 'warning'], review_required: ['Нужна проверка', 'review'], external_blocked: ['Внешний blocker', 'warning'], unavailable: ['Недоступно', 'warning'], exhausted: ['Лимит исчерпан', 'warning'], approve: ['За', 'good'], reject: ['Против', 'error'], abstain: ['Воздержался', 'neutral'],
   };
   // Presentation grouping over task_presentation's display states. This is a
   // view of the one server-side computation, never a second opinion: phaseOf
@@ -634,6 +634,21 @@
       const heading = domainState.key === 'system' ? `<strong>${title}</strong>` : `<button class="aw-table-title" data-aw-domain-item="${esc(id)}">${title}</button>`;
       return `<article class="aw-domain-card"><div class="aw-domain-card-head">${heading}${badge(item.status)}</div>${item.summary || item.description ? `<p class="aw-text">${esc(item.summary || item.description)}</p>` : ''}<div class="aw-domain-card-meta">${item.model ? `<span>Model: ${esc(item.model)}</span>` : ''}${item.provider ? `<span>${esc(item.provider)}</span>` : ''}${item.synthetic === true ? '<span class="aw-status aw-info">SYNTHETIC</span>' : ''}<time>${esc(date(item.updated_at || item.created_at))}</time></div>${domainState.key === 'models' ? `<p class="aw-field-hint">${item.connected === true ? 'Соединение подтверждено фактическим ответом.' : item.credentials_configured === true ? 'Ключ сохранён. Соединение ещё не подтверждено.' : 'Подключение отключено; ключ не используется.'}</p>` : ''}${metrics ? `<div class="aw-domain-card-meta"><span>Проверка ответа: ${esc(pct(metrics.score_pct ?? metrics.observed_score_pct))}</span>${number(metrics.sample_size) == null ? '' : `<span>n = ${count(metrics.sample_size)}</span>`}</div>` : ''}${item.result_text ? `<p class="aw-result-excerpt">${esc(String(item.result_text).slice(0, 240))}</p>` : ''}${domainState.key === 'system' && item.fields ? `<pre class="aw-result-text">${esc(publicJSON(item.fields))}</pre>` : ''}<div class="aw-actions">${domainActionButtons(item)}</div></article>`;
     }
+    const GRANT_KINDS = { schedule: 'Расписание', delegation: 'Делегирование' };
+    function automationGrantCard(item) {
+      const id = recordId(item), kind = GRANT_KINDS[item.kind] || 'Разрешение';
+      // `operational` is the grant's own answer, and it is not the same as its
+      // status: an approved grant whose window has closed no longer authorises
+      // anything, and saying «Одобрено» alone would hide that.
+      const standing = item.operational === true ? 'да'
+        : item.expired === true ? 'нет — срок истёк' : 'нет';
+      return `<article class="aw-domain-card"><div class="aw-domain-card-head"><button class="aw-table-title" data-aw-domain-item="${esc(id)}">${esc(kind + ' · ' + String(id).slice(0, 8))}</button>${badge(item.operational === true ? 'active' : item.status)}</div>`
+        + `<dl class="aw-detail-grid"><div><dt>Действует сейчас</dt><dd>${standing}</dd></div>`
+        + `<div><dt>Срок</dt><dd>${esc(date(item.expires_at))}</dd></div>`
+        + `<div><dt>Потолок на вызов</dt><dd>${esc(cost(item.max_call_cost_usd))}</dd></div>`
+        + `<div><dt>Устройство</dt><dd>${esc(item.device_mode || '—')}</dd></div></dl>`
+        + `<div class="aw-actions">${domainActionButtons(item)}</div></article>`;
+    }
     function drawDomain() {
       if (!domainState) return;
       const { key, data } = domainState, meta = DOMAINS[key];
@@ -642,7 +657,7 @@
       const history = ['models', 'model_tasks', 'experiments'].includes(key) ? `<div class="aw-actions"><button class="aw-link-button" data-aw-domain="models">Подключения</button><button class="aw-link-button" data-aw-domain="model_tasks">История задач моделей</button><button class="aw-link-button" data-aw-domain="experiments">Сравнения</button></div>` : '';
       let body;
       if (data.enabled !== true) body = empty('Раздел не разрешён в текущем контексте', 'Функция не удалена из плана. Сервер не разрешил её использование; проверьте ограничения ниже.');
-      else body = items(data).length ? `<div class="aw-domain-grid">${items(data).map(domainItemCard).join('')}</div>` : smallEmpty('Сохранённых записей пока нет. Новые записи появятся только после подтверждённого действия.');
+      else body = items(data).length ? `<div class="aw-domain-grid">${items(data).map(key === 'automation' ? automationGrantCard : domainItemCard).join('')}</div>` : smallEmpty('Сохранённых записей пока нет. Новые записи появятся только после подтверждённого действия.');
       if (key === 'automation') {
         const admin = data.capability_admin || {}, granted = admin.granted === true;
         // Three separate conditions, shown as three separate facts.
@@ -651,7 +666,7 @@
           : `<p class="aw-note">Разрешение выдаёт владелец рабочего пространства. Самостоятельно повысить свои права здесь нельзя.</p>`;
         body = `<section class="aw-detail-section"><h3>Условия автоматизации</h3><dl class="aw-detail-grid"><div><dt>Разрешение ai_automation</dt><dd>${badge(granted ? 'active' : 'disabled')}</dd></div><div><dt>Механизм расписаний</dt><dd>${badge(data.flags?.AI_SCHEDULER_V1 ? 'active' : 'disabled')}</dd></div><div><dt>Согласие на рутину</dt><dd>Отдельное действие для каждой записи</dd></div></dl>${control}</section>` + body;
         const schedules = rows(data.schedules);
-        if (schedules.length) body += `<section class="aw-detail-section"><h3>Расписания</h3><div class="aw-domain-grid">${schedules.map(row => `<article class="aw-domain-card"><h4>${esc(String(row.id || '').slice(0, 8))}</h4><div class="aw-inline">${badge(row.status)}${row.grant_status ? badge(row.grant_status) : ''}</div><p class="aw-text">${esc(rows(row.occurrences).map(item => (item.status || '') + ' · ' + date(item.due_at)).join(' | ') || 'Запусков ещё не было.')}</p><div class="aw-actions">${allowedDomainActions(data, row).map(action => `<button class="btn" data-aw-domain-action="${action}" data-aw-entity="${esc(row.id)}">${esc(actionLabel(action))}</button>`).join('')}</div></article>`).join('')}</div></section>`;
+        if (schedules.length) body += `<section class="aw-detail-section"><h3>Расписания</h3><div class="aw-domain-grid">${schedules.map(row => `<article class="aw-domain-card"><h4>${esc('Расписание · ' + String(row.id || '').slice(0, 8))}</h4><div class="aw-inline">${badge(row.status)}${row.grant_status ? badge(row.grant_status) : ''}</div><p class="aw-text">${esc(rows(row.occurrences).map(item => (item.status || '') + ' · ' + date(item.due_at)).join(' | ') || 'Запусков ещё не было.')}</p><div class="aw-actions">${allowedDomainActions(data, row).map(action => `<button class="btn" data-aw-domain-action="${action}" data-aw-entity="${esc(row.id)}">${esc(actionLabel(action))}</button>`).join('')}</div></article>`).join('')}</div></section>`;
       }
       if (key === 'system') {
         const flags = flagRows(data.flags);
