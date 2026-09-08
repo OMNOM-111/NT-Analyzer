@@ -29,8 +29,11 @@ from .states import ContractError
 
 ENV = "STRATFORGE_AGENT_WORLD_TEST_EXECUTOR"
 EXECUTOR = "agent-world-local-test-executor-v1"
-# The two bounded data rubrics a schedule may carry, plus the connection check.
-SUPPORTED = frozenset({"connection_exact", "json_arithmetic", "extract_facts"})
+# The bounded data rubrics a schedule may carry, the connection check, and the
+# application plan rubrics -- which only ever echo the specification the server
+# built, because the server validates and executes it independently.
+SUPPORTED = frozenset({"connection_exact", "json_arithmetic", "extract_facts",
+                       "backtest_spec", "chart_spec"})
 
 
 def workspaces() -> frozenset[str]:
@@ -65,6 +68,14 @@ def _answer(prompt: str) -> str:
         if not isinstance(facts, dict):
             raise ContractError("model_provider_response_invalid")
         return json.dumps({str(key): str(value) for key, value in facts.items()}, ensure_ascii=False)
+    if "Specification: " in prompt:
+        # An application plan is returned exactly as the server composed it.
+        # Nothing is added, and nothing here executes anything: the server
+        # validates the plan again and runs it through its own adapters.
+        spec = json.loads(prompt.split("Specification: ", 1)[1])
+        if not isinstance(spec, dict):
+            raise ContractError("model_provider_response_invalid")
+        return json.dumps(spec, ensure_ascii=False)
     raise ContractError("model_test_executor_rubric_unsupported")
 
 

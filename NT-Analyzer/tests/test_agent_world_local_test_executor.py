@@ -9,6 +9,7 @@ workspace in Development, and that turning it on changes nothing else.
 from __future__ import annotations
 
 import json
+import pathlib
 
 import pytest
 
@@ -102,10 +103,20 @@ def test_it_answers_the_bounded_rubrics_deterministically(monkeypatch):
     assert run("No markdown. Array: [1, 2, 3]")["response"] == run("No markdown. Array: [1, 2, 3]")["response"]
 
 
+def test_an_application_plan_is_echoed_exactly_and_never_executed(monkeypatch):
+    """The server composes the plan, validates it again and runs it itself."""
+    monkeypatch.setenv(test_executor.ENV, WORKSPACE)
+    spec = {"class_name": "AWRegisteredStrategy", "instrument": "MNQ 09-26", "parameters": {"Period": 5}}
+    answer = run("Prepare the explicitly authorized application request below. "
+                 "Specification: " + json.dumps(spec, ensure_ascii=False))
+    assert json.loads(answer["response"]) == spec
+    assert answer["external_call"] is False and answer["cost_usd"] == 0.0
+
+
 def test_a_rubric_it_does_not_implement_is_refused_not_improvised(monkeypatch):
     monkeypatch.setenv(test_executor.ENV, WORKSPACE)
     with pytest.raises(ContractError) as refused:
-        run("Prepare the explicitly authorized application request below. Specification: {}")
+        run("Independently review this sealed evidence packet ... Packet: {}")
     assert refused.value.code == "model_test_executor_rubric_unsupported"
 
 
@@ -125,3 +136,62 @@ def test_the_same_admissions_and_cancellation_apply_as_to_a_provider(monkeypatch
     with pytest.raises(ContractError) as stopped:
         run("No markdown. Array: [1, 2, 3]", cancelled=lambda: True)
     assert stopped.value.code == "model_cancelled"
+
+def test_no_request_or_payload_can_turn_it_on(monkeypatch):
+    """Only an operator's environment enables it; a caller never can.
+
+    The executor reads one environment variable and nothing else. There is no
+    request field, header, workspace setting or stored record that switches it,
+    so an ordinary user cannot obtain a local executor by asking for one.
+    """
+    source = pathlib.Path(test_executor.__file__).read_text(encoding="utf-8")
+    # The only input to the decision is the environment allowlist.
+    assert source.count("os.environ") == 1
+    assert "payload" not in source and "request.get" not in source
+    # And it never reaches for the owner's ratings or the global registry.
+    for forbidden in ("ai_ratings", "star_ratings", "agent_registry", "rank_agents"):
+        assert forbidden not in source
+
+    monkeypatch.setenv(test_executor.ENV, WORKSPACE)
+    # A different workspace cannot borrow it, whatever it sends.
+    class Other:
+        scope = type("S", (), {"workspace_id": "ws_a_different_workspace"})()
+    with pytest.raises(ContractError) as refused:
+        test_executor.execute(
+            context=Other(), model=None, account=None, profile={},
+            prompt="No markdown. Array: [1, 2, 3]", system_prompt="",
+            request_id="00000000-0000-4000-8000-000000000002", conversation_id=None,
+            max_output_tokens=512, purpose="agent_world_capability",
+            cancelled=None, admit=lambda *a, **kw: None)
+    assert refused.value.code == "model_test_executor_disabled"
+
+
+def test_a_passing_connection_check_attests_the_test_executor_not_a_provider(monkeypatch):
+    """CONNECTION_OK here means this local executor answered, nothing more."""
+    monkeypatch.setenv(test_executor.ENV, WORKSPACE)
+    receipt = run("Reply with exactly: CONNECTION_OK")
+    assert receipt["response"] == "CONNECTION_OK"
+    # The receipt names the executor rather than the connection's provider, so
+    # a verified connection in this workspace is never evidence that the
+    # provider behind it is reachable.
+    assert receipt["actual_model"] == test_executor.EXECUTOR
+    assert receipt["provider"] == "local_test_executor"
+    assert receipt["external_call"] is False
+
+
+def test_the_verifier_still_rejects_a_wrong_answer_it_could_have_got_right():
+    """Grading is independent of what the executor happens to be able to do."""
+    from app.ai_control_center.model_evaluation import evaluate, prepare
+
+    spec = prepare("json_arithmetic", json.dumps([17, -4, 12, 9]))
+    good = evaluate(spec, json.dumps({"count": 4, "sum": 34, "min": -4, "max": 17, "mean": 8.5}))
+    assert good["passed"] is True
+
+    for wrong in (json.dumps({"count": 4, "sum": 35, "min": -4, "max": 17, "mean": 8.5}),
+                  json.dumps({"count": 4, "sum": 34}),
+                  "not json at all"):
+        verdict = evaluate(spec, wrong)
+        assert verdict["passed"] is False
+    # The verifier is the same independent local one either way.
+    assert good["evaluator"] == "independent_local_evidence_verifier"
+    assert good["self_scored"] is False

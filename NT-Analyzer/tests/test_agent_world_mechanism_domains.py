@@ -76,7 +76,7 @@ def test_reading_either_domain_reports_state_without_starting_anything(mechanism
 
 def test_an_operation_this_adapter_does_not_implement_is_refused_by_name(mechanisms):
     for domain, action in (("automation", "approve_delegation"), ("router", "select"),
-                           ("automation", "delete"), ("router", "apply")):
+                           ("automation", "delete"), ("router", "dispatch")):
         with pytest.raises(ContractError) as refused:
             mutate(mechanisms, domain, "new", action)
         assert refused.value.code == "mechanism_action_unsupported"

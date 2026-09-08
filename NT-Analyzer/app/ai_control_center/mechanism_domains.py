@@ -25,6 +25,7 @@ one appears, so this file is replaced by that module rather than merged with it.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from . import contracts as c
@@ -34,22 +35,22 @@ from .states import ContractError, EntityKind
 # Operations a caller may ask for, per domain. Anything else is a contract
 # error rather than a silent no-op.
 ACTIONS = {
-    "automation": frozenset({"propose", "enable", "cancel", "revoke"}),
-    "router": frozenset({"preview"}),
+    "automation": frozenset({"propose", "enable", "cancel", "revoke", "delegate", "reconcile"}),
+    "router": frozenset({"preview", "apply"}),
 }
 
 # Named here so a reader of the API sees what is deliberately absent rather
 # than assuming the domain is complete.
 LIMITATIONS = {
     "automation": [
-        "Делегирование через этот домен пока не подключено: доступны предложение,"
-        " включение, остановка расписания и отзыв разрешения.",
+        "Делегирование выполняется существующим механизмом и его очередью:"
+        " отдельной очереди у этого домена нет.",
         "Разрешение ai_automation выдаётся и отзывается владельцем отдельно,"
         " существующим маршрутом POST /api/auth/users/{user_id}/permission.",
     ],
     "router": [
-        "Активный выбор маршрута здесь не выполняется: предпросмотр всегда"
-        " теневой и ничего не отправляет.",
+        "Предпросмотр всегда теневой и ничего не отправляет. Применение решения"
+        " требует активного режима и запускает задачу обычным путём.",
         "Сравниваются только подключения с нулевой стоимостью вызова:"
         " платного согласованного бюджета для private Development-подключений нет.",
     ],
@@ -75,6 +76,11 @@ def _quote(*, context, model, account, profile):
     must never guess a price it was not given.
     """
     from ..ai_lab import agent_registry
+    from . import test_executor
+    if test_executor.enabled(context.scope.workspace_id):
+        # This workspace answers locally: no provider is contacted, so zero is
+        # the measured price of a call, not an assumption about one.
+        return {"allowed": True, "cost_usd": 0.0}
     try:
         pricing = agent_registry.managed_pricing(
             model.provider_key, model.model_key,
@@ -276,6 +282,8 @@ def mutate(authorized, service, domain, identity, action, payload, *, expected_r
         raise ContractError("mechanism_action_unsupported")
     context = authorized["context"]
     if domain == "router":
+        if action == "apply":
+            return _apply(authorized, service, identity, payload, idempotency_key)
         return _preview(authorized, service, identity, payload)
     from . import automation_authority, delegation, scheduler
     if action == "revoke":
@@ -283,6 +291,10 @@ def mutate(authorized, service, domain, identity, action, payload, *, expected_r
         return automation_authority.revoke(authorized, service, reference)
     if action == "cancel":
         return scheduler.cancel(authorized, service, identity)
+    if action == "reconcile":
+        return delegation.reconcile(authorized, service, identity)
+    if action == "delegate":
+        return _delegate(authorized, service, identity, payload, idempotency_key)
 
     from . import domain_gateway
     domain_service = domain_gateway.domains(authorized, service.repository)
@@ -333,9 +345,47 @@ def mutate(authorized, service, domain, identity, action, payload, *, expected_r
     return {**created, "grant_ref": grant, "approved": True, "actions": ["cancel", "revoke"]}
 
 
-def _preview(authorized, service, identity, payload):
-    """A shadow decision for one existing task: real ranking, no dispatch."""
-    from .router_v2 import _CLASSES, select
+def _delegate(authorized, service, source_task_id, payload, idempotency_key):
+    """Split one existing task across roles, through the delegation mechanism.
+
+    No queue is created here. `delegation.start` seals the source, builds the
+    node graph, takes its own per-step authority and enqueues through the
+    existing worker router; this obtains the grant that mechanism demands and
+    hands it the call.
+    """
+    from . import automation_authority, delegation
+    from .automation_authority import normalized_plan
+    from .model_evaluation import digest
+    targets = payload.get("target_model_ids")
+    if not isinstance(targets, list) or not targets:
+        raise ContractError("mechanism_payload_incomplete")
+    try:
+        depth = int(payload.get("max_depth") or len(targets))
+        hours = float(payload.get("grant_hours") or 8)
+    except (TypeError, ValueError):
+        raise ContractError("mechanism_payload_incomplete") from None
+    if not 0 < hours <= 24 * 30:
+        raise ContractError("mechanism_grant_window_invalid")
+    parents = payload.get("parent_indices")
+    proposed = delegation.propose(authorized, service, source_task_id, targets, depth,
+                                  idempotency_key, parent_indices=parents)
+    grant = automation_authority.approve(
+        authorized, service,
+        proposal={"controller_id": proposed["controller_id"], "plan": proposed["plan"]},
+        kind="delegation",
+        expires_at=(datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat(),
+        max_call_cost_usd=payload.get("max_call_cost_usd", 0.0),
+        approved_plan_sha256=digest(normalized_plan(proposed["plan"])),
+        idempotency_key=idempotency_key)
+    view = delegation.start(authorized, service, source_task_id, targets, depth,
+                            idempotency_key, grant_ref=grant, parent_indices=parents)
+    return {**view, "grant_ref": grant, "controller_id": proposed["controller_id"],
+            "actions": ["reconcile", "revoke"]}
+
+
+def _routing_request(authorized, service, identity, payload):
+    """The exact request a decision is computed from, built server-side."""
+    from .router_v2 import _CLASSES
     context = authorized["context"]
     if not identity or identity == "new":
         raise ContractError("mechanism_task_required")
@@ -348,15 +398,51 @@ def _preview(authorized, service, identity, payload):
         ids = [row["id"] for row in service.models(context=context)["items"]]
     if current not in ids:
         ids = [current, *ids]
-    request = {"mode": "shadow", "task_class": task_class, "candidate_model_ids": list(ids),
-               "current_model_id": current,
-               "max_cost_usd": payload.get("max_cost_usd", 0.0),
-               "max_latency_ms": payload.get("max_latency_ms", 60000)}
+    return {"mode": "shadow", "task_class": task_class, "candidate_model_ids": list(ids),
+            "current_model_id": current,
+            "max_cost_usd": payload.get("max_cost_usd", 0.0),
+            "max_latency_ms": payload.get("max_latency_ms", 60000)}, task, checkpoint
+
+
+def _preview(authorized, service, identity, payload):
+    """A shadow decision for one existing task: real ranking, no dispatch."""
+    from .router_v2 import select
+    request, task, _ = _routing_request(authorized, service, identity, payload)
     decision = select(authorized, service, request, quote=_quote)
+    current = request["current_model_id"]
     return {**decision, "task_id": str(task.header.entity_id),
             "actual_model_id": current,
             "would_change": decision.get("selected_model_id") not in (None, current),
             "applied": False, "limitations": list(LIMITATIONS["router"])}
+
+
+def _apply(authorized, service, identity, payload, idempotency_key):
+    """Follow an active decision: the routed model gets the call, normally.
+
+    The decision is recomputed here rather than accepted from a caller, and it
+    is stored as an artifact so the choice stays auditable after the fact. The
+    task itself is started through the same ingress any other task uses -- this
+    grants nothing and queues nothing of its own.
+    """
+    from .router_v2 import select
+    context = authorized["context"]
+    request, task, checkpoint = _routing_request(authorized, service, identity, payload)
+    decision = select(authorized, service, {**request, "mode": "active"}, quote=_quote)
+    if decision.get("status") != "selected" or not decision.get("effective_model_id"):
+        return {**decision, "task_id": str(task.header.entity_id), "applied": False,
+                "started_task_id": None, "limitations": list(LIMITATIONS["router"])}
+    reference = service._put(context, {"version": "router-decision-record-v1", "decision": decision,
+                                       "source_task_id": str(task.header.entity_id), "synthetic": False})
+    given = checkpoint["spec"]["input"]
+    started = service.start_task(
+        context=context, model_id=decision["effective_model_id"],
+        payload={"rubric_key": checkpoint["spec"]["rubric_key"],
+                 "input_text": given if isinstance(given, str) else json.dumps(given)},
+        idempotency_key="routing-applied-" + str(idempotency_key),
+        conversation_id=checkpoint.get("conversation_id"), message_id=checkpoint.get("message_id"))
+    return {**decision, "task_id": str(task.header.entity_id), "applied": True,
+            "started_task_id": started["id"], "started_model_id": started.get("model_id"),
+            "decision_ref": c.primitive(reference), "limitations": list(LIMITATIONS["router"])}
 
 
 def execute_watch(authorized, service, job, cancelled, heartbeat):
