@@ -99,6 +99,7 @@ def enqueue_ai_message(
     conversation_id: str,
     agent: str,
     scope: Dict[str, Any],
+    persona_id: Optional[str] = None,
     mirror_to_telegram: bool = True,
     source: str = "app",
     timeout_sec: int = 600,
@@ -127,6 +128,9 @@ def enqueue_ai_message(
         "mirror_to_telegram": bool(mirror_to_telegram),
         "scope": clean_scope,
     }
+    if persona_id is not None:
+        from .ai_control_center.persona_identity import _identity
+        payload["persona_id"] = _identity(persona_id)
     try:
         return enqueue(
             "ai_orchestrator", payload,
@@ -141,6 +145,10 @@ def enqueue_ai_message(
                 or str(existing.get("user_id") or "") != user_id
                 or str((existing.get("payload") or {}).get("request_id") or "") != rid):
             raise
+        saved = existing.get("payload") or {}
+        if ("persona_id" in payload or "persona_id" in saved) and any(
+                saved.get(field) != payload.get(field) for field in ("persona_id", "message", "conversation_id")):
+            raise ValueError("persona_request_id_conflict") from None
         return existing
 
 
@@ -257,6 +265,7 @@ def _execute(job: Dict[str, Any], *, heartbeat=None, cancelled=None) -> Dict[str
             on_thinking=on_thinking,
             scope=scope,
             request_id=str(payload.get("request_id") or ""),
+            **({"persona_id": payload["persona_id"]} if "persona_id" in payload else {}),
         )
         heartbeat()
         return result

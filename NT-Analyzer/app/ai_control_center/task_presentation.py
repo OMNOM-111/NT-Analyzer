@@ -9,6 +9,7 @@ from __future__ import annotations
 TASK_CLASSES = {
     "connection_exact": "Проверка подключения",
     "json_arithmetic": "Диагностика: арифметика JSON",
+    "assistant_response": "Ответ помощника · ручная проверка",
     "extract_facts": "Передача фактов",
     "backtest_spec": "Подготовка и выполнение бэктеста",
     "chart_spec": "Снимок графика",
@@ -105,6 +106,7 @@ def project(task: dict, *, evaluation=None, human_review=None) -> dict:
             "provider_result_received": provider_result, "application_result_required": application_required,
             "application_result_received": application_result, "result_received": result,
             "verification_status": "failed" if failed_check else "passed" if application_result or not application_required and isinstance(evaluation, dict) and evaluation.get("passed") is True else "pending",
+            "verification_scope": "transport_only" if technical == "assistant_response" else "task_contract",
             "human_review": review, "is_active": display in ACTIVE,
             "needs_attention": display in ATTENTION,
             "result_label": "Результат получен" if result else "Результат ещё не получен"}

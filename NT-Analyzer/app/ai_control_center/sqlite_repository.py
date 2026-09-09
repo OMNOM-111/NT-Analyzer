@@ -545,12 +545,15 @@ class SQLiteAgentWorldRepository:
         if not isinstance(record, c.Persona):
             return
         from .application_roles import role_key
-        def assigned(persona):
+        from .persona_identity import validate_assignment
+        def profile(persona):
             artifact = self._artifact(connection, context, persona.profile)
-            profile = json.loads(artifact[0]) if artifact[1] == "application/json" else {}
-            return role_key(profile.get("application_role", "")) if isinstance(profile, dict) else ""
-        role = assigned(record)
-        if not role or record.status not in {"active", "suspended"}:
+            value = json.loads(artifact[0]) if artifact and artifact[1] == "application/json" else {}
+            return value if isinstance(value, dict) else {}
+        current = profile(record)
+        role = role_key(current.get("application_role", ""))
+        if record.status not in {"active", "suspended"}:
+            validate_assignment(record, current, [])
             return
         # The existing BEGIN IMMEDIATE serializes assignment/activation across
         # processes. Suspended agents retain their slot until explicitly unset.
@@ -558,9 +561,11 @@ class SQLiteAgentWorldRepository:
             JOIN aw_revisions v ON v.seq=r.seq WHERE r.environment=? AND r.workspace_id=?
             AND r.owner_uuid=? AND r.kind='persona' AND r.entity_id!=?""",
             (*self._context(context), str(context.user_uuid), str(record.header.entity_id))).fetchall()
-        for row in rows:
-            other = decode_record(row["payload"])
-            if other.status in {"active", "suspended"} and assigned(other) == role:
+        peers = [(other, profile(other)) for row in rows for other in (decode_record(row["payload"]),)]
+        previous = self._row(connection, context, EntityKind.PERSONA, record.header.entity_id)
+        validate_assignment(record, current, peers, previous=(previous, profile(previous)) if previous else None)
+        for other, other_profile in peers:
+            if role and other.status in {"active", "suspended"} and role_key(other_profile.get("application_role", "")) == role:
                 raise ContractError("application_role_already_assigned")
 
     def commit(self, *, context: c.RequestContext, record: c.Record, expected_revision: int,

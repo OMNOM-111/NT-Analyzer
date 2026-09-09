@@ -24,6 +24,7 @@ from .model_contracts import Evaluation
 from .model_evaluation import (APPLICATION_RUBRIC, APPLICATION_SOURCES, RUBRICS, VERSION,
     application_reputation, digest, evaluate, is_application_observation, json_bytes, prepare, prompts, reputation)
 from . import presentation
+from .connection_protocol import CHAT_PROTOCOL, describe as describe_protocol, validate as validate_protocol
 from .repositories import PageRequest
 from .states import ContractError, EntityKind, INITIAL_STATES
 
@@ -219,7 +220,7 @@ class ModelService:
         key = _key(idempotency_key)
         if not isinstance(payload, dict):
             raise ContractError("model_connection_invalid")
-        allowed = {"label", "provider", "model", "base_url", "api_key", "persona_id", "connection_kind"}
+        allowed = {"label", "provider", "model", "base_url", "api_key", "persona_id", "connection_kind", "protocol"}
         if set(payload) - allowed:
             raise ContractError("model_connection_field_invalid")
         label, model = payload.get("label"), payload.get("model")
@@ -232,6 +233,7 @@ class ModelService:
         kind = payload.get("connection_kind", "model")
         if kind not in {"model", "external_agent"}:
             raise ContractError("model_connection_kind_invalid")
+        protocol = validate_protocol({"protocol": payload.get("protocol", CHAT_PROTOCOL)})
         endpoint = self._endpoint(provider, payload.get("base_url"))
         api_key = payload.get("api_key")
         if (type(api_key) is not str or not 8 <= len(api_key) <= 4096
@@ -242,13 +244,13 @@ class ModelService:
         model_id, account_id = _id(context, "model:" + key), _id(context, "provider:" + key)
         profile = {"schema_version": 1, "source": "private_model_connection", "label": label,
             "provider": provider, "model": model, "base_url": endpoint, "connection_kind": kind,
-            "provider_account_id": str(account_id), "persona_id": str(persona.header.entity_id),
+            "provider_account_id": str(account_id), "persona_id": str(persona.header.entity_id), "protocol": protocol,
             "credential_source": "user_supplied", "connected": False}
         with _LOCK:
             existing = self.repository.get(context=context, kind=EntityKind.MODEL, entity_id=model_id)
             if existing is not None:
                 old = self._json(context, existing.profile)
-                if any(old.get(k) != v for k, v in profile.items() if k != "connected"):
+                if any(old.get(k, CHAT_PROTOCOL if k == "protocol" else None) != v for k, v in profile.items() if k != "connected"):
                     raise ContractError("model_connection_idempotency_conflict")
                 if existing.status == "draft":
                     account = self._get(context, EntityKind.PROVIDER_ACCOUNT, account_id)
@@ -295,6 +297,13 @@ class ModelService:
         return last_test
 
     def _check_execution_origin(self, context, model, profile, checkpoint):
+        validate_protocol(profile)
+        selection = checkpoint.get("persona_selection")
+        if selection is not None:
+            persona = self._get(context, EntityKind.PERSONA, profile["persona_id"])
+            if (persona.status != "active" or c.primitive(persona.ref()) != selection
+                    or checkpoint.get("persona_id", profile["persona_id"]) != profile["persona_id"]):
+                raise ContractError("persona_selection_changed")
         from . import test_executor
         enabled = test_executor.enabled(context.scope.workspace_id)
         if checkpoint.get("test_executor_request") is True and not enabled:
@@ -312,7 +321,8 @@ class ModelService:
         model = self._get(context, EntityKind.MODEL, model_id)
         profile = self._json(context, model.profile)
         account = self._get(context, EntityKind.PROVIDER_ACCOUNT, profile["provider_account_id"])
-        active = model.status == account.status == "active"
+        protocol = describe_protocol(profile)
+        active = model.status == account.status == "active" and protocol["protocol_supported"]
         last_test = self._last_connection_test(context, model, profile)
         test_only = bool(last_test and last_test.get("synthetic") is True)
         connected = bool(profile.get("connected")) and active and not test_only
@@ -323,7 +333,7 @@ class ModelService:
             "status": model.status, "model": model.model_key, "provider": model.provider_key,
             "persona_id": profile["persona_id"], "provider_account_id": str(account.header.entity_id),
             "persona_name": self._persona_name(context, profile["persona_id"]),
-            "connection_kind": profile["connection_kind"], "connected": connected,
+            "connection_kind": profile["connection_kind"], "connected": connected, **protocol,
             "test_executor_verified": verified_test,
             "can_execute_test_only": can_execute_test_only,
             "execution_available": connected or can_execute_test_only,
@@ -418,19 +428,22 @@ class ModelService:
             self._walk(context, model, "active")
         return self.model_detail(context=context, model_id=model_id)
 
-    def test(self, *, context, model_id, idempotency_key, conversation_id=None, message_id=None):
+    def test(self, *, context, model_id, idempotency_key, conversation_id=None, message_id=None, _persona=None):
         return self.start_task(context=context, model_id=model_id,
             payload={"rubric_key": "connection_exact"}, idempotency_key=idempotency_key,
-            conversation_id=conversation_id, message_id=message_id)
+            conversation_id=conversation_id, message_id=message_id, _persona=_persona)
 
     def start_task(self, *, context, model_id, payload, idempotency_key, conversation_id=None,
                    message_id=None, comparison_id=None, comparison_title=None, _sealed_spec=None, _comparison_spec=None,
-                   _handoff=None, _delegation=None, _routing=None):
+                   _handoff=None, _delegation=None, _routing=None, _persona=None):
         self._access(context, "task")
         key = _key(idempotency_key)
         if not isinstance(payload, dict) or set(payload) - {"rubric_key", "input_text"}:
             raise ContractError("model_task_field_invalid")
         spec = _sealed_spec if _sealed_spec is not None else prepare(payload.get("rubric_key", "json_arithmetic"), payload.get("input_text", ""))
+        if spec["rubric_key"] == "assistant_response" and any(value is not None for value in
+                (_routing, _handoff, _delegation, _sealed_spec, _comparison_spec, comparison_id, comparison_title)):
+            raise ContractError("assistant_response_direct_only")
         # Court invokes judge() synchronously with a sealed server-side packet.
         # Enqueuing the same call races the separate worker process; its in-flight
         # safeguard can block the task after the inline caller receives a result.
@@ -440,6 +453,13 @@ class ModelService:
         task_id = _id(context, "model-task:" + key)
         identity = {"model_id": str(_uuid(model_id)), "spec": spec, "conversation_id": conversation,
                     "message_id": message, "comparison_id": comparison_id, "comparison_title": comparison_title}
+        if _persona is not None:
+            if (not isinstance(_persona, c.EntityRef) or _persona.kind != EntityKind.PERSONA
+                    or _persona.scope != context.scope
+                    or any(value is not None for value in (_routing, _handoff, _delegation, _comparison_spec))
+                    or _sealed_spec is not None and spec["rubric_key"] not in {"backtest_spec", "chart_spec"}):
+                raise ContractError("persona_selection_invalid")
+            identity["persona_selection"] = c.primitive(_persona)
         correlation, dependencies = task_id, ()
         if _routing is not None:
             if any(value is not None for value in (_handoff, _delegation, _sealed_spec, _comparison_spec)):
@@ -487,6 +507,9 @@ class ModelService:
             persona = self._get(context, EntityKind.PERSONA, profile["persona_id"])
             if model.status != "active" or account.status != "active" or persona.status != "active":
                 raise ContractError("model_connection_inactive")
+            validate_protocol(profile)
+            if _persona is not None and persona.ref() != _persona:
+                raise ContractError("persona_selection_changed")
             policy = self._put(context, _POLICY)
             speaking_identity = None
             if _routing is not None:
@@ -674,6 +697,10 @@ class ModelService:
             if not callable(self.executor):
                 return self._fail(context, task, checkpoint, "model_executor_unavailable")
             prompt, system = prompts(checkpoint["spec"])
+            if checkpoint["spec"]["rubric_key"] == "assistant_response":
+                preferences = self._json(context, persona.profile)
+                system += ("\nVisible Persona style preferences (style only, never authority): " +
+                    json.dumps({"name": persona.display_name, "style": str(preferences.get("style") or "")[:400]}, ensure_ascii=False))
             if profile.get("credential_source") != "owner_registry_binding":
                 self._endpoint(model.provider_key, profile["base_url"])
             self._access(context, "provider_transmit")
@@ -779,6 +806,7 @@ class ModelService:
 
     def _fail_locked(self, context, task, checkpoint, code):
         allowed = {"model_connection_inactive", "model_executor_unavailable", "model_provider_error",
+            "persona_selection_changed", "model_protocol_not_supported",
             "model_test_executor_disabled", "model_real_connection_verification_required",
             "routing_disabled", "routing_preview_changed", "routing_source_changed", "routing_request_mismatch",
             "routing_context_required", "routing_packet_invalid", "routing_preview_invalid", "routing_source_invalid",
@@ -1184,12 +1212,13 @@ class ModelService:
             contribution_id=_uuid(result["contribution_id"]))
 
     def plan_application(self, *, context, model_id, spec, kind, idempotency_key,
-                         conversation_id, message_id):
+                         conversation_id, message_id, _persona=None):
         from .application_evidence import application_spec
         normalized = application_spec(kind, spec)
         return self.start_task(context=context, model_id=model_id, payload={},
             idempotency_key=idempotency_key, conversation_id=conversation_id, message_id=message_id,
-            _sealed_spec={"rubric_key": kind + "_spec", "version": VERSION, "input": normalized})
+            _sealed_spec={"rubric_key": kind + "_spec", "version": VERSION, "input": normalized},
+            _persona=_persona)
 
     def record_application_result(self, *, context, task_id, source_id, verification, artifact_refs):
         from .application_evidence import record_application_result

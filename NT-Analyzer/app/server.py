@@ -9200,6 +9200,10 @@ class Handler(BaseHTTPRequestHandler):
             request_id = "air_" + hashlib.sha256(
                 f"{time.time_ns()}:{threading.get_ident()}:{os.urandom(16).hex()}".encode()
             ).hexdigest()[:32]
+        selection = {}
+        if "persona_id" in body:
+            from .ai_control_center.persona_identity import _identity
+            selection["persona_id"] = _identity(body["persona_id"])
         # Self-heal a crashed worker before accepting more durable work.
         local_worker.start_background_worker(interval_sec=0.2)
         return local_worker.enqueue_ai_message(
@@ -9210,6 +9214,7 @@ class Handler(BaseHTTPRequestHandler):
             scope=scope,
             mirror_to_telegram=mirror_to_telegram,
             timeout_sec=600,
+            **selection,
         )
 
     @staticmethod

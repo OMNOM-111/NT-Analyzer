@@ -14,6 +14,21 @@
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
+- Latest preserved source: `376b400dc3c8ab3a008f1e45800d401dd02c4b6f`,
+  588-file bundle/static/context PASS. Immutable full: 5262 PASS / 1 FAIL /
+  112 SKIP; legacy 13/13 PASS. Later bounded Persona chat/transport changes and
+  the stale cancel-command fixture correction are separate from that snapshot.
+  [Next checkpoint](../changelog/2026-09-08-agent-world-persona-chat-checkpoint.md)
+  adds main/alias/UUID selection and receipt-only assistant responses, no
+  professional score or model/tool authority. Fresh full/PG/browser pending.
+  [Exact 376 PG evidence](../changelog/2026-09-08-agent-world-postgres-376-acceptance.md):
+  69 AW + 41 legacy PASS, separate TLS/NOBYPASSRLS API/worker/restart PASS;
+  seven later Persona PG cases remain outside those counts. Isolated 8804 now
+  runs clean376 after its checked 41-file backup; protected8765 unchanged.
+- Next operation: preserve the Persona checkpoint, launch immutable full and
+  new disposable PG including seven Persona cases, then complete the
+  [owner browser route](../current/AGENT_WORLD_OWNER_ACCEPTANCE_GUIDE.md).
+  Owner key/real consent/permanent publication/design remain distinct holds.
 - Shared checkpoint: `a03ec82b686a9f6f05c056fe5a500ecbdb3babac`, pushed to PR #285,
   clean at preservation; mandatory static/context/artifact checks passed.
   Subsequent scoped work covers canonical Connector result binding, rejected

@@ -2076,6 +2076,7 @@ def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery
                           "source_job_id": envelope.get("source_job_id"), "command_id": envelope.get("command_id"),
                           "source_kind": envelope["source_kind"], "synthetic": envelope.get("synthetic") is True,
                           "verification": verification,
+                          **{field: envelope[field] for field in ("verification_scope", "task_class") if field in envelope},
                           **{field: envelope[field] for field in ("executor", "external_call", "provenance", "source_confirmed") if field in envelope},
                           **{field: envelope[field] for field in ("intent_id", "model_id", "contribution_id", "execution_id", "outcome_id", "evaluation_id", "correlation_id",
                               "plan_evaluation_id", "plan_execution_id", "plan_outcome_id", "application_evaluation_id", "application_execution_id", "application_outcome_id", "report_url") if envelope.get(field)}}],
@@ -4614,6 +4615,7 @@ def _gateway_envelope(result: Dict[str, Any], *, source: str) -> Dict[str, Any]:
 
 def handle_message(message: str, *, source: str = "app", mirror_to_telegram: bool = True,
                    conversation_id: str = DEFAULT_CONVERSATION_ID, agent: str = "",
+                   persona_id: Optional[str] = None,
                    on_thinking: Optional[Callable[[str], None]] = None,
                    scope: Optional[Dict[str, Any]] = None,
                    request_id: str = "") -> Dict[str, Any]:
@@ -4653,12 +4655,14 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
                     message, source=source, mirror_to_telegram=mirror_to_telegram,
                     conversation_id=conversation_id, agent=agent,
                     on_thinking=on_thinking, scope=scope, request_id=request_id,
+                    **({"persona_id": persona_id} if persona_id is not None else {}),
                 )
             return _gateway_envelope(result, source=source)
         result = _handle_message_impl(
                 message, source=source, mirror_to_telegram=mirror_to_telegram,
                 conversation_id=conversation_id, agent=agent,
                 on_thinking=on_thinking, scope=scope, request_id=request_id,
+                **({"persona_id": persona_id} if persona_id is not None else {}),
             )
         return _gateway_envelope(result, source=source)
 
@@ -4985,6 +4989,7 @@ def _vitek_gateway_turn(clean: str, *, source: str, mirror_to_telegram: bool,
 
 def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegram: bool = True,
                          conversation_id: str = DEFAULT_CONVERSATION_ID, agent: str = "",
+                         persona_id: Optional[str] = None,
                          on_thinking: Optional[Callable[[str], None]] = None,
                          scope: Optional[Dict[str, Any]] = None,
                          request_id: str = "") -> Dict[str, Any]:
@@ -5022,7 +5027,11 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
             progress_emitted = True
             on_thinking("Анализирую задачу…")
     scope_info = _normalize_conversation_scope(scope)
-    from ..ai_control_center import live_gateway, coordinator
+    from ..ai_control_center import live_gateway, coordinator, persona_identity
+    persona_turn = persona_identity.try_chat(clean, scope=scope, conversation_id=conversation_id,
+        request_id=request_key, source=source, persona_id=persona_id)
+    if persona_turn is not None:
+        return persona_turn
     coordinated_turn = coordinator.try_chat(clean, scope=scope, conversation_id=conversation_id,
                                             request_id=request_key, source=source)
     if coordinated_turn is not None:

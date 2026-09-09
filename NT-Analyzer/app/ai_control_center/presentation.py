@@ -58,6 +58,7 @@ DONE_DISPLAY = frozenset({"completed", "verified_automatically"})
 RUBRIC_LABELS = MappingProxyType({
     "connection_exact": "Проверка соединения",
     "json_arithmetic": "Арифметика · JSON",
+    "assistant_response": "Ответ помощника · ручная проверка",
     "extract_facts": "Извлечение фактов",
     "court_vote": "Голос Court",
     "backtest_spec": "План бэктеста",

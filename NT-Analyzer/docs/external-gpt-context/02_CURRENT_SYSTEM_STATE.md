@@ -19,6 +19,23 @@
 
 ## Active integration — 2026-09-08
 
+Latest preserved source is `376b400dc3c8ab3a008f1e45800d401dd02c4b6f`,
+with root static/context and 588-file artifact PASS. Its immutable full run is
+**5262 PASS / 1 FAIL / 112 SKIP**, legacy 13/13 PASS. The stale cancel-command
+unit fixture is corrected in the next Persona checkpoint, not relabelled PASS
+on 376. Fresh **69 Agent World + 41 legacy PostgreSQL PASS** and separate
+API/worker/restart/RLS PASS on 376 are in the
+[exact PG receipt](../changelog/2026-09-08-agent-world-postgres-376-acceptance.md).
+Later Persona UUID/alias/main selection, transport-only assistant responses and
+honest external text protocol are in the
+[Persona chat checkpoint](../changelog/2026-09-08-agent-world-persona-chat-checkpoint.md).
+New full/PG/browser gates are pending; seven new Persona PG cases are not
+included in the previous PASS. 8804 runs an immutable 376 copy, with its own
+41-file checked data backup; protected Local 8765/owner keys remain untouched.
+This is an IN DEVELOPMENT program, not a deployment or owner design acceptance.
+
+The following checkpoints are earlier preserved evidence:
+
 Shared checkpoint `a03ec82b686a9f6f05c056fe5a500ecbdb3babac` is pushed (65 files,
 584-file artifact gate PASS), not owner acceptance. Its detached full regression
 is separate from subsequent fixes. Disposable tests confirmed a bounded

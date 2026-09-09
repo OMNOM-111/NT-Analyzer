@@ -427,20 +427,25 @@ class PostgresAgentWorldRepository:
         if not isinstance(record, c.Persona):
             return
         from .application_roles import role_key
-        def assigned(persona):
+        from .persona_identity import validate_assignment
+        def profile(persona):
             artifact = self._artifact(conn, context, persona.profile)
-            profile = json.loads(artifact[0]) if artifact and artifact[1] == "application/json" else {}
-            return role_key(profile.get("application_role", "")) if isinstance(profile, dict) else ""
-        role = assigned(record)
-        if not role or record.status not in {"active", "suspended"}:
+            value = json.loads(artifact[0]) if artifact and artifact[1] == "application/json" else {}
+            return value if isinstance(value, dict) else {}
+        current = profile(record)
+        role = role_key(current.get("application_role", ""))
+        if record.status not in {"active", "suspended"}:
+            validate_assignment(record, current, [])
             return
         rows = conn.execute("""SELECT v.payload FROM sf_aw_records r JOIN sf_aw_revisions v ON v.seq=r.seq
             WHERE r.environment=%s AND r.workspace_id=%s AND r.owner_uuid=%s
               AND r.kind='persona' AND r.entity_id!=%s""",
                             (*self._context(context), context.user_uuid, record.header.entity_id)).fetchall()
-        for row in rows:
-            other = decode_record(row["payload"])
-            if other.status in {"active", "suspended"} and assigned(other) == role:
+        peers = [(other, profile(other)) for row in rows for other in (decode_record(row["payload"]),)]
+        previous = self._row(conn, context, EntityKind.PERSONA, record.header.entity_id)
+        validate_assignment(record, current, peers, previous=(previous, profile(previous)) if previous else None)
+        for other, other_profile in peers:
+            if role and other.status in {"active", "suspended"} and role_key(other_profile.get("application_role", "")) == role:
                 raise ContractError("application_role_already_assigned")
 
     def commit(self, *, context, record, expected_revision, event, mutation):

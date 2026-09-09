@@ -8,8 +8,9 @@ suite has always substituted one.
 
 This executor is off unless an operator names the exact workspace in
 `STRATFORGE_AGENT_WORLD_TEST_EXECUTOR`; it exists only in Development, never
-inside a preview sandbox, and it answers only the bounded data rubrics a
-schedule is allowed to run. It performs no network call of any kind, so the zero
+inside a preview sandbox. It answers bounded data rubrics and explicitly echoes
+one-off assistant text for delivery tests; that echo is not a model answer or
+an autonomous scheduled task. It performs no network call of any kind, so the zero
 cost it reports is a fact rather than an assumption.
 
 What it does **not** relax: the flag, grant, device, budget, cancellation and
@@ -33,7 +34,7 @@ EXECUTOR = "agent-world-local-test-executor-v1"
 # application plan rubrics -- which only ever echo the specification the server
 # built, because the server validates and executes it independently.
 SUPPORTED = frozenset({"connection_exact", "json_arithmetic", "extract_facts",
-                       "backtest_spec", "chart_spec"})
+                       "backtest_spec", "chart_spec", "assistant_response"})
 
 
 def workspaces() -> frozenset[str]:
@@ -53,6 +54,9 @@ def enabled(workspace_id: str = "") -> bool:
 
 def _answer(prompt: str) -> str:
     """Compute the bounded answer locally, from the prompt the server built."""
+    if prompt.startswith("Assistant request (text only):\n"):
+        return ("SYNTHETIC — тестовый ответ механизма доставки, не решение задания моделью. "
+                "Получен текст поручения: " + prompt.split("\n", 1)[1][:600])
     if "Reply with exactly: CONNECTION_OK" in prompt:
         return "CONNECTION_OK"
     if "Array: " in prompt:

@@ -33,10 +33,16 @@ def envelope(authorized, detail, *, request_id, pending=False):
     human_review = task.get("human_review") or {"status": "not_required", "quality_claim": False}
     display_status = "queued" if pending else task.get("display_status") or ("result_received" if verified else "blocked")
     result_text = detail.get("result_text") or ""
-    text = ("Задача модели принята существующим worker. Результат и независимая проверка появятся здесь." if pending else
+    response_only = task.get("task_class") == "assistant_response"
+    text = ("Задача модели принята существующим worker. Результат и проверка появятся здесь." if pending else
             (result_text + "\n\nНезависимая проверка: " + ("PASS" if verified else "FAIL / требуется проверка") +
              " · " + str(task.get("task_class") or "") +
              ("\nПричина: " + str(task["error_code"]) if task.get("error_code") else "")))
+    if response_only:
+        text = ("Задание помощнику принято. Полученный ответ будет ожидать вашей проверки." if pending else
+                result_text + "\n\n" + ("Ответ получен; проверена только доставка текста." if verified else
+                "Ответ не получен или доставка не подтверждена.") +
+                " Содержание и профессиональное качество автоматически не оценены.")
     if not pending and task.get("application_request") and evaluation.get("passed") is False:
         text += "\nСпецификация модели не совпала с поручением. Команда приложению не отправлена; бэктест или снимок не выполнен."
     if provenance["synthetic"]:
@@ -48,17 +54,21 @@ def envelope(authorized, detail, *, request_id, pending=False):
     actual = None if pending else detail.get("actual_model")
     provider = "local_test_executor" if provenance["synthetic"] else task.get("provider")
     return {"scope": authorized["chat_scope"], "conversation_id": task["conversation_id"], "request_id": request_id,
-            **provenance, "task_id": task["id"],
+            **provenance, "task_id": task["id"], "task_class": task.get("task_class"),
             "status": display_status, "display_status": display_status, "ledger_status": task.get("ledger_status", task.get("status")),
             "human_review": human_review, "result_received": task.get("result_received") is True,
             "verification_status": task.get("verification_status"), "text": text,
+            "verification_scope": "transport_only" if response_only else "task_contract",
             "agent_id": task.get("persona_id"), "agent_name": task.get("lead", {}).get("display_name") or task.get("model_label"),
             "actual_model": actual, "provider": provider, "configured_provider": task.get("provider"),
             "executor": None if pending else detail.get("executor"),
             "external_call": None if pending else detail.get("external_call"),
             "verification": {"passed": verified, "evaluation_id": task.get("application_evaluation_id") or task.get("evaluation_id"),
                              "plan_evaluation_id": task.get("evaluation_id"), "checks": evaluation.get("checks", []),
-                             "application": application.get("evaluation"), "synthetic": provenance["synthetic"]},
+                             "application": application.get("evaluation"), "synthetic": provenance["synthetic"],
+                             "scope": "transport_only" if response_only else "task_contract",
+                             "semantic_verified": False if response_only else evaluation.get("semantic_verified"),
+                             "quality_claim": False},
             **{field: task.get(field) for field in ("intent_id", "model_id", "contribution_id", "execution_id", "outcome_id", "evaluation_id", "correlation_id")},
             "attachments": [{**artifact, "type": "image" if artifact.get("mime_type") in
                 {"image/png", "image/jpeg", "image/webp", "image/svg+xml"} else "artifact",
@@ -70,13 +80,14 @@ def envelope(authorized, detail, *, request_id, pending=False):
             "execution_id": application.get("execution_id") or task.get("execution_id"),
             "outcome_id": application.get("outcome_id") or task.get("outcome_id"),
             "evaluation_id": task.get("application_evaluation_id") or task.get("evaluation_id"),
-            "participation_chain": [] if not actual else [{"agent_id": task.get("persona_id"), "agent_name": task.get("model_label"),
+            "participation_chain": [] if not actual else [{"agent_id": task.get("persona_id"),
+                "agent_name": task.get("lead", {}).get("display_name") or task.get("model_label"),
                 "role": "test_executor_response" if provenance["synthetic"] else "model_response",
                 "model": actual, "actual_model": actual, "provider": provider,
                 "synthetic": provenance["synthetic"], "purpose": task.get("task_class")}]}
 
 
-def start(authorized, service, model_id, payload, key, *, test=False, conversation_id=None, user_message=None):
+def start(authorized, service, model_id, payload, key, *, test=False, conversation_id=None, user_message=None, persona=None):
     if test and payload:
         raise ContractError("model_connection_input_not_allowed")
     model = service.model_detail(context=authorized["context"], model_id=model_id)
@@ -88,6 +99,8 @@ def start(authorized, service, model_id, payload, key, *, test=False, conversati
     def execute(message_id):
         kwargs = {"context": authorized["context"], "model_id": model_id, "idempotency_key": key,
                   "conversation_id": cid, "message_id": message_id}
+        if persona is not None:
+            kwargs["_persona"] = persona
         detail = service.test(**kwargs) if test else service.start_task(**kwargs, payload=payload)
         created.update(detail)
         return envelope(authorized, detail, request_id=key, pending=True)
@@ -227,6 +240,36 @@ def deliver(authorized, service, *, task_id, event_id, checkpoint_sha256, events
         raise ContractError("model_delivery_unconfirmed")
     return {"ok": True, "status": "delivered", "task_id": str(task_id),
             "replayed": result.get("idempotent_replay") is True}
+
+
+def try_persona(*, message, authorized, service, persona_id, persona_revision,
+                conversation_id, request_id, user_message):
+    """One selected, owned Persona -> one bound connection -> existing worker.
+
+    A received free-text answer is never evidence of correctness or permission
+    to use tools. Explicit application actions have already passed the normal
+    application-chat adapter, not this text-only protocol.
+    """
+    from . import persona_identity
+    context = authorized["context"]
+    authorized["admit"]()
+    persona = persona_identity._owned(service, context, persona_id)
+    if type(persona_revision) is not int or persona.header.revision != persona_revision:
+        raise ContractError("persona_selection_changed")
+    model_id = persona_identity.select_model(service, context=context, persona_id=persona_id)
+    diagnostic = re.fullmatch(r"(connection_exact|json_arithmetic|extract_facts)(?:\s*\n([\s\S]*))?", message, re.I)
+    rubric = diagnostic[1].lower() if diagnostic else "assistant_response"
+    if rubric == "connection_exact" and diagnostic[2]:
+        raise ContractError("model_connection_input_not_allowed")
+    payload = {} if rubric == "connection_exact" else {"rubric_key": rubric,
+        "input_text": (diagnostic[2] or "") if diagnostic else message}
+    detail = start(authorized, service, model_id, payload, request_id,
+        test=rubric == "connection_exact", conversation_id=conversation_id,
+        user_message=user_message, persona=persona.ref())
+    return {"ok": True, "conversation_id": conversation_id,
+            "reply": "Задание помощнику принято. Ответ появится в этой теме.",
+            "task_id": detail["id"], "persona_id": persona_id,
+            "actions": [{"name": "agent_world_model_response", "status": "queued", "task_id": detail["id"]}]}
 
 
 def try_chat(message, *, scope, conversation_id, request_id, source):

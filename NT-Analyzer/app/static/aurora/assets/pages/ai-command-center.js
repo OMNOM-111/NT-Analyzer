@@ -45,7 +45,7 @@
   const AVATAR_LABELS = Object.freeze({ vitek: 'Виктор', manager: 'Управляющий', marina: 'Марина', tolik: 'Толик', nikita: 'Никита', ivan: 'Иван' });
   const PERSONA_VOICE_PROFILES = Object.freeze({ ...AVATAR_LABELS, deputy: 'Заместитель', secretary: 'Секретарь' });
   const PERSONA_DEFAULTS = Object.freeze({ voice_profile_id: '', voice_mode: 'browser', voice_speed: 1, voice_language: 'ru-RU', animation_mode: 'auto', expression_preset: 'neutral', lip_sync_mode: 'auto' });
-  const RUBRIC_LABELS = Object.freeze({ connection_exact: 'Проверка соединения', json_arithmetic: 'Арифметика · JSON', extract_facts: 'Извлечение фактов', court_vote: 'Голос Court', backtest_spec: 'План бэктеста', chart_spec: 'План графика', application_execution: 'Соответствие результата приложения', ninjatrader_historical_backtest: 'Исторический бэктест NinjaTrader', desktop_chart_snapshot: 'Снимок графика Рабочего стола' });
+  const RUBRIC_LABELS = Object.freeze({ connection_exact: 'Проверка соединения', json_arithmetic: 'Арифметика · JSON', extract_facts: 'Извлечение фактов', assistant_response: 'Ответ помощника · ручная проверка', court_vote: 'Голос Court', backtest_spec: 'План бэктеста', chart_spec: 'План графика', application_execution: 'Соответствие результата приложения', ninjatrader_historical_backtest: 'Исторический бэктест NinjaTrader', desktop_chart_snapshot: 'Снимок графика Рабочего стола' });
 
   const phaseOf = task => PHASE_BY_DISPLAY[String(task && (task.display_status || task.status) || '').toLowerCase()] || 'awaiting_decision';
   const phaseLabel = task => PHASE_LABELS[phaseOf(task)] || 'Состояние не определено';
@@ -138,7 +138,7 @@
     return rows(item ? item.actions : data.actions).filter(value => typeof value === 'string' && Object.prototype.hasOwnProperty.call(ACTION_LABELS, value));
   }
   const field = (key, label, type, extra) => ({ key, label, type: type || 'text', ...(extra || {}) });
-  const rubricField = () => field('rubric_key', 'Независимая проверка', 'select', { required: true, options: [['connection_exact', 'Точный ответ · соединение'], ['json_arithmetic', 'Арифметика · JSON'], ['extract_facts', 'Извлечение фактов']] });
+  const rubricField = (assistant = false) => field('rubric_key', 'Задание и проверка', 'select', { required: true, options: [['connection_exact', 'Точный ответ · соединение'], ['json_arithmetic', 'Арифметика · JSON'], ['extract_facts', 'Извлечение фактов'], ...(assistant ? [['assistant_response', 'Ответ помощника · ручная проверка']] : [])] });
   function personaVoiceFields(catalog) {
     const profiles = catalog?.version === 'persona-presentation-v1' ? rows(catalog.profiles).filter(profile => Object.prototype.hasOwnProperty.call(PERSONA_VOICE_PROFILES, profile.id)).map(profile => [profile.id, profile.label || PERSONA_VOICE_PROFILES[profile.id]]) : Object.entries(PERSONA_VOICE_PROFILES);
     const voiceField = (key, label, type, extra) => field(key, label, type, { default: PERSONA_DEFAULTS[key], optionalIfMissing: true, ...(extra || {}) });
@@ -165,7 +165,7 @@
     if (domain === 'models') {
       if (action === 'bind_existing') return [field('registry_id', 'Разрешённое Local-подключение', 'binding', { required: true, hint: 'Список сформирован сервером только для текущего владельца. Исходный ключ и существующий бюджет не меняются.' }), field('persona_id', 'Активная Persona', 'persona', { required: true }), field('label', 'Название связи (необязательно)', 'text', { max: 80 })];
       if (action === 'connect') return [field('label', 'Название подключения', 'text', { required: true, max: 80 }), field('connection_kind', 'Тип подключения', 'select', { required: true, options: [['model', 'Своя модель'], ['external_agent', 'Внешний агент']] }), field('provider', 'Провайдер', 'provider', { required: true }), field('model', 'Идентификатор модели', 'text', { required: true, max: 120 }), field('base_url', 'Endpoint (для совместимого провайдера)', 'url', { max: 250, hint: 'Только разрешённый сервером HTTPS endpoint. Для стандартного провайдера оставьте пустым.' }), field('api_key', 'Ключ подключения', 'password', { required: true, max: 4096 }), field('persona_id', 'Persona', 'persona', { required: true })];
-      if (action === 'task') return [rubricField(), field('input_text', 'Входные данные проверки', 'textarea', { max: 4000, hint: 'Соединение: пустое поле. Арифметика: JSON-массив 3–20 целых чисел или пустое поле для стандартного набора. Факты: 2–12 строк вида city=Paris. Не отправляйте секреты.' })];
+      if (action === 'task') return [rubricField(true), field('input_text', 'Задание / входные данные', 'textarea', { max: 4000, hint: 'Ответ помощника: обычный текст, один ограниченный ответ без tools; содержание проверяете вы, автоматического рейтинга нет. Соединение: пусто. Арифметика: JSON-массив 3–20 целых чисел. Факты: 2–12 строк city=Paris. Секреты не отправляйте.' })];
     }
     if (domain === 'experiments' && action === 'create') return [field('title', 'Название сравнения', 'text', { required: true, max: 80 }), field('model_ids', 'Модели (выберите 2–3)', 'models', { required: true, minItems: 2, maxItems: 3 }), rubricField(), field('input_text', 'Одинаковые входные данные', 'textarea', { max: 4000, hint: 'Соединение: пусто. Арифметика: JSON-массив целых чисел. Факты: строки key=value. Один вход будет отправлен всем выбранным моделям.' })];
     if (domain === 'decisions') {
@@ -197,7 +197,10 @@
     if (domain === 'projects' && action === 'version') return [field('notes', 'Что изменилось', 'textarea', { required: true, max: 6000 }), field('parameters', 'Параметры версии (JSON-объект)', 'json', { required: true, max: 12000 })];
     if (domain === 'memory' && ['promote', 'revoke', 'publish_to_workspace'].includes(action)) return [field('reason', 'Основание', 'textarea', { required: true, max: 1000 })];
     if (!['create', 'update'].includes(action)) return [];
-    if (domain === 'personas') return [field('name', 'Имя персоны', 'text', { required: true, max: 160 }), field('description', 'Назначение', 'textarea', { max: 4000 }), field('style', 'Стиль общения', 'textarea', { max: 1000 }), field('avatar_key', 'Лицо персоны', 'select', { sendEmpty: true, options: [['', 'Без изображения — буква имени'], ...AVATAR_KEYS.map(key => [key, AVATAR_LABELS[key]])], hint: 'Выбирается явно. Имя персоны — свободный текст и само по себе не выдаёт лицо другого агента. Смена модели сохраняет выбранное лицо.' }), field('application_role', 'Роль в приложении', 'select', { sendEmpty: true, options: [['', 'Не назначена'], ['backtest_researcher', 'Бэктестирование'], ['chart_researcher', 'Рабочий стол и графики']], hint: 'Явное назначение для команд SF Chat. Имя можно менять. Роль не выдаёт прав, ключей или торгового доступа. Одна активная / приостановленная Persona на роль.' }), ...personaVoiceFields(catalog)];
+    if (domain === 'personas') return [field('name', 'Имя персоны', 'text', { required: true, max: 160 }),
+      field('aliases', 'Обращения по имени (до пяти)', 'aliases', { max: 405, optionalIfMissing: true, hint: 'Одно имя или прозвище на строку. В SF Chat можно написать «@Имя, задание». Уникальные обращения не дают новых прав и не меняют историю.' }),
+      field('main_assistant', 'Главный помощник', 'select', { optionalIfMissing: true, boolean: true, default: 'false', options: [['false', 'Нет — выбор в SF Chat или обращение по имени'], ['true', 'Да — когда другой помощник не выбран']], hint: 'Один главный помощник в вашем рабочем пространстве. Чтобы сменить его, сначала явно снимите этот выбор у прежней Persona и сохраните, затем назначьте новую. Приостановленный помощник не заменяется автоматически.' }),
+      field('description', 'Назначение', 'textarea', { max: 4000 }), field('style', 'Стиль общения', 'textarea', { max: 1000 }), field('avatar_key', 'Лицо персоны', 'select', { sendEmpty: true, options: [['', 'Без изображения — буква имени'], ...AVATAR_KEYS.map(key => [key, AVATAR_LABELS[key]])], hint: 'Выбирается явно. Имя персоны — свободный текст и само по себе не выдаёт лицо другого агента. Смена модели сохраняет выбранное лицо.' }), field('application_role', 'Роль в приложении', 'select', { sendEmpty: true, options: [['', 'Не назначена'], ['backtest_researcher', 'Бэктестирование'], ['chart_researcher', 'Рабочий стол и графики']], hint: 'Явное назначение для команд SF Chat. Имя можно менять. Роль не выдаёт прав, ключей или торгового доступа. Одна активная / приостановленная Persona на роль.' }), ...personaVoiceFields(catalog)];
     const title = field('title', 'Название', 'text', { required: true, max: 160 });
     const description = field('description', 'Описание', 'textarea', { max: 4000, sendEmpty: true });
     const sources = field('source_ids', 'UUID исходных артефактов', 'ids', { maxItems: 20, hint: 'Необязательно. По одному UUID в строке; принадлежность проверит сервер.' });
@@ -215,7 +218,7 @@
       if (spec.optionalIfMissing && raw === undefined) continue;
       let value = Array.isArray(raw) ? raw : String(raw ?? '').trim();
       if (spec.required && (!value || Array.isArray(value) && !value.length)) throw new Error('Заполните поле «' + spec.label + '».');
-      if (!value || Array.isArray(value) && !value.length) { if (spec.type === 'ids') payload[spec.key] = []; else if (spec.sendEmpty) payload[spec.key] = ''; continue; }
+      if (!value || Array.isArray(value) && !value.length) { if (['ids', 'aliases'].includes(spec.type)) payload[spec.key] = []; else if (spec.sendEmpty) payload[spec.key] = ''; continue; }
       if (spec.type === 'publication-source') {
         const match = /^(outcome|decision|backtest):([A-Za-z0-9_-]{1,96})$/.exec(value);
         if (!match || match[1] !== 'backtest' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(match[2])) throw new Error('Выберите проверенный источник.');
@@ -224,6 +227,10 @@
         if (Array.isArray(value)) throw new Error('Проверьте число в поле «' + spec.label + '».');
         value = Number(value);
         if (!(spec.decimal ? Number.isFinite(value) : Number.isSafeInteger(value)) || value < spec.min || value > spec.max) throw new Error('«' + spec.label + '»: допустимо от ' + spec.min + ' до ' + spec.max + '.');
+      } else if (spec.type === 'aliases') {
+        value = (Array.isArray(value) ? value : value.split(/[\n,]+/)).map(alias => String(alias).trim()).filter(Boolean);
+        const keys = value.map(alias => alias.normalize('NFKC').toLocaleLowerCase('ru-RU'));
+        if (value.length > 5 || value.some(alias => alias.length > 80) || new Set(keys).size !== keys.length) throw new Error('Укажите до пяти разных обращений, каждое — не длиннее 80 символов.');
       } else if (['models', 'ids', 'evidence', 'records'].includes(spec.type)) {
         value = Array.from(new Set((Array.isArray(value) ? value : value.split(/[\s,]+/)).map(String).filter(Boolean)));
         if (value.some(id => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) || value.length < (spec.minItems || 0) || value.length > spec.maxItems) throw new Error('Проверьте UUID и количество в поле «' + spec.label + '».');
@@ -241,7 +248,7 @@
         if (!value || Array.isArray(value) || typeof value !== 'object') throw new Error('Параметры должны быть JSON-объектом.');
         if (Object.keys(value).some(key => ['__proto__', 'constructor', 'prototype'].includes(key))) throw new Error('Недопустимое имя параметра.');
       } else if (spec.max && value.length > spec.max) throw new Error('Поле «' + spec.label + '» слишком длинное.');
-      payload[spec.key] = value;
+      payload[spec.key] = spec.boolean ? value === 'true' : value;
     }
     if (domain === 'calendar' && payload.starts_at && payload.ends_at && payload.ends_at <= payload.starts_at) throw new Error('Окончание должно быть позже начала.');
     if (domain === 'automation' && action === 'commission') {
@@ -277,6 +284,13 @@
   function connectionLabel(model) {
     return model.can_execute_test_only === true ? 'SYNTHETIC · только локальный тестовый исполнитель' : model.connected === true ? 'Реальное соединение проверено' : model.test_executor_verified === true ? 'Локальный тест сохранён; реальное соединение не проверено' : 'Реальное соединение не проверено';
   }
+  function modelProtocolCard(model) {
+    const caps = model?.capabilities;
+    const known = model?.protocol === 'chat_completions_v1' && caps?.text === true
+      && ['remote_tools', 'remote_tasks', 'mcp', 'a2a', 'artifacts'].every(key => caps[key] === false);
+    if (!known) return '<p class="aw-note">Протокол и возможности подключения ещё не подтверждены сервером. Название «внешний агент» само по себе не означает доступ к удалённым действиям.</p>';
+    return '<section class="aw-detail-section"><strong>Текстовый HTTPS-исполнитель</strong><p class="aw-note">Один ограниченный текстовый ответ через совместимый chat-completions endpoint. Удалённые инструменты, отдельные удалённые задачи, MCP, A2A и артефакты этим подключением не поддерживаются. Права и бюджет остаются у приложения.</p><details class="aw-technical"><summary>Протокол и возможности, полученные от сервера</summary><pre>' + esc(publicJSON({protocol: model.protocol, capabilities: caps})) + '</pre></details></section>';
+  }
   function domainError(error) {
     const code = String(error?.code || error?.data?.error || error?.error || '');
     const messages = {
@@ -288,6 +302,11 @@
       process_sources_changed: 'Результаты или их проверка изменились. Обновите предложения и проверьте новые источники; старая история сохранена.',
       process_suggestion_stale: 'Предложение уже изменилось. Откройте актуальную запись перед решением.',
       process_scan_incomplete: 'Полный набор наблюдений сейчас недоступен. Предложение не создано; повторите после обновления раздела.',
+      persona_aliases_invalid: 'Укажите до пяти обращений: буквы, цифры, пробел, дефис или подчёркивание; до 80 символов каждое.',
+      persona_aliases_ambiguous: 'Обращения должны различаться, в том числе без учёта регистра.',
+      persona_alias_repeats_name: 'Обращение повторяет имя Persona. Имя уже можно использовать без дополнительного alias.',
+      persona_alias_already_assigned: 'Это обращение уже относится к другой вашей Persona. Измените его; существующие имена и история сохранены.',
+      persona_main_already_assigned: 'Главный помощник уже назначен. Сначала явно снимите этот выбор у прежней Persona и сохраните, затем назначьте новую.',
     };
     if (Object.prototype.hasOwnProperty.call(messages, code)) return messages[code];
     if (error?.status === 403 || error?.status === 401) return 'Сервер не разрешил действие в текущем рабочем пространстве. Права и бюджет не изменены.';
@@ -343,18 +362,25 @@
   function publicJSON(value) {
     return JSON.stringify(value, (key, entry) => /(?:secret|password|api_?key|access_?token|authorization|cookie)/i.test(key) ? '[скрыто]' : entry, 2);
   }
+  function transportResponseOnly(value) {
+    return value?.verification_scope === 'transport_only' || [value?.task_class, value?.rubric_key].includes('assistant_response');
+  }
+  function transportVerificationNote(value) {
+    return transportResponseOnly(value) ? '<p class="aw-note">Проверено только получение и технический формат ответа. Содержание автоматически не оценено; приёмка результата — отдельное решение человека. Этот класс не влияет на профессиональный рейтинг или выбор модели.</p>' : '';
+  }
   function evaluationMeta(agent) {
     const evaluation = agent?.evaluation || {};
     const sample = Math.max(0, Math.floor(number(evaluation.sample_size) || 0));
-    const insufficient = sample < 3 || evaluation.confidence === 'insufficient' || number(evaluation.score_pct) == null;
-    const confidence = { insufficient: 'недостаточно данных', low: 'низкая', medium: 'средняя', high: 'высокая' }[evaluation.confidence] || 'не оценена';
+    const manualOnly = transportResponseOnly(evaluation);
+    const insufficient = manualOnly || sample < 3 || evaluation.confidence === 'insufficient' || number(evaluation.score_pct) == null;
+    const confidence = manualOnly ? 'не оценена' : { insufficient: 'недостаточно данных', low: 'низкая', medium: 'средняя', high: 'высокая' }[evaluation.confidence] || 'не оценена';
     const diagnostic = ['json_arithmetic', 'connection_exact', 'extract_facts'].includes(evaluation.task_class || evaluation.rubric_key);
-    const label = diagnostic ? (sample ? `${count(evaluation.passed)} из ${count(sample)} · диагностика` : 'Нет наблюдений') : insufficient ? 'NEW' : pct(evaluation.score_pct);
+    const label = manualOnly ? 'Ручная проверка · без рейтинга' : diagnostic ? (sample ? `${count(evaluation.passed)} из ${count(sample)} · диагностика` : 'Нет наблюдений') : insufficient ? 'NEW' : pct(evaluation.score_pct);
     const ORIGINS = { real_model_bounded_capability: 'фактические ответы модели', real_application_execution_conformance: 'проверенные результаты приложения', desktop_canvas_receipt: 'снимок рабочего стола' };
     const mode = String(evaluation.mode || evaluation.scope || '');
     const classKey = String(evaluation.task_class || evaluation.rubric_key || '');
     return { sample, score: insufficient ? null : number(evaluation.score_pct), label, confidence, insufficient, diagnostic,
-      observed: number(evaluation.observed_score_pct), mode,
+      observed: manualOnly ? null : number(evaluation.observed_score_pct), mode,
       classKey, classLabel: rubricLabel(classKey) || classKey || 'Класс проверки не указан',
       origin: Object.prototype.hasOwnProperty.call(ORIGINS, mode) ? ORIGINS[mode] : '' };
   }
@@ -493,6 +519,8 @@
     if (!view || view.version !== 'persona-presentation-v1') return '<p class="aw-note">Настройки голоса ещё не предоставлены сервером. Существующее лицо и история сохранены.</p>';
     const configured = personaCanSpeak(persona), staticFace = view.animation_mode === 'static' || !AVATAR_KEYS.includes(view.avatar_key);
     const fields = [
+      ['Обращения в SF Chat', rows(persona.aliases).join(', ') || 'Имя Persona; дополнительных обращений нет'],
+      ['Главный помощник', persona.main_assistant === true ? 'Да · когда другая Persona не выбрана' : 'Нет'],
       ['Голосовой профиль', view.voice_label || 'Голос не выбран'],
       ['Запрошенный звук', view.voice_mode === 'existing_tts' ? 'Существующий серверный TTS, если разрешён; иначе голос устройства' : 'Локальный голос устройства'],
       ['Язык / скорость', (view.voice_language === 'en-US' ? 'English' : 'Русский') + ' · ×' + (number(view.voice_speed) ?? 1)],
@@ -524,7 +552,7 @@
     const body = !ready ? '<p class="aw-note">Полный актуальный набор наблюдений сейчас не подтверждён. Создание предложения недоступно; сохранённые записи не изменены.</p>' : candidates.length ? `<div class="aw-domain-grid">${candidates.map(candidate => processCandidateCard(candidate, domain, true)).join('')}</div>` : '<p class="aw-note">Новых предложений нет: данных пока недостаточно, предложение уже существует или действует пауза от повторов. Это не ошибка и не оценка качества.</p>';
     return heading + body + summary + '</section>';
   }
-  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, rows, items, taskMatches, taskState, taskTitle, taskClass, taskBadge, evaluationMeta, phaseOf, phaseLabel, rubricLabel, stageName, machineKey, availabilityMeta, occupancyMeta, readinessGrid, technicalSplit, technicalDetails, AVATAR_KEYS, applicationRows, applicationTable, safeArtifactUrl, sourceMeta, overviewOutcomes, realChatCommands, canRunDemo, flagRows, captureChart, knownDomain, allowedDomainActions, domainFormFields, domainPayload, actionLabel, domainError, publicJSON, handoffCard, followupCard, modelConnectionGuide, personaVoiceFields, personaReadText, personaCanSpeak, personaSpeechEnvelope, personaAudioStatus, personaPresentationCard, processCandidatePayload, processCandidateCard, processIntelligencePanel, validCoordinatorPreview, coordinatorApproval, connectionLabel }; return; }
+  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, rows, items, taskMatches, taskState, taskTitle, taskClass, taskBadge, evaluationMeta, phaseOf, phaseLabel, rubricLabel, stageName, machineKey, availabilityMeta, occupancyMeta, readinessGrid, technicalSplit, technicalDetails, AVATAR_KEYS, applicationRows, applicationTable, safeArtifactUrl, sourceMeta, overviewOutcomes, realChatCommands, canRunDemo, flagRows, captureChart, knownDomain, allowedDomainActions, domainFormFields, domainPayload, actionLabel, domainError, publicJSON, handoffCard, followupCard, modelConnectionGuide, modelProtocolCard, personaVoiceFields, personaReadText, personaCanSpeak, personaSpeechEnvelope, personaAudioStatus, personaPresentationCard, processCandidatePayload, processCandidateCard, processIntelligencePanel, validCoordinatorPreview, coordinatorApproval, connectionLabel }; return; }
 
   root.UI.ready(async function () {
     const UI = root.UI, API = root.API.http;
@@ -760,7 +788,7 @@
     }
     function evaluations(values) {
       if (!values.length) return smallEmpty('Оценок нет. Отсутствие наблюдений не означает провал.');
-      return values.map(value => `<section class="aw-panel"><div class="aw-panel-body"><div class="aw-inline"><strong>${esc(pct(value.score_pct ?? value.observed_score_pct))}</strong><span class="aw-muted">проверенных критериев этого ответа</span></div><p class="aw-note">${esc(value.scope || value.rubric_key || 'Класс конкретной задачи')} · ${esc(value.verifier || value.evaluator || 'Источник проверки не указан')}</p><div class="aw-stack">${rows(value.rubric || value.checks).map(check => `<div class="aw-inline">${badge(check.passed === true ? 'passed' : check.passed === false ? 'failed' : 'pending')}<span class="aw-text">${esc(check.label || check.key || check.summary)}</span></div>`).join('')}</div>${value.summary ? `<p class="aw-text">${esc(value.summary)}</p>` : ''}${value.response_sha256 ? `<div class="aw-hash">RESPONSE SHA256 ${esc(value.response_sha256)}</div>` : ''}${value.input_sha256 ? `<div class="aw-hash">INPUT SHA256 ${esc(value.input_sha256)}</div>` : ''}<p class="aw-field-hint">Проверка одного ответа не является общей оценкой качества модели или торговой стратегии.</p></div></section>`).join('');
+      return values.map(value => `<section class="aw-panel"><div class="aw-panel-body"><div class="aw-inline"><strong>${transportResponseOnly(value) ? 'Без оценки содержания' : esc(pct(value.score_pct ?? value.observed_score_pct))}</strong><span class="aw-muted">${transportResponseOnly(value) ? 'только техническая проверка' : 'проверенных критериев этого ответа'}</span></div>${transportVerificationNote(value)}<p class="aw-note">${esc(value.scope || value.rubric_key || 'Класс конкретной задачи')} · ${esc(value.verifier || value.evaluator || 'Источник проверки не указан')}</p><div class="aw-stack">${rows(value.rubric || value.checks).map(check => `<div class="aw-inline">${badge(check.passed === true ? 'passed' : check.passed === false ? 'failed' : 'pending')}<span class="aw-text">${esc(check.label || check.key || check.summary)}</span></div>`).join('')}</div>${value.summary ? `<p class="aw-text">${esc(value.summary)}</p>` : ''}${value.response_sha256 ? `<div class="aw-hash">RESPONSE SHA256 ${esc(value.response_sha256)}</div>` : ''}${value.input_sha256 ? `<div class="aw-hash">INPUT SHA256 ${esc(value.input_sha256)}</div>` : ''}<p class="aw-field-hint">Проверка одного ответа не является общей оценкой качества модели или торговой стратегии.</p></div></section>`).join('');
     }
     function openDrawer(title, html) {
       stopPersonaAudio();
@@ -795,7 +823,7 @@
       const id = recordId(item), metrics = item.observed_eval || item.evaluation;
       const title = esc(item.title || item.label || item.name || item.model || 'Запись');
       const heading = domainState.key === 'system' ? `<strong>${title}</strong>` : `<button class="aw-table-title" data-aw-domain-item="${esc(id)}">${title}</button>`;
-      const component = domainState.key === 'system' && typeof item.implemented === 'boolean' ? `<dl class="aw-detail-grid"><div><dt>Код реализован</dt><dd>${item.implemented ? 'Да' : 'Нет'}</dd></div><div><dt>Флаг</dt><dd>${item.enabled ? 'Включён' : 'Выключен'}</dd></div><div><dt>Фактический режим</dt><dd>${esc(item.mode)}</dd></div><div><dt>Доступность сейчас</dt><dd>${item.available ? 'Подтверждена' : 'Не подтверждена'}</dd></div></dl><p class="aw-note">${esc(item.note || '')}</p>` : '';
+      const component = domainState.key === 'models' ? modelProtocolCard(item) : domainState.key === 'system' && typeof item.implemented === 'boolean' ? `<dl class="aw-detail-grid"><div><dt>Код реализован</dt><dd>${item.implemented ? 'Да' : 'Нет'}</dd></div><div><dt>Флаг</dt><dd>${item.enabled ? 'Включён' : 'Выключен'}</dd></div><div><dt>Фактический режим</dt><dd>${esc(item.mode)}</dd></div><div><dt>Доступность сейчас</dt><dd>${item.available ? 'Подтверждена' : 'Не подтверждена'}</dd></div></dl><p class="aw-note">${esc(item.note || '')}</p>` : '';
       return `<article class="aw-domain-card"><div class="aw-domain-card-head">${heading}${item.display_status ? taskBadge(item) : badge(item.status)}</div>${item.summary || item.description ? `<p class="aw-text">${esc(item.summary || item.description)}</p>` : ''}<div class="aw-domain-card-meta">${item.model ? `<span>Model: ${esc(item.model)}</span>` : ''}${item.provider ? `<span>${esc(item.provider)}</span>` : ''}${item.synthetic === true ? '<span class="aw-status aw-info">SYNTHETIC</span>' : ''}<time>${esc(date(item.updated_at || item.created_at))}</time></div>${domainState.key === 'models' ? `<p class="aw-field-hint">${esc(connectionLabel(item))}</p>` : ''}${metrics ? `<div class="aw-domain-card-meta"><span>Проверка ответа: ${esc(pct(metrics.score_pct ?? metrics.observed_score_pct))}</span>${number(metrics.sample_size) == null ? '' : `<span>n = ${count(metrics.sample_size)}</span>`}</div><p class="aw-note">Результат указанной проверки, не общий процент профессионального качества.</p>` : ''}${item.result_text ? `<p class="aw-result-excerpt">${esc(String(item.result_text).slice(0, 240))}</p>` : ''}${component}${domainState.key === 'system' && item.fields ? `<details class="aw-technical"><summary>Технические детали</summary><pre class="aw-result-text">${esc(publicJSON(item.fields))}</pre></details>` : ''}<div class="aw-actions">${domainActionButtons(item)}</div></article>`;
     }
     const GRANT_KINDS = { schedule: 'Расписание', delegation: 'Делегирование' };
@@ -906,7 +934,7 @@
       const comparisons = key === 'experiments' && comparison.length ? `<section class="aw-detail-section"><h3>Сопоставимые результаты</h3><div class="aw-domain-grid">${comparison.map(result => `<article class="aw-domain-card"><strong>${esc(result.model || result.label || result.model_id || 'Модель')}</strong>${badge(result.status)}<dl class="aw-detail-grid"><div><dt>Результат проверки</dt><dd>${esc(pct(result.score_pct ?? result.evaluation?.score_pct ?? result.evaluation?.observed_score_pct ?? result.observed_eval?.score_pct))}</dd></div><div><dt>Длительность</dt><dd>${number(result.latency_ms) == null ? 'не измерена' : esc(count(result.latency_ms)) + ' мс'}</dd></div><div><dt>Стоимость</dt><dd>${esc(cost(result.cost_usd))}</dd></div></dl>${result.task_id || result.id ? `<button class="aw-link-button" data-aw-model-task="${esc(result.task_id || result.id)}">Ответ и доказательства →</button>` : ''}</article>`).join('')}</div></section>` : '';
       const modelTaskLink = key === 'model_tasks' && (item.id || item.task_id) ? `<button class="btn" data-aw-task-chat="${esc(recordId(item))}">Открыть в SF Chat</button>` : '';
       const metaFields = `<dl class="aw-detail-grid"><div><dt>Ревизия</dt><dd>${count(item.revision)}</dd></div><div><dt>Обновлено</dt><dd>${esc(date(item.updated_at || item.created_at))}</dd></div>${item.model ? `<div><dt>Запрошенная модель</dt><dd>${esc(item.model)}</dd></div>` : ''}${key === 'models' ? `<div><dt>Ключ</dt><dd>${item.credentials_configured === true ? 'Настроен · не выводится' : 'Не настроен'}</dd></div>` : ''}${key === 'model_tasks' ? `<div><dt>Model ID от провайдера</dt><dd>${esc(item.actual_model || 'Не предоставлен')}</dd></div><div><dt>Измеренная стоимость</dt><dd>${esc(cost(item.cost_usd))}</dd></div><div><dt>Длительность</dt><dd>${number(item.latency_ms) == null ? 'не измерена' : count(item.latency_ms) + ' мс'}</dd></div>` : ''}</dl>`;
-      const personaBody = key === 'personas' ? personaPresentationCard(item, avatar(item, 'lg')) : '';
+      const personaBody = key === 'personas' ? personaPresentationCard(item, avatar(item, 'lg')) : key === 'models' ? modelProtocolCard(item) : '';
       openDrawer(meta.title + ' · ' + (item.title || item.label || item.name || 'Запись'), `${domainNav(key)}<div class="aw-actions"><button class="aw-link-button" data-aw-domain="${key}">← Все записи</button>${domainActionButtons(item)}${modelTaskLink}</div><h2 class="aw-inspector-title">${esc(item.title || item.label || item.name || item.model || 'Запись')}</h2><div class="aw-inline">${badge(item.status)}${item.synthetic === true ? '<span class="aw-status aw-info">SYNTHETIC</span>' : ''}</div>${domainLimitations(item)}${item.summary ? `<p class="aw-text">${esc(item.summary)}</p>` : ''}${metaFields}${personaBody}<dl class="aw-detail-grid">${description}</dl>${resultBody}${evaluationBody}${sourceBody}${versionBody}${courtBody}${comparisons}<div class="aw-hash">ID ${esc(recordId(item))}${item.correlation_id ? '<br>CORRELATION ' + esc(item.correlation_id) : ''}</div>`);
     }
     async function openDomainItem(id) {
@@ -977,7 +1005,7 @@
         if (spec.type === 'persona' && !options.length) input += '<p class="aw-field-hint">Сначала создайте и активируйте Persona в этом рабочем пространстве.</p><button type="button" class="aw-link-button" data-aw-domain="personas">Создать / активировать Persona →</button>';
         if (spec.type === 'provider' && !options.length) input += '<p class="aw-field-hint">Сервер не предоставил доступных провайдеров.</p>';
         if (spec.type === 'binding' && !options.length) input += '<p class="aw-field-hint">Нет разрешённых настроенных подключений владельца. Глобальные ключи не запрашиваются и не показываются.</p>';
-      } else if (['textarea', 'ids', 'json'].includes(spec.type)) input = `<textarea ${attrs} rows="${spec.type === 'ids' ? 3 : 4}" spellcheck="${spec.type === 'textarea' ? 'true' : 'false'}">${esc(value)}</textarea>`;
+      } else if (['textarea', 'ids', 'json', 'aliases'].includes(spec.type)) input = `<textarea ${attrs} rows="${['ids', 'aliases'].includes(spec.type) ? 3 : 4}" spellcheck="${spec.type === 'textarea' ? 'true' : 'false'}">${esc(value)}</textarea>`;
       else input = `<input ${attrs} type="${spec.type}" value="${esc(value)}"${spec.type === 'number' ? ` min="${spec.min}" max="${spec.max}" step="${spec.step || 1}"` : ''}${spec.type === 'password' ? ' autocomplete="new-password" spellcheck="false" autocapitalize="off"' : ' autocomplete="off"'}>`;
       return `<div class="aw-form-field"><label for="${id}">${esc(spec.label)}${spec.required ? ' <span aria-hidden="true">*</span>' : ''}</label>${input}${spec.hint ? `<p class="aw-field-hint">${esc(spec.hint)}</p>` : ''}</div>`;
     }
@@ -1148,6 +1176,7 @@
       else if (detailTab === 'decisions') body = detailRows(rows(detail.decisions), 'У этой задачи нет записанных решений. Проверочный сценарий не имитирует разрешение владельца или Court.');
       else body = detailRows(rows(detail.errors), task.status === 'failed' ? 'Подробности ошибки не опубликованы.' : 'Зарегистрированных ошибок нет.');
       if (detailTab === 'summary' && detail.result_text) body += `<details class="aw-technical"><summary>Полный ответ и технические данные</summary><pre>${esc(detail.result_text)}</pre></details>`;
+      if (detailTab === 'summary') body += transportVerificationNote(task);
       if (detailTab === 'summary' && task.source_kind === 'real_model_response') body += `<section class="aw-detail-section"><h3>Исполнитель и происхождение результата</h3><dl class="aw-detail-grid"><div><dt>Запрошенная модель</dt><dd>${esc(task.model || 'Не предоставлена')}</dd></div><div><dt>Model ID от провайдера</dt><dd>${esc(detail.actual_model || 'Не предоставлен')}</dd></div><div><dt>Провайдер</dt><dd>${detail.external_call === false ? esc((task.provider || 'провайдер') + ' — не вызывался') : esc(task.provider || 'Не предоставлен')}</dd></div>${detail.executor ? `<div><dt>Ответ получен от</dt><dd>${esc(detail.executor)}</dd></div>` : ''}</dl>${detail.external_call === false ? '<p class="aw-note">Ответ вычислен локально: внешнее обращение не выполнялось, поэтому этот результат ничего не говорит о доступности провайдера.</p>' : ''}<details class="aw-technical"><summary>Связанные записи</summary>${['intent_id', 'execution_id', 'contribution_id', 'outcome_id', 'evaluation_id', 'conversation_id', 'message_id'].filter(key => task[key]).map(key => `<div class="aw-hash">${esc(key.toUpperCase())} ${esc(task[key])}</div>`).join('')}</details></section>`;
       if (detailTab === 'summary' && detail.graph) {
         const review = detail.graph.human_review || {};

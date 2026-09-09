@@ -8844,7 +8844,11 @@
     const d = back._d;
     d.style.width = '';
     d.classList.remove('wide', 'full', 'custom');
-    qs('.drawer-h', d).innerHTML = `<div class="drawer-title">${titleHtml}</div><div class="drawer-tools"><button class="btn sm ghost" data-drawer-size="wide">Шире</button><button class="btn sm ghost" data-drawer-size="full">На весь экран</button><button class="btn icon ghost" data-close-drawer aria-label="Закрыть">${icon('close')}</button></div>`;
+    qs('.drawer-h', d).innerHTML = `<div class="drawer-title" id="app-drawer-title">${titleHtml}</div><div class="drawer-tools"><button class="btn sm ghost" data-drawer-size="wide">Шире</button><button class="btn sm ghost" data-drawer-size="full">На весь экран</button><button class="btn icon ghost" data-close-drawer aria-label="Закрыть">${icon('close')}</button></div>`;
+    // This same drawer is reused by unrelated panels. Its accessible name
+    // follows the current visible heading, never a previous caller's label.
+    d.removeAttribute('aria-label');
+    d.setAttribute('aria-labelledby', 'app-drawer-title');
     qs('.drawer-b', d).innerHTML = bodyHtml;
     requestAnimationFrame(() => {
       back.classList.add('open');
@@ -8936,6 +8940,7 @@
     mode: 'auto', messagesSignature: '', feedbackVoice: null, loadError: null,
     retryAfter: 0, transientError: null, viewerProfileId: '', aiAvailable: null,
     pendingAttachments: [], listQuery: '', listFilter: 'all',
+    personas: [], personaId: '', personaError: '', personaGeneration: 0,
   };
   const ORCH_KEY = lsKey('orch.currentConversationId');
   const ORCH_SKIN_KEY = lsKey('orch.skin');
@@ -9050,11 +9055,81 @@
   function orchLoadMode() {
     return 'auto';
   }
+  function orchPersonaOptions(personas, selected, error) {
+    const people = Array.isArray(personas) ? personas : [];
+    const main = people.filter(person => person.main_assistant === true);
+    const defaultLabel = main.length === 1 ? `Главный: ${main[0].title || main[0].name || 'Persona'}${main[0].status === 'active' ? '' : ' · приостановлен'}` : main.length > 1 ? 'Главный помощник: требуется уточнение' : 'Авто · главный помощник не назначен';
+    const options = [`<option value="">${esc(defaultLabel)}</option>`];
+    people.forEach(person => {
+      const id = String(person.id || '');
+      if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id) || !['active', 'suspended'].includes(person.status)) return;
+      const title = String(person.title || person.name || 'Persona');
+      options.push(`<option value="${esc(id)}"${id === selected ? ' selected' : ''}${person.status === 'active' ? '' : ' disabled'}>${esc(title)}${person.main_assistant === true ? ' · главный' : ''}${person.status === 'active' ? '' : ' · приостановлен'}</option>`);
+    });
+    if (selected && !people.some(person => person.id === selected)) options.push(`<option value="${esc(selected)}" selected disabled>Выбранная Persona недоступна — выберите другую</option>`);
+    return `<label for="orch-persona-select">Помощник <select class="btn sm" id="orch-persona-select" style="max-width:100%;min-width:0">${options.join('')}</select></label> <button class="btn sm" id="orch-persona-refresh" type="button" title="Обновить список Persona">Обновить</button><small style="display:block;overflow-wrap:anywhere">${esc(error || 'Выбирается личность, не модель. Доступны только поддерживаемые задания; имя не даёт новых прав.')}</small>`;
+  }
+  function orchRenderPersonaPicker() {
+    const wrap = qs('#orch-model-picker');
+    if (!wrap) return;
+    const hidden = orchIsHumanConversation(ORCH.currentId) || isGuest() || ORCH.aiAvailable === false;
+    wrap.hidden = hidden; wrap.setAttribute('aria-hidden', String(hidden));
+    if (hidden) return;
+    const html = orchPersonaOptions(ORCH.personas, ORCH.personaId, ORCH.personaError);
+    if (wrap._personaHtml !== html) {
+      wrap._personaHtml = html; wrap.innerHTML = html;
+      qs('#orch-persona-select', wrap)?.addEventListener('change', event => {
+        if (ORCH.sending) return;
+        const id = event.target.value;
+        if (id && !ORCH.personas.some(person => person.id === id && person.status === 'active')) return;
+        agentSpeakStop(); ORCH.personaId = id; ORCH.personaError = '';
+        orchRenderPersonaPicker();
+      });
+      qs('#orch-persona-refresh', wrap)?.addEventListener('click', () => orchLoadPersonas());
+    }
+    const select = qs('#orch-persona-select', wrap), refresh = qs('#orch-persona-refresh', wrap);
+    if (select) select.disabled = ORCH.sending;
+    if (refresh) refresh.disabled = ORCH.sending;
+  }
+  async function orchLoadPersonas() {
+    const generation = ++ORCH.personaGeneration, people = [], seen = new Set();
+    if (!window.API?.http?.aiControlCenterDomain || API.config.offline || isGuest()) return;
+    try {
+      let cursor = null;
+      for (let page = 0; page < 10; page += 1) {
+        const data = await API.http.aiControlCenterDomain('personas', { limit: 100, ...(cursor ? { cursor } : {}) }, { retries: 0 });
+        if (!Array.isArray(data?.items)) throw new Error('invalid_persona_catalog');
+        people.push(...data.items);
+        cursor = data.next_cursor || null;
+        if (!cursor) break;
+        if (seen.has(cursor) || page === 9) throw new Error('incomplete_persona_catalog');
+        seen.add(cursor);
+      }
+      if (generation !== ORCH.personaGeneration) return;
+      ORCH.personas = people; ORCH.personaError = '';
+    } catch (_) {
+      if (generation !== ORCH.personaGeneration) return;
+      ORCH.personas = [];
+      ORCH.personaError = 'Список личных помощников не получен. Обновите список; выбор не считается подтверждённым.';
+    }
+    orchRenderPersonaPicker();
+  }
+  function orchPersonaTransport(personas, selected) {
+    if (!selected) return {};
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(selected)
+        || !(Array.isArray(personas) ? personas : []).some(person => person.id === selected && person.status === 'active')) throw new Error('Выбранная Persona недоступна. Обновите список и выберите помощника.');
+    return { persona_id: selected };
+  }
+  function orchPendingPersonaFace(persona, label) {
+    const name = String(label || persona?.title || persona?.name || 'AI-помощник');
+    return persona && AGENT_AVATAR_IDS[persona.avatar_key] ? agentAvatarHtml(persona.avatar_key, {label: name, cls: 'orch-msg-face'})
+      : `<span class="orch-human-face orch-msg-face" title="${esc(name)} · AI-помощник">${esc(name.slice(0, 1))}</span>`;
+  }
   function orchLoadLastId() {
     try { return localStorage.getItem(ORCH_KEY) || 'default'; } catch (e) { return 'default'; }
   }
   function orchSaveCurrentId(cid) {
-    if (ORCH.currentId !== String(cid || '')) agentSpeakStop();
+    if (ORCH.currentId !== String(cid || '')) { agentSpeakStop(); ORCH.personaId = ''; }
     ORCH.currentId = String(cid || '');
     try {
       if (ORCH.currentId) localStorage.setItem(ORCH_KEY, ORCH.currentId);
@@ -9376,8 +9451,10 @@
     const wanted = ORCH.currentId;
     ORCH.historyRows = null; ORCH.historyMore = false; ORCH.historyBefore = undefined;
     const messagesFirst = wanted ? orchLoadMessages(wanted).catch(() => false) : null;
+    const personasFirst = orchLoadPersonas();
     const loaded = await orchLoadConversations();
     if (messagesFirst) await messagesFirst;
+    await personasFirst;
     if (!loaded) return;
     // orchLoadConversations may retarget currentId when the stored dialogue is
     // gone; in that case the prefetch above rendered nothing and the corrected
@@ -9409,6 +9486,8 @@
   }
   function orchRenderAuthRequired(panel) {
     agentSpeakStop();
+    ++ORCH.personaGeneration; ORCH.personas = []; ORCH.personaId = ''; ORCH.personaError = '';
+    const personaPicker = qs('#orch-model-picker'); if (personaPicker) { personaPicker.hidden = true; personaPicker.innerHTML = ''; personaPicker._personaHtml = ''; }
     const root = panel || qs('#orch-panel');
     if (!root) return;
     ORCH.loadError = { status: 401, message: 'Требуется вход через Telegram.' };
@@ -9508,6 +9587,7 @@
     const meta = ORCH_WORK_STATES[workState] || ORCH_WORK_STATES.open;
     const isDefault = !!(c && c.is_default);
     orchUpdateHeader();
+    orchRenderPersonaPicker();
     const badge = qs('#orch-task-state');
     if (badge) {
       if (!c || human || isDefault) {
@@ -10087,12 +10167,19 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) agentSpeakStop(); });
   function orchAgentWorldCard(row) {
     const id = orchAgentWorldTaskId(row);
-    if (!id || !row._awLatest) return '';
+    if (!id) return '';
+    const savedTransport = (row.actions || []).some(action => action?.verification_scope === 'transport_only'
+      || action?.verification?.scope === 'transport_only' || action?.task_class === 'assistant_response');
+    const savedNote = savedTransport ? '<small>Сохранённая проверка относится только к получению текста. Содержание автоматически не оценено; профессиональный рейтинг не изменяется.</small>' : '';
+    if (!row._awLatest) return savedNote;
     const task = row._awTask;
-    if (!task) return '<div class="orch-aw-task">Текущее состояние задачи недоступно. Проверка не считается завершённой.</div>';
+    if (!task) return `<div class="orch-aw-task">Текущее состояние задачи недоступно. Проверка не считается завершённой.${savedNote}</div>`;
     const actions = Array.isArray(task.actions) ? task.actions : [];
     const review = task.human_review || {};
-    return `<section class="orch-aw-task" data-aw-chat-task="${esc(id)}" data-aw-state="${esc(task.display_status)}"><strong>${esc(task.display_title || 'Задача Agent World')}</strong><p>${esc(task.display_status_label || task.status_label || 'Состояние не получено')}</p><p>${esc(task.result_label || '')}</p><small>Автоматическая проверка: ${esc({ passed: 'пройдена', failed: 'не пройдена', pending: 'ожидается' }[task.verification_status] || 'не получена')}. Приёмка владельцем — отдельное решение.</small>${actions.includes('review_result') && review.status === 'pending' ? `<div class="orch-aw-actions"><button type="button" class="btn sm" data-aw-chat-review="accept" data-aw-task-id="${esc(id)}">Проверено: принять</button><button type="button" class="btn sm" data-aw-chat-review="reject" data-aw-task-id="${esc(id)}">Проверено: отклонить</button></div>` : ''}<a class="btn sm" href="/ui/ai-command-center.html#tab=work&task=${encodeURIComponent(id)}">Задача, история и действия</a></section>`;
+    const transportOnly = savedTransport || task.verification_scope === 'transport_only' || [task.task_class, task.rubric_key].includes('assistant_response');
+    const verification = { passed: 'пройдена', failed: 'не пройдена', pending: 'ожидается' }[task.verification_status] || 'не получена';
+    const verificationText = transportOnly ? `Техническая проверка получения ответа: ${verification}. Содержание автоматически не оценено; требуется отдельное решение человека. В профессиональный рейтинг не входит.` : `Автоматическая проверка: ${verification}. Приёмка владельцем — отдельное решение.`;
+    return `<section class="orch-aw-task" data-aw-chat-task="${esc(id)}" data-aw-state="${esc(task.display_status)}"><strong>${esc(task.display_title || 'Задача Agent World')}</strong><p>${esc(task.display_status_label || task.status_label || 'Состояние не получено')}</p><p>${esc(task.result_label || '')}</p><small>${esc(verificationText)}</small>${actions.includes('review_result') && review.status === 'pending' ? `<div class="orch-aw-actions"><button type="button" class="btn sm" data-aw-chat-review="accept" data-aw-task-id="${esc(id)}">Проверено: принять</button><button type="button" class="btn sm" data-aw-chat-review="reject" data-aw-task-id="${esc(id)}">Проверено: отклонить</button></div>` : ''}<a class="btn sm" href="/ui/ai-command-center.html#tab=work&task=${encodeURIComponent(id)}">Задача, история и действия</a></section>`;
   }
   function wireOrchAgentWorld(container, messages, cid) {
     qsa('[data-aw-chat-review]', container).forEach(button => button.addEventListener('click', async () => {
@@ -10590,7 +10677,15 @@
     if (!text && !(human && ORCH.pendingAttachments.length)) return;
     if (isGuest()) { orchRenderAuthRequired(qs('#orch-panel')); return; }
     if (!window.API || API.config.offline) { toast('Чат недоступен в офлайн-превью'); return; }
+    let personaOptions = {};
+    if (!human) {
+      try { personaOptions = orchPersonaTransport(ORCH.personas, ORCH.personaId); }
+      catch (error) { toast(error.message); return; }
+    }
+    const pendingPersona = !human ? ORCH.personas.find(person => person.id === personaOptions.persona_id)
+      || (!ORCH.personaId ? ORCH.personas.find(person => person.main_assistant === true && person.status === 'active') : null) : null;
     ORCH.sending = true;
+    orchRenderPersonaPicker();
     ORCH.transientError = null;
     if (sendBtn) sendBtn.disabled = true;
     ta.value = ''; ta.style.height = 'auto';
@@ -10634,7 +10729,7 @@
         <div class="orch-think-live-label">${icon('spark')}<span>Передаю запрос…</span></div>
         <div class="orch-think-live-text"><span id="orch-live-think-body"></span></div>
       </div>
-      <div class="orch-msg assistant orch-live-answer" id="orch-live-body">${agentAvatarHtml('vitek', { speaking: true, label: 'Виктор', cls: 'orch-msg-face' })}<div class="orch-msg-stack"><span class="orch-dots"><i></i><i></i><i></i></span></div></div>
+      <div class="orch-msg assistant orch-live-answer" id="orch-live-body">${pendingPersona ? orchPendingPersonaFace(pendingPersona) : agentAvatarHtml('vitek', { speaking: true, label: 'Виктор', cls: 'orch-msg-face' })}<div class="orch-msg-stack"><span class="orch-dots"><i></i><i></i><i></i></span></div></div>
     </div>`);
     box.appendChild(live);
     wireAgentFaces(live);
@@ -10646,7 +10741,9 @@
     const liveStack = () => qs('.orch-msg-stack', liveBody) || liveBody;
     const setLiveFace = (ref, label) => {
       if (!liveBody) return;
-      const next = agentAvatarHtml(ref || 'vitek', {
+      const stableId = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(String(ref || ''));
+      const next = stableId ? orchPendingPersonaFace(ORCH.personas.find(person => person.id === ref), label)
+        : agentAvatarHtml(ref || 'vitek', {
         speaking: true, label: label || 'Виктор', cls: 'orch-msg-face',
       });
       const current = qs('.orch-msg-face', liveBody);
@@ -10682,7 +10779,7 @@
           setLiveBody(`<span class="orch-err">Не удалось получить ответ: ${esc(err)}</span>`);
           keepBottom();
         },
-      });
+      }, personaOptions);
       if (!streamResult || streamResult.ok !== true) {
         const message = String((streamResult && streamResult.error) || 'Не удалось получить ответ.');
         ORCH.transientError = { cid, text: `Не удалось получить ответ: ${message}` };
@@ -10698,6 +10795,7 @@
       setLiveBody(`<span class="orch-err">${esc(ORCH.transientError.text)}</span>`);
     } finally {
       ORCH.sending = false;
+      orchRenderPersonaPicker();
       if (sendBtn) sendBtn.disabled = false;
       // Reload from storage so the final reply and auditable action states
       // replace the transient public progress block.
