@@ -13,11 +13,11 @@
 PROGRAM: Agent World / AI Center
 STATUS: IN DEVELOPMENT
 
-CURRENT IMPLEMENTATION COVERAGE: 85%
-CURRENT OWNER ACCEPTANCE READINESS: 61%
+CURRENT IMPLEMENTATION COVERAGE: 86%
+CURRENT OWNER ACCEPTANCE READINESS: 64%
 
 CURRENT INTEGRATION BRANCH: codex/agent-world-unified-acceptance
-CURRENT INTEGRATION SHA: 2a2e402e (pushed) — full regression green at c3a79675, tests-only since
+CURRENT INTEGRATION SHA: 437febf4 — CI green on all three jobs. Tip is 1059bc99+ (docs only).
 CURRENT WIP: clean
 CURRENT LOCAL 8765 SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (48 commits behind, not switched)
 CURRENT ACCEPTANCE INSTANCE: http://127.0.0.1:8806/ui/ai-command-center.html — SHA 4d9ff737,
@@ -43,13 +43,15 @@ A percentage that **falls** after a defect is found is correct and must be
 recorded as such.
 
 ```text
-IMPLEMENTATION COVERAGE: 85%   (30.5 / 36)
-OWNER ACCEPTANCE READINESS: 61%   (22.0 / 36)
+IMPLEMENTATION COVERAGE: 86%   (31.0 / 36)
+OWNER ACCEPTANCE READINESS: 64%   (23.0 / 36)
+
+P0 REMAINING: 0
 
 CHANGE SINCE PREVIOUS CHECKPOINT:
-Implementation: +0 pp  — no new capability; the P0 work fixed and proved existing ones
-Acceptance:     +5 pp  — Persona, SF Chat, Execution and Outcomes moved from
-                         automated-only to walked live on the acceptance build
+Implementation: +1 pp  — CI is configured and actually runs; no new capability
+Acceptance:     +8 pp  — Persona, SF Chat, Execution and Outcomes walked live on
+                         the acceptance build, and CI verifies the exact SHA
 ```
 
 > The independent audit of 2026-09-10 reported 84% / 54% on a 34-row basis.
@@ -103,7 +105,7 @@ Marks: `Y` yes · `P` partial · `N` no.
 | Security / tenant isolation | Y | Y | Y | Y | Y | DONE + VERIFIED | FORCE RLS; foreign workspace reads 0 and inserts fail `42501`; device and session re-checked per request; SSRF guard; no secret in Git | — |
 | Restart / idempotency | Y | Y | Y | Y | Y | DONE + VERIFIED | Stop/restart/re-read against PostgreSQL; duplicate dispatch and replay refused | — |
 | Documentation | Y | Y | Y | Y | Y | DONE + VERIFIED | Per-SHA receipts, file hashes, explicit withdrawn-claims section, skips never counted as passes | — |
-| Git / CI | Y | Y | Y | Y | Y | DONE + VERIFIED | Immutable per-SHA worktrees, preserved originals, no force pushes. CI now runs on this branch by `workflow_dispatch`: run 34516120281 at 437febf4 — static gates PASS, full suite on Linux **5466 passed / 0 failed / 116 skipped**. The Windows cap that cancelled the first attempt is fixed | PR base is still not `main`, so nothing triggers automatically — owner decision |
+| Git / CI | Y | Y | Y | Y | Y | DONE + VERIFIED | Run 34516120281 at 437febf4 **success on all three jobs**: static gates, Linux **5466/0/116**, Windows self-hosted **5463/0/119**. Immutable per-SHA worktrees, preserved originals, no force pushes | PR base is still not `main`, so nothing triggers automatically — owner decision |
 
 ## Active remainder
 
@@ -184,8 +186,7 @@ Evidence required: the run id and conclusion, recorded here — a local pytest i
 Owner action required: NO for workflow_dispatch. YES if the PR base is to be
                        changed to main.
 Assigned to: Claude
-Status: DONE for the finding and the fix; the Windows leg's conclusion is the
-        last thing outstanding.
+Status: DONE.
 
         Run 34510366536 on c3a79675 — static gates PASS (17 s),
         Tests (ubuntu-latest) PASS (16 m 59 s), Tests (windows-self-hosted)
@@ -198,10 +199,14 @@ Status: DONE for the finding and the fix; the Windows leg's conclusion is the
         last green run was 2026-09-04, before the suite grew. Both raised to 120
         in 437febf4, kept finite so a real hang still ends the job.
 
-        Run 34516120281 on 437febf4 (the final SHA) — static gates PASS,
-        Tests (ubuntu-latest) **5466 passed / 0 failed / 116 skipped** in
-        18 m 23 s, Windows leg running past the old cap, which is itself the
-        proof the fix works. Record its conclusion here when it lands.
+        Run 34516120281 on 437febf4 (the final SHA) — **conclusion: success**,
+        all three jobs green: static gates PASS (18 s),
+        Tests (ubuntu-latest) **5466 passed / 0 failed / 116 skipped** (18 m 23 s),
+        Tests (windows-self-hosted) **5463 passed / 0 failed / 119 skipped**
+        (1 h 49 m 12 s). The Windows leg needed 109 minutes, so the old 30-minute
+        cap was out by more than 3x and even 90 would not have been enough.
+        The platform skip difference (116 vs 119) is the three Windows-only
+        cases: two shell-syntax tests and one POSIX permission test.
         https://github.com/OMNOM-111/NT-Analyzer/actions/runs/34516120281
 ```
 
@@ -340,14 +345,15 @@ P3-3  Eight expected sections live behind three tabs as drawers — owner design
 | P0-2 · the page shows it | `2a2e402e` | refusal rendered through the shipped page code; asserts the queue label and decision wording are absent |
 | P0-3 · Persona → chat → result → decision | `4d9ff737` | completion case on the enabled V2 path, plus the live walk on :8806 ending «Проверка завершена» |
 | Master status introduced | `c3a79675` | this file |
+| P0-4 · CI runs, and can finish | `437febf4` | run 34516120281 green on all three jobs; the 30-minute Windows cap that cancelled run 34510366536 was raised to 120 in both workflows, `ci.yml` included, where it would have cancelled main PRs too |
+| P0-5 · owner acceptance build | `4d9ff737` | :8806 on an immutable SHA, disposable data, zero external calls, 10 screenshots, click-by-click route |
 
 ## NEXT AGENT START HERE
 
 ```text
-Last safe commit: 437febf4 — pushed. Local full regression green at c3a79675
-                  (5463 / 0 / 117); CI full suite green on Linux at 437febf4
-                  (5466 / 0 / 116). Commits between the two add tests and the CI
-                  timeout only — no runtime code.
+Last safe commit: 437febf4 — pushed, CI green on all three jobs. Later commits
+                  are documentation only. Local full regression was also green
+                  at c3a79675 (5463 / 0 / 117).
 
 Uncommitted files: none. Re-check `git status` before assuming that.
 
@@ -359,9 +365,7 @@ Active processes:
   :8806      — current acceptance build, SHA 4d9ff737, disposable data root.
 
 Tests currently running:
-  CI run 34516120281 on 437febf4. Static gates PASS, Linux full suite PASS
-  (5466/0/116). Windows self-hosted leg still running at the time of writing —
-  record its conclusion in P0-4 and in the Git/CI row.
+  None. CI run 34516120281 on 437febf4 finished green on all three jobs.
 
 Known failures: none at the current head.
 
@@ -372,12 +376,11 @@ Do not touch:
   - deploy/testing/acceptance.env or any generated DSN — never into Git
 
 Exact next action:
-  1. Record the conclusion of CI run 34510366536 above and in P0-4. If the
-     Windows leg timed out at 30 minutes, that is a CI budget finding: the same
-     suite takes 78 minutes locally. Raising the timeout is a workflow change
-     and belongs in its own commit.
-  2. Run a full regression at the final SHA once no further commits are planned,
-     so the green result and the tip are the same object.
-  3. Then P1-1: give the Coordinator a second operation class whose children
-     produce new analysis rather than another fact-transfer check.
+  P1-1 — give the Coordinator a second operation class whose children produce
+  new analysis rather than another fact-transfer check. `coordinator.commission`
+  currently hard-codes `prepare("json_arithmetic", ...)` as the root and
+  overwrites every node with `operation="verify_fact_transfer",
+  produces_new_analysis=False`. The graph machinery underneath already supports
+  more; the constraint is in that one function. Prove it the way the existing
+  lifecycle test does, in tests/test_agent_world_coordinator_integration.py.
 ```
