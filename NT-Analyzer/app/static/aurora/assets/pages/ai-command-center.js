@@ -564,6 +564,7 @@
     let detail = null, detailTab = 'summary', detailKind = '', profile = null, currentDrawer = null, returnFocus = null;
     let domainState = null, actionForm = null, mutationBusy = false;
     let generation = 0, overviewGeneration = 0, detailGeneration = 0, debounceTimer = null, disposed = false, demoBusy = false, demoKey = null;
+    let refreshing = false, quietDrawer = false, pendingListReads = 0;
     let personaFaceGeneration = 0;
     const signal = UI.signal();
     const personaAudio = root.PersonaAudio?.create({
@@ -715,21 +716,69 @@
       context.innerHTML = scope.synthetic || overview?.synthetic ? '<span class="aw-context-mark">SYNTHETIC</span><span><strong>Изолированная проверка владельца.</strong> Задачи действительно выполняются локальными детерминированными обработчиками. Исходные данные тестовые; платные модели и торговые действия не вызываются. Рейтинг — не оценка качества LLM.</span>' : '<span class="aw-context-mark">LOCAL</span><span><strong>Ваше рабочее пространство.</strong> AI Центр находится в разработке. Проверочные данные не заменяют owner-данные, а выключенные пути не изменяют текущие механизмы приложения.</span>';
       qs('#aw-updated').textContent = 'Обновлено ' + date(new Date().toISOString());
     }
-    function selectTab(next, updateLocation) {
-      stopPersonaAudio();
+    function selectTab(next, updateLocation, background = false) {
+      if (!background) stopPersonaAudio();
       if (!TABS.includes(next)) next = 'overview';
       tab = next;
       qsa('.aw-tabs [data-aw-tab]', shell).forEach(button => { const active = button.dataset.awTab === tab; button.setAttribute('aria-selected', String(active)); button.tabIndex = active ? 0 : -1; });
       content.setAttribute('aria-labelledby', 'aw-tab-' + tab);
       if (updateLocation) root.history.replaceState(null, '', '#tab=' + encodeURIComponent(tab));
-      return loadTab();
+      // Work used to read fresh tasks while its header/profile retained an old
+      // overview indefinitely. User navigation refreshes both projections.
+      return updateLocation ? refresh() : loadTab();
     }
     function readError(error) {
       if (error?.status === 403) return empty('Нет доступа к этому разделу', 'Сервер не разрешил чтение данных в текущем контексте. Обновите страницу после изменения доступа.');
       if (error?.status === 404) return empty('Раздел недоступен', 'Этот путь пока не включён в текущем локальном build.', '<button class="btn" data-aw-retry>Проверить снова</button>');
       return empty('Не удалось загрузить данные', 'Сохранённые записи не изменены. Повторите безопасное чтение.', '<button class="btn" data-aw-retry>Повторить</button>');
     }
-    async function loadTab(append) {
+    function backgroundReadBlocked() {
+      return disposed || document.hidden || mutationBusy || actionForm || demoBusy || pendingListReads > 0
+        || personaAudio?.activePersona() || root.getSelection?.()?.isCollapsed === false
+        || content.contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '');
+    }
+    function preserveView(container, render) {
+      if (!container) { render(); return; }
+      const active = document.activeElement, inside = container.contains(active);
+      const attributes = ['id', 'data-aw-detail-tab', 'data-aw-profile-tab', 'data-aw-task-action', 'data-aw-task', 'data-aw-agent', 'data-aw-filter', 'data-aw-domain', 'data-aw-entity', 'data-aw-task-chat', 'data-aw-router-task', 'data-aw-chart-chat', 'href'];
+      const identity = inside ? attributes.filter(key => active?.hasAttribute?.(key)).map(key => [key, active.getAttribute(key)]) : [];
+      const summaries = qsa('summary', container), summaryIndex = inside ? summaries.indexOf(active) : -1;
+      const expanded = qsa('details', container).map((node, index) => ({ index, open: node.open, label: qs('summary', node)?.textContent }));
+      const scrolling = [container, ...qsa('.aw-table-wrap, .aw-tabs, .aw-domain-nav', container)].map(node => [node.scrollTop, node.scrollLeft]);
+      const pageX = root.scrollX, pageY = root.scrollY;
+      render();
+      const details = qsa('details', container);
+      expanded.forEach(state => { const node = details[state.index]; if (node && qs('summary', node)?.textContent === state.label) node.open = state.open; });
+      [container, ...qsa('.aw-table-wrap, .aw-tabs, .aw-domain-nav', container)].forEach((node, index) => {
+        if (scrolling[index]) [node.scrollTop, node.scrollLeft] = scrolling[index];
+      });
+      if (inside && active?.isConnected === false) {
+        const replacement = identity.length ? qsa('button, a, [tabindex]', container).find(node => identity.every(([key, value]) => node.getAttribute(key) === value))
+          : summaryIndex >= 0 ? qsa('summary', container)[summaryIndex] : null;
+        (replacement || (container === content ? qs('[data-aw-tab][aria-selected="true"]', shell) : currentDrawer))?.focus({ preventScroll: true });
+      }
+      if (Number.isFinite(pageX) && Number.isFinite(pageY) && (root.scrollX !== pageX || root.scrollY !== pageY)) root.scrollTo?.(pageX, pageY);
+    }
+    async function readWorkPages(pageCount, isCurrent) {
+      const collected = [], visited = new Set();
+      let cursor = '';
+      ++pendingListReads;
+      try {
+        // Finite already-loaded page count plus a cursor cycle check. Every
+        // request retains the existing server-side 50-row limit and filters.
+        for (let page = 0; page < pageCount; ++page) {
+          const result = await API.aiControlCenterTasks({ limit: 50, status: filter === 'all' ? '' : filter, query, cursor }, { signal });
+          if (!isCurrent()) return null;
+          collected.push(...items(result));
+          cursor = result?.next_cursor || '';
+          if (!cursor) break;
+          if (visited.has(cursor)) throw new Error('task_cursor_cycle');
+          visited.add(cursor);
+        }
+        return { items: collected, next_cursor: cursor || null };
+      } finally { --pendingListReads; }
+    }
+    async function loadTab(append, options = {}) {
       const request = ++generation;
       if (!overview?.enabled) {
         content.innerHTML = empty('AI Центр пока выключен', 'Новый интерфейс включается сервером для конкретного окружения и рабочего пространства. Текущие AI Lab и подключения остаются доступны.', '<a class="btn" href="ai-lab.html">Исследования</a><a class="btn" href="ai-agents.html">Подключения и модели</a>');
@@ -737,42 +786,92 @@
       }
       content.setAttribute('aria-busy', 'true');
       try {
-        if (tab === 'overview') renderOverview();
-        else if (tab === 'agents') renderAgents();
+        if (tab === 'overview') preserveView(content, renderOverview);
+        else if (tab === 'agents') preserveView(content, renderAgents);
         else if (tab === 'work') {
-          const result = await API.aiControlCenterTasks({ limit: 50, status: filter === 'all' ? '' : filter, query, cursor: append ? nextCursor : '' }, { signal });
+          let result = options.workResult;
+          if (!result) {
+            ++pendingListReads;
+            try { result = await API.aiControlCenterTasks({ limit: 50, status: filter === 'all' ? '' : filter, query, cursor: append ? nextCursor : '' }, { signal }); }
+            finally { --pendingListReads; }
+          }
           if (request !== generation || disposed) return;
+          if (options.background && backgroundReadBlocked()) return;
           workRows = append ? workRows.concat(items(result)) : items(result);
           nextCursor = result?.next_cursor || null;
-          renderWork();
+          preserveView(content, renderWork);
         }
         refreshFaces();
       } catch (error) {
         if (error?.name !== 'AbortError' && request === generation && !disposed) content.innerHTML = readError(error);
       } finally { if (request === generation && !disposed) content.setAttribute('aria-busy', 'false'); }
     }
-    async function refresh() {
-      stopPersonaAudio();
+    async function refresh({ background = false } = {}) {
+      if (disposed || background && (refreshing || backgroundReadBlocked())) return;
+      if (!background) stopPersonaAudio();
+      refreshing = true;
       const request = ++overviewGeneration;
+      const listRequest = generation;
+      const inspectorRequest = detailGeneration;
+      const shownTask = detailKind === 'task' && currentDrawer?.classList.contains('open') && !actionForm
+        ? taskId(detail?.task || detail) : '';
+      const shownAgent = detailKind === 'agent' && currentDrawer?.classList.contains('open') && !actionForm
+        ? agentId(profile) : '';
       qs('#aw-refresh').disabled = true;
       try {
         const result = await API.aiControlCenterOverview({ signal });
         if (disposed || request !== overviewGeneration) return;
         const identity = value => JSON.stringify([value?.scope?.environment, value?.scope?.workspace_id, value?.scope?.user_uuid, value?.scope?.synthetic]);
-        if (overview && identity(result) !== identity(overview)) {
+        const scopeChanged = overview && identity(result) !== identity(overview);
+        if (scopeChanged) {
           ++detailGeneration; detail = null; profile = null; domainState = null; actionForm = null; workRows = []; nextCursor = null; demoKey = null;
           if (currentDrawer?.querySelector('.aw-inspector')) UI.closeDrawer();
+          // Never retain a previous principal's visible data while the next
+          // workspace is loading, even if an interaction began mid-request.
+          overview = null; renderHeader(); content.innerHTML = '';
         }
+        if (background && backgroundReadBlocked()) return;
+        if (listRequest !== generation) return;
+        const isCurrent = () => !disposed && request === overviewGeneration && listRequest === generation
+          // readWorkPages owns pendingListReads; it must not block itself.
+          && (!background || !document.hidden && !mutationBusy && !actionForm && !demoBusy
+            && !personaAudio?.activePersona() && root.getSelection?.()?.isCollapsed !== false
+            && !(content.contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')));
+        const workResult = tab === 'work' && result?.enabled
+          ? await readWorkPages(Math.max(1, Math.ceil(workRows.length / 50)), isCurrent) : null;
+        if (!isCurrent() || tab === 'work' && result?.enabled && !workResult) return;
         overview = result;
         renderHeader();
-        await selectTab(tab, false);
+        if (workResult) await loadTab(false, { workResult, background });
+        else await selectTab(tab, false, background);
+        if (shownTask && inspectorRequest === detailGeneration && !actionForm && currentDrawer?.classList.contains('open')) {
+          const latest = await API.aiControlCenterTask(shownTask, { signal });
+          if (!disposed && request === overviewGeneration && inspectorRequest === detailGeneration && !actionForm
+              && (!background || !backgroundReadBlocked())
+              && currentDrawer?.classList.contains('open') && JSON.stringify(latest) !== JSON.stringify(detail)) {
+            detail = latest;
+            quietDrawer = true;
+            try { drawTask(); } finally { quietDrawer = false; }
+          }
+        } else if (shownAgent && inspectorRequest === detailGeneration && !actionForm && currentDrawer?.classList.contains('open')) {
+          if (!rows(overview.agents).some(value => agentId(value) === shownAgent)) {
+            ++detailGeneration; profile = null; detailKind = ''; UI.closeDrawer();
+          } else {
+            quietDrawer = true;
+            try { openProfile(shownAgent, detailTab); } finally { quietDrawer = false; }
+          }
+        }
       } catch (error) {
         if (error?.name !== 'AbortError' && !disposed && request === overviewGeneration) {
+          if (background && ![401, 403].includes(error?.status)) {
+            qs('#aw-updated').textContent = 'Обновление не завершено · показаны ранее загруженные данные';
+            return; // Do not discard a form opened after the background GET.
+          }
           ++detailGeneration; overview = null; detail = null; profile = null; domainState = null; actionForm = null; workRows = [];
           if (currentDrawer?.querySelector('.aw-inspector')) UI.closeDrawer();
           renderHeader(); content.innerHTML = readError(error); content.setAttribute('aria-busy', 'false');
         }
-      } finally { if (!disposed && request === overviewGeneration) qs('#aw-refresh').disabled = false; }
+      } finally { if (request === overviewGeneration) { refreshing = false; if (!disposed) qs('#aw-refresh').disabled = false; } }
     }
     function detailRows(values, fallback) {
       if (!values.length) return smallEmpty(fallback);
@@ -791,6 +890,17 @@
       return values.map(value => `<section class="aw-panel"><div class="aw-panel-body"><div class="aw-inline"><strong>${transportResponseOnly(value) ? 'Без оценки содержания' : esc(pct(value.score_pct ?? value.observed_score_pct))}</strong><span class="aw-muted">${transportResponseOnly(value) ? 'только техническая проверка' : 'проверенных критериев этого ответа'}</span></div>${transportVerificationNote(value)}<p class="aw-note">${esc(value.scope || value.rubric_key || 'Класс конкретной задачи')} · ${esc(value.verifier || value.evaluator || 'Источник проверки не указан')}</p><div class="aw-stack">${rows(value.rubric || value.checks).map(check => `<div class="aw-inline">${badge(check.passed === true ? 'passed' : check.passed === false ? 'failed' : 'pending')}<span class="aw-text">${esc(check.label || check.key || check.summary)}</span></div>`).join('')}</div>${value.summary ? `<p class="aw-text">${esc(value.summary)}</p>` : ''}${value.response_sha256 ? `<div class="aw-hash">RESPONSE SHA256 ${esc(value.response_sha256)}</div>` : ''}${value.input_sha256 ? `<div class="aw-hash">INPUT SHA256 ${esc(value.input_sha256)}</div>` : ''}<p class="aw-field-hint">Проверка одного ответа не является общей оценкой качества модели или торговой стратегии.</p></div></section>`).join('');
     }
     function openDrawer(title, html) {
+      if (quietDrawer && currentDrawer?.classList.contains('open') && currentDrawer.querySelector('.aw-inspector')) {
+        // Refresh only the read-only inspector content: keep its width, scroll
+        // and keyboard focus, and never interrupt SF Chat or a consent form.
+        const body = qs('.drawer-b', currentDrawer);
+        if (body) preserveView(body, () => { body.innerHTML = `<div class="aw-inspector">${html}</div>`; });
+        const heading = qs('.drawer-title h3', currentDrawer);
+        if (heading) heading.textContent = title;
+        currentDrawer.setAttribute('aria-label', title);
+        refreshFaces(currentDrawer);
+        return currentDrawer;
+      }
       stopPersonaAudio();
       // The inspector re-renders on every tab switch and refresh. By then the
       // active element is the drawer, so re-capturing here would make Escape
@@ -1337,5 +1447,8 @@
       const entity = locationParams.get('entity');
       if (/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(entity || '')) await openDomainItem(entity);
     }
+    // Reuse Aurora's existing single-flight, onLeave-cleaned polling lifecycle.
+    // Reading never enqueues, accepts, retries or changes a permission/flag.
+    UI.poll?.(() => refresh({ background: true }), 5000);
   });
 })(typeof window !== 'undefined' ? window : globalThis);

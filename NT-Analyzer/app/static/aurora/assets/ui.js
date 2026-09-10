@@ -8849,8 +8849,12 @@
     // follows the current visible heading, never a previous caller's label.
     d.removeAttribute('aria-label');
     d.setAttribute('aria-labelledby', 'app-drawer-title');
+    d.inert = false;
+    d.removeAttribute('aria-hidden');
     qs('.drawer-b', d).innerHTML = bodyHtml;
+    const opening = d._openGeneration = (d._openGeneration || 0) + 1;
     requestAnimationFrame(() => {
+      if (opening !== d._openGeneration) return;
       back.classList.add('open');
       d.classList.add('open');
       // After the class lands, so the measurement sees the real width.
@@ -8907,7 +8911,14 @@
   }
   function closeDrawer() {
     const back = qs('.drawer-back');
-    if (back) { back.classList.remove('open'); back._d.classList.remove('open'); }
+    if (back) {
+      back.classList.remove('open'); back._d.classList.remove('open');
+      back._d._openGeneration = (back._d._openGeneration || 0) + 1;
+      // Translated off screen is still reachable by Tab and screen readers.
+      // Keep the content/history, but make a closed drawer non-interactive.
+      back._d.inert = true;
+      back._d.setAttribute('aria-hidden', 'true');
+    }
     syncNoticeOffset();
   }
 
@@ -10591,6 +10602,30 @@
       ORCH.loadingOlder = false;
     }
   }
+  function orchFailure(error, uncertain) {
+    // Provider payloads can contain private data. Only known machine codes go
+    // into expandable details; never place arbitrary error text in the chat.
+    const known = {
+      execution_v2_approved_scope_changed: 'Параметры поручения не совпали с подтверждёнными. Выполнение остановлено защитой; откройте задачу и проверьте выбранную персону и подключение.',
+      persona_model_required: 'Для этой персоны нужно выбрать доступное подключение в AI Центре.',
+      persona_model_ambiguous: 'У персоны несколько подключений. Уточните выбор подключения в AI Центре.',
+      persona_selection_inactive: 'Выбранная персона не активна. Проверьте её состояние в AI Центре.',
+      persona_selection_unavailable: 'Выбранная персона недоступна в текущем рабочем пространстве.',
+    };
+    const code = typeof error === 'string' ? error : String(error?.code || error?.message || '');
+    const status = Number(error?.status);
+    return {
+      text: uncertain ? 'Не удалось подтвердить получение ответа. Обновите историю перед повторной отправкой: сервер мог уже сохранить результат.'
+        : Object.prototype.hasOwnProperty.call(known, code) ? known[code]
+        : status === 401 || status === 403 ? 'Доступ к ответу не подтверждён. Проверьте вход и доступ к рабочему пространству.'
+        : 'Ответ не получен. Обновите историю и проверьте состояние задачи перед новой попыткой.',
+      code: Object.prototype.hasOwnProperty.call(known, code) ? code : uncertain ? 'delivery_unconfirmed' : 'response_not_received',
+      status: Number.isInteger(status) && status >= 400 && status <= 599 ? status : null,
+    };
+  }
+  function orchErrorHtml(failure) {
+    return `<span class="orch-err" role="status">${esc(failure.text)}</span><details class="orch-error-details"><summary>Технические подробности</summary><p><code>${esc(failure.code)}</code>${failure.status ? ` · HTTP ${esc(failure.status)}` : ''}</p><p>Повторная отправка автоматически не выполнялась. История задач и ошибок сохраняется.</p></details>`;
+  }
   async function orchLoadMessages(cid, silent) {
     const box = qs('#orch-msgs'); if (!box) return;
     if (!cid) return false;
@@ -10653,7 +10688,7 @@
       ? '<div class="empty-state">Личная переписка начнётся с первого сообщения.</div>'
       : '<div class="empty-state">Начните диалог: например «Разработай простую стратегию максимально быстро».</div>');
     if (ORCH.transientError && ORCH.transientError.cid === cid) {
-      box.insertAdjacentHTML('beforeend', `<div class="orch-msg assistant"><span class="orch-err">${esc(ORCH.transientError.text)}</span></div>`);
+      box.insertAdjacentHTML('beforeend', `<div class="orch-msg assistant">${orchErrorHtml(ORCH.transientError)}</div>`);
     }
     ORCH.messagesSignature = signature;
     if (!human) {
@@ -10776,23 +10811,21 @@
         },
         onError: (err) => {
           removeThink();
-          setLiveBody(`<span class="orch-err">Не удалось получить ответ: ${esc(err)}</span>`);
+          setLiveBody(orchErrorHtml(orchFailure(err, false)));
           keepBottom();
         },
       }, personaOptions);
       if (!streamResult || streamResult.ok !== true) {
-        const message = String((streamResult && streamResult.error) || 'Не удалось получить ответ.');
-        ORCH.transientError = { cid, text: `Не удалось получить ответ: ${message}` };
+        ORCH.transientError = { cid, ...orchFailure(streamResult?.error, false) };
         removeThink();
-        setLiveBody(`<span class="orch-err">${esc(ORCH.transientError.text)}</span>`);
+        setLiveBody(orchErrorHtml(ORCH.transientError));
       }
     } catch (e) {
       // A failed streaming POST may already have been committed by the server.
       // Never repeat the same mutating message through a second transport.
-      const message = String((e && e.message) || e || 'Соединение прервалось');
-      ORCH.transientError = { cid, text: `Не удалось подтвердить получение ответа: ${message}. Обновите историю перед повторной отправкой.` };
+      ORCH.transientError = { cid, ...orchFailure(e, true) };
       removeThink();
-      setLiveBody(`<span class="orch-err">${esc(ORCH.transientError.text)}</span>`);
+      setLiveBody(orchErrorHtml(ORCH.transientError));
     } finally {
       ORCH.sending = false;
       orchRenderPersonaPicker();

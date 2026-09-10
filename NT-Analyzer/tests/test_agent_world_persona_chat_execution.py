@@ -148,6 +148,58 @@ def test_selected_persona_uses_saved_user_message_and_normal_worker_then_awaits_
     assert observations["score_pct"] is None and observations["sample_size"] == 0
 
 
+def _enable_persona_v2(persona_chat, monkeypatch):
+    from app.ai_control_center.flags import Flag, FlagRule
+
+    original_flags = gateway.live_gateway.flag_snapshot
+
+    def flags(context):
+        snapshot = original_flags(context)
+        rules = tuple(rule for rule in snapshot.rules if rule.flag != Flag.AI_EXECUTION_V2)
+        rules += tuple(FlagRule(environment=context.scope.environment, workspace_id=workspace,
+            flag=Flag.AI_EXECUTION_V2, enabled=True) for workspace in (None, context.scope.workspace_id))
+        return replace(snapshot, rules=rules)
+
+    monkeypatch.setattr(gateway.live_gateway, "flag_snapshot", flags)
+    persona_chat.authorized["snapshot"] = flags(persona_chat.context)
+
+
+def test_selected_persona_with_execution_v2_uses_same_approved_identity(persona_chat, monkeypatch):
+    """Browser regression: valid selection traverses the actual enabled V2.
+
+    This is the normal Chat/queue/worker path with the existing V2 gate enabled
+    for this disposable scope. No scope verifier or transport is bypassed.
+    """
+    _enable_persona_v2(persona_chat, monkeypatch)
+    test_selected_persona_uses_saved_user_message_and_normal_worker_then_awaits_review(persona_chat)
+    from app.ai_control_center import execution_v2
+    task_id = _jobs(persona_chat)[0]["payload"]["task_id"]
+    controller = execution_v2.projection(persona_chat.service, persona_chat.context, task_id)
+    assert controller["status"] == "succeeded" and controller["human_accepted"] is False
+
+
+@pytest.mark.parametrize("change", ["revision", "entity_id", "remove"])
+def test_execution_v2_still_refuses_changed_selected_persona_checkpoint(persona_chat, monkeypatch, change):
+    from app.ai_control_center import execution_v2
+
+    fixture = persona_chat
+    _enable_persona_v2(fixture, monkeypatch)
+    accepted = _start(fixture)
+    task_id = accepted["task_id"]
+    _, approved, _ = execution_v2._load(fixture.service, fixture.context, task_id)
+    task = fixture.service._get(fixture.context, EntityKind.TASK, task_id)
+    checkpoint = fixture.service._json(fixture.context, task.checkpoint)
+    if change == "remove":
+        checkpoint.pop("persona_selection")
+    else:
+        checkpoint["persona_selection"][change] = 999 if change == "revision" else str(uuid4())
+    fixture.service._change(fixture.context, task, checkpoint=fixture.service._put(fixture.context, checkpoint))
+    with pytest.raises(ContractError, match="execution_v2_approved_scope_changed"):
+        execution_v2._scope(fixture.service, fixture.context, task_id, approved)
+    assert fixture.calls == []
+    assert len(_jobs(fixture)) == 1  # History/queue is not erased to hide the refusal.
+
+
 def test_selection_revision_changed_before_ingress_denies_without_enqueue(persona_chat):
     fixture = persona_chat
     fixture.service._change(fixture.context, fixture.persona, display_name="Changed after selection")

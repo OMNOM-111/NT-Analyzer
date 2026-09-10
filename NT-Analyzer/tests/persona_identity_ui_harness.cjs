@@ -48,6 +48,7 @@ const env = {ORCH: state, esc, qs: selector => elements.get(selector) || null, i
     aiOrchestratorMessageStream: async (...args) => {
       calls.push(['stream', args.slice(0, 3), args[4]]);
       if (apiFailure) throw Error('transport interrupted');
+      if(input.mode==='rejected'){const error='execution_v2_approved_scope_changed';args[3].onError(error);return {ok:false,error};}
       args[3].onFinal({ok: true, conversation_id: 'chat-one', agent_id: ID, agent_name: 'Марина', reply: 'Сохранённый ответ'});
       return {ok: true};
     },
@@ -57,7 +58,7 @@ const env = {ORCH: state, esc, qs: selector => elements.get(selector) || null, i
 };
 env.window = {API: env.API};
 vm.createContext(env);
-const names = ['orchPersonaOptions', 'orchRenderPersonaPicker', 'orchLoadPersonas', 'orchPersonaTransport', 'orchPendingPersonaFace', 'orchSend', 'orchRenderAuthRequired'];
+const names = ['orchPersonaOptions', 'orchRenderPersonaPicker', 'orchLoadPersonas', 'orchPersonaTransport', 'orchPendingPersonaFace', 'orchFailure', 'orchErrorHtml', 'orchSend', 'orchRenderAuthRequired'];
 names.forEach(name => vm.runInContext(extract(name), env));
 const plain = value => JSON.parse(JSON.stringify(value));
 (async () => {
@@ -81,6 +82,7 @@ const plain = value => JSON.parse(JSON.stringify(value));
       assert.equal(state.sending, false);
       assert.ok(calls.some(call => call[0] === 'conversations'));
       if (input.mode === 'failure') assert.match(state.transientError.text, /Обновите историю/);
+      else if(input.mode==='rejected'){assert.match(state.transientError.text,/остановлено защитой/);assert.ok(!calls.some(call=>call[0]==='history'));assert.match(elements.get('.orch-msg-stack').innerHTML,/<details/);}
       else { assert.match(elements.get('.orch-msg-face').outerHTML, /data-face="marina"/); assert.doesNotMatch(elements.get('.orch-msg-face').outerHTML, /vitek/); }
     }
   } else if (input.kind === 'picker') {
@@ -126,11 +128,22 @@ const plain = value => JSON.parse(JSON.stringify(value));
       assert.equal(requests.length, 1); assert.equal(events.length, 1);
       assert.deepEqual(plain(requests[0][1]), {message: 'original', conversation_id: 'chat', agent: '', request_id: 'request-one', ...(options ? {persona_id: ID} : {})});
     }
+  } else if (input.kind === 'error') {
+    const raw = input.mode === 'known' ? 'execution_v2_approved_scope_changed' : '<img src=x onerror=bad> api_key=private-value ' + 'payload'.repeat(1000);
+    const error = env.orchFailure(raw,input.mode==='uncertain');
+    const html = env.orchErrorHtml(error);
+    assert.ok(html.includes('<details') && html.includes('Технические подробности'));
+    assert.doesNotMatch(html,/<img|private-value|payload/);
+    assert.doesNotMatch(error.text,/execution_v2_|delivery_unconfirmed|response_not_received/);
+    if(input.mode==='known') {assert.match(error.text,/остановлено защитой/);assert.ok(html.includes('<code>'+raw+'</code>'));}
+    if(input.mode==='uncertain') assert.match(error.text,/Обновите историю/);
+    assert.equal(calls.length,0);
   } else if (input.kind === 'drawer') {
     const back = add('.drawer-back'), panel = new Element(), heading = add('.drawer-h'); add('.drawer-b');
     back._d = panel; panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-label', 'Модели и подключения · Подключить');
-    env.requestAnimationFrame = action => action(); env.syncNoticeOffset = () => {};
-    vm.runInContext(extract('drawer'), env);
+    const frames=[];env.requestAnimationFrame = action => input.mode==='close-before-frame'?frames.push(action):action(); env.syncNoticeOffset = () => {};
+    let opens=0;panel.classList.add=()=>opens++;
+    vm.runInContext(extract('drawer')+'\n'+extract('closeDrawer'), env);
     assert.equal(env.drawer('<h3>Developer Preview</h3>', '<p>Sandbox</p>'), panel);
     assert.equal(panel.attributes['aria-label'], undefined);
     assert.equal(panel.attributes['aria-labelledby'], 'app-drawer-title');
@@ -141,6 +154,10 @@ const plain = value => JSON.parse(JSON.stringify(value));
     assert.equal(panel.attributes['aria-label'], undefined);
     assert.match(heading.innerHTML, /id="app-drawer-title"><h3>Безопасность<\/h3>/);
     assert.doesNotMatch(heading.innerHTML, /Developer Preview/);
+    assert.equal(panel.inert,false);assert.equal(panel.attributes['aria-hidden'],undefined);
+    env.closeDrawer();assert.equal(panel.inert,true);assert.equal(panel.attributes['aria-hidden'],'true');
+    if(input.mode==='close-before-frame'){frames.forEach(fn=>fn());assert.equal(opens,0);}
+    else {env.drawer('<h3>Reopened</h3>','body');assert.equal(panel.inert,false);assert.equal(panel.attributes['aria-hidden'],undefined);}
   } else if (input.kind === 'face') {
     assert.match(env.orchPendingPersonaFace(person), /data-face="marina"/);
     assert.doesNotMatch(env.orchPendingPersonaFace({...person, avatar_key: ''}), /vitek|<video/);

@@ -16,7 +16,7 @@ def run(kind, mode=""):
     assert result.stdout == "PASS"
 
 
-@pytest.mark.parametrize("mode", ["selected", "main", "missing", "suspended", "invalid", "human", "failure"])
+@pytest.mark.parametrize("mode", ["selected", "main", "missing", "suspended", "invalid", "human", "failure", "rejected"])
 def test_actual_send_uses_uuid_metadata_preserves_text_and_never_falls_back(mode):
     run("send", mode)
 
@@ -42,6 +42,15 @@ def test_pending_uuid_avatar_never_falls_back_to_a_different_named_agent():
 
 def test_reused_drawer_accessible_name_tracks_current_visible_heading():
     run("drawer")
+
+
+def test_closed_drawer_is_inert_and_pending_frame_cannot_reopen_it():
+    run("drawer", "close-before-frame")
+
+
+@pytest.mark.parametrize("mode", ["known", "private", "uncertain"])
+def test_chat_error_is_readable_bounded_and_never_resends_or_exposes_payload(mode):
+    run("error", mode)
 
 
 def test_persona_form_round_trips_aliases_main_and_preserves_old_client_payloads():

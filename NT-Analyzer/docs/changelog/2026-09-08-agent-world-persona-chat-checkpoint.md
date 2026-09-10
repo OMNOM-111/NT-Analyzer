@@ -3,8 +3,10 @@
 Status: **IN DEVELOPMENT**. Branch `codex/agent-world-unified-acceptance`,
 draft [PR #285](https://github.com/OMNOM-111/NT-Analyzer/pull/285).
 Source baseline: `376b400dc3c8ab3a008f1e45800d401dd02c4b6f`.
-This record belongs to the following code checkpoint; its exact SHA is recorded
-at preservation in the handoff. It is not a release or owner acceptance.
+Preserved/pushed source: **`e45b64b0121014c5d796553ae8b512d98a5782ae`**,
+52 files. This is not a release or owner acceptance. The later Persona/V2
+scope-reconstruction and live-refresh delta is separate work and does not
+inherit this checkpoint's full/PG results.
 
 ## Change summary
 
@@ -54,11 +56,12 @@ Shared API/UI script query versions are refreshed mechanically across the same
   28.64 s. Combined model/identity/worker checks: **200 PASS**, 62.65 s.
 - Corrected cancel observability, trusted Connector HTTP and Persona execution:
   **67 PASS**, 17.78 s. These focused suites overlap; they are not a full total.
-- New seven Persona PostgreSQL cases were skipped without explicit disposable
-  opt-in. They require a new real run, separate from previous PG PASS receipts.
-- Full immutable regression, fresh PostgreSQL and browser on this new checkpoint
-  are pending. Local Python compilation and whitespace checks passed before
-  preservation; final artifact/static/context results are recorded at closeout.
+- At the short pre-checkpoint run, seven new Persona PostgreSQL cases were
+  skipped without disposable opt-in. They have since passed in a separate real
+  PG run for exact e45; the original skip report is not relabelled.
+- Before preservation, full immutable regression, fresh PostgreSQL and browser
+  were pending. The completed e45 results are below. Local Python compilation
+  and whitespace checks passed before preservation.
 - Final bounded combined rerun: **329 PASS**, 46.11 s, including Aurora/cache,
   Persona, actual handler, Chat/worker, response-only and cancel-observability
   contracts. The first rerun exposed an old pinned cache-query expectation;
@@ -68,16 +71,42 @@ Shared API/UI script query versions are refreshed mechanically across the same
   warning, staged diff-check PASS, **593-file pre-release bundle PASS**
   (static scan, runtime reads, Python and shipped JavaScript).
 
+## Exact e45 verification completed on 2026-09-09
+
+- Clean immutable full: **5416 PASS / 119 SKIP / 0 FAIL / 0 ERROR**,
+  5834.82 s. Separate legacy runner **13/13 PASS**, 183.0977726 s.
+- Generic skips: 68 Agent World PG, 7 Persona PG, 41 legacy PG, 3 platform
+  cases. No skip becomes PASS by omission.
+- Fresh disposable PostgreSQL 16.4/TLS/NOBYPASSRLS: **69 Agent World PASS**,
+  **41 legacy PG PASS**, and separately **7 Persona identity PASS**, all with
+  zero skips. Actual API/worker/SQL/replay/restart/RLS **PASS** on isolated
+  8805; result remains pending human review. Test executor is synthetic,
+  zero external calls, not a model-quality or BYOK acceptance.
+- Exact raw evidence paths/hashes, timing and cluster identity are in the
+  [e45 verification receipt](2026-09-09-agent-world-e45-verification.md).
+  PR #285 is pushed at e45; its inspected check rollup was empty, not CI PASS.
+- Browser on e45 retained Ариадна QA's name/aliases/main/style/Марина face
+  after restart and explicitly activated revision 2. A separate synthetic
+  wizard connection completed its diagnostic without a real key or provider call.
+- The selected-Persona Chat route exposed
+  `execution_v2_approved_scope_changed`, while header/Work refresh and narrow
+  stage-cell wrapping also disagreed. Error history remains intact. Subsequent
+  corrections and their positive browser repeat are **IN DEVELOPMENT**; the
+  successful full/PG run does not certify those changes or the complete UI route.
+
 ## Isolation and rollback
 
 Protected Local 8765 remains `2b6d0112bef88c5bfb73970de64ec5518443e56b`.
-Only isolated 8804 was moved to immutable `376b400d`, with a cold backup of its
-41 synthetic data files and matching SHA256 checks. This is not an owner Local
+Isolated 8804 first used immutable `376b400d`, then immutable e45, with a cold
+backup of its 41 synthetic data files and matching SHA256 checks before the e45
+switch. This is not an owner Local
 backup or authorization to activate this code. No source/DB migration is needed
 to return isolated QA to the previous checkpoint; never delete new data/history.
 
 No paid/model/TTS calls, real registration consent, owner-key copying, permanent
 real Social publication, protected flag change, merge, release or deploy.
 Actual provider quality, real data results and owner design acceptance remain
-separate. Next: preserve exact source, run immutable regression + fresh PG,
-then finish the full-Aurora browser route and update the canonical program matrix.
+separate. Next: preserve the separate Persona/V2 and refresh correction after
+its own checks, back up retained synthetic data, repeat the full-Aurora route
+on exact new code and update the canonical program matrix. No repeat of the
+completed e45 full/PG run is required merely to resume development.

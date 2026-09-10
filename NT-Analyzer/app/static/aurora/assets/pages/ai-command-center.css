@@ -270,5 +270,10 @@
 .aw-rating-mini strong { font-size: 12px; }
 .aw-agent-score > strong { font-size: 19px; overflow-wrap: anywhere; }
 .aw-inspector .aw-tabs { overflow-x: auto; flex-wrap: wrap; }
-.aw-table td { overflow-wrap: anywhere; }
+.aw-table td { overflow-wrap: break-word; }
+/* Keep readable words in the existing horizontally scrollable table. Do not
+   squeeze stage/status cells into one-character columns at owner window size. */
+.aw-table td:nth-child(4) { min-width: 125px; }
+.aw-table td:nth-child(6) { min-width: 150px; }
+.aw-table td:nth-child(7) { min-width: 115px; }
 @media (max-width: 720px) { .aw-rollup { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

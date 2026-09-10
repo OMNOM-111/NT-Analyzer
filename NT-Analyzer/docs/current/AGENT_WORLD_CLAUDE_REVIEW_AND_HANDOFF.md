@@ -1,11 +1,14 @@
 # Agent World — independent review, fixes and handoff to GPT/Codex
 
-## Unified continuation — 2026-09-08
+## Unified continuation — 2026-09-09
 
 The original review and all late Parts C/D/E below are preserved. Current
-implementation is now the unified task branch, after core checkpoint
-`13573bf76bae2dbad4f9efc4f6893d0bcb4d5406`; do not resume from the older review
-or mechanisms branches. Shared API/worker/Chat/UI integration, synthetic origin,
+implementation is the unified task branch, latest saved/pushed executable
+checkpoint `e45b64b0121014c5d796553ae8b512d98a5782ae`, followed by a separate
+Persona/Execution V2 and live-refresh WIP delta. Do not resume from the older
+review or mechanisms branches. e45 full/PG receipts and the observed browser
+failure are summarized in Part G below; they do not certify the later WIP.
+Shared API/worker/Chat/UI integration, synthetic origin,
 ordinary SERVICE history and source-pinned Router work are recorded in the
 [shared checkpoint](../changelog/2026-09-08-agent-world-shared-integration-checkpoint.md).
 The [program matrix](AGENT_WORLD_IMPLEMENTATION_STATUS.md) is the only current
@@ -1807,3 +1810,66 @@ Task. Scoped changelogs and the current matrix retain all remaining gates.
 Protected Local 8765 remains `2b6d0112`, untouched. Final isolated Aurora and
 fresh disposable PostgreSQL acceptance still require the exact final saved
 source. No merge, release or deployment has occurred; design is not accepted.
+
+## Part G — e45 verification and new browser correction, 2026-09-09
+
+This is a continuation receipt, not a second implementation status. Keep Parts
+C/D/E/F, their errors and their exact-source results as historical evidence.
+Resume only in `agent-world-unified-acceptance` on
+`codex/agent-world-unified-acceptance`; no original review/mechanisms worktree,
+other PR base, owner credential or protected runtime is part of this delta.
+
+- Saved/pushed checkpoint **e45b64b0121014c5d796553ae8b512d98a5782ae**:
+  clean immutable full **5416 PASS / 119 SKIP / 0 FAIL / 0 ERROR**,
+  5834.82 s; legacy **13/13 PASS**. Short gates at preservation: 329 focused,
+  root static/context and 593-file pre-release bundle PASS. PR #285's inspected
+  rollup was empty, **not CI PASS**.
+- Fresh PostgreSQL 16.4 on disposable port 56632, migrations 1–23, TLS,
+  application role without SUPERUSER/BYPASSRLS: **69 Agent World PASS**,
+  **41 legacy PG PASS**, **7 Persona identity PASS**, all with zero skips.
+  Actual authenticated API → existing queue/worker → SQL → replay → restart
+  and RLS refusals separately **PASS** on isolated 8805. Pending-review Task
+  `23086a0c-f893-5826-94d6-3cb3fedf5682` survived restart without human acceptance.
+  The named synthetic executor made zero external calls. Owned 8805 processes
+  were stopped; its data and receipts remain outside Git.
+- The generic full run's 119 skips remain 68 AW PG, 7 Persona PG, 41 legacy PG
+  and 3 platform cases. The new PG runs supplement these skips; the previous
+  376 receipts do not become e45 evidence. Exact timing, cluster, source and
+  SHA256 references: [e45 verification](../changelog/2026-09-09-agent-world-e45-verification.md).
+- Isolated Aurora **http://localhost:8804/ui/ai-command-center.html** runs an
+  immutable e45 copy with preserved synthetic data and a checked 41-file cold
+  backup. Browser reopened **Ариадна QA** (`b7f4bfff-50f9-55d5-85d7-d42b117d0aff`),
+  retained aliases/main/style/Марина face, and explicitly activated revision 2.
+  Its separate wizard connection `1d5d08a3-0834-5dc9-b82e-d7ce680b9a58` completed
+  a named-executor diagnostic using an obvious non-secret placeholder. No real
+  DeepSeek connection, ordinary-user key or semantic model-quality claim follows.
+- Browser then found a real failure: explicit selected-Persona SF Chat request
+  returned `execution_v2_approved_scope_changed` before enqueue. The approved
+  reconstruction omitted `persona_selection`; the new delta retains that
+  identity and must continue rejecting altered identities. The original message
+  and error are preserved. Positive exact-code browser repeat is still pending.
+- A separate presentation discrepancy showed a completed diagnostic in Work
+  while the header retained “1 в работе”; at 1136×904 the stage cell wrapped
+  almost character-by-character. Read-only refresh and narrow cell wrapping are
+  being corrected without a new permissions/jobs system or broad relayout.
+
+The subsequent delta is **IN DEVELOPMENT**, not covered by the immutable e45
+full/PG PASS. Root owns the integration/code/tests, new checkpoint record and
+Git; this bounded documentation update only synchronizes the current matrix,
+owner route and Context Pack. No runtime data, credentials or test receipts are
+to be staged with source.
+
+Next: finish focused V2 identity/tamper and refresh tests, preserve the new
+checkpoint after mandatory short gates, cold-back up current synthetic data,
+and restart only owned 8804 on that immutable source. Complete the same request
+through result → pending review → explicit decision, plus error/safe repeat,
+checking header, Work, profile and SF Chat at every step. Then continue remaining
+Preview/Memory/Coordinator/Router/Court/projects/scheduler/Social-prepare routes
+with new-code regression. Do not restart e45's already completed long run or
+reimplement its mechanisms; later executable changes get separate evidence.
+
+Protected Local **8765 remains unchanged**. Registration consent, separate
+ordinary-user key, one specific permanent real Social publication and visual
+design acceptance remain owner actions, not blockers for other development.
+`OWNER ACCEPTANCE READY: NO`; `VISUAL DESIGN ACCEPTED: NO`;
+`LOCAL 8765 UPDATED: NO`; `MERGE / DEPLOY: NOT PERFORMED`.

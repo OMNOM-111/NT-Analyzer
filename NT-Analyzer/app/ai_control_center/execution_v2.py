@@ -112,7 +112,11 @@ def _connection(service, context, checkpoint):
 def _request(checkpoint):
     value = {key: checkpoint.get(key) for key in (
         "model_id", "spec", "conversation_id", "message_id", "comparison_id", "comparison_title")}
-    for key in ("handoff", "delegation", "comparison_spec", "routing"):
+    # ModelService hashes the optional selected Persona into the same request.
+    # Keep legacy requests byte-equivalent when no selection was supplied;
+    # omitting it here rejects a valid selection, while ignoring it would allow
+    # a different identity to escape the approved request's integrity check.
+    for key in ("handoff", "delegation", "comparison_spec", "routing", "persona_selection"):
         if key in checkpoint:
             value[key] = checkpoint[key]
     return value
