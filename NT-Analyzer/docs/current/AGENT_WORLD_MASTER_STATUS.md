@@ -262,12 +262,64 @@ Current state: commission hard-codes a json_arithmetic root and forces every
                child to verify_fact_transfer; no descendant produces new analysis.
 Target truth: At least one more real operation class whose child roles produce
               new analysis, selected by role rather than supplied by the caller.
-Files/modules: coordinator.commission, delegation._graph
+Files/modules: coordinator.commission, delegation
 Evidence required: a second lifecycle integration test of the same shape
 Owner action required: NO
 Assigned to: unassigned
-Status: OPEN
+Status: OPEN — designed, not implemented. The design below was traced through
+        the actual code on 2026-09-10; start from it rather than re-deriving.
 ```
+
+**The one constraint that makes children fact-transfer-only.** It is not the
+graph machinery, which already supports more. It is a single expected spec in
+`delegation.validate_constructor`:
+
+```python
+spec != prepare("extract_facts", "
+".join(k + "=" + v for k, v in packet["facts"].items()))
+```
+
+plus `_verified`, which requires the parent's `rubric_key == "extract_facts"`.
+Note `result_handoff.verified_model_data` **already** accepts both
+`json_arithmetic` and `extract_facts`; only delegation narrows it.
+
+**Proposed operation `numeric_breakdown`.** Every node runs `json_arithmetic`
+over a server-computed contiguous segment of its parent's array — genuinely new
+numbers, graded by the same independent verifier, which can reject a wrong one.
+Uniform rule, no special case per depth:
+
+  node array = parent array split into (sibling count) contiguous parts,
+  take the part at this node's ordinal among its siblings.
+
+For a node whose parent is the root, the parent array is the re-verified root
+task's `spec["input"]`, not `plan["root_source"]["facts"]`.
+
+**Keep `facts` a dict.** Six other places iterate `facts.items()` —
+`coordinator` line 242, `task_review` 174, `domain_gateway` 708, `model_service`
+1006 and two in `result_handoff`. Carrying a list there would ripple into the
+review and publication surfaces. Use `{"values": "<json array>"}` instead, so
+the sealed shape and `facts_sha256` are unchanged.
+
+**The six places to change**
+
+1. `coordinator.commission` — accept `operation` in the payload allowlist
+   (`verify_fact_transfer` default, `numeric_breakdown` new); validate the array
+   actually splits, because the rubric needs 3–20 integers per node and a plan
+   that cannot split must be refused at commission, not at the first child;
+   set `produces_new_analysis=True` and a real role label on the nodes.
+2. `delegation._verified` — take the plan (or its operation) and require the
+   rubric that operation implies. Every other check stays exactly as it is.
+3. `delegation._seal_node` — derive the child's facts by operation.
+4. `delegation.validate_constructor` — build the expected spec by operation.
+5. `delegation._queue` (line ~493) — enqueue with the right rubric and input.
+6. `_verified`'s other two call sites (lines ~416 and ~475, reconcile and
+   projection) need the same operation, so thread it rather than defaulting.
+
+**What must not move:** grant binding, depth and fan-out limits, cycle and
+repeated-ancestor refusal, the immutable plan digest, one provider call per
+node, the parent-verified-before-child rule, and the fact that the server
+computes every segment and re-validates the answer. If any of these has to bend
+to make the operation fit, stop and report instead.
 
 ```text
 ID: P1-2  Intent is invisible to the user
