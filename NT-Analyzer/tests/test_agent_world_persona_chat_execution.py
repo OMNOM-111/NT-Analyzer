@@ -304,3 +304,57 @@ def test_comparison_public_service_path_rejects_assistant_response_before_any_ch
                 "rubric_key": "assistant_response", "input_text": MESSAGE}, idempotency_key="persona-no-comparison")
     assert not _jobs(fixture) and not fixture.calls
     assert not list(fixture.service._all(fixture.context, EntityKind.TASK))
+
+
+def test_selected_persona_v2_result_is_reviewed_to_completion_without_a_second_call(persona_chat, monkeypatch):
+    """The whole path a person walks: select, ask, read, decide.
+
+    Execution V2 is actually enabled, nothing is bypassed, and the decision is
+    taken through the same gateway mutation the panel uses. Accepting a result
+    is a human record, not a re-run and not a quality claim.
+    """
+    fixture = persona_chat
+    _enable_persona_v2(fixture, monkeypatch)
+    test_selected_persona_uses_saved_user_message_and_normal_worker_then_awaits_review(fixture)
+    task_id = _jobs(fixture)[0]["payload"]["task_id"]
+
+    pending = fixture.service.task_detail(context=fixture.context, task_id=task_id)
+    assert pending["display_status"] == "awaiting_review"
+    assert pending["human_review"]["status"] == "pending"
+    identity = (pending["persona_id"], pending["lead"]["display_name"])
+    assert identity == (str(fixture.persona.header.entity_id), fixture.persona.display_name)
+
+    accepted = gateway.mutate(fixture.authorized, "tasks", task_id, "review_result", {
+        "payload": {"decision": "accept", "source_sha256": pending["human_review"]["source_sha256"],
+                    "comment": "Явная проверка полученного ответа, не оценка качества модели."},
+        "expected_revision": pending["revision"], "idempotency_key": "persona-chat-human-review"})
+    assert accepted["chat_delivery"]["problems"] == [], accepted
+
+    done = fixture.service.task_detail(context=fixture.context, task_id=task_id)
+    assert done["display_status"] == "completed"
+    assert done["human_review"]["status"] == "accepted"
+    assert done["human_review"]["quality_claim"] is False
+    # The identity that answered is the identity on the completed record.
+    assert (done["persona_id"], done["lead"]["display_name"]) == identity
+    assert done["source_kind"] == "synthetic_model_response" and done["synthetic"] is True
+    assert done["actual_model"] == test_executor.EXECUTOR and done["external_call"] is False
+    # Deciding on a result never asks the provider again.
+    assert len(fixture.calls) == 1
+
+    from app.ai_control_center import execution_v2
+    controller = execution_v2.projection(fixture.service, fixture.context, task_id)
+    assert controller["status"] == "succeeded"
+
+    overview = gateway.enrich_overview(fixture.authorized)
+    row = next(item for item in overview["tasks"] if item["id"] == task_id)
+    assert row["display_status"] == "completed" and row["needs_attention"] is False
+    assert not [item for item in overview["attention"] if item["id"] == task_id]
+
+    # Replaying the same decision is not a second acceptance.
+    gateway.mutate(fixture.authorized, "tasks", task_id, "review_result", {
+        "payload": {"decision": "accept", "source_sha256": pending["human_review"]["source_sha256"],
+                    "comment": "Явная проверка полученного ответа, не оценка качества модели."},
+        "expected_revision": pending["revision"], "idempotency_key": "persona-chat-human-review"})
+    assert fixture.service.task_detail(context=fixture.context,
+                                       task_id=task_id)["display_status"] == "completed"
+    assert len(fixture.calls) == 1
