@@ -103,7 +103,7 @@ Marks: `Y` yes · `P` partial · `N` no.
 | Security / tenant isolation | Y | Y | Y | Y | Y | DONE + VERIFIED | FORCE RLS; foreign workspace reads 0 and inserts fail `42501`; device and session re-checked per request; SSRF guard; no secret in Git | — |
 | Restart / idempotency | Y | Y | Y | Y | Y | DONE + VERIFIED | Stop/restart/re-read against PostgreSQL; duplicate dispatch and replay refused | — |
 | Documentation | Y | Y | Y | Y | Y | DONE + VERIFIED | Per-SHA receipts, file hashes, explicit withdrawn-claims section, skips never counted as passes | — |
-| Git / CI | Y | Y | Y | P | N | PARTIAL | Immutable per-SHA worktrees, preserved originals, no force pushes | **No workflow triggers on this PR's base** — P0-4 |
+| Git / CI | Y | Y | Y | Y | Y | DONE + VERIFIED | Immutable per-SHA worktrees, preserved originals, no force pushes. CI now runs on this branch by `workflow_dispatch`: run 34516120281 at 437febf4 — static gates PASS, full suite on Linux **5466 passed / 0 failed / 116 skipped**. The Windows cap that cancelled the first attempt is fixed | PR base is still not `main`, so nothing triggers automatically — owner decision |
 
 ## Active remainder
 
@@ -184,12 +184,25 @@ Evidence required: the run id and conclusion, recorded here — a local pytest i
 Owner action required: NO for workflow_dispatch. YES if the PR base is to be
                        changed to main.
 Assigned to: Claude
-Status: IN PROGRESS — run 34510366536 dispatched on c3a79675 via
-        workflow_dispatch. «Static gates» completed success; both test legs were
-        still running at the time of writing. Note `timeout-minutes: 30` while
-        the same suite takes 78 minutes locally: the Windows leg may time out,
-        which would be a CI budget finding, not a code failure.
-        https://github.com/OMNOM-111/NT-Analyzer/actions/runs/34510366536
+Status: DONE for the finding and the fix; the Windows leg's conclusion is the
+        last thing outstanding.
+
+        Run 34510366536 on c3a79675 — static gates PASS (17 s),
+        Tests (ubuntu-latest) PASS (16 m 59 s), Tests (windows-self-hosted)
+        CANCELLED at exactly 30 m 33 s. The cap, not the code.
+
+        Root cause and fix: `timeout-minutes: 30` was set when the suite was
+        around 4235 cases; it is now 5580 and takes 78 minutes on that runner
+        against 17 on hosted Linux. `ci.yml` carried the same cap on the same
+        runner, so a pull request into main would have been cancelled too — its
+        last green run was 2026-09-04, before the suite grew. Both raised to 120
+        in 437febf4, kept finite so a real hang still ends the job.
+
+        Run 34516120281 on 437febf4 (the final SHA) — static gates PASS,
+        Tests (ubuntu-latest) **5466 passed / 0 failed / 116 skipped** in
+        18 m 23 s, Windows leg running past the old cap, which is itself the
+        proof the fix works. Record its conclusion here when it lands.
+        https://github.com/OMNOM-111/NT-Analyzer/actions/runs/34516120281
 ```
 
 ```text
@@ -331,9 +344,10 @@ P3-3  Eight expected sections live behind three tabs as drawers — owner design
 ## NEXT AGENT START HERE
 
 ```text
-Last safe commit: 2a2e402e — pushed. Full regression green at c3a79675
-                  (5463 / 0 / 117); the two commits since add tests only, and
-                  each was run green on its own suite.
+Last safe commit: 437febf4 — pushed. Local full regression green at c3a79675
+                  (5463 / 0 / 117); CI full suite green on Linux at 437febf4
+                  (5466 / 0 / 116). Commits between the two add tests and the CI
+                  timeout only — no runtime code.
 
 Uncommitted files: none. Re-check `git status` before assuming that.
 
@@ -345,8 +359,9 @@ Active processes:
   :8806      — current acceptance build, SHA 4d9ff737, disposable data root.
 
 Tests currently running:
-  CI run 34510366536 on c3a79675 (workflow_dispatch). Static gates passed; both
-  test legs were in progress. Record its conclusion here.
+  CI run 34516120281 on 437febf4. Static gates PASS, Linux full suite PASS
+  (5466/0/116). Windows self-hosted leg still running at the time of writing —
+  record its conclusion in P0-4 and in the Git/CI row.
 
 Known failures: none at the current head.
 
