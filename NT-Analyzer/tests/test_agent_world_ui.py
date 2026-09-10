@@ -231,8 +231,8 @@ def test_compact_overview_boots_without_hidden_tab_nodes_or_extra_api_requests()
       const tabs = ['overview','work','agents'].map(key => ({dataset:{awTab:key},setAttribute(){}}));
       const node = key => {
         if (!nodes.has(key)) nodes.set(key,{innerHTML:'',textContent:'',hidden:false,
-          setAttribute(){},addEventListener(){},classList:{toggle(){}},
-          querySelectorAll(){return tabs;}});
+          setAttribute(){},addEventListener(){},classList:{toggle(){}},contains(){return false;},
+          querySelectorAll(selector){return selector.includes('[data-aw-tab]')?tabs:[];}});
         return nodes.get(key);
       };
       const document = {querySelector:node,addEventListener(){},removeEventListener(){}};
@@ -251,7 +251,9 @@ def test_compact_overview_boots_without_hidden_tab_nodes_or_extra_api_requests()
       return {requests,html:node('#aw-content').innerHTML,pulse:node('#aw-pulse').innerHTML};
     })()""".replace("PATH_TO_SCRIPT", json.dumps(str(SCRIPT))))
     assert result["requests"] == 1
-    assert all(name in result["html"] for name in ["aw-column-work", "aw-column-results", "aw-column-team"])
+    assert all(name in result["html"] for name in [
+        "aw-column-work", "aw-column-results", "aw-column-team",
+    ]), result["html"]
     assert "NEW" in result["html"]
     # The mini card leads with the observation count rather than "n = N";
     # the claim it must keep making is that the sample size is visible.

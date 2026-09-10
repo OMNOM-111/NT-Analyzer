@@ -192,9 +192,19 @@ def enqueue_model(authorized, *, context, task_id):
     from . import execution_v2
     service = models(authorized)
     managed = execution_v2.enabled(authorized) or execution_v2.is_managed(service, context, task_id)
-    if managed:
-        execution_v2.prepare(authorized, service, task_id)
     job_id = "wj_aw_model_" + UUID(str(task_id)).hex
+    if managed:
+        try:
+            execution_v2.prepare(authorized, service, task_id)
+        except ContractError as error:
+            # Only prepare is inside this handler: enqueue can have committed
+            # its job before losing the response, which is not a safe refusal.
+            # An existing/concurrent submission also owns its own outcome.
+            if not worker_router.get(job_id, workspace_id=context.scope.workspace_id):
+                task = service._get(context, EntityKind.TASK, task_id)
+                checkpoint = service._json(context, task.checkpoint)
+                service._fail(context, task, checkpoint, error.code, pre_enqueue=True)
+            raise
     payload = {"task_id": str(task_id), "scope": authorized["chat_scope"]}
     if authorized.get("automation"):
         payload.update(automation_controller_id=authorized["automation_controller_id"],

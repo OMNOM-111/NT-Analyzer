@@ -10047,7 +10047,7 @@
   };
   function orchAgentWorldTaskId(row) {
     if (row?.source !== 'agent_world_local' || row.role !== 'assistant') return '';
-    const id = (row.actions || []).find(action => action?.source_kind === 'real_model_response')?.task_id;
+    const id = (row.actions || []).find(action => ['real_model_response', 'synthetic_model_response'].includes(action?.source_kind))?.task_id;
     return /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(String(id || '')) ? id : '';
   }
   async function orchAgentWorldViews(messages, cid) {
@@ -10059,7 +10059,9 @@
       await Promise.all(entries.slice(offset, offset + 4).map(async ([id, index]) => {
         try {
           const response = await API.http.aiControlCenterTask(id), task = response.task || response;
-          if (task.id === id && task.conversation_id === cid && task.source_kind === 'real_model_response') views.set(index, task);
+          if (task.id === id && task.conversation_id === cid
+              && ['real_model_response', 'synthetic_model_response'].includes(task.source_kind)
+              && (task.source_kind !== 'synthetic_model_response' || task.synthetic === true)) views.set(index, task);
         } catch (_) { /* Unavailable current state must never become a PASS. */ }
       }));
       if (ORCH.currentId !== cid) return messages;

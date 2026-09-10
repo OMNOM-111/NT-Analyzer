@@ -489,6 +489,11 @@ class ModelService:
                 checkpoint = self._json(context, existing.checkpoint)
                 if checkpoint.get("request_sha256") != digest(identity):
                     raise ContractError("model_task_idempotency_conflict")
+                if checkpoint.get("enqueue_rejected") is True:
+                    # This exact request was explicitly refused before queue
+                    # creation. Do not turn its replay into a new dispatch or
+                    # a false "queued" SF Chat acknowledgment.
+                    raise ContractError(checkpoint["error_code"])
                 if existing.status in {"planned", "ready"} and not checkpoint.get("receipt"):
                     model = self._get(context, EntityKind.MODEL, model_id)
                     self._check_execution_origin(context, model, self._json(context, model.profile), checkpoint)
@@ -800,11 +805,21 @@ class ModelService:
             "cost_estimated": result.get("cost_estimated") is True if cost is not None else None,
             "observed_at": _now().isoformat(), **tokens}
 
-    def _fail(self, context, task, checkpoint, code):
+    def _fail(self, context, task, checkpoint, code, *, pre_enqueue=False):
         with _LOCK:
-            return self._fail_locked(context, task, checkpoint, code)
+            return self._fail_locked(context, task, checkpoint, code, pre_enqueue=pre_enqueue)
 
-    def _fail_locked(self, context, task, checkpoint, code):
+    def _fail_locked(self, context, task, checkpoint, code, *, pre_enqueue=False):
+        current = self._get(context, EntityKind.TASK, task.header.entity_id)
+        if pre_enqueue:
+            # Preserve a concurrent result/cancel/in-flight state. The existing
+            # repository CAS also refuses a newer revision at the first write.
+            if (current != task or current.status != "ready"
+                    or self._json(context, current.checkpoint) != checkpoint
+                    or checkpoint.get("receipt") or checkpoint.get("application_dispatch")
+                    or self._execution(context, current.header.entity_id).status != "queued"):
+                return self.task_detail(context=context, task_id=current.header.entity_id)
+            checkpoint = {**checkpoint, "enqueue_rejected": True}
         allowed = {"model_connection_inactive", "model_executor_unavailable", "model_provider_error",
             "persona_selection_changed", "model_protocol_not_supported",
             "model_test_executor_disabled", "model_real_connection_verification_required",
@@ -820,8 +835,21 @@ class ModelService:
             "handoff_request_mismatch", "handoff_target_inactive", "handoff_different_persona_required",
             "handoff_recursive_denied", "handoff_chat_scope_required", "handoff_chat_unavailable",
             "handoff_source_message_required"}
-        checkpoint["error_code"] = code if code in allowed else "model_provider_error"
-        current = self._get(context, EntityKind.TASK, task.header.entity_id)
+        if pre_enqueue:
+            allowed |= {"execution_v2_controller_required", "execution_v2_controller_mismatch",
+                "execution_v2_connection_changed", "execution_v2_authority_denied",
+                "execution_v2_automation_refresh_required", "execution_v2_gate_disabled",
+                "execution_v2_approved_scope_changed", "execution_v2_approved_decision_changed",
+                "execution_v2_deadline_expired", "execution_v2_new_approved_task_required",
+                "execution_v2_legacy_adoption_denied", "execution_v2_approved_decision_required",
+                "execution_v2_approval_invalid", "execution_v2_high_risk_not_supported",
+                "agent_world_identity_required", "agent_world_session_expired",
+                "agent_world_confirmed_session_required", "agent_world_own_workspace_required",
+                "agent_world_capability_required", "agent_world_context_changed",
+                "agent_world_disabled", "agent_world_local_disabled", "model_capability_required",
+                "model_context_required", "model_history_read_only"}
+        checkpoint["error_code"] = (code if code in allowed else
+            "model_enqueue_refused" if pre_enqueue else "model_provider_error")
         if current.status == "cancelled":
             return self.task_detail(context=context, task_id=task.header.entity_id)
         current = self._change(context, current, checkpoint=self._put(context, checkpoint))

@@ -716,7 +716,7 @@
       context.innerHTML = scope.synthetic || overview?.synthetic ? '<span class="aw-context-mark">SYNTHETIC</span><span><strong>Изолированная проверка владельца.</strong> Задачи действительно выполняются локальными детерминированными обработчиками. Исходные данные тестовые; платные модели и торговые действия не вызываются. Рейтинг — не оценка качества LLM.</span>' : '<span class="aw-context-mark">LOCAL</span><span><strong>Ваше рабочее пространство.</strong> AI Центр находится в разработке. Проверочные данные не заменяют owner-данные, а выключенные пути не изменяют текущие механизмы приложения.</span>';
       qs('#aw-updated').textContent = 'Обновлено ' + date(new Date().toISOString());
     }
-    function selectTab(next, updateLocation, background = false) {
+    function selectTab(next, updateLocation, background = false, options = {}) {
       if (!background) stopPersonaAudio();
       if (!TABS.includes(next)) next = 'overview';
       tab = next;
@@ -725,7 +725,7 @@
       if (updateLocation) root.history.replaceState(null, '', '#tab=' + encodeURIComponent(tab));
       // Work used to read fresh tasks while its header/profile retained an old
       // overview indefinitely. User navigation refreshes both projections.
-      return updateLocation ? refresh() : loadTab();
+      return updateLocation ? refresh() : loadTab(false, options);
     }
     function readError(error) {
       if (error?.status === 403) return empty('Нет доступа к этому разделу', 'Сервер не разрешил чтение данных в текущем контексте. Обновите страницу после изменения доступа.');
@@ -842,8 +842,7 @@
         if (!isCurrent() || tab === 'work' && result?.enabled && !workResult) return;
         overview = result;
         renderHeader();
-        if (workResult) await loadTab(false, { workResult, background });
-        else await selectTab(tab, false, background);
+        await selectTab(tab, false, background, { workResult, background });
         if (shownTask && inspectorRequest === detailGeneration && !actionForm && currentDrawer?.classList.contains('open')) {
           const latest = await API.aiControlCenterTask(shownTask, { signal });
           if (!disposed && request === overviewGeneration && inspectorRequest === detailGeneration && !actionForm

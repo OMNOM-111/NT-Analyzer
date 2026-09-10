@@ -39,7 +39,14 @@ const env = {
 vm.createContext(env);
 ['selectTab','backgroundReadBlocked','preserveView','readWorkPages','loadTab','refresh','readError','openDrawer'].forEach(name=>vm.runInContext(extract(name),env));
 (async()=>{
-  if (mode === 'navigation') {
+  if (mode === 'initial-work') {
+    const tabs=['overview','work','agents'].map(id=>({dataset:{awTab:id},attrs:{},setAttribute(key,value){this.attrs[key]=value;}}));
+    env.qsa=selector=>selector==='.aw-tabs [data-aw-tab]'?tabs:[];
+    content.setAttribute=(key,value)=>{content[key]=value;};
+    await env.refresh();
+    assert.equal(tabs[1].attrs['aria-selected'],'true');assert.equal(tabs[0].attrs['aria-selected'],'false');
+    assert.equal(content['aria-labelledby'],'aw-tab-work');
+  } else if (mode === 'navigation') {
     await env.selectTab('work',true);
     assert.ok(calls.includes('read-overview') && calls.includes('read-work'));
     assert.deepEqual(calls.find(c=>Array.isArray(c)&&c[0]==='header'),['header',0]);

@@ -48,8 +48,8 @@ def render(state: dict) -> dict:
       const tabs = ['overview','work','agents'].map(key => ({dataset:{awTab:key},setAttribute(){}}));
       const node = key => {
         if (!nodes.has(key)) nodes.set(key,{innerHTML:'',textContent:'',hidden:false,
-          setAttribute(){},addEventListener(){},classList:{toggle(){}},
-          querySelectorAll(){return tabs;}});
+          setAttribute(){},addEventListener(){},classList:{toggle(){}},contains(){return false;},
+          querySelectorAll(selector){return selector.includes('[data-aw-tab]')?tabs:[];}});
         return nodes.get(key);
       };
       const document = {querySelector:node,addEventListener(){},removeEventListener(){}};
@@ -65,7 +65,13 @@ def render(state: dict) -> dict:
     })()"""
     harness = harness.replace("DATA", json.dumps(state)).replace(
         "SCRIPT_PATH", json.dumps(str(SCRIPT)))
-    return evaluate(harness)
+    result = evaluate(harness)
+    # Negative copy assertions must inspect the actual Overview, not pass on
+    # the generic error page when the disposable DOM port is incomplete.
+    assert all(name in result["html"] for name in [
+        "aw-column-work", "aw-column-results", "aw-column-team",
+    ]), result["html"]
+    return result
 
 
 def task(**overrides) -> dict:
