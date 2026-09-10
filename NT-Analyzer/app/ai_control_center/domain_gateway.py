@@ -972,6 +972,10 @@ def enrich_overview(authorized, base=None):
             continue
         phase = presentation.task_phase(row.get("display_status"))
         reason, action = presentation.attention_reason(phase)
+        if row.get("enqueue_rejected"):
+            # Nothing here is waiting on a decision: the server already refused
+            # it. Saying "confirm the next step" would invent one.
+            reason, action = presentation.refusal_reason(row.get("error_code")) or (reason, action)
         attention.append({**row, "phase": phase, "phase_label": presentation.phase_label(phase),
                           "reason": reason, "action_hint": action,
                           "since": row.get("updated_at") or row.get("created_at"),

@@ -99,6 +99,30 @@ ATTENTION_REASONS = MappingProxyType({
     ),
 })
 
+# A request refused before it reached the queue. The stored code is exact; these
+# are the sentences a person can act on. Families cover the codes that share one
+# cause, so a new code inside a family is explained rather than shown raw.
+REFUSAL_REASONS = MappingProxyType({
+    "execution_v2_approved_scope_changed":
+        "Запрос не принят: состав согласованного задания изменился между подготовкой и отправкой.",
+    "execution_v2_deadline_expired":
+        "Запрос не принят: срок согласованного задания истёк до отправки.",
+    "persona_selection_changed":
+        "Запрос не принят: выбранная Persona изменилась между подготовкой и отправкой.",
+    "model_connection_inactive":
+        "Запрос не принят: выбранное подключение больше не активно.",
+    "model_test_executor_disabled":
+        "Запрос не принят: named-обработчик недоступен в этом рабочем пространстве.",
+})
+REFUSAL_FAMILIES = (
+    ("execution_v2_", "Запрос не принят: проверка прав на исполнение не пропустила его."),
+    ("agent_world_", "Запрос не принят: сессия или рабочее пространство изменились."),
+    ("model_", "Запрос не принят: подключение или его настройки не позволили выполнить его."),
+    ("handoff_", "Запрос не принят: источник передачи фактов не прошёл проверку."),
+)
+REFUSAL_ACTION = ("Задание не выполнялось и не стоит в очереди. Исходное сообщение сохранено; "
+                  "отправьте новый запрос, когда причина устранена.")
+
 
 def task_phase(display_status) -> str:
     """Group one already-computed display state. Never re-derives from status."""
@@ -146,6 +170,24 @@ def progress_pct(display_status) -> int | None:
 def attention_reason(phase) -> tuple[str, str]:
     return ATTENTION_REASONS.get(str(phase or ""), (
         "Требуется внимание владельца.", "Откройте задачу, чтобы увидеть подробности."))
+
+
+def refusal_reason(error_code) -> tuple[str, str] | None:
+    """The sentence and next action behind a pre-queue refusal, or None.
+
+    A code this module does not recognise still produces a sentence rather than
+    silence: not knowing the exact cause is not a reason to tell somebody
+    nothing happened.
+    """
+    code = str(error_code or "")
+    if not code:
+        return None
+    if code in REFUSAL_REASONS:
+        return REFUSAL_REASONS[code], REFUSAL_ACTION
+    for prefix, sentence in REFUSAL_FAMILIES:
+        if code.startswith(prefix):
+            return sentence, REFUSAL_ACTION
+    return "Запрос не принят сервером до постановки в очередь.", REFUSAL_ACTION
 
 
 def counters(display_statuses) -> dict:

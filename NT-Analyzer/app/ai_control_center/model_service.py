@@ -933,6 +933,9 @@ class ModelService:
             "created_at": task.header.created_at.isoformat(), "updated_at": task.header.updated_at.isoformat(),
             "evidence_count": 2 if evaluation else int(bool(receipt)), "comparison_id": checkpoint.get("comparison_id"),
             "comparison_title": checkpoint.get("comparison_title"), "error_code": checkpoint.get("error_code"),
+            "enqueue_rejected": checkpoint.get("enqueue_rejected") is True,
+            "error_reason": (presentation.refusal_reason(checkpoint.get("error_code")) or ("", ""))[0]
+                            if checkpoint.get("enqueue_rejected") is True else None,
             "actions": ["cancel"] if task.status in _ACTIVE else [],
             "task_class_label": presentation.rubric_label(rubric_key),
             "progress_pct": presentation.progress_pct(task.status)}

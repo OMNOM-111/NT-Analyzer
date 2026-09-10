@@ -168,3 +168,50 @@ def test_non_contract_prepare_interruption_is_not_declared_safe_rejection(person
     assert task.status == "ready"
     assert "enqueue_rejected" not in fixture.service._json(fixture.context, task.checkpoint)
     assert not _jobs(fixture) and not fixture.calls
+
+
+def test_a_refused_request_tells_the_user_why_and_what_to_do_next(persona_chat, monkeypatch):
+    """A stored reason code nobody renders is the same as no reason at all.
+
+    The overview row must not fall under the generic «подтвердите или отклоните
+    следующий шаг»: there is no next step to confirm, and retry is refused by
+    contract, so the only correct instruction is a new request.
+    """
+    from app.ai_control_center import domain_gateway as gateway, presentation
+
+    fixture = persona_chat
+    _enable_persona_v2(fixture, monkeypatch)
+    _reject_selected_scope(monkeypatch)
+    with pytest.raises(ContractError, match="execution_v2_approved_scope_changed"):
+        _start(fixture)
+    task = _one_task(fixture)
+
+    detail = fixture.service.task_detail(context=fixture.context, task_id=task.header.entity_id)
+    assert detail["enqueue_rejected"] is True
+    assert detail["error_reason"] == presentation.REFUSAL_REASONS["execution_v2_approved_scope_changed"]
+    assert "изменился" in detail["error_reason"]
+
+    overview = gateway.enrich_overview(fixture.authorized)
+    row = next(item for item in overview["attention"] if item["id"] == str(task.header.entity_id))
+    assert row["reason"] == detail["error_reason"]
+    assert row["action_hint"] == presentation.REFUSAL_ACTION
+    assert "отправьте новый запрос" in row["action_hint"]
+    # The wording that would send somebody looking for a decision to make.
+    assert "подтвердите или отклоните" not in row["action_hint"]
+    assert "retry" not in detail["actions"]
+
+
+@pytest.mark.parametrize("code, expected", [
+    ("execution_v2_controller_mismatch", "проверка прав на исполнение"),
+    ("agent_world_session_expired", "сессия или рабочее пространство"),
+    ("model_executor_unavailable", "подключение или его настройки"),
+    ("handoff_target_inactive", "источник передачи фактов"),
+    ("a_code_nobody_has_written_yet", "не принят сервером"),
+])
+def test_every_refusal_code_produces_a_sentence_not_a_raw_token(code, expected):
+    from app.ai_control_center import presentation
+
+    sentence, action = presentation.refusal_reason(code)
+    assert expected in sentence and action == presentation.REFUSAL_ACTION
+    assert code not in sentence
+    assert presentation.refusal_reason("") is None
