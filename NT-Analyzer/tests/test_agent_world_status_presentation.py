@@ -609,3 +609,22 @@ def test_the_inspector_renders_the_reason_and_the_source_link():
     assert "aw-limitations" in source
     assert "String(task.source_url || '').startsWith('/ui/')" in source
     assert "Открыть исходный отчёт" in source
+
+
+def test_a_refused_request_reads_as_refused_not_as_a_pending_decision():
+    """The page must not repeat the decision wording for a refused request.
+
+    A task the server turned down before the queue has no next step to confirm,
+    and its reason lived only in `error_code` where nobody could see it.
+    """
+    reason, action = presentation.refusal_reason("execution_v2_approved_scope_changed")
+    rows = [task(display_status="blocked", display_status_label="Заблокировано",
+                 status="blocked", stage="preflight_refused", stage_label="Запрос не принят",
+                 enqueue_rejected=True, error_code="execution_v2_approved_scope_changed",
+                 error_reason=reason, reason=reason, action_hint=action)]
+    result = render(workspace(rows))
+
+    assert reason in result["html"] and action in result["html"]
+    assert "подтвердите или отклоните" not in result["html"]
+    assert "В очереди" not in result["html"]
+    assert "<progress" not in result["html"]
