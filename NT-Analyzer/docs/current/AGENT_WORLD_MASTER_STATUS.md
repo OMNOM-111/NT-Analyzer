@@ -14,17 +14,19 @@ PROGRAM: Agent World / AI Center
 STATUS: IN DEVELOPMENT
 
 CURRENT IMPLEMENTATION COVERAGE: 85%
-CURRENT OWNER ACCEPTANCE READINESS: 56%
+CURRENT OWNER ACCEPTANCE READINESS: 61%
 
 CURRENT INTEGRATION BRANCH: codex/agent-world-unified-acceptance
-CURRENT INTEGRATION SHA: 92d873e3364d9bea5a6c49fc82f08b9bfc629de2
-CURRENT WIP: dirty — 9 files, the render + pre-enqueue fix (being saved now)
-CURRENT LOCAL 8765 SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (44 commits behind)
-CURRENT ACCEPTANCE INSTANCE: http://127.0.0.1:8804 — serves 92d873e3, disposable data root
+CURRENT INTEGRATION SHA: 2a2e402e (pushed) — full regression green at c3a79675, tests-only since
+CURRENT WIP: clean
+CURRENT LOCAL 8765 SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (48 commits behind, not switched)
+CURRENT ACCEPTANCE INSTANCE: http://127.0.0.1:8806/ui/ai-command-center.html — SHA 4d9ff737,
+  runtime code identical to head (the later commit adds a test only), disposable data root,
+  zero external calls. The older :8804 still serves 92d873e3 and is superseded.
 CURRENT VERSION: 0.10.0-beta.96 (pre_release)
 
 LAST VERIFIED: 2026-09-10
-UPDATED BY: Claude (independent audit + P0 continuation)
+UPDATED BY: Claude (independent audit + P0 closure)
 ```
 
 ## Percentage method — identical for every executor
@@ -42,11 +44,12 @@ recorded as such.
 
 ```text
 IMPLEMENTATION COVERAGE: 85%   (30.5 / 36)
-OWNER ACCEPTANCE READINESS: 56%   (20.0 / 36)
+OWNER ACCEPTANCE READINESS: 61%   (22.0 / 36)
 
 CHANGE SINCE PREVIOUS CHECKPOINT:
-Implementation: +0 pp
-Acceptance:     +0 pp
+Implementation: +0 pp  — no new capability; the P0 work fixed and proved existing ones
+Acceptance:     +5 pp  — Persona, SF Chat, Execution and Outcomes moved from
+                         automated-only to walked live on the acceptance build
 ```
 
 > The independent audit of 2026-09-10 reported 84% / 54% on a 34-row basis.
@@ -74,16 +77,16 @@ Marks: `Y` yes · `P` partial · `N` no.
 | Coordinator | Y | Y | Y | Y | P | PARTIAL | `coordinator.commission`; 40 focused PASS; full lifecycle integration test | Hard-coded to one `json_arithmetic` goal; not a planner — P1-1 |
 | Task Graph | Y | Y | Y | Y | P | PARTIAL | Real parent → subtasks → contributions → aggregate, depth ≤3, typed deps | No descendant produces new analysis — P1-1 |
 | Delegation | Y | Y | Y | Y | P | PARTIAL | Grant-bound, depth-bounded, cycle- and restart-safe; 61 handoff/delegation PASS | Roots only on Coordinator task or verified application result |
-| Persona | Y | Y | Y | Y | P | IMPLEMENTED | Identity, aliases, main assistant, style, face, role, voice prefs survive restart and model change — browser-confirmed on e45 | Selected-Persona chat path — P0-3 |
+| Persona | Y | Y | Y | Y | Y | DONE + VERIFIED | Identity survives restart and model change; the selected-Persona chat path walked live on 8806 to a completed, accepted result with the identity intact | Audible voice check — P2-5 |
 | Voice / TTS / lip-sync | Y | Y | Y | Y | N | PARTIAL | 8 TTS profiles, 6 reused `speaking.webm`, browser speech default, owner TTS opt-in | Audio never heard; phoneme lip-sync absent by design — P2 |
 | Model Registry | Y | Y | Y | Y | P | IMPLEMENTED | Persona / account / model separate; own-key wizard; capabilities, cost, latency | Only ever exercised with the named local test executor |
 | Router | Y | Y | Y | Y | P | IMPLEMENTED | Candidates, exclusions, reason codes, shadow vs active, apply pinned to the exact preview; test-executor observations disqualified from real routing | No comparison between two real providers |
-| Outcomes | Y | Y | Y | Y | P | IMPLEMENTED | Outcome records drive the aggregate and the chat report | Live route |
+| Outcomes | Y | Y | Y | Y | Y | DONE + VERIFIED | Outcome and evaluation produced, displayed and accepted on the live route | — |
 | Evaluation | Y | Y | Y | Y | Y | DONE + VERIFIED | Independent verifier; per-check pass/fail in the inspector; rejects wrong and corrupted answers | — |
 | Reputation | Y | Y | Y | Y | P | PARTIAL | Honest labelling: <3 observations → `NEW`; diagnostics → «3 из 3 · диагностика»; manual → «без рейтинга» | Model / agent-role / decision-outcome not three separate scopes — P1-3 |
 | Consensus | Y | Y | Y | Y | P | IMPLEMENTED | Independent same-input contributions, then a separate Court | Synthetic only |
 | Court | Y | Y | Y | Y | P | IMPLEMENTED | 3 isolated sessions from one sealed packet, unweighted 2-of-3, failure-domain diversity, provenance-checked votes, revocation re-checked after the call, judges cannot execute | Never three genuinely different providers — P2 |
-| Execution | Y | Y | Y | Y | P | IMPLEMENTED | Immutable approved decision, capability/device re-check, budget, idempotency, cancel, restart | Approved-scope reconstruction — P0-3 |
+| Execution | Y | Y | Y | Y | Y | DONE + VERIFIED | Immutable approved decision, capability/device re-check, budget, idempotency, cancel, restart. V2 enabled path walked live: prepare → queue → worker → receipt → completion | — |
 | Deviation | Y | Y | Y | Y | P | IMPLEMENTED | Provider and application deviations recorded; material deviation returns to review | Live route |
 | Memory | Y | Y | Y | Y | P | IMPLEMENTED | 10 HTTP E2E cases, two real cookie sessions: share, revoke, expire, foreign-workspace refusal, per-request re-check | No visual two-user route; not on PostgreSQL |
 | Strategy Projects | Y | Y | Y | Y | P | IMPLEMENTED | Versioned records, comparison jobs | Real comparisons need permitted connections |
@@ -91,7 +94,7 @@ Marks: `Y` yes · `P` partial · `N` no.
 | Routines | Y | Y | Y | Y | P | IMPLEMENTED | Per-routine consent separate from automation permission and budget | Live route |
 | Scheduler | Y | Y | Y | Y | P | IMPLEMENTED | Scanner has a real worker producer; grant, capability, budget, device re-checked per occurrence | Self-starting run shown once, on older code |
 | Calendar | Y | Y | Y | Y | P | IMPLEMENTED | Workspace events, local input stored UTC | Live route |
-| SF Chat | Y | Y | Y | Y | P | IMPLEMENTED | Task cards, deep links, delivery recovery without a second model call, human and AI stores separate | Live request path — P0-2, P0-3 |
+| SF Chat | Y | Y | Y | Y | Y | DONE + VERIFIED | Message addressed to a Persona → task → real worker result → review → completed, walked live on 8806; refused requests now carry their reason | — |
 | SF Social | Y | Y | Y | Y | P | IMPLEMENTED | Prepare → explicit publish; verified sources only; corrupted receipts never attested; private memory never publishable | One real publication is an owner decision |
 | Owner Preview | Y | Y | Y | Y | P | IMPLEMENTED | Isolated synthetic operator with its own domains; deliberately no provider, worker, Router, Court, publication or routine execution | Manual route not re-run on final code |
 | Ordinary-user model onboarding | Y | P | Y | P | N | PARTIAL | Wizard driven in a browser with a placeholder key against the local executor | Real key, real endpoint, real BYOK E2E — P1-4 |
@@ -117,7 +120,8 @@ Files/modules: ai-command-center.js, ui.js, domain_gateway.py, model_service.py,
 Evidence required: immutable regression worktree receipt at the new SHA
 Owner action required: NO
 Assigned to: Claude
-Status: IN PROGRESS — targeted suites green, checkpoint being saved
+Status: DONE — saved as 1afce6e8. Full regression at c3a79675:
+        5463 passed / 0 failed / 117 skipped, 4709.32 s.
 ```
 
 ```text
@@ -133,7 +137,12 @@ Files/modules: domain_gateway.enqueue_model, model_service._fail_locked
 Evidence required: test_agent_world_pre_enqueue_rejection.py + live isolated repeat
 Owner action required: NO
 Assigned to: Claude
-Status: IN PROGRESS — folded into the P0-1 checkpoint
+Status: DONE — server side in 1afce6e8, the reason a person reads in 2a49e0b9,
+        page-level proof in 2a2e402e. 11 + 1 cases.
+        Known limit: the historical stuck task ef1b1052 on :8804 was written by
+        the old code and has no `enqueue_rejected`, so it still reads «В очереди».
+        The fix applies to requests refused from now on; that row is not healed
+        retroactively and must not be presented as if it were.
 ```
 
 ```text
@@ -149,7 +158,14 @@ Evidence required: regression test with Execution V2 actually enabled, plus an
                    exact-code browser repeat
 Owner action required: NO
 Assigned to: Claude
-Status: OPEN
+Status: DONE. The scope guard itself was already correct — `persona_selection`
+        entered the approved request in Codex's 92d873e3. What was missing was
+        proof the path ends anywhere: coverage stopped at `awaiting_review`.
+        4d9ff737 carries it to `completed`. Walked live on :8806: Persona
+        84268b97 created and activated, connection eebb3c00 verified, chat
+        addressed to that Persona, task 5ce6310c executed by the named local
+        executor with external_call=false, reviewed and accepted →
+        «Проверка завершена», attention list empty.
 ```
 
 ```text
@@ -168,7 +184,12 @@ Evidence required: the run id and conclusion, recorded here — a local pytest i
 Owner action required: NO for workflow_dispatch. YES if the PR base is to be
                        changed to main.
 Assigned to: Claude
-Status: OPEN
+Status: IN PROGRESS — run 34510366536 dispatched on c3a79675 via
+        workflow_dispatch. «Static gates» completed success; both test legs were
+        still running at the time of writing. Note `timeout-minutes: 30` while
+        the same suite takes 78 minutes locally: the Windows leg may time out,
+        which would be a CI budget finding, not a code failure.
+        https://github.com/OMNOM-111/NT-Analyzer/actions/runs/34510366536
 ```
 
 ```text
@@ -183,7 +204,36 @@ Files/modules: .artifacts/acceptance-*/run_aurora.py
 Evidence required: the route walked with captures at every step
 Owner action required: YES to switch Local 8765 — not to be done otherwise
 Assigned to: Claude
-Status: OPEN
+Status: DONE for the build and the captures; Local switch remains the owner's.
+        URL: http://127.0.0.1:8806/ui/ai-command-center.html
+        SHA: 4d9ff737 (runtime code identical to head 2a2e402e — the later
+             commit adds a test only, verified by an empty app/ diff)
+        Data: disposable root under .artifacts/acceptance-4d9ff737/aurora-data
+        Flags: AI_ROUTER_V2, AI_ROUTER_SHADOW_V2, AI_EXECUTION_V2,
+               AI_DELEGATION_V2, AI_SCHEDULER_V1 for this workspace only
+        External calls: not authorized. Named local executor only.
+        Rollback: stop the process; nothing outside that directory is written.
+        Screenshots: .artifacts/acceptance-4d9ff737/screenshots (7 files)
+```
+
+### Click-by-click route on the acceptance build
+
+```text
+1. Open http://127.0.0.1:8806/ui/ai-command-center.html
+   Three tabs: Обзор · Работа · Агенты. Counters read from one projection.
+2. Drawer «Persona» → «Создать персону» → name, style → «Активировать».
+   The record becomes active at revision 2; identity is separate from any model.
+3. Drawer «Модели и подключения» → «Подключить модель» → pick that Persona.
+   Then «Проверить соединение»: the receipt names
+   agent-world-local-test-executor-v1, not the provider, and says so.
+4. «Открыть SF Chat» → address the Persona by name: «@<имя>: <вопрос>».
+   A task card appears in Работа with that Persona as coordinator.
+5. Open the task. It shows «Ожидает вашей проверки», the answer, and the
+   per-check verification. Cost reads 0,00 $ and the note states the content
+   was not automatically scored.
+6. «Проверить полученный результат» → accept. The task becomes
+   «Проверка завершена», leaves the attention list, and the decision is
+   recorded as a human fact with quality_claim false.
 ```
 
 ### P1 — REQUIRED FUNCTIONAL REMAINDER
@@ -271,38 +321,34 @@ P3-3  Eight expected sections live behind three tabs as drawers — owner design
 
 | Item | SHA | Evidence |
 | --- | --- | --- |
-| _(nothing yet in this cycle)_ | — | — |
+| P0-1 · saved branch tip made green | `1afce6e8` | full regression at `c3a79675`: **5463 passed / 0 failed / 117 skipped**, 4709.32 s |
+| P0-2 · refused request no longer looks queued | `1afce6e8` | `test_agent_world_pre_enqueue_rejection.py` — 5 cases: terminal `blocked`, real reason code, intent blocked, execution cancelled, no job, immutable old revision, replay refused, new request gets a new task |
+| P0-2 · the person is told why | `2a49e0b9` | `presentation.refusal_reason`; 6 more cases incl. every code family; attention row no longer says «подтвердите или отклоните» |
+| P0-2 · the page shows it | `2a2e402e` | refusal rendered through the shipped page code; asserts the queue label and decision wording are absent |
+| P0-3 · Persona → chat → result → decision | `4d9ff737` | completion case on the enabled V2 path, plus the live walk on :8806 ending «Проверка завершена» |
+| Master status introduced | `c3a79675` | this file |
 
 ## NEXT AGENT START HERE
 
 ```text
-Last safe commit: 92d873e3364d9bea5a6c49fc82f08b9bfc629de2
-                  WARNING: its full regression is 14 failed. Do not treat it as green.
-                  The last fully green saved SHA is e45b64b0121014c5d796553ae8b512d98a5782ae.
+Last safe commit: 2a2e402e — pushed. Full regression green at c3a79675
+                  (5463 / 0 / 117); the two commits since add tests only, and
+                  each was run green on its own suite.
 
-Uncommitted files: (being saved by the current session — re-check `git status` first)
-  NT-Analyzer/app/ai_control_center/domain_gateway.py
-  NT-Analyzer/app/ai_control_center/model_service.py
-  NT-Analyzer/app/static/aurora/assets/pages/ai-command-center.js
-  NT-Analyzer/app/static/aurora/assets/ui.js
-  NT-Analyzer/tests/agent_world_refresh_ui_harness.cjs
-  NT-Analyzer/tests/test_agent_world_live_refresh_ui.py
-  NT-Analyzer/tests/test_agent_world_status_presentation.py
-  NT-Analyzer/tests/test_agent_world_ui.py
-  NT-Analyzer/tests/test_agent_world_pre_enqueue_rejection.py  (new file)
+Uncommitted files: none. Re-check `git status` before assuming that.
 
 Active processes:
   PID 20328 — Local 8765, code 2b6d0112, owner data root. DO NOT switch or restart.
-  PID 8852  — acceptance instance :8804, code 92d873e3, disposable data root.
+  PID 8852  — old acceptance instance :8804, code 92d873e3. Superseded by :8806;
+              it still holds the historical stuck task ef1b1052 as evidence of
+              the behaviour P0-2 replaced. Stop it only deliberately.
+  :8806      — current acceptance build, SHA 4d9ff737, disposable data root.
 
-Tests currently running: none
+Tests currently running:
+  CI run 34510366536 on c3a79675 (workflow_dispatch). Static gates passed; both
+  test legs were in progress. Record its conclusion here.
 
-Known failures:
-  92d873e3 full run: 14 failed — 13 in test_agent_world_status_presentation.py,
-  1 in test_agent_world_ui.py. Cause: the disposable DOM harness returned the tab
-  list for every querySelectorAll selector, so the page fell back to its error
-  state and negative copy assertions passed against the wrong HTML. Fixed in the
-  uncommitted work above.
+Known failures: none at the current head.
 
 Do not touch:
   - Local 8765 and the owner data root under NT-Analyzer/data
@@ -311,9 +357,12 @@ Do not touch:
   - deploy/testing/acceptance.env or any generated DSN — never into Git
 
 Exact next action:
-  P0-3 — make a selected-Persona SF Chat request reach a result. Start from
-  tests/test_agent_world_pre_enqueue_rejection.py::_reject_selected_scope, which
-  already reproduces the failure by removing persona_selection from the approved
-  request; the product fix is to keep that field in the approved digest without
-  relaxing the tamper guard.
+  1. Record the conclusion of CI run 34510366536 above and in P0-4. If the
+     Windows leg timed out at 30 minutes, that is a CI budget finding: the same
+     suite takes 78 minutes locally. Raising the timeout is a workflow change
+     and belongs in its own commit.
+  2. Run a full regression at the final SHA once no further commits are planned,
+     so the green result and the tip are the same object.
+  3. Then P1-1: give the Coordinator a second operation class whose children
+     produce new analysis rather than another fact-transfer check.
 ```
