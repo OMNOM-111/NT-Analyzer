@@ -46,7 +46,10 @@ jobs:
           - label: windows-self-hosted
             runner: [self-hosted, windows, x64, stratforge-ci]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    # The Windows leg runs the same full suite as ci.yml and needs the same
+    # budget; see the measurement recorded there. The hosted Linux leg finishes
+    # in about 17 minutes and is unaffected by the higher cap.
+    timeout-minutes: 120
     steps:
       # A self-hosted workspace persists between jobs; a hosted image does not.
       # Without this a file deleted on a branch lingers and the suite passes
