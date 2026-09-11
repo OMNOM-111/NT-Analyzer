@@ -358,15 +358,70 @@ Status: BLOCKED — must not block other work
 ```
 
 ```text
-ID: P1-5  External-agent onboarding does not exist
-Current state: No remote tools or tasks, no MCP, no A2A, no general protocol.
-Target truth: Either a minimal agreed supported protocol, or an explicit removal
-              from the acceptance scope.
-Evidence required: implementation with tests, or a recorded product decision
-Owner action required: YES — an executor may not drop this unilaterally
-Assigned to: unassigned
-Status: OWNER ACTION REQUIRED
+ID: P1-5  External-agent onboarding
+Current state: A separate branch, codex/... external-agent-onboarding, draft
+               PR #286, carries four unimported modules and 64 tests. Nothing is
+               wired into storage, the queue or any UI; the integration branch
+               is unchanged by it.
+Target truth: An ordinary user connects an external agent, it does bounded work,
+              and its results are evaluated without pretending to be a Model.
+Evidence required: the native end-to-end route below
+Owner action required: YES for accepting the protocol into scope
+Assigned to: P1-5 executor (contracts), integrator (shared seams)
+Status: REVIEWED — contracts accepted, two shared seams owed by the integrator
 ```
+
+### Integration answer to the P1-5 checkpoint
+
+Reviewed at `97095b0010a278e8f917a00e9661d77e93fadf0e`. Reviewed, not merged:
+the branch stays unintegrated until the two seams below exist, which is what its
+own rollback note proposes.
+
+**1. Accepted SHA.** `97095b00` as the reviewed code checkpoint. The integration
+branch does not carry it and no shared file was copied from it.
+
+**2. `ExternalAgentConnection` — accepted as its own record kind.** It must not
+be a Model wearing a different label, and this type is not. Its state machine
+(`draft → verifying → active | degraded | disabled | revoked`), its capability
+negotiation (allowed ⊆ requested ∩ advertised), its credential as an
+`ExternalRef`, and the Development-only `synthetic` gate are all right. Becoming
+a native record additionally needs, in files the integrator owns:
+`states.py` — an `EntityKind` member, a transition graph, an initial state and
+an `EDITABLE_STATES` entry; and `storage_codec.py` — codec registration. Those
+are small and are the integrator's to write, not the P1-5 executor's.
+
+**3. Evaluation subject without a Model ID — the real blocker, and it is mine.**
+`model_contracts.Evaluation` declares `model: EntityRef` with
+`require_entity(..., EntityKind.MODEL)`. An external agent therefore cannot be
+evaluated at all today, and inventing a Model ID for one is exactly the
+falsification this programme exists to prevent.
+
+The fix is a typed subject on `Evaluation` — `subject: EntityRef` plus the kind
+it points at — with `model` kept as a compatibility accessor while the subject
+is a Model, so existing readers do not move. This is the same seam P1-3 needs
+for Agent Role and Decision/Outcome performance, so it will be defined once, by
+the integrator, as part of P1-3. **Do not define a second evaluation shape for
+external agents.** If P1-5 lands first it should keep producing no Evaluation
+rather than produce one with a fabricated subject.
+
+**4. Shared-file ownership — no transfer.** The integrator keeps `contracts.py`,
+`model_contracts.py`, `states.py`, `storage_codec.py`, both repositories,
+`domain_gateway.py`, `model_service.py` and the page. The P1-5 executor keeps
+`external_agent_contracts.py`, `external_agent_protocol.py`,
+`external_agent_adapter.py`, `external_agent_onboarding.py` and their tests.
+Nothing in that list is handed over by this answer.
+
+**5. Next executor and dependencies.** P1-5 wiring is blocked on (a) the typed
+Evaluation subject and (b) the record-kind registration, both owed by the
+integrator. Until both exist the branch stays as it is. The 64 existing tests
+are unit coverage of the contracts and do not stand in for the native route:
+ordinary user creates a connection → real handshake → ACTIVE → compatible
+Task/Intent → Contribution → its own Evaluation → history and statistics →
+revoke → the next task refused; plus a second workspace, a duplicate, a timeout,
+a revoke during execution, and the error preserved.
+
+Percentages are unchanged by this answer: reviewing a contract implements
+nothing. P1-5 stays NOT IMPLEMENTED in the matrix.
 
 ### P2 — ACCEPTANCE / HARDENING
 
