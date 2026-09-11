@@ -38,6 +38,20 @@ class Window:
         return timedelta(0) <= (now - created_at) <= timedelta(days=self.days)
 
 
+def _basis(sample, synthetic):
+    """What the observations actually were.
+
+    The local test executor produces real runs and real evidence, but it is a
+    diagnostic, not the field. A rate computed entirely from it is reported as
+    a diagnostic result, never as observed performance.
+    """
+    if not sample:
+        return "none"
+    if synthetic == sample:
+        return "diagnostic"
+    return "field" if not synthetic else "mixed"
+
+
 def _confidence(sample, passed):
     """Deliberately coarse: sample size first, agreement second.
 
@@ -93,6 +107,7 @@ def measure(service, context, *, subject_kind, subject_id, task_class, now, wind
     passed = sum(1 for proof in observations if proof.get("passed") is True)
     synthetic = sum(1 for proof in observations if proof.get("synthetic") is True)
     enough = sample >= MIN_SAMPLE
+    basis = _basis(sample, synthetic)
     return {
         "version": VERSION,
         "scope": scope_for(subject_kind),
@@ -101,6 +116,9 @@ def measure(service, context, *, subject_kind, subject_id, task_class, now, wind
         "sample_size": sample,
         "confidence": _confidence(sample, passed),
         "status": "measured" if enough else "new",
+        # Separate from `status`: a sample can be large enough to measure and
+        # still be nothing but diagnostics.
+        "basis": basis,
         "quality": {"passed": passed, "observed_pct": round(100.0 * passed / sample, 1) if enough else None},
         "evidence_refs": evidence_refs,
         # Anchored to the newest observation counted, not to the wall clock: the
@@ -115,8 +133,14 @@ def measure(service, context, *, subject_kind, subject_id, task_class, now, wind
             "measured_observations": sample - synthetic,
             "professional_quality_assessed": False,
         },
-        # Said plainly so a reader never has to infer it from a small number.
+        # Said plainly so a reader never has to infer it from a small number,
+        # or from a percentage that came entirely from the local diagnostic.
         "limitation": ("Недостаточно наблюдений для оценки." if not enough else
+                       "Все наблюдения получены локальным диагностическим исполнителем. "
+                       "Это результат диагностики, а не наблюдаемое качество работы."
+                       if basis == "diagnostic" else
+                       "Часть наблюдений получена локальным диагностическим исполнителем; "
+                       "доля указана в происхождении оценки." if basis == "mixed" else
                        "Наблюдаемая проверка формата ответа в этом классе задач, "
                        "не профессиональная оценка качества."),
     }

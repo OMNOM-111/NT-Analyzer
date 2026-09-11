@@ -228,3 +228,38 @@ def test_measuring_the_same_rows_twice_gives_the_same_answer(scopes):
     _observe(service, context, policy, subject=model_ref, passed=False)
     third = _measure(service, context, model_ref)
     assert third["sample_size"] == 4 and third != first
+
+
+def test_a_sample_of_only_diagnostics_is_not_reported_as_observed_performance(scopes):
+    """Four local test-executor runs are not a model scoring 100%.
+
+    The live walk produced exactly this: a green headline percentage off a
+    sample that was entirely synthetic. The rate is still computed — it is true
+    about the diagnostic — but the basis says what it is, and the limitation
+    says it in words.
+    """
+    service, context, policy, model_ref, _role_ref, _decision_ref = scopes
+    for _ in range(4):
+        _observe(service, context, policy, subject=model_ref, synthetic=True)
+
+    view = _measure(service, context, model_ref)
+    assert view["status"] == "measured" and view["sample_size"] == 4
+    assert view["basis"] == "diagnostic"
+    assert view["provenance"]["measured_observations"] == 0
+    assert "диагности" in view["limitation"]
+    assert "не наблюдаемое качество" in view["limitation"]
+
+
+def test_basis_separates_field_evidence_from_diagnostics_and_from_a_mixture(scopes):
+    service, context, policy, model_ref, role_ref, decision_ref = scopes
+    for _ in range(3):
+        _observe(service, context, policy, subject=model_ref)
+    assert _measure(service, context, model_ref)["basis"] == "field"
+
+    for _ in range(3):
+        _observe(service, context, policy, subject=role_ref, synthetic=True)
+    _observe(service, context, policy, subject=role_ref)
+    mixed = _measure(service, context, role_ref)
+    assert mixed["basis"] == "mixed" and mixed["provenance"]["synthetic_observations"] == 3
+
+    assert _measure(service, context, decision_ref)["basis"] == "none"
