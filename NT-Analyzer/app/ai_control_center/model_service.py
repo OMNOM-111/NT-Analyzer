@@ -638,6 +638,12 @@ class ModelService:
         self._ensure(context, Evaluation, _id(context, f"evaluation:{task.header.entity_id}"), correlation, policy,
             task=task.ref(), outcome=outcome.ref(), evidence=proof, subject=model.ref(),
             rubric_key=checkpoint["spec"]["rubric_key"])
+        # The same outcome is also evidence about the decision that authorised
+        # this execution — a different subject, in its own task class. It writes
+        # nothing when the execution failed on its own account.
+        from .decision_evaluation import record as record_decision
+        record_decision(self, context, task=task, checkpoint=checkpoint,
+                        execution=execution, outcome=outcome, provenance=provenance)
         waiting_for_application = bool(checkpoint.get("application_request") and evaluation["passed"])
         task = self._change(context, task, "waiting" if waiting_for_application else "succeeded" if evaluation["passed"] else "review")
         intent = self._get(context, EntityKind.INTENT, task.intent.entity_id)
@@ -1131,6 +1137,15 @@ class ModelService:
             view = scopes.measure(self, context, subject_kind=kind, subject_id=_uuid(identity),
                                   task_class=task_class, now=now)
             views[view["scope"]] = view
+        # The decision that authorised the work is a third subject, and it is
+        # measured in its own class: being asked a good question and making a
+        # good call are not the same thing, and this is what keeps the two
+        # numbers from ever being computed from the same rows.
+        from .decision_evaluation import RUBRIC as DECISION_RUBRIC
+        decision = scopes.measure(self, context, subject_kind=EntityKind.DECISION,
+                                  subject_id=_id(context, f"decision:{task.header.entity_id}"),
+                                  task_class=DECISION_RUBRIC, now=now)
+        views[decision["scope"]] = decision
         return views
 
     def reputation(self, *, context, subject_kind, subject_id, task_class, window_days=None):

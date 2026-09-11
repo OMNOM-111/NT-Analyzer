@@ -45,7 +45,7 @@
   const AVATAR_LABELS = Object.freeze({ vitek: 'Виктор', manager: 'Управляющий', marina: 'Марина', tolik: 'Толик', nikita: 'Никита', ivan: 'Иван' });
   const PERSONA_VOICE_PROFILES = Object.freeze({ ...AVATAR_LABELS, deputy: 'Заместитель', secretary: 'Секретарь' });
   const PERSONA_DEFAULTS = Object.freeze({ voice_profile_id: '', voice_mode: 'browser', voice_speed: 1, voice_language: 'ru-RU', animation_mode: 'auto', expression_preset: 'neutral', lip_sync_mode: 'auto' });
-  const RUBRIC_LABELS = Object.freeze({ connection_exact: 'Проверка соединения', json_arithmetic: 'Арифметика · JSON', extract_facts: 'Извлечение фактов', assistant_response: 'Ответ помощника · ручная проверка', court_vote: 'Голос Court', backtest_spec: 'План бэктеста', chart_spec: 'План графика', application_execution: 'Соответствие результата приложения', ninjatrader_historical_backtest: 'Исторический бэктест NinjaTrader', desktop_chart_snapshot: 'Снимок графика Рабочего стола' });
+  const RUBRIC_LABELS = Object.freeze({ connection_exact: 'Проверка соединения', json_arithmetic: 'Арифметика · JSON', extract_facts: 'Извлечение фактов', assistant_response: 'Ответ помощника · ручная проверка', court_vote: 'Голос Court', backtest_spec: 'План бэктеста', chart_spec: 'План графика', application_execution: 'Соответствие результата приложения', decision_outcome: 'Исход одобренного решения', ninjatrader_historical_backtest: 'Исторический бэктест NinjaTrader', desktop_chart_snapshot: 'Снимок графика Рабочего стола' });
 
   const phaseOf = task => PHASE_BY_DISPLAY[String(task && (task.display_status || task.status) || '').toLowerCase()] || 'awaiting_decision';
   const phaseLabel = task => PHASE_LABELS[phaseOf(task)] || 'Состояние не определено';

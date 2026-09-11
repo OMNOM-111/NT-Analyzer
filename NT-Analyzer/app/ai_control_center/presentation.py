@@ -64,6 +64,7 @@ RUBRIC_LABELS = MappingProxyType({
     "backtest_spec": "План бэктеста",
     "chart_spec": "План графика",
     "application_execution": "Соответствие результата приложения",
+    "decision_outcome": "Исход одобренного решения",
     # Emitted by the existing NinjaTrader and Desktop adapters.
     "ninjatrader_historical_backtest": "Исторический бэктест NinjaTrader",
     "desktop_chart_snapshot": "Снимок графика Рабочего стола",

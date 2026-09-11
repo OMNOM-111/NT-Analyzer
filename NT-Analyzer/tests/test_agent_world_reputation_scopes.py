@@ -182,8 +182,8 @@ def test_every_declared_scope_maps_to_exactly_one_subject_kind():
         assert reputation.scope_for(kind) == name
 
 
-def test_the_task_detail_carries_both_scopes_named_and_unmerged(setup):  # noqa: F811
-    """The API path a panel reads: two scopes, each saying whose it is."""
+def test_the_task_detail_carries_every_scope_named_and_unmerged(setup):  # noqa: F811
+    """The API path a panel reads: three scopes, each saying whose it is."""
     from app.ai_control_center import model_chat  # noqa: F401
     service, context = setup[0], setup[1]
     model = connected(setup, key="reputation-detail-model")
@@ -193,17 +193,24 @@ def test_the_task_detail_carries_both_scopes_named_and_unmerged(setup):  # noqa:
     detail = service.task_detail(context=context, task_id=pending["id"])
 
     views = detail["reputation"]
-    assert set(views) == {"model_performance", "agent_role_performance"}
+    assert set(views) == {"model_performance", "agent_role_performance", "decision_performance"}
+    kinds = {"model_performance": "model", "agent_role_performance": "agent_role",
+             "decision_performance": "decision"}
     for name, view in views.items():
         assert view["scope"] == name
-        assert view["subject"]["kind"] == ("model" if name == "model_performance" else "agent_role")
+        assert view["subject"]["kind"] == kinds[name]
         assert view["task_class"] and view["window"]["days"]
         assert view["provenance"]["professional_quality_assessed"] is False
         assert "confidence" in view and "sample_size" in view
-    # The two subjects are different records, so the scores cannot be the same
-    # measurement wearing two labels.
-    assert views["model_performance"]["subject"]["id"] != views["agent_role_performance"]["subject"]["id"]
-    # One observation is never enough in either scope.
+    # Three different records, so no score can be the same measurement wearing
+    # another label.
+    identities = [view["subject"]["id"] for view in views.values()]
+    assert len(set(identities)) == 3
+    # And the decision is not even measured in the same class, so its rows and
+    # the model's cannot meet however the filters are later changed.
+    assert views["decision_performance"]["task_class"] == "decision_outcome"
+    assert views["model_performance"]["task_class"] != "decision_outcome"
+    # One observation is never enough in any scope.
     assert all(view["status"] == "new" for view in views.values())
     assert all(view["quality"]["observed_pct"] is None for view in views.values())
 
