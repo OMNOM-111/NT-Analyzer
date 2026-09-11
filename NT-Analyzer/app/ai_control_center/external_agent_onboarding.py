@@ -124,14 +124,23 @@ class ExternalAgentOnboarding:
         self._access(context, "revoke")
         row = self._get(context, connection_id)
         if row.status == "revoked":
+            self._cleanup_credential(row)
             return row.public()
         if row.header.revision != expected_revision:
             raise ContractError("external_agent_revision_conflict")
         row = self._save(context, row.transition("revoked", now=datetime.now(timezone.utc)), expected_revision, idempotency_key)
         # Revoke first: no later task can use this connection even if deletion
         # fails. Remote cancellation needs an explicit host cleanup decision.
-        self.secrets.delete_secret(row.credential.key)
+        self._cleanup_credential(row)
         return row.public()
+
+    def _cleanup_credential(self, row):
+        # Retryable local cleanup only. Never contact the remote agent using
+        # revoked credentials, restore authority or write another revision.
+        try:
+            self.secrets.delete_secret(row.credential.key)
+        except Exception:
+            raise ContractError("external_agent_credential_cleanup_pending") from None
 
     def get(self, *, context, connection_id):
         return self._get(context, connection_id).public()

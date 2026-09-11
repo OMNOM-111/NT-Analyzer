@@ -93,6 +93,23 @@ missing user key. Existing PostgreSQL/CI/full-suite results do not cover this co
 
 ## Next operation / rollback
 
+### Revocation cleanup / uncertain dispatch checkpoint
+
+Retrying revoke now retries failed secure-store deletion while preserving the
+terminal revoked record. Secret-store errors become a safe cleanup-pending code,
+never raw provider/OS text. Cleanup makes no remote calls and cannot reactivate.
+Dispatch refreshes current authority and approved binding after durable claim and
+credential access. Added injected races at claim/secret access and timeout retry
+test: an uncertain first dispatch remains claimed and is not sent twice.
+Focused result: **79 passed / 0 failed / 0 skipped**, 15.37 s.
+
+Important boundary: host ports are still test doubles. An absolute cross-process
+dispatch/revoke linearization guarantee requires native atomic claim/lease ordering
+in the integrator-owned queue/repository. A last-moment recheck alone cannot make
+that guarantee. Remote work already transmitted is not claimed to have stopped.
+Credential rotation, background cleanup scheduling and native composition remain
+unwired; no temporary Evaluation, Model or second reputation format introduced.
+
 ### Bound cancellation checkpoint
 
 Added `ExternalAgentAdapter.cancel` using the same current admission, owner,

@@ -19,6 +19,8 @@
   shared ownership unchanged; await typed Evaluation/native kind integration SHA.
   Subsequent isolated protocol/role-ownership hardening: 70 focused tests passed.
   Next bound-cancel checkpoint: 75 passed; terminal-state preservation checked.
+  Subsequent cleanup: repeat revoke retries local secret deletion safely; dispatch
+  rechecks after claim/secret access. Native atomic ordering remains unwired.
   Native cleanup after revoke and API/worker composition still require integration.
 
 - Parallel P1-5 only: branch `codex/agent-world-external-agent-onboarding`, base

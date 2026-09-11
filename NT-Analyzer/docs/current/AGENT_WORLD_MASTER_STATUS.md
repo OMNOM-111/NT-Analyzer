@@ -451,6 +451,12 @@ Next independent checkpoint: bound adapter cancellation (same authority/spec/rem
 checks as polling), no fabricated cancellation success, test agent terminal-state
 preservation. Native cleanup after revoke remains unwired; no shared ownership changed.
 Cancellation checkpoint focused result: **75 passed / 0 failed / 0 skipped**, 13.37 s.
+Next independent cleanup checkpoint: failed local credential deletion leaves the
+connection revoked; repeated revoke retries deletion without another revision or
+remote call. Dispatch rechecks authority after claim/secret access. Native atomic
+dispatch/revoke ordering remains an integrator-owned requirement, not proven by
+port tests. Credential rotation and native cleanup scheduling remain unwired.
+Cleanup checkpoint focused result: **79 passed / 0 failed / 0 skipped**, 15.37 s.
 
 ```text
 Last safe commit: 437febf4 — pushed, CI green on all three jobs. Later commits

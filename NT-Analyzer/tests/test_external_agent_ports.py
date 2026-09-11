@@ -126,6 +126,55 @@ def execution(parts):
     return adapter, args, binding, live, row
 
 
+def test_revoke_cleanup_failure_stays_revoked_and_retry_removes_secret(agent):
+    parts = setup(agent[0]); service, store, secrets, context, *_ = parts
+    row = create_active(parts)
+    original = secrets.delete_secret
+    def fail(key): raise OSError(KEY)
+    secrets.delete_secret = fail
+    with pytest.raises(ContractError, match="credential_cleanup_pending") as error:
+        service.revoke(context=context, connection_id=row["id"], expected_revision=3, idempotency_key="cleanup")
+    assert KEY not in str(error.value)
+    assert store.records[row["id"]].status == "revoked"
+    assert secrets.values
+    secrets.delete_secret = original
+    before = len(agent[2])
+    result = service.revoke(context=context, connection_id=row["id"], expected_revision=3, idempotency_key="cleanup")
+    assert result["status"] == "revoked" and not secrets.values
+    assert len(store.history) == 4 and len(agent[2]) == before
+
+
+@pytest.mark.parametrize("phase", ["claim", "secret"])
+def test_revoke_during_dispatch_preparation_never_sends(agent, phase):
+    parts = setup(agent[0]); adapter, args, _, _, row = execution(parts)
+    def revoke():
+        parts[0].revoke(context=args["context"], connection_id=row["id"], expected_revision=3, idempotency_key="pre-send-revoke")
+    if phase == "claim":
+        original = adapter.claim_dispatch
+        def claim(**kw):
+            result = original(**kw); revoke(); return result
+        adapter.claim_dispatch = claim
+    else:
+        original = adapter.read_secret
+        def read(key):
+            result = original(key); revoke(); return result
+        adapter.read_secret = read
+    before = len(agent[2])
+    with pytest.raises(ContractError): adapter.send(**args)
+    assert len(agent[2]) == before
+
+
+def test_unknown_dispatch_outcome_does_not_allow_automatic_resend(agent):
+    parts = setup(agent[0]); adapter, args, _, _, _ = execution(parts)
+    calls = []
+    def unknown(*a, **kw):
+        calls.append(kw); raise ContractError("external_agent_outcome_unknown")
+    adapter.client.send = unknown
+    with pytest.raises(ContractError, match="outcome_unknown"): adapter.send(**args)
+    with pytest.raises(ContractError, match="dispatch_already_claimed"): adapter.send(**args)
+    assert len(calls) == 1
+
+
 def test_guarded_adapter_checks_result_not_model_quality_and_prevents_resend(agent):
     parts = setup(agent[0]); adapter, args, binding, _, row = execution(parts)
     sent = adapter.send(**args)

@@ -79,6 +79,9 @@ class ExternalAgentAdapter:
         if self.claim_dispatch(context=context, task=task, request_id=request_id) is not True:
             raise ContractError("external_agent_dispatch_already_claimed")
         secret = self.read_secret(connection.credential.key)
+        # Claim/credential access may yield; refresh after both before dispatch.
+        self._bound(**bound, expected_revision=connection.header.revision)
+        self._binding(context, task, connection, spec)
         result = self.client.send(connection.endpoint, secret, task_id=str(task.header.entity_id),
             intent_id=str(intent.header.entity_id), capability=capability, values=values, request_id=request_id)
         self._bound(**bound, expected_revision=connection.header.revision)
