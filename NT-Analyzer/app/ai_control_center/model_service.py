@@ -26,7 +26,7 @@ from .model_evaluation import (APPLICATION_RUBRIC, APPLICATION_SOURCES, RUBRICS,
 from . import presentation
 from .connection_protocol import CHAT_PROTOCOL, describe as describe_protocol, validate as validate_protocol
 from .repositories import PageRequest
-from .states import ContractError, EntityKind, INITIAL_STATES
+from .states import ContractError, EDITABLE_STATES, EntityKind, INITIAL_STATES
 
 
 _NS = UUID("34a15c32-6b28-514e-b14d-bda987c95882")
@@ -901,11 +901,12 @@ class ModelService:
         acceptance = self._json(context, intent.acceptance)
         spec = checkpoint.get("spec") or {}
         rubric = (acceptance.get("rubric") or {}).get("rubric_key") or spec.get("rubric_key")
-        # Amendment is only honest while nothing has been sent and the task has
-        # not started: after that the deadline no longer describes the future.
-        amendable = (task.status in {"planned", "ready"} and not receipt
-                     and not checkpoint.get("enqueue_rejected") and intent.status in {"draft", "ready"})
-        actions = (["amend_intent"] if amendable else []) + (["cancel"] if task.status in _ACTIVE else [])
+        # An Intent is editable only while it is a draft, and a task's Intent
+        # leaves that state the moment the task exists. Nothing here offers to
+        # change it: what was asked for is bound to the request hash, and a
+        # different request is a new one. Stopping it is the action that exists.
+        amendable = intent.status in EDITABLE_STATES[EntityKind.INTENT]
+        actions = ["cancel"] if task.status in _ACTIVE else []
         return {
             "id": str(intent.header.entity_id), "revision": intent.header.revision,
             "status": intent.status,
@@ -927,43 +928,6 @@ class ModelService:
             "amendable": amendable, "actions": actions,
             "created_at": intent.header.created_at.isoformat(),
             "updated_at": intent.header.updated_at.isoformat()}
-
-    def amend_intent(self, *, context, task_id, payload, expected_revision=None):
-        """Extend the deadline as a new Intent revision. History is kept.
-
-        What was asked for is not editable: its hash binds the request, the
-        receipt and the evidence together. Changing it is a new request, which
-        is exactly what a refused one is told to do.
-        """
-        self._access(context, "write")
-        if type(payload) is not dict or set(payload) != {"deadline"}:
-            raise ContractError("intent_amendment_invalid")
-        task = self._get(context, EntityKind.TASK, task_id)
-        checkpoint = self._json(context, task.checkpoint)
-        if checkpoint.get("source") != "real_model_task":
-            raise ContractError("model_task_not_found")
-        receipt = self._json(context, checkpoint["receipt"]) if checkpoint.get("receipt") else {}
-        if not (task.status in {"planned", "ready"} and not receipt
-                and not checkpoint.get("enqueue_rejected")):
-            raise ContractError("intent_not_amendable")
-        intent = self._get(context, EntityKind.INTENT, task.intent.entity_id)
-        if expected_revision is not None and int(expected_revision) != intent.header.revision:
-            raise ContractError("revision_conflict")
-        try:
-            deadline = datetime.fromisoformat(str(payload["deadline"]).replace("Z", "+00:00"))
-        except (TypeError, ValueError):
-            raise ContractError("intent_amendment_invalid") from None
-        if deadline.tzinfo is None:
-            raise ContractError("intent_amendment_invalid")
-        now = _now()
-        if not now < deadline <= now + timedelta(hours=24):
-            raise ContractError("intent_deadline_out_of_range")
-        with _LOCK:
-            current = self._get(context, EntityKind.INTENT, task.intent.entity_id)
-            if current.header.revision != intent.header.revision:
-                raise ContractError("revision_conflict")
-            self._change(context, current, deadline=deadline)
-        return self.task_detail(context=context, task_id=task_id)
 
     def task_detail(self, *, context, task_id):
         self._access(context)

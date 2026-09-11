@@ -1049,9 +1049,6 @@ def mutate(authorized, domain, identity, action, body):
             return model_chat.start(authorized, service, identity, payload, key, test=action == "test")
         if action == "disconnect" and not payload:
             return service.disconnect(context=context, model_id=identity)
-    elif domain in {"model_tasks", "tasks"} and action == "amend_intent":
-        return service.amend_intent(context=context, task_id=identity, payload=payload,
-                                    expected_revision=body.get("expected_revision"))
     elif domain in {"model_tasks", "tasks"} and action == "handoff":
         if set(payload) != {"target_model_id"}:
             raise ContractError("invalid_domain_request")

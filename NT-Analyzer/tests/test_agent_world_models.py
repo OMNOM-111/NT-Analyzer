@@ -957,55 +957,47 @@ def test_the_intent_a_task_came_from_is_visible_before_anything_runs(setup):
     detail = service.task_detail(context=ctx, task_id=pending["id"])
     intent = detail["intent"]
 
-    assert intent["status"] in {"draft", "ready"} and intent["revision"] >= 1
+    assert intent["status"] and intent["revision"] >= 1
     assert intent["goal"]["text"] and intent["goal"]["request"] is not None
     assert intent["constraints"]["risk"] == "low"
     assert intent["constraints"]["deadline"] and intent["constraints"]["budget_key"]
     assert intent["required_evidence"]["verified_by"] == "independent_local_evidence_verifier"
     assert intent["approval_mode"] == "advice"
     assert intent["scope"]["workspace_id"] == ctx.scope.workspace_id
-    # Before anything is sent, both actions are offered.
-    assert intent["amendable"] is True
-    assert "amend_intent" in intent["actions"] and "cancel" in intent["actions"]
+    # Stopping is the only pre-execution action; editing is not on offer.
+    assert intent["actions"] == ["cancel"]
 
 
-def test_the_deadline_can_be_extended_as_a_new_revision_keeping_the_old_one(setup):
-    from datetime import datetime, timedelta, timezone
+def test_the_intent_is_immutable_once_the_task_exists(setup):
+    """The contract allows editing an Intent only while it is a draft.
+
+    `start_task` walks it to `ready` at once, so a task's Intent has no editable
+    window at all. That is the rule rather than an oversight: the request hash
+    binds the request, the receipt and the evidence together, so changing what
+    was asked for would invalidate evidence already gathered against it. The
+    panel must never offer an edit, and the store must refuse one.
+    """
+    from datetime import timedelta
+    from app.ai_control_center.states import EDITABLE_STATES
 
     service, ctx, *_ = setup
     model = connected(setup)
-    pending = task(setup, model, key="intent-amend")
-    before = service.task_detail(context=ctx, task_id=pending["id"])["intent"]
-    later = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat()
+    pending = task(setup, model, key="intent-immutable")
+    detail = service.task_detail(context=ctx, task_id=pending["id"])
+    record = service._get(ctx, EntityKind.INTENT, UUID(detail["intent"]["id"]))
 
-    after = service.amend_intent(context=ctx, task_id=pending["id"], payload={"deadline": later},
-                                 expected_revision=before["revision"])["intent"]
-    assert after["revision"] == before["revision"] + 1
-    assert after["constraints"]["deadline"] != before["constraints"]["deadline"]
-    # The earlier revision is still readable: an amendment is not a rewrite.
-    from app.ai_control_center.states import EntityKind
-    old = service.repository.get_revision(context=ctx, kind=EntityKind.INTENT,
-        entity_id=UUID(before["id"]), revision=before["revision"])
-    assert old is not None and old.deadline.isoformat() == before["constraints"]["deadline"]
+    assert EDITABLE_STATES[EntityKind.INTENT] == frozenset({"draft"})
+    assert record.status == "ready" and record.status not in EDITABLE_STATES[EntityKind.INTENT]
+    assert detail["intent"]["amendable"] is False
 
-
-@pytest.mark.parametrize("payload, code", [
-    ({}, "intent_amendment_invalid"),
-    ({"goal": "something else"}, "intent_amendment_invalid"),
-    ({"deadline": "not-a-time"}, "intent_amendment_invalid"),
-    ({"deadline": "2020-01-01T00:00:00+00:00"}, "intent_deadline_out_of_range"),
-])
-def test_an_amendment_cannot_change_what_was_asked_for(setup, payload, code):
-    """The request hash binds request, receipt and evidence. Only time moves."""
-    service, ctx, *_ = setup
-    model = connected(setup)
-    pending = task(setup, model, key="intent-amend-refused")
+    # Refused by the store itself, not only hidden by the view.
     with pytest.raises(ContractError) as refused:
-        service.amend_intent(context=ctx, task_id=pending["id"], payload=payload)
-    assert refused.value.code == code
+        service._change(ctx, record, deadline=record.deadline + timedelta(hours=2))
+    assert refused.value.code == "finalized_record_immutable"
 
 
-def test_an_intent_stops_being_amendable_once_the_answer_exists(setup):
+def test_a_finished_task_offers_no_intent_action_at_all(setup):
+    """Once an answer exists there is nothing left to stop either."""
     service, ctx, *_ = setup
     model = connected(setup)
     pending = task(setup, model, key="intent-after-result")
@@ -1013,9 +1005,4 @@ def test_an_intent_stops_being_amendable_once_the_answer_exists(setup):
     detail = service.task_detail(context=ctx, task_id=pending["id"])
 
     assert detail["intent"]["amendable"] is False
-    assert "amend_intent" not in detail["intent"]["actions"]
-    from datetime import datetime, timedelta, timezone
-    with pytest.raises(ContractError) as refused:
-        service.amend_intent(context=ctx, task_id=pending["id"],
-            payload={"deadline": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()})
-    assert refused.value.code == "intent_not_amendable"
+    assert detail["intent"]["actions"] == []
