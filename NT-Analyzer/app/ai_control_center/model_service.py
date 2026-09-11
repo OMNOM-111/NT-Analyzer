@@ -1065,6 +1065,7 @@ class ModelService:
         return {"task": task_dto, **task_dto, "result_text": result_text,
             "actual_model": receipt.get("actual_model"), "evaluation": evidence,
             "intent": self.intent_view(context, task, checkpoint, receipt),
+            "reputation": self.task_reputation(context, task, checkpoint),
             "executor": receipt.get("executor"), "external_call": receipt.get("external_call"),
             "application_evaluation": application_evaluation,
             "evaluations": ([evidence] if evidence else []) + ([application_evaluation] if application_evaluation else []),
@@ -1110,6 +1111,40 @@ class ModelService:
         return {"enabled": True, "items": rows[:100], "total": len(rows), "actions": [],
                 "truncated": len(rows) > 100, "limitations": []}
 
+    def task_reputation(self, context, task, checkpoint):
+        """Both scopes this task contributed to, named rather than merged.
+
+        The model that answered and the role it answered under are different
+        subjects with different histories. Returning them side by side, each
+        carrying its own scope name, is what stops one being read as the other.
+        """
+        from . import reputation as scopes
+        task_class = (checkpoint.get("spec") or {}).get("rubric_key")
+        if not task_class:
+            return {}
+        now = _now()
+        views = {}
+        for kind, identity in ((EntityKind.MODEL, checkpoint.get("model_id")),
+                               (EntityKind.AGENT_ROLE, task.role.entity_id)):
+            if not identity:
+                continue
+            view = scopes.measure(self, context, subject_kind=kind, subject_id=_uuid(identity),
+                                  task_class=task_class, now=now)
+            views[view["scope"]] = view
+        return views
+
+    def reputation(self, *, context, subject_kind, subject_id, task_class, window_days=None):
+        """One scope's measurement. Scopes are never summed or blended.
+
+        Exposed per subject kind on purpose: asking for "the score" of something
+        without saying which scope is the question this split exists to stop.
+        """
+        from . import reputation as scopes
+        self._access(context)
+        window = scopes.Window(int(window_days)) if window_days else scopes.Window()
+        return scopes.measure(self, context, subject_kind=subject_kind, subject_id=subject_id,
+                              task_class=task_class, now=_now(), window=window)
+
     def evaluations(self, *, context, model_id, rubric_key="json_arithmetic"):
         self._access(context)
         model = self._get(context, EntityKind.MODEL, model_id)
@@ -1118,7 +1153,9 @@ class ModelService:
             # response or unavailable application artifact cannot earn credit.
             observations = []
             for row in self._all(context, EntityKind.EVALUATION):
-                if row.model.entity_id == model.header.entity_id and row.rubric_key == APPLICATION_RUBRIC:
+                if (row.subject.kind is EntityKind.MODEL
+                        and row.subject.entity_id == model.header.entity_id
+                        and row.rubric_key == APPLICATION_RUBRIC):
                     detail = self.task_detail(context=context, task_id=row.task.entity_id)
                     proof = detail.get("application_evaluation")
                     if proof is not None:
@@ -1128,7 +1165,11 @@ class ModelService:
             return application_reputation(observations)
         observations = []
         for row in self._all(context, EntityKind.EVALUATION):
-            if row.model.entity_id != model.header.entity_id or row.rubric_key != rubric_key:
+            # Model performance counts model-subject evaluations only. A role
+            # or decision evaluation is a different scope, not a missing one.
+            if (row.subject.kind is not EntityKind.MODEL
+                    or row.subject.entity_id != model.header.entity_id
+                    or row.rubric_key != rubric_key):
                 continue
             task = self._get(context, EntityKind.TASK, row.task.entity_id)
             checkpoint = self._json(context, task.checkpoint)

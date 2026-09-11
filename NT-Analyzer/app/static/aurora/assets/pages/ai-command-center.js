@@ -928,6 +928,49 @@
     const RISK_LABELS = Object.freeze({ low: 'низкий', moderate: 'умеренный', high: 'высокий', critical: 'критический' });
     const APPROVAL_LABELS = Object.freeze({ advice: 'только совет, исполнение не разрешено', draft: 'черновик',
       reversible_execution: 'обратимое исполнение', approval_required: 'требуется подтверждение', forbidden: 'запрещено' });
+    const SCOPE_LABELS = Object.freeze({
+      model_performance: 'Модель',
+      agent_role_performance: 'Рабочая роль',
+      decision_performance: 'Решение',
+    });
+    const CONFIDENCE_LABELS = Object.freeze({ insufficient: 'недостаточно данных', low: 'низкая',
+      medium: 'средняя', high: 'высокая' });
+    function reputationPanel(views) {
+      // One card per scope. They are never summed, never averaged and never
+      // relabelled: a model's observed rate is not the role's, and the heading
+      // of each card says which subject the number below it belongs to.
+      const scopes = Object.values(views || {}).filter(view => view && view.scope);
+      if (!scopes.length) return '';
+      const cards = scopes.map(view => {
+        const quality = view.quality || {}, provenance = view.provenance || {}, window = view.window || {};
+        const measured = view.status === 'measured' && number(quality.observed_pct) != null;
+        return `<article class="aw-domain-card"><div class="aw-domain-card-head">`
+          + `<strong>${esc(SCOPE_LABELS[view.scope] || view.scope)}</strong>`
+          + `${measured ? `<span class="aw-status aw-good">${esc(pct(quality.observed_pct))}</span>`
+                        : '<span class="aw-status aw-neutral">NEW · недостаточно данных</span>'}</div>`
+          + `<dl class="aw-detail-grid">`
+          + `<div><dt>Субъект оценки</dt><dd>${esc(SCOPE_LABELS[view.scope] || '')} · <span class="aw-hash">${esc(String((view.subject || {}).id || '').slice(0, 8))}</span></dd></div>`
+          + `<div><dt>Класс задачи</dt><dd>${esc(rubricLabel(view.task_class) || view.task_class || '')}</dd></div>`
+          + `<div><dt>Наблюдений</dt><dd>${count(view.sample_size)}</dd></div>`
+          + `<div><dt>Уверенность</dt><dd>${esc(CONFIDENCE_LABELS[view.confidence] || view.confidence || '')}</dd></div>`
+          + `<div><dt>Доказательства</dt><dd>${count(rows(view.evidence_refs).length)} записей</dd></div>`
+          + `<div><dt>Окно измерения</dt><dd>${count(window.days)} дн. до ${esc(date(window.until))}</dd></div>`
+          + `</dl>`
+          + `<p class="aw-field-hint">${esc(view.limitation || '')}</p>`
+          + `<details class="aw-technical"><summary>Происхождение оценки</summary><pre>${esc(publicJSON({
+              scope: view.scope, subject: view.subject, task_class: view.task_class,
+              evaluator: provenance.evaluator, self_scored: provenance.self_scored,
+              synthetic_observations: provenance.synthetic_observations,
+              measured_observations: provenance.measured_observations,
+              professional_quality_assessed: provenance.professional_quality_assessed,
+              evidence_refs: rows(view.evidence_refs).slice(0, 5),
+            }))}</pre></details></article>`;
+      }).join('');
+      return `<section class="aw-detail-section"><h3>Наблюдаемые оценки</h3>`
+        + `<p class="aw-field-hint">Каждая оценка относится к своему субъекту и классу задач. `
+        + `Оценка модели не является оценкой рабочей роли, и наоборот; они не складываются.</p>`
+        + `<div class="aw-domain-grid">${cards}</div></section>`;
+    }
     function intentPanel(intent) {
       // Everything here is the server's own Intent record. The panel neither
       // recomputes a state nor decides whether the work may proceed.
@@ -1310,6 +1353,7 @@
       else body = detailRows(rows(detail.errors), task.status === 'failed' ? 'Подробности ошибки не опубликованы.' : 'Зарегистрированных ошибок нет.');
       if (detailTab === 'summary' && detail.result_text) body += `<details class="aw-technical"><summary>Полный ответ и технические данные</summary><pre>${esc(detail.result_text)}</pre></details>`;
       if (detailTab === 'summary') body += intentPanel(detail.intent);
+      if (detailTab === 'evaluations') body += reputationPanel(detail.reputation);
       if (detailTab === 'summary') body += transportVerificationNote(task);
       if (detailTab === 'summary' && task.source_kind === 'real_model_response') body += `<section class="aw-detail-section"><h3>Исполнитель и происхождение результата</h3><dl class="aw-detail-grid"><div><dt>Запрошенная модель</dt><dd>${esc(task.model || 'Не предоставлена')}</dd></div><div><dt>Model ID от провайдера</dt><dd>${esc(detail.actual_model || 'Не предоставлен')}</dd></div><div><dt>Провайдер</dt><dd>${detail.external_call === false ? esc((task.provider || 'провайдер') + ' — не вызывался') : esc(task.provider || 'Не предоставлен')}</dd></div>${detail.executor ? `<div><dt>Ответ получен от</dt><dd>${esc(detail.executor)}</dd></div>` : ''}</dl>${detail.external_call === false ? '<p class="aw-note">Ответ вычислен локально: внешнее обращение не выполнялось, поэтому этот результат ничего не говорит о доступности провайдера.</p>' : ''}<details class="aw-technical"><summary>Связанные записи</summary>${['intent_id', 'execution_id', 'contribution_id', 'outcome_id', 'evaluation_id', 'conversation_id', 'message_id'].filter(key => task[key]).map(key => `<div class="aw-hash">${esc(key.toUpperCase())} ${esc(task[key])}</div>`).join('')}</details></section>`;
       if (detailTab === 'summary' && detail.graph) {
