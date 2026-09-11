@@ -19,13 +19,14 @@ CURRENT OWNER ACCEPTANCE READINESS: 66%
 CURRENT INTEGRATION BRANCH: codex/agent-world-unified-acceptance
 CURRENT INTEGRATION SHA: 84ddb2e7 — P1-3 complete. Full regression at b06c5f55 (the commit
   before the honesty fix): 5493 passed / 0 failed / 117 skipped, 1:31:06.
-  At 84ddb2e7: CI run 34641854998 — Static gates and Tests (ubuntu-latest) SUCCESS;
-  Tests (windows-self-hosted) still running at the time of writing. A local full run at
-  84ddb2e7 was started and then STOPPED ON PURPOSE at 10%: the self-hosted Windows runner
-  is this same machine, so the two were competing for it and both crawled. CI's Windows leg
-  IS the full suite on this box; the local duplicate bought nothing. Its log,
+  At 84ddb2e7: CI run 34641854998 SUCCESS on all three jobs — Static gates;
+  Tests (ubuntu-latest) 5502 passed / 0 failed / 116 skipped, 17:32;
+  Tests (windows-self-hosted) 5499 passed / 0 failed / 119 skipped, 1:40:53.
+  A local full run at 84ddb2e7 was started and then STOPPED ON PURPOSE at 10%: the
+  self-hosted Windows runner is this same machine, so the two were competing for it and
+  both crawled. CI's Windows leg IS the full suite on this box. Its log,
   scratchpad/full_84ddb2e7.txt, ends mid-run with zero failures — that is a kill, not a
-  red result. Read the CI run for the verdict.
+  red result.
 CURRENT WIP: clean
 CURRENT LOCAL 8765 SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (not switched, not restarted)
 CURRENT ACCEPTANCE INSTANCE: http://127.0.0.1:8809/ui/ai-command-center.html — SHA 84ddb2e7,
@@ -404,7 +405,8 @@ Target truth: An ordinary user connects an external agent, it does bounded work,
 Evidence required: the native end-to-end route below
 Owner action required: YES for accepting the protocol into scope
 Assigned to: P1-5 executor (contracts), integrator (shared seams)
-Status: UNBLOCKED at 84ddb2e7 — the typed Evaluation subject is delivered.
+Status: UNBLOCKED at 84ddb2e7 — the typed Evaluation subject is delivered,
+        and CI 34641854998 is green on all three jobs at that SHA.
         Integration SHA for the executor: 84ddb2e7.
         `EXTERNAL_AGENT_CONNECTION` добавляется атомарно при интеграции P1-5:
         enum + record + states + codec + Evaluation subject allowlist.
@@ -535,8 +537,7 @@ Active processes:
   :8804      - 92d873e3, holds the historical stuck task ef1b1052.
   Stop any of the last four only deliberately; none of them touches owner data.
 
-Tests currently running: CI 34641854998 only — its Windows leg is the full regression
-at 84ddb2e7. The local duplicate was stopped deliberately; see the header block.
+Tests currently running: none. CI 34641854998 is green on all three jobs at 84ddb2e7.
 
 Known failures: none at 84ddb2e7 in any suite run so far.
 
@@ -547,10 +548,9 @@ Do not touch:
   - deploy/testing/acceptance.env or any generated DSN - never into Git
 
 Exact next action:
-  1. Read CI 34641854998. Static gates and ubuntu are already green; if the
-     Windows leg is green too, the P1-3 evidence is complete. Do not start a
-     local full regression while a self-hosted CI job is running — they share
-     this machine and each roughly doubles the other's wall time.
+  1. DONE - CI 34641854998 green on all three jobs. P1-3 evidence is complete.
+     Do not start a local full regression while a self-hosted CI job is running:
+     they share this machine and each roughly doubles the other's wall time.
   2. DONE - the browser pass on :8809. Both panels were read from the live DOM.
      Note for anyone driving this page from the in-app browser tool: its
      coordinate clicks do not land on the inspector's drawer tabs - the tool
