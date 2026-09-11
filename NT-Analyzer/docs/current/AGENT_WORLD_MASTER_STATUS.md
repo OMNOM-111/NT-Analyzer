@@ -18,9 +18,14 @@ CURRENT OWNER ACCEPTANCE READINESS: 66%
 
 CURRENT INTEGRATION BRANCH: codex/agent-world-unified-acceptance
 CURRENT INTEGRATION SHA: 84ddb2e7 — P1-3 complete. Full regression at b06c5f55 (the commit
-  before the honesty fix): 5493 passed / 0 failed / 117 skipped, 1:31:06. Full regression at
-  84ddb2e7 itself is running; CI dispatched as run 34641854998. Do not call 84ddb2e7 verified
-  until both land.
+  before the honesty fix): 5493 passed / 0 failed / 117 skipped, 1:31:06.
+  At 84ddb2e7: CI run 34641854998 — Static gates and Tests (ubuntu-latest) SUCCESS;
+  Tests (windows-self-hosted) still running at the time of writing. A local full run at
+  84ddb2e7 was started and then STOPPED ON PURPOSE at 10%: the self-hosted Windows runner
+  is this same machine, so the two were competing for it and both crawled. CI's Windows leg
+  IS the full suite on this box; the local duplicate bought nothing. Its log,
+  scratchpad/full_84ddb2e7.txt, ends mid-run with zero failures — that is a kill, not a
+  red result. Read the CI run for the verdict.
 CURRENT WIP: clean
 CURRENT LOCAL 8765 SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (not switched, not restarted)
 CURRENT ACCEPTANCE INSTANCE: http://127.0.0.1:8809/ui/ai-command-center.html — SHA 84ddb2e7,
@@ -530,7 +535,8 @@ Active processes:
   :8804      - 92d873e3, holds the historical stuck task ef1b1052.
   Stop any of the last four only deliberately; none of them touches owner data.
 
-Tests currently running: the full regression at 84ddb2e7, and CI 34641854998.
+Tests currently running: CI 34641854998 only — its Windows leg is the full regression
+at 84ddb2e7. The local duplicate was stopped deliberately; see the header block.
 
 Known failures: none at 84ddb2e7 in any suite run so far.
 
@@ -541,7 +547,10 @@ Do not touch:
   - deploy/testing/acceptance.env or any generated DSN - never into Git
 
 Exact next action:
-  1. Read the two runs above. If both are green, the P1-3 evidence is complete.
+  1. Read CI 34641854998. Static gates and ubuntu are already green; if the
+     Windows leg is green too, the P1-3 evidence is complete. Do not start a
+     local full regression while a self-hosted CI job is running — they share
+     this machine and each roughly doubles the other's wall time.
   2. DONE - the browser pass on :8809. Both panels were read from the live DOM.
      Note for anyone driving this page from the in-app browser tool: its
      coordinate clicks do not land on the inspector's drawer tabs - the tool
