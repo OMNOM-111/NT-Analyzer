@@ -947,3 +947,62 @@ def test_a_real_provider_answer_carries_no_local_executor(setup):
     assert detail["actual_model"] == "served-model"
     assert detail["executor"] is None
     assert detail["external_call"] is None
+
+
+def test_the_intent_a_task_came_from_is_visible_before_anything_runs(setup):
+    """Six things a person needs before work starts, none of them recomputed."""
+    service, ctx, *_ = setup
+    model = connected(setup)
+    pending = task(setup, model, key="intent-visible")
+    detail = service.task_detail(context=ctx, task_id=pending["id"])
+    intent = detail["intent"]
+
+    assert intent["status"] and intent["revision"] >= 1
+    assert intent["goal"]["text"] and intent["goal"]["request"] is not None
+    assert intent["constraints"]["risk"] == "low"
+    assert intent["constraints"]["deadline"] and intent["constraints"]["budget_key"]
+    assert intent["required_evidence"]["verified_by"] == "independent_local_evidence_verifier"
+    assert intent["approval_mode"] == "advice"
+    assert intent["scope"]["workspace_id"] == ctx.scope.workspace_id
+    # Stopping is the only pre-execution action; editing is not on offer.
+    assert intent["actions"] == ["cancel"]
+
+
+def test_the_intent_is_immutable_once_the_task_exists(setup):
+    """The contract allows editing an Intent only while it is a draft.
+
+    `start_task` walks it to `ready` at once, so a task's Intent has no editable
+    window at all. That is the rule rather than an oversight: the request hash
+    binds the request, the receipt and the evidence together, so changing what
+    was asked for would invalidate evidence already gathered against it. The
+    panel must never offer an edit, and the store must refuse one.
+    """
+    from datetime import timedelta
+    from app.ai_control_center.states import EDITABLE_STATES
+
+    service, ctx, *_ = setup
+    model = connected(setup)
+    pending = task(setup, model, key="intent-immutable")
+    detail = service.task_detail(context=ctx, task_id=pending["id"])
+    record = service._get(ctx, EntityKind.INTENT, UUID(detail["intent"]["id"]))
+
+    assert EDITABLE_STATES[EntityKind.INTENT] == frozenset({"draft"})
+    assert record.status == "ready" and record.status not in EDITABLE_STATES[EntityKind.INTENT]
+    assert detail["intent"]["amendable"] is False
+
+    # Refused by the store itself, not only hidden by the view.
+    with pytest.raises(ContractError) as refused:
+        service._change(ctx, record, deadline=record.deadline + timedelta(hours=2))
+    assert refused.value.code == "finalized_record_immutable"
+
+
+def test_a_finished_task_offers_no_intent_action_at_all(setup):
+    """Once an answer exists there is nothing left to stop either."""
+    service, ctx, *_ = setup
+    model = connected(setup)
+    pending = task(setup, model, key="intent-after-result")
+    service.execute(context=ctx, task_id=pending["id"])
+    detail = service.task_detail(context=ctx, task_id=pending["id"])
+
+    assert detail["intent"]["amendable"] is False
+    assert detail["intent"]["actions"] == []

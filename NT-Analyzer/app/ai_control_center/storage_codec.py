@@ -16,6 +16,7 @@ from uuid import UUID
 from . import contracts as c
 from .domain_contracts import CalendarItem, CourtCase, CourtVote, Routine, StrategyProject
 from .model_contracts import Evaluation
+from .external_agent_contracts import ExternalAgentConnection
 from .events import EventEnvelope
 from .states import ContractError, EntityKind
 
@@ -23,7 +24,7 @@ from .states import ContractError, EntityKind
 _RECORD_TYPES = {cls.KIND: cls for cls in (
     c.Persona, c.AgentRole, c.ProviderAccount, c.Model, c.Intent, c.Task,
     c.Contribution, c.Decision, c.Execution, c.Outcome, c.Memory,
-    StrategyProject, Routine, CalendarItem, CourtCase, CourtVote, Evaluation,
+    StrategyProject, Routine, CalendarItem, CourtCase, CourtVote, Evaluation, ExternalAgentConnection,
 )}
 MAX_RECORD_BYTES = 256 * 1024
 
@@ -105,7 +106,12 @@ def decode_record(raw: str) -> c.Record:
         value = _parse(raw)
         if type(value) is not dict:
             raise ContractError("stored_contract_invalid")
-        cls = _RECORD_TYPES[EntityKind(value.pop("kind"))]
+        kind = EntityKind(value.pop("kind"))
+        cls = _RECORD_TYPES[kind]
+        if kind is EntityKind.EVALUATION and "model" in value and "subject" not in value:
+            # Written before an evaluation could name anything but a Model.
+            # The bytes on disk are left alone; only this reading maps them.
+            value["subject"] = value.pop("model")
         return _decode(cls, value)
     except (ValueError, TypeError, KeyError, RecursionError) as exc:
         raise ContractError("stored_contract_invalid") from exc

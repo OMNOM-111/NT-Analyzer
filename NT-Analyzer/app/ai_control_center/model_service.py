@@ -26,7 +26,7 @@ from .model_evaluation import (APPLICATION_RUBRIC, APPLICATION_SOURCES, RUBRICS,
 from . import presentation
 from .connection_protocol import CHAT_PROTOCOL, describe as describe_protocol, validate as validate_protocol
 from .repositories import PageRequest
-from .states import ContractError, EntityKind, INITIAL_STATES
+from .states import ContractError, EDITABLE_STATES, EntityKind, INITIAL_STATES
 
 
 _NS = UUID("34a15c32-6b28-514e-b14d-bda987c95882")
@@ -636,7 +636,8 @@ class ModelService:
         if outcome.status == "pending":
             outcome = self._change(context, outcome, "verified" if evaluation["passed"] else "disputed", verification=proof)
         self._ensure(context, Evaluation, _id(context, f"evaluation:{task.header.entity_id}"), correlation, policy,
-            task=task.ref(), outcome=outcome.ref(), evidence=proof, model=model.ref(), rubric_key=checkpoint["spec"]["rubric_key"])
+            task=task.ref(), outcome=outcome.ref(), evidence=proof, subject=model.ref(),
+            rubric_key=checkpoint["spec"]["rubric_key"])
         waiting_for_application = bool(checkpoint.get("application_request") and evaluation["passed"])
         task = self._change(context, task, "waiting" if waiting_for_application else "succeeded" if evaluation["passed"] else "review")
         intent = self._get(context, EntityKind.INTENT, task.intent.entity_id)
@@ -891,6 +892,44 @@ class ModelService:
                 self._change(context, intent, "cancelled")
         return self.task_detail(context=context, task_id=task.header.entity_id)
 
+    def intent_view(self, context, task, checkpoint, receipt):
+        """What the person was committed to, beside what came back.
+
+        Read-only. Every field already existed on the Intent record; none of it
+        is recomputed here, and nothing about the task's state is decided by it.
+        """
+        intent = self._get(context, EntityKind.INTENT, task.intent.entity_id)
+        acceptance = self._json(context, intent.acceptance)
+        spec = checkpoint.get("spec") or {}
+        rubric = (acceptance.get("rubric") or {}).get("rubric_key") or spec.get("rubric_key")
+        # An Intent is editable only while it is a draft, and a task's Intent
+        # leaves that state the moment the task exists. Nothing here offers to
+        # change it: what was asked for is bound to the request hash, and a
+        # different request is a new one. Stopping it is the action that exists.
+        amendable = intent.status in EDITABLE_STATES[EntityKind.INTENT]
+        actions = ["cancel"] if task.status in _ACTIVE else []
+        return {
+            "id": str(intent.header.entity_id), "revision": intent.header.revision,
+            "status": intent.status,
+            "goal": {"text": presentation.rubric_label(rubric),
+                     "request": spec.get("input"),
+                     "persona_name": checkpoint.get("persona_name"),
+                     "conversation_id": checkpoint.get("conversation_id"),
+                     "message_id": checkpoint.get("message_id")},
+            "constraints": {"risk": intent.risk.value, "deadline": intent.deadline.isoformat(),
+                            "budget_key": intent.budget.key,
+                            "max_output_tokens": 512},
+            "required_evidence": {"rubric_key": rubric,
+                                  "rubric_label": presentation.rubric_label(rubric),
+                                  "verified_by": "independent_local_evidence_verifier",
+                                  "human_review": "separate decision, never a quality claim"},
+            "approval_mode": intent.autonomy.value,
+            "scope": {"workspace_id": context.scope.workspace_id,
+                      "environment": context.scope.environment.value},
+            "amendable": amendable, "actions": actions,
+            "created_at": intent.header.created_at.isoformat(),
+            "updated_at": intent.header.updated_at.isoformat()}
+
     def task_detail(self, *, context, task_id):
         self._access(context)
         task = self._get(context, EntityKind.TASK, task_id)
@@ -1025,6 +1064,8 @@ class ModelService:
         task_dto["progress_pct"] = presentation.progress_pct(task_dto["display_status"])
         return {"task": task_dto, **task_dto, "result_text": result_text,
             "actual_model": receipt.get("actual_model"), "evaluation": evidence,
+            "intent": self.intent_view(context, task, checkpoint, receipt),
+            "reputation": self.task_reputation(context, task, checkpoint),
             "executor": receipt.get("executor"), "external_call": receipt.get("external_call"),
             "application_evaluation": application_evaluation,
             "evaluations": ([evidence] if evidence else []) + ([application_evaluation] if application_evaluation else []),
@@ -1070,6 +1111,40 @@ class ModelService:
         return {"enabled": True, "items": rows[:100], "total": len(rows), "actions": [],
                 "truncated": len(rows) > 100, "limitations": []}
 
+    def task_reputation(self, context, task, checkpoint):
+        """Both scopes this task contributed to, named rather than merged.
+
+        The model that answered and the role it answered under are different
+        subjects with different histories. Returning them side by side, each
+        carrying its own scope name, is what stops one being read as the other.
+        """
+        from . import reputation as scopes
+        task_class = (checkpoint.get("spec") or {}).get("rubric_key")
+        if not task_class:
+            return {}
+        now = _now()
+        views = {}
+        for kind, identity in ((EntityKind.MODEL, checkpoint.get("model_id")),
+                               (EntityKind.AGENT_ROLE, task.role.entity_id)):
+            if not identity:
+                continue
+            view = scopes.measure(self, context, subject_kind=kind, subject_id=_uuid(identity),
+                                  task_class=task_class, now=now)
+            views[view["scope"]] = view
+        return views
+
+    def reputation(self, *, context, subject_kind, subject_id, task_class, window_days=None):
+        """One scope's measurement. Scopes are never summed or blended.
+
+        Exposed per subject kind on purpose: asking for "the score" of something
+        without saying which scope is the question this split exists to stop.
+        """
+        from . import reputation as scopes
+        self._access(context)
+        window = scopes.Window(int(window_days)) if window_days else scopes.Window()
+        return scopes.measure(self, context, subject_kind=subject_kind, subject_id=subject_id,
+                              task_class=task_class, now=_now(), window=window)
+
     def evaluations(self, *, context, model_id, rubric_key="json_arithmetic"):
         self._access(context)
         model = self._get(context, EntityKind.MODEL, model_id)
@@ -1078,7 +1153,9 @@ class ModelService:
             # response or unavailable application artifact cannot earn credit.
             observations = []
             for row in self._all(context, EntityKind.EVALUATION):
-                if row.model.entity_id == model.header.entity_id and row.rubric_key == APPLICATION_RUBRIC:
+                if (row.subject.kind is EntityKind.MODEL
+                        and row.subject.entity_id == model.header.entity_id
+                        and row.rubric_key == APPLICATION_RUBRIC):
                     detail = self.task_detail(context=context, task_id=row.task.entity_id)
                     proof = detail.get("application_evaluation")
                     if proof is not None:
@@ -1088,7 +1165,11 @@ class ModelService:
             return application_reputation(observations)
         observations = []
         for row in self._all(context, EntityKind.EVALUATION):
-            if row.model.entity_id != model.header.entity_id or row.rubric_key != rubric_key:
+            # Model performance counts model-subject evaluations only. A role
+            # or decision evaluation is a different scope, not a missing one.
+            if (row.subject.kind is not EntityKind.MODEL
+                    or row.subject.entity_id != model.header.entity_id
+                    or row.rubric_key != rubric_key):
                 continue
             task = self._get(context, EntityKind.TASK, row.task.entity_id)
             checkpoint = self._json(context, task.checkpoint)

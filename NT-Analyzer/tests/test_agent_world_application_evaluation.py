@@ -164,7 +164,7 @@ def test_service_rechecks_evaluation_model_link_not_only_payload(model_setup, mo
     def altered(**kwargs):
         row = original(**kwargs)
         if row is not None and str(row.header.entity_id) == detail["application_evaluation_id"]:
-            return replace(row, model=other_model.ref())
+            return replace(row, subject=other_model.ref())
         return row
     monkeypatch.setattr(service.repository, "get", altered)
     with pytest.raises(ContractError, match="application_evaluation_mismatch"):

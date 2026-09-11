@@ -37,12 +37,17 @@ def commission(authorized, service, payload, key, *, conversation_id=None, user_
     context = delegation.gate(authorized, "AI_DELEGATION_V2")
     if context.actor.kind != c.ActorKind.HUMAN:
         raise ContractError("coordinator_human_required")
-    allowed = {"goal", "input_text", "coordinator_model_id", "target_model_ids", "parent_indices", "max_depth"}
+    allowed = {"goal", "input_text", "coordinator_model_id", "target_model_ids", "parent_indices",
+               "max_depth", "operation"}
     if type(payload) is not dict or set(payload) - allowed:
         raise ContractError("coordinator_payload_invalid")
     goal = payload.get("goal")
     if type(goal) is not str or not 1 <= len(goal.strip()) <= 400 or not payload.get("input_text"):
         raise ContractError("coordinator_goal_and_data_required")
+    operation = payload.get("operation", delegation.DEFAULT_OPERATION)
+    if operation not in delegation.OPERATIONS:
+        raise ContractError("coordinator_operation_unsupported")
+    profile = delegation.OPERATIONS[operation]
     spec = prepare("json_arithmetic", payload["input_text"])
     identity = _id(context, "coordinator:" + _key(key))
     root_key = "coordinator.root." + str(identity)
@@ -52,11 +57,15 @@ def commission(authorized, service, payload, key, *, conversation_id=None, user_
     nodes = delegation._graph(payload.get("target_model_ids"), payload.get("parent_indices"), depth,
                               model["persona_id"], service, context)
     for node in nodes:
-        node.update(operation="verify_fact_transfer", role="fact_transfer_checker",
-            operation_label="Проверка точности передачи фактов", produces_new_analysis=False)
+        node.update(operation=operation, role=profile["role"],
+            operation_label=profile["label"],
+            produces_new_analysis=profile["produces_new_analysis"])
+    # A plan that cannot carry the work is refused while it is still a proposal,
+    # not once the first specialist is already queued.
+    _validate_operation(operation, nodes, spec["input"])
     # The plan contains no supplied execution status, result or credential.
     cid = conversation_id or model_chat._conversation(authorized, root_key, "Координатор · " + goal.strip()[:100])
-    plan = {"version": VERSION, "goal": goal.strip(), "root_task_id": str(root_id),
+    plan = {"version": VERSION, "goal": goal.strip(), "operation": operation, "root_task_id": str(root_id),
         "root_model_id": model["id"], "root_persona_id": model["persona_id"], "root_operation": "numeric_summary",
         "root_connection_sha256": delegation.connection_digest(service, context, model["id"]),
         "spec": spec, "nodes": nodes, "max_depth": depth, "conversation_id": cid,
@@ -67,7 +76,8 @@ def commission(authorized, service, payload, key, *, conversation_id=None, user_
         return projection(authorized, service, identity)
     text = user_message or ("Координатор: " + goal.strip() + "\nДанные: " + json.dumps(spec["input"])
         + "\nПлан: 1. Числовая сводка выбранной моделью; 2. После проверки — отдельное согласование "
-        + str(len(nodes)) + " проверок передачи фактов; 3. Общий результат, ожидающий вашей приёмки. " + LIMITATION)
+        + str(len(nodes)) + " " + profile["plan_phrase"]
+        + "; 3. Общий результат, ожидающий вашей приёмки. " + LIMITATION)
     # Chief ingress itself rejects body changes on an existing request. The
     # immutable controller additionally pins targets even after a partial crash.
     model_chat.start(authorized, service, model["id"],
@@ -76,6 +86,24 @@ def commission(authorized, service, payload, key, *, conversation_id=None, user_
     if control.status == "planned":
         control = service._walk(context, control, "ready", "running", "waiting")
     return projection(authorized, service, identity)
+
+
+def _validate_operation(operation, nodes, values):
+    """Refuse a plan whose specialists could not actually do the work.
+
+    A breakdown gives every node its own slice of its parent's data, and the
+    rubric only accepts 3..20 integers. Walking the tree here means an
+    impossible graph is rejected while the person can still change it, rather
+    than at the first child. `_graph` has already ordered parents before
+    children, so one pass is enough.
+    """
+    if operation != "numeric_breakdown":
+        return
+    arrays = {-1: values}
+    for node in nodes:
+        index, parent = node["index"], node["parent_index"]
+        order = [row["index"] for row in nodes if row["parent_index"] == parent]
+        arrays[index] = delegation.segment(arrays[parent], order.index(index), len(order))
 
 
 def validate_plan_link(service, context, plan):
@@ -103,7 +131,8 @@ def preview(authorized, service, coordinator_id):
         raise ContractError("coordinator_stopped")
     proposed = delegation.propose(authorized, service, plan["root_task_id"],
         [node["model_id"] for node in plan["nodes"]], plan["max_depth"], _graph_key(control.header.entity_id),
-        parent_indices=[node["parent_index"] for node in plan["nodes"]], commission_id=control.header.entity_id)
+        parent_indices=[node["parent_index"] for node in plan["nodes"]], commission_id=control.header.entity_id,
+        operation=delegation.operation_of(plan))
     if proposed["plan"]["nodes"] != plan["nodes"] or delegation.connection_digest(service, context, plan["root_model_id"]) != plan["root_connection_sha256"]:
         raise ContractError("coordinator_connection_changed")
     from .automation_authority import normalized_plan
@@ -129,7 +158,7 @@ def approve(authorized, service, coordinator_id, payload):
         approved_plan_sha256=payload["approved_plan_sha256"], idempotency_key=key)
     graph = delegation.start(authorized, service, plan["root_task_id"], [node["model_id"] for node in plan["nodes"]],
         plan["max_depth"], key, grant_ref=grant, parent_indices=[node["parent_index"] for node in plan["nodes"]],
-        commission_id=control.header.entity_id)
+        commission_id=control.header.entity_id, operation=delegation.operation_of(plan))
     return {**projection(authorized, service, coordinator_id), "graph": graph, "grant_ref": grant,
         "approved": True, "human_accepted": graph["human_accepted"]}
 

@@ -93,6 +93,45 @@ missing user key. Existing PostgreSQL/CI/full-suite results do not cover this co
 
 ## Next operation / rollback
 
+### Native registration on the delivered integration base
+
+Fetched integration code `84ddb2e7` / documentation `3c62465d`; code is an ancestor
+of the documentation commit. Common ancestor with P1-5 was `9ae183f6`. Integrated
+that saved base into the P1-5 task branch without rewriting either history; no PR,
+main, deploy or Local merge/promotion. Claude's saved code is preserved.
+
+Atomic registration adds EXTERNAL_AGENT_CONNECTION, Record inheritance/ref, native
+state graph/initial/editable states, strict codec, event type and shared Evaluation
+subject allowlist. No new repository/table: the existing generic SQLite/PostgreSQL
+record interfaces receive the registered kind. Native SQLite tests cover creation,
+replay, restart, immutable revision history and two-owner/workspace isolation; shared
+Evaluation roundtrip refuses the Model accessor for external subjects. PostgreSQL
+RLS and full native dispatch/E2E are not inferred from these SQLite tests.
+
+First registration run: 365 passed / 5 failed, generic transition fixtures omitted
+required handshake proof for active connections. Added explicit proof to fixtures;
+did not weaken production verification or codec validation.
+Second run: 371 passed / 1 failed caught default workspace visibility for the new
+connection. Added private visibility using the existing shared SQLite/PostgreSQL
+visibility helper and an owner check in record validation. Final focused native
+registration/storage/protocol suite: **372 passed / 0 failed / 0 skipped**, 22.96 s.
+
+Concrete ownership blocker discovered by read-only status of the integrator worktree
+at `3c62465daa023bd85af0f2e28cf17a13ea604a8d`: new dirty `model_service.py`,
+`presentation.py`, `ai-command-center.js`, `test_agent_world_reputation_scopes.py`,
+untracked `decision_evaluation.py` and `test_agent_world_decision_outcome_path.py`.
+These subsequent edits are not in the delivered SHA and overlap native execution,
+result presentation and acceptance. Do not copy or overwrite them. Integrator must
+save/publish that work and identify the ownership boundary, or explicitly hand off
+the overlapping files, before this executor wires into them. This is NOT the old
+typed-Evaluation blocker: that contract is now present and used.
+
+Native API/Coordinator dispatch, Contribution/Outcome closeout, statistics, credential
+rotation, background cleanup and interprocess dispatch/revoke remain incomplete.
+No E2E PASS, no new full pytest or workflow_dispatch result claimed. Local 8765 and
+all acceptance instances unchanged. Next operation: reconcile the newly active
+integrator files, then continue the existing worker path; never create a bypass.
+
 ### Revocation cleanup / uncertain dispatch checkpoint
 
 Retrying revoke now retries failed secure-store deletion while preserving the

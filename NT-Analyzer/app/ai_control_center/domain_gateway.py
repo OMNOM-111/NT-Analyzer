@@ -913,7 +913,8 @@ def enrich_overview(authorized, base=None):
     for person in people:
         bound = [row for row in configured_models if row.get("persona_id") == person["id"]]
         mine = [row for row in model_rows if row.get("persona_id") == person["id"]]
-        evaluation = {"sample_size": 0, "score_pct": None, "confidence": "insufficient", "label": "NEW"}
+        evaluation = {"sample_size": 0, "score_pct": None, "confidence": "insufficient", "label": "NEW",
+                      "scope": "model_performance", "subject_kind": "model", "subject_id": None}
         observations, application_observations = [], []
         for model in bound:
             stats = model_service.evaluations(context=context, model_id=model["id"])
@@ -927,7 +928,8 @@ def enrich_overview(authorized, base=None):
         if len(active_observations) == 1:
             # Retired bindings remain history, but cannot erase the current
             # model's observed rating or be averaged into it.
-            evaluation = active_observations[0]
+            evaluation = {**active_observations[0], "scope": "model_performance",
+                          "subject_kind": "model", "subject_id": active_observations[0]["model_id"]}
         role_spec = ROLES.get(person.get("application_role"), {})
         legacy = legacy_agents.get(role_spec.get("legacy_id")) if aliases.get(role_spec.get("legacy_id")) == person["id"] else None
         personal_tasks = [row for row in tasks if (row.get("lead") or {}).get("id") == person["id"]]

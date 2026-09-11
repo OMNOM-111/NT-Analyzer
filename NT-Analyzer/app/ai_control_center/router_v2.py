@@ -67,7 +67,9 @@ def _observations(service, context, model, task_class, now, policy):
     """Read independently recorded model observations for this exact class."""
     rows = {}
     for record in service._all(context, EntityKind.EVALUATION):
-        if record.rubric_key != task_class or record.model.entity_id != model.header.entity_id:
+        # Routing compares models, so only model-subject observations count.
+        if (record.rubric_key != task_class or record.subject.kind is not EntityKind.MODEL
+                or record.subject.entity_id != model.header.entity_id):
             continue
         if not 0 <= (now - record.header.created_at).total_seconds() <= policy.max_sample_age_seconds:
             continue

@@ -769,3 +769,22 @@ def test_a_configured_postgres_dsn_is_never_served_from_the_sqlite_file(owner, m
     chosen = gateway.repository(authorized)
     assert isinstance(chosen, PostgresAgentWorldRepository)
     assert not isinstance(chosen, SQLiteAgentWorldRepository)
+
+
+def test_an_agent_headline_score_declares_it_is_the_models_not_the_roles(models):
+    """The number on an agent card is a model's observed rate.
+
+    Displaying it without saying whose it is, beside a persona's name, is how a
+    model score becomes read as the agent's own. The record therefore carries
+    the scope and subject it came from, so no reader has to assume.
+    """
+    result = gateway.enrich_overview(models.authorized)
+    assert result["agents"], "the fixture should expose at least one agent"
+    for agent in result["agents"]:
+        evaluation = agent["evaluation"]
+        assert evaluation["scope"] == "model_performance"
+        assert evaluation["subject_kind"] == "model"
+        # Never labelled as the role's, and never carrying a role subject.
+        assert evaluation["scope"] != "agent_role_performance"
+        for observation in agent["model_observations"]:
+            assert observation["model_id"]

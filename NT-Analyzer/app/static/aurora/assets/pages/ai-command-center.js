@@ -552,7 +552,79 @@
     const body = !ready ? '<p class="aw-note">Полный актуальный набор наблюдений сейчас не подтверждён. Создание предложения недоступно; сохранённые записи не изменены.</p>' : candidates.length ? `<div class="aw-domain-grid">${candidates.map(candidate => processCandidateCard(candidate, domain, true)).join('')}</div>` : '<p class="aw-note">Новых предложений нет: данных пока недостаточно, предложение уже существует или действует пауза от повторов. Это не ошибка и не оценка качества.</p>';
     return heading + body + summary + '</section>';
   }
-  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, rows, items, taskMatches, taskState, taskTitle, taskClass, taskBadge, evaluationMeta, phaseOf, phaseLabel, rubricLabel, stageName, machineKey, availabilityMeta, occupancyMeta, readinessGrid, technicalSplit, technicalDetails, AVATAR_KEYS, applicationRows, applicationTable, safeArtifactUrl, sourceMeta, overviewOutcomes, realChatCommands, canRunDemo, flagRows, captureChart, knownDomain, allowedDomainActions, domainFormFields, domainPayload, actionLabel, domainError, publicJSON, handoffCard, followupCard, modelConnectionGuide, modelProtocolCard, personaVoiceFields, personaReadText, personaCanSpeak, personaSpeechEnvelope, personaAudioStatus, personaPresentationCard, processCandidatePayload, processCandidateCard, processIntelligencePanel, validCoordinatorPreview, coordinatorApproval, connectionLabel }; return; }
+  const RISK_LABELS = Object.freeze({ low: 'низкий', moderate: 'умеренный', high: 'высокий', critical: 'критический' });
+  const APPROVAL_LABELS = Object.freeze({ advice: 'только совет, исполнение не разрешено', draft: 'черновик',
+    reversible_execution: 'обратимое исполнение', approval_required: 'требуется подтверждение', forbidden: 'запрещено' });
+  const SCOPE_LABELS = Object.freeze({
+    model_performance: 'Модель',
+    agent_role_performance: 'Рабочая роль',
+    decision_performance: 'Решение',
+  });
+  const CONFIDENCE_LABELS = Object.freeze({ insufficient: 'недостаточно данных', low: 'низкая',
+    medium: 'средняя', high: 'высокая' });
+  function reputationPanel(views) {
+    // One card per scope. They are never summed, never averaged and never
+    // relabelled: a model's observed rate is not the role's, and the heading
+    // of each card says which subject the number below it belongs to.
+    const scopes = Object.values(views || {}).filter(view => view && view.scope);
+    if (!scopes.length) return '';
+    const cards = scopes.map(view => {
+      const quality = view.quality || {}, provenance = view.provenance || {}, window = view.window || {};
+      const measured = view.status === 'measured' && number(quality.observed_pct) != null;
+      const diagnostic = view.basis === 'diagnostic';
+      const headline = !measured
+        ? '<span class="aw-status aw-neutral">NEW · недостаточно данных</span>'
+        : diagnostic
+          ? `<span class="aw-status aw-neutral">диагностика · ${esc(count(provenance.measured_observations + provenance.synthetic_observations))} из ${esc(count(view.sample_size))}</span>`
+          : `<span class="aw-status ${view.basis === 'mixed' ? 'aw-neutral' : 'aw-good'}">${esc(pct(quality.observed_pct))}${view.basis === 'mixed' ? ' · частично диагностика' : ''}</span>`;
+      return `<article class="aw-domain-card"><div class="aw-domain-card-head">`
+        + `<strong>${esc(SCOPE_LABELS[view.scope] || view.scope)}</strong>`
+        + `${headline}</div>`
+        + `<dl class="aw-detail-grid">`
+        + `<div><dt>Субъект оценки</dt><dd>${esc(SCOPE_LABELS[view.scope] || '')} · <span class="aw-hash">${esc(String((view.subject || {}).id || '').slice(0, 8))}</span></dd></div>`
+        + `<div><dt>Класс задачи</dt><dd>${esc(rubricLabel(view.task_class) || view.task_class || '')}</dd></div>`
+        + `<div><dt>Наблюдений</dt><dd>${count(view.sample_size)}${number(provenance.synthetic_observations) ? ' · из них диагностических ' + esc(count(provenance.synthetic_observations)) : ''}</dd></div>`
+        + `<div><dt>Уверенность</dt><dd>${esc(CONFIDENCE_LABELS[view.confidence] || view.confidence || '')}</dd></div>`
+        + `<div><dt>Доказательства</dt><dd>${count(rows(view.evidence_refs).length)} записей</dd></div>`
+        + `<div><dt>Окно измерения</dt><dd>${count(window.days)} дн.${window.newest_observation ? ' · последнее наблюдение ' + esc(date(window.newest_observation)) : ' · наблюдений нет'}</dd></div>`
+        + `</dl>`
+        + `<p class="aw-field-hint">${esc(view.limitation || '')}</p>`
+        + `<details class="aw-technical"><summary>Происхождение оценки</summary><pre>${esc(publicJSON({
+            scope: view.scope, subject: view.subject, task_class: view.task_class,
+            evaluator: provenance.evaluator, self_scored: provenance.self_scored,
+            synthetic_observations: provenance.synthetic_observations,
+            measured_observations: provenance.measured_observations,
+            professional_quality_assessed: provenance.professional_quality_assessed,
+            evidence_refs: rows(view.evidence_refs).slice(0, 5),
+          }))}</pre></details></article>`;
+    }).join('');
+    return `<section class="aw-detail-section"><h3>Наблюдаемые оценки</h3>`
+      + `<p class="aw-field-hint">Каждая оценка относится к своему субъекту и классу задач. `
+      + `Оценка модели не является оценкой рабочей роли, и наоборот; они не складываются.</p>`
+      + `<div class="aw-domain-grid">${cards}</div></section>`;
+  }
+  function intentPanel(intent) {
+    // Everything here is the server's own Intent record. The panel neither
+    // recomputes a state nor decides whether the work may proceed.
+    if (!intent) return '';
+    const goal = intent.goal || {}, limits = intent.constraints || {}, evidence = intent.required_evidence || {};
+    const request = goal.request === undefined || goal.request === null ? '' : publicJSON(goal.request);
+    return `<section class="aw-detail-section"><h3>Поручение</h3>`
+      + `<div class="aw-inline">${badge(intent.status)}<span class="aw-status aw-info">ревизия ${count(intent.revision)}</span></div>`
+      + `<dl class="aw-detail-grid">`
+      + `<div><dt>Цель</dt><dd>${esc(goal.text || 'Не указана')}</dd></div>`
+      + `<div><dt>Режим согласования</dt><dd>${esc(APPROVAL_LABELS[intent.approval_mode] || intent.approval_mode || 'не указан')}</dd></div>`
+      + `<div><dt>Уровень риска</dt><dd>${esc(RISK_LABELS[limits.risk] || limits.risk || 'не указан')}</dd></div>`
+      + `<div><dt>Срок</dt><dd>${esc(date(limits.deadline))}</dd></div>`
+      + `<div><dt>Рабочее пространство</dt><dd>${esc((intent.scope || {}).workspace_id || '')}</dd></div>`
+      + `<div><dt>Требуемое доказательство</dt><dd>${esc(evidence.rubric_label || evidence.rubric_key || 'не указано')}</dd></div>`
+      + `</dl>`
+      + `<p class="aw-field-hint">Проверяет: ${esc(evidence.verified_by || 'не указано')}. Приёмка человеком — отдельное решение и не является оценкой качества.</p>`
+      + (request ? `<details class="aw-technical"><summary>Что именно было запрошено</summary><pre>${esc(request)}</pre></details>` : '')
+      + `<p class="aw-field-hint">Поручение не редактируется после создания задачи: его значением связаны запрос, ответ и проверка. Пока работа не началась, поручение можно остановить — «Отменить задачу». Нужны другие условия — отправьте новый запрос; прежнее поручение и его история сохраняются.</p>`
+      + `</section>`;
+  }
+  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, rows, items, taskMatches, taskState, taskTitle, taskClass, taskBadge, evaluationMeta, phaseOf, phaseLabel, rubricLabel, stageName, machineKey, availabilityMeta, occupancyMeta, readinessGrid, technicalSplit, technicalDetails, AVATAR_KEYS, applicationRows, applicationTable, safeArtifactUrl, sourceMeta, overviewOutcomes, realChatCommands, canRunDemo, flagRows, captureChart, knownDomain, allowedDomainActions, domainFormFields, domainPayload, actionLabel, domainError, publicJSON, handoffCard, followupCard, modelConnectionGuide, modelProtocolCard, personaVoiceFields, personaReadText, personaCanSpeak, personaSpeechEnvelope, personaAudioStatus, personaPresentationCard, processCandidatePayload, processCandidateCard, processIntelligencePanel, reputationPanel, intentPanel, validCoordinatorPreview, coordinatorApproval, connectionLabel }; return; }
 
   root.UI.ready(async function () {
     const UI = root.UI, API = root.API.http;
@@ -1285,6 +1357,8 @@
       else if (detailTab === 'decisions') body = detailRows(rows(detail.decisions), 'У этой задачи нет записанных решений. Проверочный сценарий не имитирует разрешение владельца или Court.');
       else body = detailRows(rows(detail.errors), task.status === 'failed' ? 'Подробности ошибки не опубликованы.' : 'Зарегистрированных ошибок нет.');
       if (detailTab === 'summary' && detail.result_text) body += `<details class="aw-technical"><summary>Полный ответ и технические данные</summary><pre>${esc(detail.result_text)}</pre></details>`;
+      if (detailTab === 'summary') body += intentPanel(detail.intent);
+      if (detailTab === 'evaluations') body += reputationPanel(detail.reputation);
       if (detailTab === 'summary') body += transportVerificationNote(task);
       if (detailTab === 'summary' && task.source_kind === 'real_model_response') body += `<section class="aw-detail-section"><h3>Исполнитель и происхождение результата</h3><dl class="aw-detail-grid"><div><dt>Запрошенная модель</dt><dd>${esc(task.model || 'Не предоставлена')}</dd></div><div><dt>Model ID от провайдера</dt><dd>${esc(detail.actual_model || 'Не предоставлен')}</dd></div><div><dt>Провайдер</dt><dd>${detail.external_call === false ? esc((task.provider || 'провайдер') + ' — не вызывался') : esc(task.provider || 'Не предоставлен')}</dd></div>${detail.executor ? `<div><dt>Ответ получен от</dt><dd>${esc(detail.executor)}</dd></div>` : ''}</dl>${detail.external_call === false ? '<p class="aw-note">Ответ вычислен локально: внешнее обращение не выполнялось, поэтому этот результат ничего не говорит о доступности провайдера.</p>' : ''}<details class="aw-technical"><summary>Связанные записи</summary>${['intent_id', 'execution_id', 'contribution_id', 'outcome_id', 'evaluation_id', 'conversation_id', 'message_id'].filter(key => task[key]).map(key => `<div class="aw-hash">${esc(key.toUpperCase())} ${esc(task[key])}</div>`).join('')}</details></section>`;
       if (detailTab === 'summary' && detail.graph) {

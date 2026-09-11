@@ -572,3 +572,79 @@ def test_two_graphs_share_root_review_event_but_not_chat_delivery_identity(scena
         assert message["actions"][0]["synthetic"] is True
         message_ids.add(message["message_id"])
     assert len(message_ids) == 2
+
+
+def _breakdown(env, values="[10,20,30,40,50,60,70,80]", parents=(-1, -1), depth=1):
+    env.payload = {**env.payload, "goal": "Разобрать участки переданных чисел",
+        "input_text": values, "operation": "numeric_breakdown",
+        "target_model_ids": [row["id"] for row in env.models[1:3]],
+        "parent_indices": list(parents), "max_depth": depth}
+    return env
+
+
+def test_second_operation_gives_each_specialist_its_own_slice_and_a_new_answer(scenario):
+    """Two specialists, two different slices, two different answers.
+
+    The distinguishing property against `verify_fact_transfer` is that no child
+    restates what it was handed: each computes statistics over its own part of
+    the parent's data, and the same independent verifier grades every one.
+    """
+    env = _breakdown(scenario)
+    view, plan, grant, started = approved(env)
+    graph = finish(env, started["graph"]["id"])
+
+    assert [node["depth"] for node in graph["nodes"]] == [1, 1]
+    assert graph["result"]["operation"] == "numeric_breakdown"
+    assert graph["result"]["produces_new_analysis"] is True
+
+    answers = []
+    for node in graph["nodes"]:
+        contribution = node["contribution"]
+        assert contribution["operation"] == "numeric_breakdown"
+        assert contribution["produces_new_analysis"] is True
+        assert node["operation_role"] == "segment_analyst"
+        assert all(check["passed"] for check in contribution["checks"])
+        child = env.service._get(env.context, EntityKind.TASK, node["task_id"])
+        checkpoint = env.service._json(env.context, child.checkpoint)
+        assert checkpoint["spec"]["rubric_key"] == "json_arithmetic"
+        answers.append(checkpoint["spec"]["input"])
+
+    # Disjoint halves that together are the whole root array, in order.
+    assert answers == [[10, 20, 30, 40], [50, 60, 70, 80]]
+    assert answers[0] != answers[1], "a breakdown whose children share a slice is a restatement"
+
+    # Every child was still reviewed and the aggregate still waits for a human.
+    assert graph["review_state"] == "awaiting_required_reviews"
+    assert graph["result"]["human_accepted"] is False
+    assert graph["result"]["professional_quality_assessed"] is False
+    assert graph["result"]["provenance"]["provider_receipts"] == 0
+
+
+def test_a_breakdown_that_cannot_be_split_is_refused_while_it_is_still_a_proposal(scenario):
+    """Four values cannot become two slices the rubric would accept."""
+    env = _breakdown(scenario, values="[17,-4,12,9]")
+    with pytest.raises(ContractError) as refused:
+        request(env, "commission")
+    assert refused.value.code == "delegation_segment_too_small"
+    assert not list(env.service._all(env.context, EntityKind.DECISION))
+
+
+def test_an_operation_outside_the_closed_set_is_refused(scenario):
+    """The caller names a class of work; it cannot invent one."""
+    env = scenario
+    env.payload = {**env.payload, "operation": "summarise_however_you_like"}
+    with pytest.raises(ContractError) as refused:
+        request(env, "commission")
+    assert refused.value.code == "coordinator_operation_unsupported"
+
+
+def test_the_default_operation_is_unchanged_when_none_is_named(scenario):
+    """An existing caller that names no operation keeps fact transfer."""
+    env = scenario
+    assert "operation" not in env.payload
+    view = request(env, "commission")
+    control = env.service._get(env.context, EntityKind.TASK, view["id"])
+    plan = env.service._json(env.context, env.service._json(env.context, control.checkpoint)["plan"])
+    assert plan["operation"] == "verify_fact_transfer"
+    assert all(node["operation"] == "verify_fact_transfer" for node in plan["nodes"])
+    assert all(node["produces_new_analysis"] is False for node in plan["nodes"])

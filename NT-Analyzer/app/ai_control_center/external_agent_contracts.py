@@ -7,24 +7,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime
+from typing import ClassVar
 
 from . import contracts as c
 from .external_agent_protocol import CAPABILITIES, PROTOCOL, Handshake
-from .states import ContractError
+from .states import ContractError, EntityKind, TRANSITIONS as NATIVE_TRANSITIONS
 
 
-TRANSITIONS = {
-    "draft": frozenset({"verifying", "disabled", "revoked"}),
-    "verifying": frozenset({"active", "degraded", "disabled", "revoked"}),
-    "active": frozenset({"verifying", "degraded", "disabled", "revoked"}),
-    "degraded": frozenset({"verifying", "disabled", "revoked"}),
-    "disabled": frozenset({"verifying", "revoked"}),
-    "revoked": frozenset(),
-}
+TRANSITIONS = NATIVE_TRANSITIONS[EntityKind.EXTERNAL_AGENT_CONNECTION]
 
 
 @dataclass(frozen=True, kw_only=True)
-class ExternalAgentConnection:
+class ExternalAgentConnection(c.Record):
+    KIND: ClassVar = EntityKind.EXTERNAL_AGENT_CONNECTION
     header: c.RecordHeader
     display_name: str
     protocol: str
@@ -41,6 +36,7 @@ class ExternalAgentConnection:
     synthetic: bool = False
 
     def __post_init__(self):
+        super().__post_init__()
         if not isinstance(self.header, c.RecordHeader):
             raise ContractError("external_agent_header_required")
         c.require_text(self.display_name, limit=80)

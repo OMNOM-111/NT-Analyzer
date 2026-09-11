@@ -138,12 +138,14 @@ def _aggregate_snapshot(authorized, service, task):
             entry["human_review"] = review
             entry["model"] = c.primitive(service._get(context, EntityKind.MODEL, source_checkpoint["model_id"]).ref())
             if index:
-                _, _, child_outcome = delegation._verified(service, context, identity)
+                _, _, child_outcome = delegation._verified(service, context, identity,
+                    operation=delegation.operation_of(plan))
                 fresh = delegation._seal_node(service, context, control, plan, index - 1)
                 if source_checkpoint.get("delegation") != fresh.wire() or source.dependencies != fresh.dependencies:
                     raise ContractError("delegation_lineage_invalid")
                 entry["source"] = result_handoff.verified_model_data(service, context, identity, allow_dependent=True)
-                contributions.append(delegation._contribution(service, context, identity))
+                contributions.append(delegation._contribution(service, context, identity,
+                    operation=delegation.operation_of(plan)))
                 child_outcomes.append(child_outcome)
             elif c.primitive(source.ref()) != plan["root_task"]:
                 raise ContractError("delegation_root_source_changed")
@@ -171,7 +173,8 @@ def _aggregate_snapshot(authorized, service, task):
             "human_accepted": False, "professional_quality_assessed": False, "synthetic": bool(provenance["local_test_receipts"]),
             "root_kind": plan.get("root_kind", "application_result"), "root_source": plan["root_source"],
             "contributions": contributions, "provenance": provenance,
-            "facts": plan["root_source"]["facts"], "produces_new_analysis": False}
+            "facts": plan["root_source"]["facts"], "operation": delegation.operation_of(plan),
+            "produces_new_analysis": delegation.OPERATIONS[delegation.operation_of(plan)]["produces_new_analysis"]}
         if (not delegation._same_result(result, expected) or outcome.task.entity_id != control.header.entity_id
                 or outcome.evidence != tuple(row.verification for row in child_outcomes) or outcome.execution is not None):
             raise ContractError("delegation_result_changed")
@@ -288,7 +291,7 @@ def submit(service, *, context, task_id, payload, expected_revision, idempotency
                 raise ContractError("task_review_stale")
         committed = service._ensure(context, Evaluation, _identity(service, context, task),
             task.header.correlation_id, task.header.policy, task=task.ref(), outcome=outcome.ref(),
-            model=model.ref(), evidence=proof, rubric_key=RUBRIC)
+            subject=model.ref(), evidence=proof, rubric_key=RUBRIC)
         # _ensure is deliberately reusable/idempotent and can return a record
         # created by another process after our read. Never report its opposite
         # decision as success for this request (the ledger remains untouched).

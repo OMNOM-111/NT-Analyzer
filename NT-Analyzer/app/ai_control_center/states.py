@@ -31,6 +31,7 @@ class EntityKind(str, Enum):
     COURT_CASE = "court_case"
     COURT_VOTE = "court_vote"
     EVALUATION = "evaluation"
+    EXTERNAL_AGENT_CONNECTION = "external_agent_connection"
 
 
 def _graph(**edges: tuple[str, ...]):
@@ -44,6 +45,12 @@ def _graph(**edges: tuple[str, ...]):
 _PROFILE = _graph(draft=("active", "retired"), active=("suspended", "retired"),
                   suspended=("active", "retired"))
 TRANSITIONS = MappingProxyType({
+    EntityKind.EXTERNAL_AGENT_CONNECTION: _graph(
+        draft=("verifying", "disabled", "revoked"),
+        verifying=("active", "degraded", "disabled", "revoked"),
+        active=("verifying", "degraded", "disabled", "revoked"),
+        degraded=("verifying", "disabled", "revoked"),
+        disabled=("verifying", "revoked")),
     EntityKind.PERSONA: _PROFILE,
     EntityKind.AGENT_ROLE: _PROFILE,
     EntityKind.PROVIDER_ACCOUNT: _PROFILE,
@@ -81,6 +88,7 @@ TRANSITIONS = MappingProxyType({
 })
 
 INITIAL_STATES = MappingProxyType({
+    EntityKind.EXTERNAL_AGENT_CONNECTION: "draft",
     **{kind: "draft" for kind in (EntityKind.PERSONA, EntityKind.AGENT_ROLE,
                                  EntityKind.PROVIDER_ACCOUNT, EntityKind.MODEL)},
     EntityKind.INTENT: "draft", EntityKind.TASK: "planned",
@@ -99,6 +107,7 @@ def validate_state(kind: EntityKind, state: str) -> None:
 
 # Versioned edits/checkpoints within a phase; finalized content uses a successor.
 EDITABLE_STATES = MappingProxyType({
+    EntityKind.EXTERNAL_AGENT_CONNECTION: frozenset({"draft", "verifying", "active", "degraded", "disabled"}),
     **{kind: frozenset({"draft", "active", "suspended"}) for kind in (
         EntityKind.PERSONA, EntityKind.AGENT_ROLE, EntityKind.PROVIDER_ACCOUNT, EntityKind.MODEL)},
     EntityKind.INTENT: frozenset({"draft"}),

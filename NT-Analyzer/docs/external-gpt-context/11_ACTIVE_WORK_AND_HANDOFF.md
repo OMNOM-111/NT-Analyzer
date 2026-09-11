@@ -15,7 +15,12 @@
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 
-- Integrator answer read at `61ff7a38` (2026-09-11): reviewed checkpoint `97095b00`,
+- Current P1-5 continuation uses delivered `3c62465d` / code `84ddb2e7`; native
+  connection registration/private visibility/shared Evaluation allowlist added.
+  372 focused tests PASS. New dirty integrator execution/presentation files prevent
+  overlapping native wiring until saved SHA or explicit ownership handoff.
+
+- Historical integrator answer read at `61ff7a38` (2026-09-11): reviewed checkpoint `97095b00`,
   shared ownership unchanged; await typed Evaluation/native kind integration SHA.
   Subsequent isolated protocol/role-ownership hardening: 70 focused tests passed.
   Next bound-cancel checkpoint: 75 passed; terminal-state preservation checked.
