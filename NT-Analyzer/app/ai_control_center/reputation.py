@@ -74,7 +74,7 @@ def measure(service, context, *, subject_kind, subject_id, task_class, now, wind
     """
     if subject_kind not in SCOPES.values():
         raise ContractError("reputation_scope_unsupported")
-    observations, evidence_refs = [], []
+    observations, evidence_refs, newest = [], [], None
     for record in service._all(context, EntityKind.EVALUATION):
         if record.subject.kind is not subject_kind or record.subject.entity_id != subject_id:
             continue
@@ -85,6 +85,7 @@ def measure(service, context, *, subject_kind, subject_id, task_class, now, wind
             # A self-reported score is not an observation of anything.
             continue
         observations.append(proof)
+        newest = record.header.created_at if newest is None else max(newest, record.header.created_at)
         evidence_refs.append({"evaluation_id": str(record.header.entity_id),
                               "outcome_id": str(record.outcome.entity_id),
                               "evidence_sha256": record.evidence.sha256})
@@ -102,7 +103,11 @@ def measure(service, context, *, subject_kind, subject_id, task_class, now, wind
         "status": "measured" if enough else "new",
         "quality": {"passed": passed, "observed_pct": round(100.0 * passed / sample, 1) if enough else None},
         "evidence_refs": evidence_refs,
-        "window": {"days": window.days, "until": now.isoformat()},
+        # Anchored to the newest observation counted, not to the wall clock: the
+        # same rows must measure the same however often they are read, or two
+        # identical reads of one task disagree for no reason anybody can act on.
+        "window": {"days": window.days,
+                   "newest_observation": newest.isoformat() if newest else None},
         "provenance": {
             "evaluator": "independent_local_evidence_verifier",
             "self_scored": False,

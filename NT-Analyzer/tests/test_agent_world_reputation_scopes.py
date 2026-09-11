@@ -117,7 +117,7 @@ def test_three_subject_kinds_are_measured_separately_and_never_share_a_sample(sc
         assert len(view["evidence_refs"]) == view["sample_size"]
         assert view["provenance"]["evaluator"] == "independent_local_evidence_verifier"
         assert view["provenance"]["professional_quality_assessed"] is False
-        assert view["window"]["days"] and view["window"]["until"]
+        assert view["window"]["days"] and view["window"]["newest_observation"]
     ids = [ref["evaluation_id"] for view in (model, role, decision) for ref in view["evidence_refs"]]
     assert len(ids) == len(set(ids)), "a scope is reading another scope's evidence"
 
@@ -206,3 +206,25 @@ def test_the_task_detail_carries_both_scopes_named_and_unmerged(setup):  # noqa:
     # One observation is never enough in either scope.
     assert all(view["status"] == "new" for view in views.values())
     assert all(view["quality"]["observed_pct"] is None for view in views.values())
+
+
+def test_measuring_the_same_rows_twice_gives_the_same_answer(scopes):
+    """A measurement is a function of its evidence, not of when it was read.
+
+    Two reads seconds apart described the same three observations differently,
+    because the window was stamped with the wall clock. Anything comparing two
+    reads of one task — and a person looking at the panel twice — saw a score
+    that had apparently moved while nothing happened.
+    """
+    service, context, policy, model_ref, _role_ref, _decision_ref = scopes
+    for _ in range(3):
+        _observe(service, context, policy, subject=model_ref)
+
+    first = _measure(service, context, model_ref)
+    second = _measure(service, context, model_ref)
+    assert first == second
+
+    # And it does move when the evidence does.
+    _observe(service, context, policy, subject=model_ref, passed=False)
+    third = _measure(service, context, model_ref)
+    assert third["sample_size"] == 4 and third != first

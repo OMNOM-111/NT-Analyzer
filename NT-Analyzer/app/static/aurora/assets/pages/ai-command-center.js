@@ -954,7 +954,7 @@
           + `<div><dt>Наблюдений</dt><dd>${count(view.sample_size)}</dd></div>`
           + `<div><dt>Уверенность</dt><dd>${esc(CONFIDENCE_LABELS[view.confidence] || view.confidence || '')}</dd></div>`
           + `<div><dt>Доказательства</dt><dd>${count(rows(view.evidence_refs).length)} записей</dd></div>`
-          + `<div><dt>Окно измерения</dt><dd>${count(window.days)} дн. до ${esc(date(window.until))}</dd></div>`
+          + `<div><dt>Окно измерения</dt><dd>${count(window.days)} дн.${window.newest_observation ? ' · последнее наблюдение ' + esc(date(window.newest_observation)) : ' · наблюдений нет'}</dd></div>`
           + `</dl>`
           + `<p class="aw-field-hint">${esc(view.limitation || '')}</p>`
           + `<details class="aw-technical"><summary>Происхождение оценки</summary><pre>${esc(publicJSON({
