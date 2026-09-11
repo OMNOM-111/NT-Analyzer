@@ -18,7 +18,7 @@
     router: { title: 'Выбор подключения · Router', description: 'Кандидаты и источник выбора для конкретной задачи. Предпросмотр ничего не запускает; повторное задание требует отдельного разрешения.', create: '' },
     system: { title: 'Система', description: 'Доступность, ограничения и состояние текущего рабочего пространства. Чтение не меняет флаги или бюджет.', create: '' },
   });
-  const ACTION_LABELS = Object.freeze({ preview: 'Предпросмотр выбора', apply: 'Разрешить новый запуск', seed_preview: 'Создать учебные записи Preview', create: 'Создать', connect: 'Подключить', bind_existing: 'Связать Local-подключение', update: 'Изменить', activate: 'Активировать', suspend: 'Приостановить', archive: 'В архив', promote: 'Продвинуть', publish_to_workspace: 'Опубликовать в workspace', propose_consensus: 'Собрать решение по вкладам', suggest_routine: 'Предложить по результатам', prepare: 'Подготовить снимок', publish: 'Опубликовать в SF Social', revoke: 'Отозвать разрешение', propose: 'Проверить расписание', enable: 'Включить по расписанию', commission: 'Новое поручение Координатору', preview_commission: 'Проверить план делегирования', approve_commission: 'Разрешить этот план', reconcile: 'Проверить продолжение', version: 'Новая версия', accept: 'Принять', dismiss: 'Отклонить', review: 'Проверить через Court', review_result: 'Проверить полученный результат', withdraw: 'Отозвать решение', test: 'Проверить соединение', task: 'Первое задание', disconnect: 'Отключить', cancel: 'Отменить задачу', retry: 'Новая безопасная попытка', handoff: 'Передать факты агенту', open_chat: 'Открыть ручной разбор в SF Chat' });
+  const ACTION_LABELS = Object.freeze({ preview: 'Предпросмотр выбора', apply: 'Разрешить новый запуск', seed_preview: 'Создать учебные записи Preview', create: 'Создать', connect: 'Подключить', bind_existing: 'Связать Local-подключение', update: 'Изменить', activate: 'Активировать', suspend: 'Приостановить', archive: 'В архив', promote: 'Продвинуть', publish_to_workspace: 'Опубликовать в workspace', propose_consensus: 'Собрать решение по вкладам', suggest_routine: 'Предложить по результатам', prepare: 'Подготовить снимок', publish: 'Опубликовать в SF Social', revoke: 'Отозвать разрешение', propose: 'Проверить расписание', enable: 'Включить по расписанию', commission: 'Новое поручение Координатору', preview_commission: 'Проверить план делегирования', approve_commission: 'Разрешить этот план', reconcile: 'Проверить продолжение', version: 'Новая версия', accept: 'Принять', dismiss: 'Отклонить', review: 'Проверить через Court', review_result: 'Проверить полученный результат', withdraw: 'Отозвать решение', test: 'Проверить соединение', task: 'Первое задание', disconnect: 'Отключить', cancel: 'Отменить задачу', amend_intent: 'Продлить срок поручения', retry: 'Новая безопасная попытка', handoff: 'Передать факты агенту', open_chat: 'Открыть ручной разбор в SF Chat' });
   const STATUS = {
     running: ['В работе', 'good'], working: ['В работе', 'good'], active: ['Активен', 'good'], healthy: ['Работает', 'good'], succeeded: ['Завершено', 'good'], completed: ['Завершено', 'good'], verified: ['Проверено', 'good'], passed: ['Проверено', 'good'], accepted: ['Принято', 'good'], submitted: ['Вклад записан', 'info'],
     planned: ['Запланировано', 'neutral'], ready: ['В очереди', 'neutral'], queued: ['В очереди', 'neutral'], waiting: ['Ожидает', 'neutral'], pending: ['Ожидает', 'neutral'], free: ['Свободен', 'neutral'], available: ['Свободен', 'neutral'], idle: ['Свободен', 'neutral'],
@@ -160,6 +160,7 @@
       if (action === 'publish') return [field('text', 'Комментарий к публикации (необязательно)', 'textarea', { max: 4000, hint: 'Только ваш публичный комментарий. Не вставляйте ключи, личные данные, private Memory или сырой ответ модели.' }), field('visibility', 'Кто увидит публикацию', 'select', { required: true, options: [['private', 'Только я'], ['followers', 'Мои подписчики'], ['network', 'Социальная сеть']] })];
       return [];
     }
+    if (['tasks', 'model_tasks'].includes(domain) && action === 'amend_intent') return [field('hours', 'Продлить на (часов)', 'number', { required: true, min: 1, max: 24, hint: 'Меняется только срок поручения. Что именно запрошено — не редактируется; для другого запроса отправьте новый.' })];
     if (['tasks', 'model_tasks'].includes(domain) && ['cancel', 'retry'].includes(action)) return [field('reason', 'Причина', 'textarea', { required: action === 'cancel', max: 1000 })];
     if (['tasks', 'model_tasks'].includes(domain) && action === 'handoff') return [field('target_model_id', 'Другой агент / подключённая модель', 'model', { required: true, hint: 'Передаются только проверенные факты и метки источника. Это проверка точности передачи, не анализ стратегии или изображения. Автономное делегирование не включается.' })];
     if (domain === 'models') {
@@ -213,6 +214,14 @@
   function domainPayload(domain, action, values) {
     if (!knownDomain(domain) || !Object.prototype.hasOwnProperty.call(ACTION_LABELS, action)) throw new Error('Неизвестное действие.');
     const payload = {};
+    if (action === 'amend_intent') {
+      // The person chooses a duration; the server is told an exact moment.
+      const hours = Number(values?.hours);
+      if (!Number.isFinite(hours) || hours < 1 || hours > 24) throw new Error('Укажите от 1 до 24 часов.');
+      const deadline = new Date(Date.now() + hours * 3600000);
+      if (!Number.isFinite(deadline.getTime())) throw new Error('Проверьте срок поручения.');
+      return { deadline: deadline.toISOString() };
+    }
     for (const spec of domainFormFields(domain, action)) {
       const raw = values?.[spec.key];
       if (spec.optionalIfMissing && raw === undefined) continue;
@@ -925,6 +934,34 @@
       const limits = rows(data?.limitations).map(item => typeof item === 'string' ? item : item.summary || item.message || '').filter(Boolean);
       return limits.length ? `<div class="aw-domain-limits"><strong>Ограничения текущего контура</strong><ul>${limits.map(text => `<li>${esc(text)}</li>`).join('')}</ul></div>` : '';
     }
+    const RISK_LABELS = Object.freeze({ low: 'низкий', moderate: 'умеренный', high: 'высокий', critical: 'критический' });
+    const APPROVAL_LABELS = Object.freeze({ advice: 'только совет, исполнение не разрешено', draft: 'черновик',
+      reversible_execution: 'обратимое исполнение', approval_required: 'требуется подтверждение', forbidden: 'запрещено' });
+    function intentPanel(intent) {
+      // Everything here is the server's own Intent record. The panel neither
+      // recomputes a state nor decides whether the work may proceed.
+      if (!intent) return '';
+      const goal = intent.goal || {}, limits = intent.constraints || {}, evidence = intent.required_evidence || {};
+      const request = goal.request === undefined || goal.request === null ? '' : publicJSON(goal.request);
+      const actions = rows(intent.actions).filter(action => action === 'amend_intent')
+        .map(action => `<button class="btn" data-aw-task-action="${esc(action)}">${esc(actionLabel(action))}</button>`).join('');
+      return `<section class="aw-detail-section"><h3>Поручение</h3>`
+        + `<div class="aw-inline">${badge(intent.status)}<span class="aw-status aw-info">ревизия ${count(intent.revision)}</span></div>`
+        + `<dl class="aw-detail-grid">`
+        + `<div><dt>Цель</dt><dd>${esc(goal.text || 'Не указана')}</dd></div>`
+        + `<div><dt>Режим согласования</dt><dd>${esc(APPROVAL_LABELS[intent.approval_mode] || intent.approval_mode || 'не указан')}</dd></div>`
+        + `<div><dt>Уровень риска</dt><dd>${esc(RISK_LABELS[limits.risk] || limits.risk || 'не указан')}</dd></div>`
+        + `<div><dt>Срок</dt><dd>${esc(date(limits.deadline))}</dd></div>`
+        + `<div><dt>Рабочее пространство</dt><dd>${esc((intent.scope || {}).workspace_id || '')}</dd></div>`
+        + `<div><dt>Требуемое доказательство</dt><dd>${esc(evidence.rubric_label || evidence.rubric_key || 'не указано')}</dd></div>`
+        + `</dl>`
+        + `<p class="aw-field-hint">Проверяет: ${esc(evidence.verified_by || 'не указано')}. Приёмка человеком — отдельное решение и не является оценкой качества.</p>`
+        + (request ? `<details class="aw-technical"><summary>Что именно было запрошено</summary><pre>${esc(request)}</pre></details>` : '')
+        + (intent.amendable
+            ? `<div class="aw-actions">${actions}</div><p class="aw-field-hint">Изменить можно только срок. Что именно запрошено — не редактируется: этим значением связаны запрос, ответ и его проверка. Нужен другой запрос — отправьте новый.</p>`
+            : `<p class="aw-field-hint">Поручение больше не изменяется: работа уже началась или ответ получен. Прежние ревизии сохранены.</p>`)
+        + `</section>`;
+    }
     function domainActionButtons(item) {
       return allowedDomainActions(domainState?.data, item).map(action => `<button class="btn sm${['disconnect', 'revoke', 'archive', 'withdraw', 'cancel'].includes(action) ? ' aw-danger-action' : ''}" data-aw-domain-action="${esc(action)}" data-aw-entity="${esc(recordId(item))}">${esc(actionLabel(action))}</button>`).join('');
     }
@@ -1285,6 +1322,7 @@
       else if (detailTab === 'decisions') body = detailRows(rows(detail.decisions), 'У этой задачи нет записанных решений. Проверочный сценарий не имитирует разрешение владельца или Court.');
       else body = detailRows(rows(detail.errors), task.status === 'failed' ? 'Подробности ошибки не опубликованы.' : 'Зарегистрированных ошибок нет.');
       if (detailTab === 'summary' && detail.result_text) body += `<details class="aw-technical"><summary>Полный ответ и технические данные</summary><pre>${esc(detail.result_text)}</pre></details>`;
+      if (detailTab === 'summary') body += intentPanel(detail.intent);
       if (detailTab === 'summary') body += transportVerificationNote(task);
       if (detailTab === 'summary' && task.source_kind === 'real_model_response') body += `<section class="aw-detail-section"><h3>Исполнитель и происхождение результата</h3><dl class="aw-detail-grid"><div><dt>Запрошенная модель</dt><dd>${esc(task.model || 'Не предоставлена')}</dd></div><div><dt>Model ID от провайдера</dt><dd>${esc(detail.actual_model || 'Не предоставлен')}</dd></div><div><dt>Провайдер</dt><dd>${detail.external_call === false ? esc((task.provider || 'провайдер') + ' — не вызывался') : esc(task.provider || 'Не предоставлен')}</dd></div>${detail.executor ? `<div><dt>Ответ получен от</dt><dd>${esc(detail.executor)}</dd></div>` : ''}</dl>${detail.external_call === false ? '<p class="aw-note">Ответ вычислен локально: внешнее обращение не выполнялось, поэтому этот результат ничего не говорит о доступности провайдера.</p>' : ''}<details class="aw-technical"><summary>Связанные записи</summary>${['intent_id', 'execution_id', 'contribution_id', 'outcome_id', 'evaluation_id', 'conversation_id', 'message_id'].filter(key => task[key]).map(key => `<div class="aw-hash">${esc(key.toUpperCase())} ${esc(task[key])}</div>`).join('')}</details></section>`;
       if (detailTab === 'summary' && detail.graph) {

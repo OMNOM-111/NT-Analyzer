@@ -891,6 +891,80 @@ class ModelService:
                 self._change(context, intent, "cancelled")
         return self.task_detail(context=context, task_id=task.header.entity_id)
 
+    def intent_view(self, context, task, checkpoint, receipt):
+        """What the person was committed to, beside what came back.
+
+        Read-only. Every field already existed on the Intent record; none of it
+        is recomputed here, and nothing about the task's state is decided by it.
+        """
+        intent = self._get(context, EntityKind.INTENT, task.intent.entity_id)
+        acceptance = self._json(context, intent.acceptance)
+        spec = checkpoint.get("spec") or {}
+        rubric = (acceptance.get("rubric") or {}).get("rubric_key") or spec.get("rubric_key")
+        # Amendment is only honest while nothing has been sent and the task has
+        # not started: after that the deadline no longer describes the future.
+        amendable = (task.status in {"planned", "ready"} and not receipt
+                     and not checkpoint.get("enqueue_rejected") and intent.status in {"draft", "ready"})
+        actions = (["amend_intent"] if amendable else []) + (["cancel"] if task.status in _ACTIVE else [])
+        return {
+            "id": str(intent.header.entity_id), "revision": intent.header.revision,
+            "status": intent.status,
+            "goal": {"text": presentation.rubric_label(rubric),
+                     "request": spec.get("input"),
+                     "persona_name": checkpoint.get("persona_name"),
+                     "conversation_id": checkpoint.get("conversation_id"),
+                     "message_id": checkpoint.get("message_id")},
+            "constraints": {"risk": intent.risk.value, "deadline": intent.deadline.isoformat(),
+                            "budget_key": intent.budget.key,
+                            "max_output_tokens": 512},
+            "required_evidence": {"rubric_key": rubric,
+                                  "rubric_label": presentation.rubric_label(rubric),
+                                  "verified_by": "independent_local_evidence_verifier",
+                                  "human_review": "separate decision, never a quality claim"},
+            "approval_mode": intent.autonomy.value,
+            "scope": {"workspace_id": context.scope.workspace_id,
+                      "environment": context.scope.environment.value},
+            "amendable": amendable, "actions": actions,
+            "created_at": intent.header.created_at.isoformat(),
+            "updated_at": intent.header.updated_at.isoformat()}
+
+    def amend_intent(self, *, context, task_id, payload, expected_revision=None):
+        """Extend the deadline as a new Intent revision. History is kept.
+
+        What was asked for is not editable: its hash binds the request, the
+        receipt and the evidence together. Changing it is a new request, which
+        is exactly what a refused one is told to do.
+        """
+        self._access(context, "write")
+        if type(payload) is not dict or set(payload) != {"deadline"}:
+            raise ContractError("intent_amendment_invalid")
+        task = self._get(context, EntityKind.TASK, task_id)
+        checkpoint = self._json(context, task.checkpoint)
+        if checkpoint.get("source") != "real_model_task":
+            raise ContractError("model_task_not_found")
+        receipt = self._json(context, checkpoint["receipt"]) if checkpoint.get("receipt") else {}
+        if not (task.status in {"planned", "ready"} and not receipt
+                and not checkpoint.get("enqueue_rejected")):
+            raise ContractError("intent_not_amendable")
+        intent = self._get(context, EntityKind.INTENT, task.intent.entity_id)
+        if expected_revision is not None and int(expected_revision) != intent.header.revision:
+            raise ContractError("revision_conflict")
+        try:
+            deadline = datetime.fromisoformat(str(payload["deadline"]).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            raise ContractError("intent_amendment_invalid") from None
+        if deadline.tzinfo is None:
+            raise ContractError("intent_amendment_invalid")
+        now = _now()
+        if not now < deadline <= now + timedelta(hours=24):
+            raise ContractError("intent_deadline_out_of_range")
+        with _LOCK:
+            current = self._get(context, EntityKind.INTENT, task.intent.entity_id)
+            if current.header.revision != intent.header.revision:
+                raise ContractError("revision_conflict")
+            self._change(context, current, deadline=deadline)
+        return self.task_detail(context=context, task_id=task_id)
+
     def task_detail(self, *, context, task_id):
         self._access(context)
         task = self._get(context, EntityKind.TASK, task_id)
@@ -1025,6 +1099,7 @@ class ModelService:
         task_dto["progress_pct"] = presentation.progress_pct(task_dto["display_status"])
         return {"task": task_dto, **task_dto, "result_text": result_text,
             "actual_model": receipt.get("actual_model"), "evaluation": evidence,
+            "intent": self.intent_view(context, task, checkpoint, receipt),
             "executor": receipt.get("executor"), "external_call": receipt.get("external_call"),
             "application_evaluation": application_evaluation,
             "evaluations": ([evidence] if evidence else []) + ([application_evaluation] if application_evaluation else []),

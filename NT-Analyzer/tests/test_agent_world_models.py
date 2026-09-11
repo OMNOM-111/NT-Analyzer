@@ -947,3 +947,75 @@ def test_a_real_provider_answer_carries_no_local_executor(setup):
     assert detail["actual_model"] == "served-model"
     assert detail["executor"] is None
     assert detail["external_call"] is None
+
+
+def test_the_intent_a_task_came_from_is_visible_before_anything_runs(setup):
+    """Six things a person needs before work starts, none of them recomputed."""
+    service, ctx, *_ = setup
+    model = connected(setup)
+    pending = task(setup, model, key="intent-visible")
+    detail = service.task_detail(context=ctx, task_id=pending["id"])
+    intent = detail["intent"]
+
+    assert intent["status"] in {"draft", "ready"} and intent["revision"] >= 1
+    assert intent["goal"]["text"] and intent["goal"]["request"] is not None
+    assert intent["constraints"]["risk"] == "low"
+    assert intent["constraints"]["deadline"] and intent["constraints"]["budget_key"]
+    assert intent["required_evidence"]["verified_by"] == "independent_local_evidence_verifier"
+    assert intent["approval_mode"] == "advice"
+    assert intent["scope"]["workspace_id"] == ctx.scope.workspace_id
+    # Before anything is sent, both actions are offered.
+    assert intent["amendable"] is True
+    assert "amend_intent" in intent["actions"] and "cancel" in intent["actions"]
+
+
+def test_the_deadline_can_be_extended_as_a_new_revision_keeping_the_old_one(setup):
+    from datetime import datetime, timedelta, timezone
+
+    service, ctx, *_ = setup
+    model = connected(setup)
+    pending = task(setup, model, key="intent-amend")
+    before = service.task_detail(context=ctx, task_id=pending["id"])["intent"]
+    later = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat()
+
+    after = service.amend_intent(context=ctx, task_id=pending["id"], payload={"deadline": later},
+                                 expected_revision=before["revision"])["intent"]
+    assert after["revision"] == before["revision"] + 1
+    assert after["constraints"]["deadline"] != before["constraints"]["deadline"]
+    # The earlier revision is still readable: an amendment is not a rewrite.
+    from app.ai_control_center.states import EntityKind
+    old = service.repository.get_revision(context=ctx, kind=EntityKind.INTENT,
+        entity_id=UUID(before["id"]), revision=before["revision"])
+    assert old is not None and old.deadline.isoformat() == before["constraints"]["deadline"]
+
+
+@pytest.mark.parametrize("payload, code", [
+    ({}, "intent_amendment_invalid"),
+    ({"goal": "something else"}, "intent_amendment_invalid"),
+    ({"deadline": "not-a-time"}, "intent_amendment_invalid"),
+    ({"deadline": "2020-01-01T00:00:00+00:00"}, "intent_deadline_out_of_range"),
+])
+def test_an_amendment_cannot_change_what_was_asked_for(setup, payload, code):
+    """The request hash binds request, receipt and evidence. Only time moves."""
+    service, ctx, *_ = setup
+    model = connected(setup)
+    pending = task(setup, model, key="intent-amend-refused")
+    with pytest.raises(ContractError) as refused:
+        service.amend_intent(context=ctx, task_id=pending["id"], payload=payload)
+    assert refused.value.code == code
+
+
+def test_an_intent_stops_being_amendable_once_the_answer_exists(setup):
+    service, ctx, *_ = setup
+    model = connected(setup)
+    pending = task(setup, model, key="intent-after-result")
+    service.execute(context=ctx, task_id=pending["id"])
+    detail = service.task_detail(context=ctx, task_id=pending["id"])
+
+    assert detail["intent"]["amendable"] is False
+    assert "amend_intent" not in detail["intent"]["actions"]
+    from datetime import datetime, timedelta, timezone
+    with pytest.raises(ContractError) as refused:
+        service.amend_intent(context=ctx, task_id=pending["id"],
+            payload={"deadline": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()})
+    assert refused.value.code == "intent_not_amendable"
