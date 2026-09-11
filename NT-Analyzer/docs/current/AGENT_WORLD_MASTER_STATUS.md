@@ -14,7 +14,7 @@ PROGRAM: Agent World / AI Center
 STATUS: IN DEVELOPMENT
 
 CURRENT IMPLEMENTATION COVERAGE: 93%
-CURRENT OWNER ACCEPTANCE READINESS: 65%
+CURRENT OWNER ACCEPTANCE READINESS: 66%
 
 CURRENT INTEGRATION BRANCH: codex/agent-world-unified-acceptance
 CURRENT INTEGRATION SHA: 84ddb2e7 — P1-3 complete. Full regression at b06c5f55 (the commit
@@ -48,7 +48,7 @@ recorded as such.
 
 ```text
 IMPLEMENTATION COVERAGE: 93%   (33.5 / 36)
-OWNER ACCEPTANCE READINESS: 65%   (23.5 / 36)
+OWNER ACCEPTANCE READINESS: 66%   (24.0 / 36)
 
 P0 REMAINING: 0
 
@@ -57,11 +57,13 @@ Implementation: +6 pp  — two rows move 0.5 to 1.0. Intent: the commitment a ta
                          was created from is now on the task, in the API and on
                          the page. Reputation: three separate scopes over one
                          typed subject, with provenance and basis.
-Acceptance:     +0 pp  — deliberately unchanged. Both rows were confirmed
-                         through the running application's own API and through
-                         the shipped page code, which is the 0.5 definition.
-                         Neither has been walked by a person in a browser, and
-                         that is what 1.0 requires. See NEXT AGENT START HERE.
+Acceptance:     +1 pp  — Intent only. Both panels were then opened in a browser
+                         on :8809 and read from the live DOM. That closes Intent:
+                         the commitment is visible to the person in the running
+                         application. Reputation stays 0.5 because only two of
+                         its three scopes have a producer in the application —
+                         nothing writes a decision-subject evaluation yet, so
+                         the row cannot be called fully confirmed.
 ```
 
 > The independent audit of 2026-09-10 reported 84% / 54% on a 34-row basis.
@@ -85,7 +87,7 @@ Marks: `Y` yes · `P` partial · `N` no.
 | SQLite | Y | Y | Y | Y | Y | DONE + VERIFIED | Default backend on every instance | — |
 | PostgreSQL / RLS | Y | Y | Y | Y | Y | DONE + VERIFIED | e45 runtime harness: API → worker → SQL → replay → restart → RLS; 69+41+7 suite PASS; 10 FORCE RLS tables; no SQLite fallback | Never run as Local's backend |
 | Event ledger / outbox / idempotency | Y | Y | Y | Y | Y | DONE + VERIFIED | Idempotent replay and restart in the same harness | — |
-| Intent | Y | Y | Y | Y | P | IMPLEMENTED | «Поручение» on the task: goal, approval mode, risk, deadline, workspace, required evidence and reviewer, with the request itself behind a disclosure. Live on :8809; six rendering cases over the shipped page code | Browser pass. Amendment is refused by design, not missing: `EDITABLE_STATES[INTENT] == {"draft"}` and a started task has already left it, so an editable Intent would mean widening the immutability rule that binds request, receipt and evidence. The panel says so and points to «Отменить задачу» or a new request |
+| Intent | Y | Y | Y | Y | Y | DONE + VERIFIED | «Поручение» read from the live DOM on :8809: goal, approval mode «только совет, исполнение не разрешено», risk, deadline, workspace, required evidence and verifier, with the request behind a disclosure. Six rendering cases over the shipped page code | Cancel was not caught in the browser: the local executor finishes a task within seconds of creation, so the control had already gone by the time the page opened. It is the task's pre-existing action, offered by the panel (`actions: ["cancel"]` observed on the unstarted task) and covered by the task suites. Amendment is refused by design, not missing: `EDITABLE_STATES[INTENT] == {"draft"}` and a started task has already left it, so an editable Intent would mean widening the immutability rule that binds request, receipt and evidence. The panel says so and points to «Отменить задачу» or a new request |
 | Coordinator | Y | Y | Y | Y | P | PARTIAL | `coordinator.commission`; 202 PASS across coordinator, delegation, handoff, integration, review and UI | Two closed operation classes, caller-named rather than inferred from the goal; still not a general planner |
 | Task Graph | Y | Y | Y | Y | P | IMPLEMENTED | Real parent → subtasks → contributions → aggregate, depth ≤3, typed deps. Two operation classes: `verify_fact_transfer` restates and is graded on exactness, `numeric_breakdown` gives each child its own slice and a different answer | Live browser route for the second operation |
 | Delegation | Y | Y | Y | Y | P | PARTIAL | Grant-bound, depth-bounded, cycle- and restart-safe; 61 handoff/delegation PASS | Roots only on Coordinator task or verified application result |
@@ -95,7 +97,7 @@ Marks: `Y` yes · `P` partial · `N` no.
 | Router | Y | Y | Y | Y | P | IMPLEMENTED | Candidates, exclusions, reason codes, shadow vs active, apply pinned to the exact preview; test-executor observations disqualified from real routing | No comparison between two real providers |
 | Outcomes | Y | Y | Y | Y | Y | DONE + VERIFIED | Outcome and evaluation produced, displayed and accepted on the live route | — |
 | Evaluation | Y | Y | Y | Y | Y | DONE + VERIFIED | Independent verifier; per-check pass/fail in the inspector; rejects wrong and corrupted answers | — |
-| Reputation | Y | Y | Y | Y | P | IMPLEMENTED | Three scopes over one typed `Evaluation.subject` — model, agent role, decision — never summed, never relabelled, each with its own sample, confidence, evidence and window. `basis` names what was measured on: diagnostic, mixed or field. Live on :8809: model `measured` at 4, role `NEW` at 0 for the same task class, no shared evidence, no drift between reads | Browser pass. Decision scope has no live producer yet: it is reachable through the API and covered by cases, but nothing in the running application writes a decision-subject evaluation |
+| Reputation | Y | Y | Y | Y | P | IMPLEMENTED | Three scopes over one typed `Evaluation.subject` — model, agent role, decision — never summed, never relabelled, each with its own sample, confidence, evidence and window. `basis` names what was measured on: diagnostic, mixed or field. Read from the live DOM on :8809: «Модель · диагностика · 4 из 4», «Наблюдений 4 · из них диагностических 4», «Рабочая роль · NEW · недостаточно данных», neither card carrying the observed-performance style | Decision scope has no live producer yet: it is reachable through the API and covered by cases, but nothing in the running application writes a decision-subject evaluation |
 | Consensus | Y | Y | Y | Y | P | IMPLEMENTED | Independent same-input contributions, then a separate Court | Synthetic only |
 | Court | Y | Y | Y | Y | P | IMPLEMENTED | 3 isolated sessions from one sealed packet, unweighted 2-of-3, failure-domain diversity, provenance-checked votes, revocation re-checked after the call, judges cannot execute | Never three genuinely different providers — P2 |
 | Execution | Y | Y | Y | Y | Y | DONE + VERIFIED | Immutable approved decision, capability/device re-check, budget, idempotency, cancel, restart. V2 enabled path walked live: prepare → queue → worker → receipt → completion | — |
@@ -540,16 +542,13 @@ Do not touch:
 
 Exact next action:
   1. Read the two runs above. If both are green, the P1-3 evidence is complete.
-  2. The browser pass that both new rows are waiting on. It is the only thing
-     between 65% and a higher acceptance number, and it is small: open a task on
-     :8809, read «Поручение» on Обзор, then the Оценка tab, and confirm the
-     model card says «диагностика · 4 из 4» rather than a green percentage.
-     Note for whoever does it: the in-app browser tool could not click that
-     drawer tab - its coordinate frame disagrees with the page's own layout, and
-     ref clicks were reported as outside the viewport at x~2013 on an 800-wide
-     frame. That is a tooling problem, not a page defect; the panel renders
-     correctly from the running server's own payload, checked by feeding that
-     payload straight into the shipped renderer. Use a real browser.
+  2. DONE - the browser pass on :8809. Both panels were read from the live DOM.
+     Note for anyone driving this page from the in-app browser tool: its
+     coordinate clicks do not land on the inspector's drawer tabs - the tool
+     reported refs as outside the viewport at x~2013 on an 800-wide frame. The
+     keyboard works and is the reliable route: open ?task=<id>, Tab to the
+     tablist (the drawer's roving tabindex leaves only the selected tab
+     tabbable), then Arrow/Home/End between tabs. Not a page defect.
   3. Then P1-5, which is unblocked. Give the executor the handoff sentence
      recorded in the P1-5 section verbatim; the seam it names is the whole
      dependency.
