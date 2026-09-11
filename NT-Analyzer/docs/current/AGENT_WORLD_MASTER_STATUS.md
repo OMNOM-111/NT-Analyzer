@@ -14,10 +14,13 @@ PROGRAM: Agent World / AI Center
 STATUS: IN DEVELOPMENT
 
 CURRENT IMPLEMENTATION COVERAGE: 93%
-CURRENT OWNER ACCEPTANCE READINESS: 66%
+CURRENT OWNER ACCEPTANCE READINESS: 68%
 
 CURRENT INTEGRATION BRANCH: codex/agent-world-unified-acceptance
-CURRENT INTEGRATION SHA: 84ddb2e7 — P1-3 complete. Full regression at b06c5f55 (the commit
+CURRENT INTEGRATION SHA: fb2c472b — P1-3 complete, including the decision producer.
+  At fb2c472b: CI run 34658942542 dispatched; 228 passed locally across the completion,
+  handoff, shared-security and reputation suites, plus 13 new decision-path cases.
+  Previous checkpoint 84ddb2e7 — P1-3 scopes. Full regression at b06c5f55 (the commit
   before the honesty fix): 5493 passed / 0 failed / 117 skipped, 1:31:06.
   At 84ddb2e7: CI run 34641854998 SUCCESS on all three jobs — Static gates;
   Tests (ubuntu-latest) 5502 passed / 0 failed / 116 skipped, 17:32;
@@ -54,7 +57,7 @@ recorded as such.
 
 ```text
 IMPLEMENTATION COVERAGE: 93%   (33.5 / 36)
-OWNER ACCEPTANCE READINESS: 66%   (24.0 / 36)
+OWNER ACCEPTANCE READINESS: 68%   (24.5 / 36)
 
 P0 REMAINING: 0
 
@@ -63,13 +66,13 @@ Implementation: +6 pp  — two rows move 0.5 to 1.0. Intent: the commitment a ta
                          was created from is now on the task, in the API and on
                          the page. Reputation: three separate scopes over one
                          typed subject, with provenance and basis.
-Acceptance:     +1 pp  — Intent only. Both panels were then opened in a browser
-                         on :8809 and read from the live DOM. That closes Intent:
-                         the commitment is visible to the person in the running
-                         application. Reputation stays 0.5 because only two of
-                         its three scopes have a producer in the application —
-                         nothing writes a decision-subject evaluation yet, so
-                         the row cannot be called fully confirmed.
+Acceptance:     +3 pp  — Intent (+0.5) once both panels were read from the live
+                         DOM on :8809, and Reputation (+0.5) once the third scope
+                         got a producer. All three scopes now fill from the
+                         application's own completion path, confirmed on :8810
+                         through the API and in the browser: «Решение · Класс
+                         задачи: Исход одобренного решения · Наблюдений 1 · из
+                         них диагностических 1 · Доказательства 1 запись».
 ```
 
 > The independent audit of 2026-09-10 reported 84% / 54% on a 34-row basis.
@@ -103,7 +106,7 @@ Marks: `Y` yes · `P` partial · `N` no.
 | Router | Y | Y | Y | Y | P | IMPLEMENTED | Candidates, exclusions, reason codes, shadow vs active, apply pinned to the exact preview; test-executor observations disqualified from real routing | No comparison between two real providers |
 | Outcomes | Y | Y | Y | Y | Y | DONE + VERIFIED | Outcome and evaluation produced, displayed and accepted on the live route | — |
 | Evaluation | Y | Y | Y | Y | Y | DONE + VERIFIED | Independent verifier; per-check pass/fail in the inspector; rejects wrong and corrupted answers | — |
-| Reputation | Y | Y | Y | Y | P | IMPLEMENTED | Three scopes over one typed `Evaluation.subject` — model, agent role, decision — never summed, never relabelled, each with its own sample, confidence, evidence and window. `basis` names what was measured on: diagnostic, mixed or field. Read from the live DOM on :8809: «Модель · диагностика · 4 из 4», «Наблюдений 4 · из них диагностических 4», «Рабочая роль · NEW · недостаточно данных», neither card carrying the observed-performance style | Decision scope has no live producer yet: it is reachable through the API and covered by cases, but nothing in the running application writes a decision-subject evaluation |
+| Reputation | Y | Y | Y | Y | Y | DONE + VERIFIED | Three scopes over one typed `Evaluation.subject` — model, agent role, decision — never summed, never relabelled, each with its own sample, confidence, evidence and window. `basis` names what was measured on: diagnostic, mixed or field. Read from the live DOM on :8809: «Модель · диагностика · 4 из 4», «Наблюдений 4 · из них диагностических 4», «Рабочая роль · NEW · недостаточно данных», neither card carrying the observed-performance style. All three scopes now fill from the application's own completion path: an approved Decision, the Execution naming it, the Outcome bound to that Execution, then the observation. Read from the live DOM on :8810: «Решение · Класс задачи: Исход одобренного решения · Наблюдений 1 · из них диагностических 1» | Nothing outstanding. The decision observation is deliberately narrow — whether what ran was what was approved, and whether the outcome was verified, never whether the call was wise — and a failed execution writes nothing at all rather than a zero |
 | Consensus | Y | Y | Y | Y | P | IMPLEMENTED | Independent same-input contributions, then a separate Court | Synthetic only |
 | Court | Y | Y | Y | Y | P | IMPLEMENTED | 3 isolated sessions from one sealed packet, unweighted 2-of-3, failure-domain diversity, provenance-checked votes, revocation re-checked after the call, judges cannot execute | Never three genuinely different providers — P2 |
 | Execution | Y | Y | Y | Y | Y | DONE + VERIFIED | Immutable approved decision, capability/device re-check, budget, idempotency, cancel, restart. V2 enabled path walked live: prepare → queue → worker → receipt → completion | — |
@@ -381,6 +384,18 @@ Status: DONE - fddc6bf7 (subject seam), 49b20b71 (read models, API, UI),
         of quietly returning the wrong thing. Every generic iteration over
         EVALUATION that leads to a model judgement filters subject.kind first:
         router_v2._observations and both model_service loops.
+        The decision producer landed separately at fb2c472b, after the scopes:
+        `decision_evaluation.py` observes the decision an execution was approved
+        under, at the one point a real outcome is settled. Two things about it
+        are deliberate and should not be "simplified" later. It measures only
+        whether what ran was what was approved and whether the outcome was
+        verified - never whether the call was wise - because nothing in the
+        system can observe the latter. And when an execution fails on its own
+        account it writes NOTHING, rather than a failed observation: a queue
+        that lost its claim is not a decision that was wrong. Every deviation
+        reason is attributed to one side or the other on purpose, and
+        `test_every_deviation_reason_is_attributed_on_purpose` fails if a new
+        reason is added without being classified.
 ```
 
 ```text
@@ -516,53 +531,50 @@ P3-3  Eight expected sections live behind three tabs as drawers — owner design
 | P1-3 - three reputation scopes over one typed subject | `84ddb2e7` | 9 scope cases on real Model/AgentRole/Decision records + 6 rendering cases over the shipped page code; live on :8809 - model `measured` at 4, role `NEW` at 0 for the same class, no shared evidence |
 | P1-3 - a measurement is a function of its evidence | `b06c5f55` | The window was stamped with the wall clock, so two reads of the same rows disagreed. Caught by two regressions that compare one task's detail twice |
 | P1-3 - a diagnostic is not an observed score | `84ddb2e7` | Found on the running build, not in a test: 4 synthetic runs headlined as a green «100%». `basis` now names diagnostic / mixed / field and the headline follows it |
+| P1-3 - the decision scope gets a producer | `fb2c472b` | Approved Decision -> Execution -> observed Outcome -> Evaluation, written by the application's own completion path. 13 cases: the model score and the decision score cannot reach each other's rows, a decision fails on scope while the model that answered passed, a role scope reads no decision row, a failed execution writes nothing rather than a zero, and a synthetic-only decision measures as diagnostic. Live on :8810 through the API and the browser |
 
 ## NEXT AGENT START HERE
 
 ```text
-Last safe commit: 84ddb2e7 - P1-3 complete.
-  Full regression PASS at b06c5f55 (the commit before it): 5493 / 0 / 117, 1:31:06.
-  Focused PASS at 84ddb2e7: 618 across every UI and reputation suite; 17 across
-  the two reputation suites. The full run at 84ddb2e7 and CI run 34641854998
-  were both started at this checkpoint - read their results before calling
-  84ddb2e7 verified, and record them here.
+Last safe commit: fb2c472b - P1-3 complete, decision producer included.
+  CI 34641854998 was green on all three jobs at 84ddb2e7 (the previous
+  checkpoint): Static gates; ubuntu 5502 / 0 / 116; windows self-hosted
+  5499 / 0 / 119. CI 34658942542 was dispatched at fb2c472b - read it before
+  calling this SHA verified, and record the result here.
+  Locally at fb2c472b: 228 passed across the completion, handoff,
+  shared-security and reputation suites, plus 13 decision-path cases.
 
 Uncommitted files: none. Re-check `git status` before assuming that.
 
 Active processes:
   PID 20328 - Local 8765, code 2b6d0112, owner data root. DO NOT switch or restart.
-  :8809      - acceptance build at 84ddb2e7, disposable data root. Current.
+  :8810      - acceptance build at fb2c472b, disposable data root. Current.
+  :8809      - 84ddb2e7, the P1-3 scopes build.
   :8808      - b06c5f55. Keeps the reputation headline defect as evidence.
   :8806      - 4d9ff737, the P0 acceptance build.
   :8804      - 92d873e3, holds the historical stuck task ef1b1052.
-  Stop any of the last four only deliberately; none of them touches owner data.
+  Stop any but the first only deliberately; none of them touches owner data.
 
-Tests currently running: none. CI 34641854998 is green on all three jobs at 84ddb2e7.
+Tests currently running: CI 34658942542 at fb2c472b.
 
-Known failures: none at 84ddb2e7 in any suite run so far.
+Known failures: none at fb2c472b in any suite run so far.
 
 Do not touch:
   - Local 8765 and the owner data root under NT-Analyzer/data
   - The bases of PR #280-#285; PR #285 is not to be moved onto `main`
+  - states.py, storage_codec.py and model_contracts.py while Codex integrates
+    P1-5: those three are what its atomic commit rewrites
   - Any Codex branch other than codex/agent-world-unified-acceptance
   - deploy/testing/acceptance.env or any generated DSN - never into Git
 
 Exact next action:
-  1. DONE - CI 34641854998 green on all three jobs. P1-3 evidence is complete.
-     Do not start a local full regression while a self-hosted CI job is running:
-     they share this machine and each roughly doubles the other's wall time.
-  2. DONE - the browser pass on :8809. Both panels were read from the live DOM.
-     Note for anyone driving this page from the in-app browser tool: its
-     coordinate clicks do not land on the inspector's drawer tabs - the tool
-     reported refs as outside the viewport at x~2013 on an 800-wide frame. The
-     keyboard works and is the reliable route: open ?task=<id>, Tab to the
-     tablist (the drawer's roving tabindex leaves only the selected tab
-     tabbable), then Arrow/Home/End between tabs. Not a page defect.
-  3. Then P1-5, which is unblocked. Give the executor the handoff sentence
-     recorded in the P1-5 section verbatim; the seam it names is the whole
-     dependency.
+  1. Read CI 34658942542. If green, P1-3 is closed on every count and the
+     Reputation row's evidence is complete.
+  2. P1-4 (BYOK) is the next owner-blocking item and needs a real key and a
+     permitted endpoint - owner action, not an executor's.
+  3. P1-5 is unblocked and belongs to Codex. Do not pre-empt its three files.
 
-Two notes for anyone changing this area:
+Three notes for anyone changing this area:
 
 Three places re-derive the same work and compare - `reconcile` stores the
 aggregate proof, `task_review` rebuilds it, `propose` rebuilds the node labels.
@@ -574,4 +586,9 @@ that renders sits above the `module.exports` line; that is the boundary the UI
 suite loads. `reputationPanel` and `intentPanel` were written below it, which is
 exactly why a green «100%» over four synthetic runs reached a running build with
 a full green suite behind it. Put new render functions above the line.
+
+Each reputation scope has its own task class as well as its own subject kind.
+That is not decoration: it is the second lock that stops a model's rows and a
+decision's rows ever pooling, whatever happens to the subject filter later.
+Do not give two scopes the same class.
 ```
