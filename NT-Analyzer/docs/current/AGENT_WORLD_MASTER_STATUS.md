@@ -408,13 +408,20 @@ PARALLEL WORKSTREAM: External Agent Onboarding
 
 - Base SHA: `9ae183f65149c9cc7253490810667fc75cbf9cf6`.
 - Branch: `codex/agent-world-external-agent-onboarding`.
-- Head: checkpoint being saved; obtain exact SHA with `git log -1` on this branch.
+- Head (code checkpoint): `97095b0010a278e8f917a00e9661d77e93fadf0e`, pushed, clean.
+- PR: [draft #286](https://github.com/OMNOM-111/NT-Analyzer/pull/286), base
+  `codex/agent-world-unified-acceptance`; PR #285 base unchanged.
 - Code: **IN DEVELOPMENT**, four isolated external_agent modules, no shared edits.
 - Wired: NO — native codec/repository, worker and Evaluation integration pending.
 - API: service ports implemented; authenticated HTTP routes NOT mounted.
 - Automated: protocol/onboarding/adapter checks with test-only host ports.
 - E2E: actual HTTP synthetic protocol path checked; full ordinary-user app E2E NOT checked.
 - Tests: final focused **64 passed / 0 failed / 0 skipped**, 11.40 s, including malformed-card cases.
+- Gates: root static scan CSP/secrets/Markdown PASS; Context Pack PASS (historical
+  pack-SHA warning retained); 600-file pre-release bundle PASS, Python/JS included.
+- Full regression, native PostgreSQL/RLS and application/UI E2E: NOT RUN.
+- At code checkpoint: no uncommitted files; ignored Python caches only. No known
+  focused test failures. Later handoff-only commit does not change executable code.
 - Known limitations: native Contribution/Evaluation/history/statistics not persisted;
   native budget settlement/audit, RLS, UI and cancellation cleanup not wired.
 - Integration files needed: states/codec/events, Evaluation subject contract,
@@ -426,7 +433,7 @@ PARALLEL WORKSTREAM: External Agent Onboarding
   contract/protocol tested, NOT a completed product flow. Integrator alone updates
   global percentages and original P1-5 matrix after reconciliation.
 
-Next P1-5 operation: save exact-file checkpoint, then integrator reviews the native
+Next P1-5 operation: integrator reviews draft #286 and the native
 connection kind and external Evaluation subject before assigning shared wiring.
 No work on P1-1/P1-2/P1-3, UI, PR #285 base or Local 8765.
 See [P1-5 change record](../changelog/2026-09-10-external-agent-onboarding.md).

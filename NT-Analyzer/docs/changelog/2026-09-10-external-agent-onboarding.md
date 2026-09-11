@@ -3,7 +3,9 @@
 Status: **IN DEVELOPMENT**. No release, merge, deployment, runtime switch or database migration.
 Base SHA: `9ae183f65149c9cc7253490810667fc75cbf9cf6`.
 Branch: `codex/agent-world-external-agent-onboarding`.
-Change source: the commit containing this record; exact checkpoint SHA is recorded in the subsequent handoff.
+Code checkpoint: `97095b0010a278e8f917a00e9661d77e93fadf0e`, pushed, clean.
+PR: [draft #286](https://github.com/OMNOM-111/NT-Analyzer/pull/286), based on
+`codex/agent-world-unified-acceptance`; no change to PR #285 base.
 Requester: owner. Implementation: AI-assisted change; no inferred model identity.
 
 ## Change summary
@@ -46,6 +48,12 @@ there is no request flag allowing loopback. Development-only composition.
 
 Final focused tests: **64 passed / 0 failed / 0 skipped**, 11.40 s,
 including two added malformed-card regression cases.
+Root static scan: CSP/secrets/Markdown PASS. Context Pack PASS (historical pack-SHA
+warning remains). Pre-release: 600 files, static scan inside bundle, runtime reads,
+Python compilation and JavaScript syntax PASS. Full regression, native RLS and UI
+E2E not run. Initial sandbox-denied setup and test-ID Windows path-length errors
+were corrected before the final run; final 64 cases all executed, none skipped.
+Context metadata placement failure was corrected before checkpoint.
 `tests/test_external_agent_protocol.py`: real ephemeral HTTP test server, actual
 credential handshake, send/poll/cancel, duplicate binding, verifier, protocol/SSRF/
 tenant/credential/timeout negatives. `tests/test_external_agent_ports.py`: service
