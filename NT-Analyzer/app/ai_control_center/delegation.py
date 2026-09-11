@@ -24,6 +24,86 @@ SOURCE = "agent_world_delegation"
 PHASE = "delegation_step"
 MAX_DEPTH, MAX_FANOUT, MAX_TOTAL = 3, 2, 7
 
+# What a delegated child actually does. `verify_fact_transfer` restates its
+# parent's facts and is graded on exactness; `numeric_breakdown` computes
+# statistics over its own slice of the parent's data, so each child produces a
+# different answer that the same independent verifier can still reject. Both are
+# closed classes of work with a fixed rubric -- neither is a free prompt, and a
+# caller cannot introduce a third.
+OPERATIONS = {
+    "verify_fact_transfer": {"rubric": "extract_facts", "produces_new_analysis": False,
+                             "role": "fact_transfer_checker",
+                             "label": "Проверка точности передачи фактов",
+                             "plan_phrase": "проверок передачи фактов"},
+    "numeric_breakdown": {"rubric": "json_arithmetic", "produces_new_analysis": True,
+                          "role": "segment_analyst",
+                          "label": "Разбор отдельного участка данных",
+                          "plan_phrase": "разборов отдельных участков этих данных, каждый по своему участку"},
+}
+DEFAULT_OPERATION = "verify_fact_transfer"
+# The arithmetic rubric accepts 3..20 integers, so a plan whose slices fall
+# outside that is refused when it is proposed rather than at the first child.
+SEGMENT_MIN, SEGMENT_MAX = 3, 20
+
+
+def operation_of(plan):
+    name = (plan or {}).get("operation", DEFAULT_OPERATION)
+    if name not in OPERATIONS:
+        raise ContractError("delegation_operation_unsupported")
+    return name
+
+
+def _siblings(plan, index):
+    """This node's ordinal among the children of its own parent, and how many.
+
+    Read from the sealed plan, so two nodes can never claim the same slice and
+    a reordered plan is a different plan.
+    """
+    parent = plan["nodes"][index]["parent_index"]
+    order = [row["index"] for row in plan["nodes"] if row["parent_index"] == parent]
+    return order.index(index), len(order)
+
+
+def segment(values, ordinal, count):
+    """A deterministic contiguous slice. Sizes differ by at most one."""
+    if (type(values) is not list or type(ordinal) is not int or type(count) is not int
+            or count < 1 or not 0 <= ordinal < count):
+        raise ContractError("delegation_segment_invalid")
+    size, extra = divmod(len(values), count)
+    start = ordinal * size + min(ordinal, extra)
+    part = values[start:start + size + (1 if ordinal < extra else 0)]
+    if not SEGMENT_MIN <= len(part) <= SEGMENT_MAX:
+        raise ContractError("delegation_segment_too_small")
+    return part
+
+
+def child_facts(operation, plan, index, parent_checkpoint, inherited):
+    """What the child is given. Derived here, never supplied by a caller.
+
+    `inherited` is the parent's own facts, which is what a fact-transfer child
+    restates. A breakdown child instead receives its slice of the parent's
+    verified input, carried in the same dict shape every other reader expects.
+    """
+    if operation != "numeric_breakdown":
+        return inherited
+    values = ((parent_checkpoint or {}).get("spec") or {}).get("input")
+    ordinal, count = _siblings(plan, index)
+    return {"values": json_bytes(segment(values, ordinal, count)).decode()}
+
+
+def child_request(operation, facts):
+    """The rubric and text for a child, used to build it and to re-check it."""
+    if operation == "numeric_breakdown":
+        return {"rubric_key": "json_arithmetic", "input_text": facts["values"]}
+    return {"rubric_key": "extract_facts",
+            "input_text": "\n".join(key + "=" + value for key, value in facts.items())}
+
+
+def expected_spec(plan, packet):
+    """The exact spec a child must carry, rebuilt from the sealed packet."""
+    request = child_request(operation_of(plan), packet["facts"])
+    return prepare(request["rubric_key"], request["input_text"])
+
 
 @dataclass(frozen=True)
 class SealedDelegation:
@@ -195,7 +275,7 @@ def _child_key(controller_id, index):
     return "delegate." + str(controller_id) + "." + str(index)
 
 
-def _verified(service, context, identity):
+def _verified(service, context, identity, *, operation=DEFAULT_OPERATION):
     # A status/score alone is not enough for a child to unlock descendants.
     data = result_handoff.verified_model_data(service, context, identity, allow_dependent=True)
     task = service._get(context, EntityKind.TASK, identity)
@@ -206,7 +286,7 @@ def _verified(service, context, identity):
             or proof.get("synthetic") not in {False, data["synthetic"]} or proof.get("self_scored") is not False
             or proof.get("evaluator") != "independent_local_evidence_verifier"
             or checkpoint.get("synthetic") is not False or checkpoint.get("source") != "real_model_task"
-            or checkpoint.get("spec", {}).get("rubric_key") != "extract_facts"
+            or checkpoint.get("spec", {}).get("rubric_key") != OPERATIONS[operation]["rubric"]
             or proof.get("input_sha256") != digest(checkpoint["spec"])
             or proof.get("task_id") != str(task.header.entity_id) or proof.get("model_id") != checkpoint.get("model_id")
             or proof.get("receipt") != checkpoint.get("receipt")):
@@ -220,7 +300,10 @@ def _seal_node(service, context, control, plan, index):
         validate_plan_link(service, context, plan)
     if type(index) is not int or not 0 <= index < len(plan["nodes"]):
         raise ContractError("delegation_node_invalid")
+    operation = operation_of(plan)
     node = plan["nodes"][index]
+    if node.get("operation", DEFAULT_OPERATION) != operation:
+        raise ContractError("delegation_operation_changed")
     root = service._get(context, EntityKind.TASK, plan["root_task"]["entity_id"])
     if c.primitive(root.ref()) != plan["root_task"]:
         raise ContractError("delegation_root_source_changed")
@@ -248,13 +331,16 @@ def _seal_node(service, context, control, plan, index):
                     or digest(sealed["facts"]) != sealed["facts_sha256"]):
                 raise ContractError("delegation_root_evidence_changed")
         parent, facts, outcome_id = root, sealed["facts"], sealed["source_outcome_id"]
+        facts = child_facts(operation, plan, index, service._json(context, root.checkpoint), facts)
     else:
-        parent, checkpoint, outcome = _verified(service, context, _child_id(context, control.header.entity_id, node["parent_index"]))
+        parent, checkpoint, outcome = _verified(service, context,
+            _child_id(context, control.header.entity_id, node["parent_index"]), operation=operation)
         packet = checkpoint.get("delegation") or {}
         if (packet.get("controller_id") != str(control.header.entity_id) or packet.get("node_index") != node["parent_index"]
                 or packet.get("plan_sha256") != digest(plan)):
             raise ContractError("delegation_parent_lineage_invalid")
         facts, outcome_id = checkpoint["spec"]["input"], str(outcome.header.entity_id)
+        facts = child_facts(operation, plan, index, checkpoint, facts)
     model = service._get(context, EntityKind.MODEL, node["model_id"])
     profile = service._json(context, model.profile)
     persona = service._get(context, EntityKind.PERSONA, node["persona_id"])
@@ -290,7 +376,7 @@ def validate_constructor(service, context, value, *, model_id, spec, conversatio
     fresh = _seal_node(service, context, control, plan, packet.get("node_index"))
     if (fresh.payload != value.payload or fresh.dependencies != value.dependencies or fresh.correlation_id != value.correlation_id
             or str(model_id) != packet["target_model_id"] or conversation_id != packet["conversation_id"]
-            or spec != prepare("extract_facts", "\n".join(key + "=" + item for key, item in packet["facts"].items()))):
+            or spec != expected_spec(plan, packet)):
         raise ContractError("delegation_source_changed")
     _admit_sources(service, context, control, plan, packet["node_index"])
     authority(service, context, control.ref(), plan["grant_ref"], "delegation_step", str(model_id))
@@ -340,7 +426,8 @@ def _queue(authorized, service, control, plan, index):
         return old
 
 
-def propose(authorized, service, source_task_id, target_model_ids, max_depth, idempotency_key, *, parent_indices=None, commission_id=None):
+def propose(authorized, service, source_task_id, target_model_ids, max_depth, idempotency_key, *,
+            parent_indices=None, commission_id=None, operation=DEFAULT_OPERATION):
     """Read-only exact proposal; it is neither approval nor a queued action."""
     context = gate(authorized, "AI_DELEGATION_V2")
     if context.actor.kind != c.ActorKind.HUMAN:
@@ -362,10 +449,15 @@ def propose(authorized, service, source_task_id, target_model_ids, max_depth, id
         "max_depth": max_depth, "conversation_id": source["conversation_id"], "source_message_id": source["source_message_id"],
         "synthetic": False}
     if data_root:
-        plan.update(root_kind=result_handoff.DATA_KIND, root_source=source)
+        # The operation the commission asked for, labelled from the one registry
+        # so the proposal and the commission describe identical work.
+        if operation not in OPERATIONS:
+            raise ContractError("delegation_operation_unsupported")
+        profile = OPERATIONS[operation]
+        plan.update(root_kind=result_handoff.DATA_KIND, root_source=source, operation=operation)
         for node in plan["nodes"]:
-            node.update(operation="verify_fact_transfer", role="fact_transfer_checker",
-                operation_label="Проверка точности передачи фактов", produces_new_analysis=False)
+            node.update(operation=operation, role=profile["role"],
+                operation_label=profile["label"], produces_new_analysis=profile["produces_new_analysis"])
     if commission_id is not None:
         from . import coordinator
         control, checkpoint, _ = controller(service, context, commission_id, coordinator.SOURCE)
@@ -376,9 +468,10 @@ def propose(authorized, service, source_task_id, target_model_ids, max_depth, id
     return {"controller_id": str(identity), "plan": plan}
 
 
-def start(authorized, service, source_task_id, target_model_ids, max_depth, idempotency_key, *, grant_ref, parent_indices=None, commission_id=None):
+def start(authorized, service, source_task_id, target_model_ids, max_depth, idempotency_key, *, grant_ref,
+          parent_indices=None, commission_id=None, operation=DEFAULT_OPERATION):
     proposed = propose(authorized, service, source_task_id, target_model_ids, max_depth, idempotency_key,
-        parent_indices=parent_indices, commission_id=commission_id)
+        parent_indices=parent_indices, commission_id=commission_id, operation=operation)
     context = authorized["context"]
     identity = _uuid(proposed["controller_id"])
     plan = {**proposed["plan"], "grant_ref": c.primitive(snapshot(context, grant_ref))}
@@ -413,7 +506,7 @@ def reconcile(authorized, service, identity):
             stopped = True
         if child is not None:
             if child.status == "succeeded":
-                _, checkpoint, outcome = _verified(service, context, child_id)
+                _, checkpoint, outcome = _verified(service, context, child_id, operation=operation_of(plan))
                 fresh = _seal_node(service, context, control, plan, node["index"])
                 if checkpoint.get("delegation") != fresh.wire() or child.dependencies != fresh.dependencies:
                     raise ContractError("delegation_lineage_invalid")
@@ -431,14 +524,16 @@ def reconcile(authorized, service, identity):
     elif len(verified) == len(plan["nodes"]):
         control = service._walk(context, control, "ready", "running")
         evidence = tuple(outcome.verification for outcome in verified)
-        contributions = [_contribution(service, context, row.task.entity_id) for row in verified]
+        contributions = [_contribution(service, context, row.task.entity_id, operation=operation_of(plan))
+                         for row in verified]
         provenance = _provenance(plan, contributions)
         proof = service._put(context, {"source": SOURCE, "plan_sha256": digest(plan), "child_outcomes": [c.primitive(row.ref()) for row in verified],
             "verified_fact_transfer": True, "human_accepted": False, "professional_quality_assessed": False,
             "synthetic": bool(provenance["local_test_receipts"]),
             "root_kind": plan.get("root_kind", "application_result"), "root_source": plan["root_source"],
             "contributions": contributions, "provenance": provenance,
-            "facts": plan["root_source"]["facts"], "produces_new_analysis": False})
+            "facts": plan["root_source"]["facts"], "operation": operation_of(plan),
+            "produces_new_analysis": OPERATIONS[operation_of(plan)]["produces_new_analysis"]})
         outcome = service._ensure(context, c.Outcome, _id(context, "delegation-outcome:" + str(identity)), control.header.correlation_id,
             control.header.policy, task=control.ref(), evidence=evidence, execution=None)
         if outcome.status == "pending": service._change(context, outcome, "verified", verification=proof)
@@ -472,7 +567,8 @@ def execute(authorized, service, job, cancelled, heartbeat):
     if job.get("worker_job_id", job.get("id")) != "wj_aw_delegate_" + control.header.entity_id.hex + "_" + str(index):
         raise ContractError("delegation_job_identity_invalid")
     if control.status == "review":
-        child, checkpoint, _ = _verified(service, context, _child_id(context, control.header.entity_id, index))
+        child, checkpoint, _ = _verified(service, context, _child_id(context, control.header.entity_id, index),
+                                         operation=operation_of(plan))
         packet = checkpoint.get("delegation") or {}
         if (packet.get("controller_id") != str(control.header.entity_id) or packet.get("node_index") != index
                 or packet.get("plan_sha256") != digest(plan)):
@@ -490,7 +586,7 @@ def execute(authorized, service, job, cancelled, heartbeat):
     service.chat_scope = authorized["chat_scope"]
     service.mechanism_authorized = authorized
     detail = service.start_task(context=context, model_id=node["model_id"],
-        payload={"rubric_key": "extract_facts", "input_text": "\n".join(key + "=" + value for key, value in packet["facts"].items())},
+        payload=child_request(operation_of(plan), packet["facts"]),
         idempotency_key=_child_key(control.header.entity_id, index), conversation_id=plan["conversation_id"],
         message_id=plan["source_message_id"], _delegation=seal)
     current = service._get(context, EntityKind.TASK, control.header.entity_id)
@@ -499,10 +595,11 @@ def execute(authorized, service, job, cancelled, heartbeat):
             "node_index": index, "human_accepted": False, "synthetic": False}
 
 
-def _contribution(service, context, identity):
+def _contribution(service, context, identity, *, operation=DEFAULT_OPERATION):
     proof = result_handoff.verified_model_data(service, context, identity, allow_dependent=True)
-    return {"task_id": str(identity), "operation": "verify_fact_transfer", "role": "fact_transfer_checker",
-        "operation_label": "Проверка точности передачи фактов", "produces_new_analysis": False,
+    profile = OPERATIONS[operation]
+    return {"task_id": str(identity), "operation": operation, "role": profile["role"],
+        "operation_label": profile["label"], "produces_new_analysis": profile["produces_new_analysis"],
         "contribution_id": proof["source_contribution_id"], "evaluation_id": proof["source_evaluation_id"],
         "outcome_id": proof["source_outcome_id"], "proof_sha256": proof["source_proof_sha256"],
         "checks": proof["checks"], "provenance": proof["provenance"], "facts_sha256": proof["facts_sha256"],
@@ -565,11 +662,12 @@ def projection(authorized, service, identity):
             role = service.repository.get_revision(context=context, kind=EntityKind.AGENT_ROLE,
                 entity_id=task.role.entity_id, revision=task.role.revision)
             if role is None: raise ContractError("delegation_role_missing")
-            item.update(operation_role=node.get("role", "fact_transfer_checker"),
+            item.update(operation_role=node.get("role", OPERATIONS[DEFAULT_OPERATION]["role"]),
                 agent_role_key=role.role_key, agent_role_ref=c.primitive(role.ref()))
         if task and task.status == "succeeded":
             try:
-                item["contribution"] = _contribution(service, context, identity)
+                item["contribution"] = _contribution(service, context, identity,
+                    operation=node.get("operation", DEFAULT_OPERATION))
             except ContractError as error:
                 # Preserve the failed evidence in history instead of making a
                 # successful-looking aggregate from incomplete contributions.
