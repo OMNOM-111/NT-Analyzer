@@ -15,6 +15,10 @@
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 
+- Integrator answer read at `61ff7a38` (2026-09-11): reviewed checkpoint `97095b00`,
+  shared ownership unchanged; await typed Evaluation/native kind integration SHA.
+  Subsequent isolated protocol/role-ownership hardening: 70 focused tests passed.
+
 - Parallel P1-5 only: branch `codex/agent-world-external-agent-onboarding`, base
   `9ae183f65149c9cc7253490810667fc75cbf9cf6`. Separate A2A 0.3 bounded connection,
   not Persona/Model/MCP. Shared integration files remain with the integrator.

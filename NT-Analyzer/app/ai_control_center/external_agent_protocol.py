@@ -171,8 +171,25 @@ class A2AClient:
         skills = card.get("skills")
         if type(skills) is not list or not 1 <= len(skills) <= 32:
             raise ContractError("external_agent_card_invalid")
-        advertised = tuple(sorted({_token(skill.get("id")) for skill in skills if type(skill) is dict}))
-        granted = tuple(sorted(set(advertised) & set(allowed) & CAPABILITIES))
+        advertised_ids = []
+        compatible_ids = set()
+        for skill in skills:
+            if type(skill) is not dict:
+                raise ContractError("external_agent_card_invalid")
+            identity = _token(skill.get("id"))
+            if identity in advertised_ids:
+                raise ContractError("external_agent_card_invalid")
+            advertised_ids.append(identity)
+            # Per-skill modes override card defaults; a matching ID alone does
+            # not prove that this JSON-only adapter can execute the skill.
+            incoming = skill.get("inputModes", input_modes)
+            outgoing = skill.get("outputModes", output_modes)
+            if type(incoming) is not list or type(outgoing) is not list:
+                raise ContractError("external_agent_card_invalid")
+            if "application/json" in incoming and "application/json" in outgoing:
+                compatible_ids.add(identity)
+        advertised = tuple(sorted(advertised_ids))
+        granted = tuple(sorted(compatible_ids & set(allowed) & CAPABILITIES))
         if not granted:
             raise ContractError("external_agent_capability_incompatible")
         # Persist a digest and validated skill IDs, not arbitrary card text/URLs.

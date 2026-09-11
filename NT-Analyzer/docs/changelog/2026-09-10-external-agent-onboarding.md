@@ -93,6 +93,29 @@ missing user key. Existing PostgreSQL/CI/full-suite results do not cover this co
 
 ## Next operation / rollback
 
+### 2026-09-11 — integrator answer and non-overlapping hardening
+
+Fetched `origin/codex/agent-world-unified-acceptance` at
+`61ff7a3822f7306e3b60dd5fc342e06c9c31a8fd`; read its master section
+"Integration answer to the P1-5 checkpoint". The integrator reviewed/accepted
+`97095b00` as an isolated contract, NOT merged or native-wired. Shared-file
+ownership explicitly remains with the integrator. Typed Evaluation subject and
+native kind/codec registration are owed by the integrator; no alternative
+Evaluation, fake Model ID or repository introduced here.
+
+Subsequent P1-5-only changes: candidate rejects another user's role even in the
+same workspace; negotiation rejects duplicate/non-object skills and respects
+per-skill input/output modes instead of trusting a matching skill ID. Added six
+negative cases. No onboarding service, gateway, UI or shared contract edits.
+Focused rerun: **70 passed / 0 failed / 0 skipped**, 10.32 s.
+Hardening gates rerun: root CSP/secrets/Markdown PASS, Context Pack PASS with
+historical SHA warning, 600-file pre-release bundle PASS (Python/JS included),
+git diff --check PASS. Full regression and native E2E remain not run.
+These tests remain synthetic contract/port tests, not native application E2E.
+Next: await the integration SHA containing both shared seams, inspect compatibility
+and then continue authorized wiring. The prior file-based request below is historical;
+its answer is now the explicit decision at `61ff7a38`.
+
 ### Сообщение Claude — согласование через файл
 
 Владелец попросил передать согласование через файл. Это сообщение передано на

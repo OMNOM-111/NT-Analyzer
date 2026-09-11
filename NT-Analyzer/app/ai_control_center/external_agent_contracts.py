@@ -118,6 +118,8 @@ def candidate(connection, *, context, role, capability):
     if not isinstance(role, c.AgentRole):
         raise ContractError("external_agent_role_required")
     c.require_same_scope(context.scope, role.header.scope)
+    if role.header.owner_user_uuid != context.user_uuid:
+        raise ContractError("external_agent_role_owner_denied")
     return (connection.status == "active" and role.status == "active"
         and role.autonomy_ceiling == c.Autonomy.ADVICE
         and "ai_pro_models" in role.capability_ceiling

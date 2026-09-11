@@ -439,7 +439,14 @@ No work on P1-1/P1-2/P1-3, UI, PR #285 base or Local 8765.
 See [P1-5 change record](../changelog/2026-09-10-external-agent-onboarding.md).
 Owner requested file-based coordination: the change record contains the explicit
 message to Claude, requested contract/ownership decisions and native E2E checklist.
-Awaiting integrator response; no shared-file ownership transfer or acceptance implied.
+Integrator response received in `61ff7a3822f7306e3b60dd5fc342e06c9c31a8fd`,
+section "Integration answer to the P1-5 checkpoint": `97095b00` reviewed, not merged.
+No ownership transfer. Typed Evaluation subject and record-kind/codec registration
+remain with the integrator; no parallel Evaluation implementation permitted.
+2026-09-11 P1-5-only hardening checks role ownership and per-skill JSON compatibility,
+rejecting duplicate/malformed skills. Native wiring still blocked on integration SHA.
+Latest focused rerun: **70 passed / 0 failed / 0 skipped**, 10.32 s; previous 64-case
+evidence above belongs to the reviewed checkpoint, not the subsequent changes.
 
 ```text
 Last safe commit: 437febf4 — pushed, CI green on all three jobs. Later commits

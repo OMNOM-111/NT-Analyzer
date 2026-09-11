@@ -203,7 +203,7 @@ def test_advertised_capabilities_never_grant_admin_or_trading():
         client.verify(ENDPOINT, KEY, allowed=(CAP, "trading.execute"), request_id="deny-grant")
 
 
-@pytest.mark.parametrize("kind", ["workspace", "principal", "role_scope", "authority", "capability"])
+@pytest.mark.parametrize("kind", ["workspace", "principal", "role_scope", "role_owner", "authority", "capability"])
 def test_candidate_scope_and_role_ceiling_are_not_self_claims(kind):
     row, context, role = connection()
     row = row.transition("verifying", now=row.header.updated_at).transition("active", now=row.header.updated_at,
@@ -215,12 +215,32 @@ def test_candidate_scope_and_role_ceiling_are_not_self_claims(kind):
     elif kind == "role_scope":
         other = replace(context.scope, workspace_id="ws_foreign_agent_test")
         role = replace(role, header=replace(role.header, scope=other, policy=replace(role.header.policy, scope=other)), responsibilities=replace(role.responsibilities, scope=other))
+    elif kind == "role_owner":
+        role = replace(role, header=replace(role.header, owner_user_uuid=uuid4()))
     elif kind == "authority":
         role = replace(role, autonomy_ceiling=c.Autonomy.REVERSIBLE_EXECUTION)
-    if kind in {"workspace", "principal", "role_scope"}:
+    if kind in {"workspace", "principal", "role_scope", "role_owner"}:
         with pytest.raises(ContractError): candidate(row, context=context, role=role, capability=CAP)
     else:
         assert not candidate(row, context=context, role=role, capability="trading.execute" if kind == "capability" else CAP)
+
+
+@pytest.mark.parametrize("mutation", ["duplicate", "non_object", "input_text", "output_text", "null_modes"])
+def test_matching_skill_id_is_not_sufficient_negotiation(mutation):
+    data = card()
+    if mutation == "duplicate":
+        data["skills"].append(copy.deepcopy(data["skills"][0]))
+    elif mutation == "non_object":
+        data["skills"].append(None)
+    elif mutation == "input_text":
+        data["skills"][0]["inputModes"] = ["text/plain"]
+    elif mutation == "output_text":
+        data["skills"][0]["outputModes"] = ["text/plain"]
+    else:
+        data["skills"][0]["inputModes"] = None
+    client = p.A2AClient(lambda endpoint, **kw: {"jsonrpc": "2.0", "id": kw["packet"]["id"], "result": data})
+    with pytest.raises(ContractError):
+        client.verify(ENDPOINT, KEY, allowed=(CAP,), request_id="verify-skill-contract")
 
 
 @pytest.mark.parametrize("raw", [b'{"id":1,"id":2}', b'{"x":NaN}', b'[]', b'x', b'{"x":"' + b'x' * p.MAX_BYTES + b'"}'], ids=["duplicate", "nan", "array", "invalid", "oversize"])
