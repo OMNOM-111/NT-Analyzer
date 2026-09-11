@@ -93,6 +93,36 @@ missing user key. Existing PostgreSQL/CI/full-suite results do not cover this co
 
 ## Next operation / rollback
 
+### Сообщение Claude — согласование через файл
+
+Владелец попросил передать согласование через файл. Это сообщение передано на
+review, но **ответ Claude ещё не получен**. Единственный статус программы остаётся
+в `AGENT_WORLD_MASTER_STATUS.md`; этот раздел — техническая передача, не новый план.
+
+Получатель: текущий интегратор, владеющий Coordinator / Intent / Reputation.
+Передаваемый код: checkpoint `97095b0010a278e8f917a00e9661d77e93fadf0e`;
+handoff `6b2895e0970614c29222977bef61c1085604addb`, draft PR #286.
+
+Пожалуйста, проверь контракты и запиши ответ в своей integration-ветке, в разделе
+P1-5 master status: принятый SHA, согласованный тип ExternalAgentConnection,
+тип subject для Evaluation без Model ID, владельцы конкретных shared-файлов,
+следующий исполнитель и зависимости. Не нужно менять рабочую P1-5 ветку параллельно.
+Если контракт уже изменён твоей работой, укажи фактический модуль/интерфейс вместо
+автоматического переноса старого снимка. Отсутствие ответа не передаёт владение.
+
+Нужное решение: ты интегрируешь перечисленные выше shared seams сам либо явно
+передаёшь ограниченный список файлов исполнителю P1-5. До такого ответа они остаются
+у тебя. Не переносить все master/context документы поверх более свежего статуса:
+сопоставить только раздел P1-5, сохранив твои изменения и глобальные проценты.
+
+После подключения к native storage/queue нужны доказательства: обычный пользователь
+создаёт connection -> настоящий synthetic handshake -> ACTIVE -> совместимая
+Task/Intent -> Contribution -> отдельный Evaluation -> история/статистика -> revoke
+-> следующая задача отказана. Отдельно другой workspace, дубль, timeout, отзыв во
+время выполнения и сохранность ошибки. Текущие 64 теста этого полного E2E не заменяют.
+Никаких выдуманных Model ID, второго реестра, копирования owner keys или автоматической
+приёмки результата. Local 8765, базы PR, merge/deploy и защитные flags не затрагивать.
+
 Integrator reviews separate connection/Evaluation contracts and assigns shared-file
 ownership before wiring. Then prove ordinary-user native E2E including persistence,
 revoke, two-workspace isolation and history/statistics. No shared ownership transfer

@@ -437,6 +437,9 @@ Next P1-5 operation: integrator reviews draft #286 and the native
 connection kind and external Evaluation subject before assigning shared wiring.
 No work on P1-1/P1-2/P1-3, UI, PR #285 base or Local 8765.
 See [P1-5 change record](../changelog/2026-09-10-external-agent-onboarding.md).
+Owner requested file-based coordination: the change record contains the explicit
+message to Claude, requested contract/ownership decisions and native E2E checklist.
+Awaiting integrator response; no shared-file ownership transfer or acceptance implied.
 
 ```text
 Last safe commit: 437febf4 — pushed, CI green on all three jobs. Later commits
