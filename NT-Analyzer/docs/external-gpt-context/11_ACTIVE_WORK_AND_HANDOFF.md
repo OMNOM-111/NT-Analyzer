@@ -14,6 +14,14 @@
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
+
+- Parallel P1-5 only: branch `codex/agent-world-external-agent-onboarding`, base
+  `9ae183f65149c9cc7253490810667fc75cbf9cf6`. Separate A2A 0.3 bounded connection,
+  not Persona/Model/MCP. Shared integration files remain with the integrator.
+  Next: agree native kind/codec and external Evaluation subject, then wire existing
+  storage/queue/API. No complete app E2E claim. See
+  [master parallel handoff](../current/AGENT_WORLD_MASTER_STATUS.md) and
+  [P1-5 change record](../changelog/2026-09-10-external-agent-onboarding.md).
 - Latest saved/pushed executable source:
   **`e45b64b0121014c5d796553ae8b512d98a5782ae`**, task branch
   `codex/agent-world-unified-acceptance`, draft PR #285. Clean immutable full

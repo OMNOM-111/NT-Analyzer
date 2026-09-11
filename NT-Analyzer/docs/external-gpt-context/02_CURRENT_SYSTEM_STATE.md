@@ -17,6 +17,12 @@
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
+- Parallel P1-5 (2026-09-10): **IN DEVELOPMENT**, isolated external-agent protocol
+  and service ports; not mounted or deployed. Native Evaluation/registry integration
+  requires integrator handoff. No global readiness change. See the parallel section
+  of [master status](../current/AGENT_WORLD_MASTER_STATUS.md) and
+  [checkpoint evidence](../changelog/2026-09-10-external-agent-onboarding.md).
+
 ## Active integration — 2026-09-09
 
 Latest preserved/pushed executable source is

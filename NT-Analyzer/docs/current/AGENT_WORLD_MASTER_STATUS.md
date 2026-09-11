@@ -402,6 +402,35 @@ P3-3  Eight expected sections live behind three tabs as drawers — owner design
 
 ## NEXT AGENT START HERE
 
+### Parallel P1-5 handoff (2026-09-10; does not replace integrator's status below)
+
+PARALLEL WORKSTREAM: External Agent Onboarding
+
+- Base SHA: `9ae183f65149c9cc7253490810667fc75cbf9cf6`.
+- Branch: `codex/agent-world-external-agent-onboarding`.
+- Head: checkpoint being saved; obtain exact SHA with `git log -1` on this branch.
+- Code: **IN DEVELOPMENT**, four isolated external_agent modules, no shared edits.
+- Wired: NO — native codec/repository, worker and Evaluation integration pending.
+- API: service ports implemented; authenticated HTTP routes NOT mounted.
+- Automated: protocol/onboarding/adapter checks with test-only host ports.
+- E2E: actual HTTP synthetic protocol path checked; full ordinary-user app E2E NOT checked.
+- Tests: final focused **64 passed / 0 failed / 0 skipped**, 11.40 s, including malformed-card cases.
+- Known limitations: native Contribution/Evaluation/history/statistics not persisted;
+  native budget settlement/audit, RLS, UI and cancellation cleanup not wired.
+- Integration files needed: states/codec/events, Evaluation subject contract,
+  existing gateway/server/worker/Coordinator/Router; exact seams in change record.
+- Conflicts with Claude: no shared files changed; requested shared contract review
+  and ownership handoff are the next dependency, not a user-key blocker.
+- Flags: no changes, no route activated; Development-only service/adapter guards.
+- Recommended master-status delta: external onboarding 0 -> isolated backend
+  contract/protocol tested, NOT a completed product flow. Integrator alone updates
+  global percentages and original P1-5 matrix after reconciliation.
+
+Next P1-5 operation: save exact-file checkpoint, then integrator reviews the native
+connection kind and external Evaluation subject before assigning shared wiring.
+No work on P1-1/P1-2/P1-3, UI, PR #285 base or Local 8765.
+See [P1-5 change record](../changelog/2026-09-10-external-agent-onboarding.md).
+
 ```text
 Last safe commit: 437febf4 — pushed, CI green on all three jobs. Later commits
                   are documentation only. Local full regression was also green
