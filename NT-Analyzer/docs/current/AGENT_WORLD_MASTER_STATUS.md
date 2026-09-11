@@ -13,20 +13,24 @@
 PROGRAM: Agent World / AI Center
 STATUS: IN DEVELOPMENT
 
-CURRENT IMPLEMENTATION COVERAGE: 87%
+CURRENT IMPLEMENTATION COVERAGE: 93%
 CURRENT OWNER ACCEPTANCE READINESS: 65%
 
 CURRENT INTEGRATION BRANCH: codex/agent-world-unified-acceptance
-CURRENT INTEGRATION SHA: 7f54d6ea — P1-1. CI last green at 437febf4; this SHA needs its own run.
+CURRENT INTEGRATION SHA: 84ddb2e7 — P1-3 complete. Full regression at b06c5f55 (the commit
+  before the honesty fix): 5493 passed / 0 failed / 117 skipped, 1:31:06. Full regression at
+  84ddb2e7 itself is running; CI dispatched as run 34641854998. Do not call 84ddb2e7 verified
+  until both land.
 CURRENT WIP: clean
-CURRENT LOCAL 8765 SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (48 commits behind, not switched)
-CURRENT ACCEPTANCE INSTANCE: http://127.0.0.1:8806/ui/ai-command-center.html — SHA 4d9ff737,
-  runtime code identical to head (the later commit adds a test only), disposable data root,
-  zero external calls. The older :8804 still serves 92d873e3 and is superseded.
+CURRENT LOCAL 8765 SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (not switched, not restarted)
+CURRENT ACCEPTANCE INSTANCE: http://127.0.0.1:8809/ui/ai-command-center.html — SHA 84ddb2e7,
+  disposable data root, zero external calls. :8808 serves b06c5f55 and holds the evidence of
+  the reputation headline defect; :8806 serves 4d9ff737 (P0 acceptance); :8804 serves 92d873e3
+  and still holds the historical stuck task. All superseded, none deleted.
 CURRENT VERSION: 0.10.0-beta.96 (pre_release)
 
-LAST VERIFIED: 2026-09-10
-UPDATED BY: Claude (independent audit + P0 closure)
+LAST VERIFIED: 2026-09-11
+UPDATED BY: Claude (P1-1, P1-2, P1-3)
 ```
 
 ## Percentage method — identical for every executor
@@ -43,17 +47,21 @@ A percentage that **falls** after a defect is found is correct and must be
 recorded as such.
 
 ```text
-IMPLEMENTATION COVERAGE: 87%   (31.5 / 36)
+IMPLEMENTATION COVERAGE: 93%   (33.5 / 36)
 OWNER ACCEPTANCE READINESS: 65%   (23.5 / 36)
 
 P0 REMAINING: 0
 
-CHANGE SINCE PREVIOUS CHECKPOINT:
-Implementation: +1 pp  — Task Graph moves 0.5 to 1.0: a delegated child now
-                         produces new analysis, so the graph is no longer one
-                         operation repeated
-Acceptance:     +1 pp  — the same row, proven by the existing lifecycle route
-                         rather than only in the new cases
+CHANGE SINCE PREVIOUS CHECKPOINT (87 / 65 at 7f54d6ea):
+Implementation: +6 pp  — two rows move 0.5 to 1.0. Intent: the commitment a task
+                         was created from is now on the task, in the API and on
+                         the page. Reputation: three separate scopes over one
+                         typed subject, with provenance and basis.
+Acceptance:     +0 pp  — deliberately unchanged. Both rows were confirmed
+                         through the running application's own API and through
+                         the shipped page code, which is the 0.5 definition.
+                         Neither has been walked by a person in a browser, and
+                         that is what 1.0 requires. See NEXT AGENT START HERE.
 ```
 
 > The independent audit of 2026-09-10 reported 84% / 54% on a 34-row basis.
@@ -77,7 +85,7 @@ Marks: `Y` yes · `P` partial · `N` no.
 | SQLite | Y | Y | Y | Y | Y | DONE + VERIFIED | Default backend on every instance | — |
 | PostgreSQL / RLS | Y | Y | Y | Y | Y | DONE + VERIFIED | e45 runtime harness: API → worker → SQL → replay → restart → RLS; 69+41+7 suite PASS; 10 FORCE RLS tables; no SQLite fallback | Never run as Local's backend |
 | Event ledger / outbox / idempotency | Y | Y | Y | Y | Y | DONE + VERIFIED | Idempotent replay and restart in the same harness | — |
-| Intent | Y | Y | N | Y | P | PARTIAL | Record created per task and per decision, correlated end to end | No user-visible goal capture, amend or cancel — P1-2 |
+| Intent | Y | Y | Y | Y | P | IMPLEMENTED | «Поручение» on the task: goal, approval mode, risk, deadline, workspace, required evidence and reviewer, with the request itself behind a disclosure. Live on :8809; six rendering cases over the shipped page code | Browser pass. Amendment is refused by design, not missing: `EDITABLE_STATES[INTENT] == {"draft"}` and a started task has already left it, so an editable Intent would mean widening the immutability rule that binds request, receipt and evidence. The panel says so and points to «Отменить задачу» or a new request |
 | Coordinator | Y | Y | Y | Y | P | PARTIAL | `coordinator.commission`; 202 PASS across coordinator, delegation, handoff, integration, review and UI | Two closed operation classes, caller-named rather than inferred from the goal; still not a general planner |
 | Task Graph | Y | Y | Y | Y | P | IMPLEMENTED | Real parent → subtasks → contributions → aggregate, depth ≤3, typed deps. Two operation classes: `verify_fact_transfer` restates and is graded on exactness, `numeric_breakdown` gives each child its own slice and a different answer | Live browser route for the second operation |
 | Delegation | Y | Y | Y | Y | P | PARTIAL | Grant-bound, depth-bounded, cycle- and restart-safe; 61 handoff/delegation PASS | Roots only on Coordinator task or verified application result |
@@ -87,7 +95,7 @@ Marks: `Y` yes · `P` partial · `N` no.
 | Router | Y | Y | Y | Y | P | IMPLEMENTED | Candidates, exclusions, reason codes, shadow vs active, apply pinned to the exact preview; test-executor observations disqualified from real routing | No comparison between two real providers |
 | Outcomes | Y | Y | Y | Y | Y | DONE + VERIFIED | Outcome and evaluation produced, displayed and accepted on the live route | — |
 | Evaluation | Y | Y | Y | Y | Y | DONE + VERIFIED | Independent verifier; per-check pass/fail in the inspector; rejects wrong and corrupted answers | — |
-| Reputation | Y | Y | Y | Y | P | PARTIAL | Honest labelling: <3 observations → `NEW`; diagnostics → «3 из 3 · диагностика»; manual → «без рейтинга» | Model / agent-role / decision-outcome not three separate scopes — P1-3 |
+| Reputation | Y | Y | Y | Y | P | IMPLEMENTED | Three scopes over one typed `Evaluation.subject` — model, agent role, decision — never summed, never relabelled, each with its own sample, confidence, evidence and window. `basis` names what was measured on: diagnostic, mixed or field. Live on :8809: model `measured` at 4, role `NEW` at 0 for the same task class, no shared evidence, no drift between reads | Browser pass. Decision scope has no live producer yet: it is reachable through the API and covered by cases, but nothing in the running application writes a decision-subject evaluation |
 | Consensus | Y | Y | Y | Y | P | IMPLEMENTED | Independent same-input contributions, then a separate Court | Synthetic only |
 | Court | Y | Y | Y | Y | P | IMPLEMENTED | 3 isolated sessions from one sealed packet, unweighted 2-of-3, failure-domain diversity, provenance-checked votes, revocation re-checked after the call, judges cannot execute | Never three genuinely different providers — P2 |
 | Execution | Y | Y | Y | Y | Y | DONE + VERIFIED | Immutable approved decision, capability/device re-check, budget, idempotency, cancel, restart. V2 enabled path walked live: prepare → queue → worker → receipt → completion | — |
@@ -327,11 +335,21 @@ to make the operation fit, stop and report instead.
 ID: P1-2  Intent is invisible to the user
 Target truth: A chat message produces a named goal with constraints, evidence and
               approval mode, which the user can amend or cancel before execution.
-Files/modules: application_chat, coordinator, ai-command-center.js
+Files/modules: model_service.intent_view, domain_gateway, ai-command-center.js
 Evidence required: UI test plus one browser pass
 Owner action required: NO
-Assigned to: unassigned
-Status: OPEN
+Assigned to: Claude
+Status: DONE for display and cancel - 7b2a5c37, f80c6856, panel tests at 84ddb2e7.
+        AMENDMENT WITHDRAWN, and this is the part to read before re-opening it.
+        It was written, reported as working, and was not: a -k "intent" filter
+        excluded the one case that would have failed. The live call returned
+        409 finalized_record_immutable. EDITABLE_STATES[INTENT] == {"draft"}
+        and start_task walks the Intent to ready at once, so there is no
+        amendable window. Making one means widening the rule that binds request,
+        receipt and evidence together - which is the rule P0-2 rests on. The
+        amendment was removed instead, and the panel says plainly that a
+        different request is a new request. Do not re-add it without deciding
+        that immutability question first, in the open.
 ```
 
 ```text
@@ -339,11 +357,22 @@ ID: P1-3  One reputation scope where three are required
 Target truth: Model Performance, Agent Role Performance and Decision/Outcome
               Performance stored and displayed separately, each with its own
               sample size, confidence and evidence.
-Files/modules: model_evaluation, presentation, ai-command-center.js
+Files/modules: model_contracts.Evaluation, storage_codec, reputation.py (new),
+               model_service.reputation, domain_gateway, ai-command-center.js
 Evidence required: presentation tests that fail if one score is reused elsewhere
 Owner action required: NO
-Assigned to: unassigned
-Status: OPEN
+Assigned to: Claude
+Status: DONE - fddc6bf7 (subject seam), 49b20b71 (read models, API, UI),
+        b06c5f55 (measurement made a function of its evidence),
+        84ddb2e7 (basis, and the panels moved where tests can reach them).
+        One Evaluation with a typed subject; no per-kind evaluation shape.
+        Nothing stored was rewritten - legacy rows say "model" and the decoder
+        maps that name to a MODEL subject on the way in. Evaluation.model
+        still exists and now raises for any other subject, deliberately, so a
+        reader written when only models could be evaluated fails loudly instead
+        of quietly returning the wrong thing. Every generic iteration over
+        EVALUATION that leads to a model judgement filters subject.kind first:
+        router_v2._observations and both model_service loops.
 ```
 
 ```text
@@ -368,7 +397,15 @@ Target truth: An ordinary user connects an external agent, it does bounded work,
 Evidence required: the native end-to-end route below
 Owner action required: YES for accepting the protocol into scope
 Assigned to: P1-5 executor (contracts), integrator (shared seams)
-Status: REVIEWED — contracts accepted, two shared seams owed by the integrator
+Status: UNBLOCKED at 84ddb2e7 — the typed Evaluation subject is delivered.
+        Integration SHA for the executor: 84ddb2e7.
+        `EXTERNAL_AGENT_CONNECTION` добавляется атомарно при интеграции P1-5:
+        enum + record + states + codec + Evaluation subject allowlist.
+        That kind is NOT registered today, and registering it alone breaks the
+        suite: test_codec_roundtrips_every_reviewed_record_and_event walks every
+        EntityKind, because a kind means a storable record. It was tried and
+        backed out — 9 failures. So SUBJECT_KINDS is scoped to the three kinds
+        that exist, and the fourth arrives with its record, in one commit.
 ```
 
 ### Integration answer to the P1-5 checkpoint
@@ -389,6 +426,14 @@ a native record additionally needs, in files the integrator owns:
 `states.py` — an `EntityKind` member, a transition graph, an initial state and
 an `EDITABLE_STATES` entry; and `storage_codec.py` — codec registration. Those
 are small and are the integrator's to write, not the P1-5 executor's.
+
+**3. Evaluation subject without a Model ID — delivered at 84ddb2e7.**
+`model_contracts.Evaluation` now declares `subject: EntityRef` validated against
+`SUBJECT_KINDS`, and `model` is a property that returns the subject while it is
+a Model and raises `evaluation_subject_not_a_model` otherwise. Stored rows were
+not rewritten: `storage_codec` maps the legacy `model` field onto `subject` when
+it decodes. `reputation.py` reads three scopes off that one contract and never
+pools them. What follows is the original analysis, kept as the record of why.
 
 **3. Evaluation subject without a Model ID — the real blocker, and it is mine.**
 `model_contracts.Evaluation` declares `model: EntityRef` with
@@ -421,7 +466,8 @@ revoke → the next task refused; plus a second workspace, a duplicate, a timeou
 a revoke during execution, and the error preserved.
 
 Percentages are unchanged by this answer: reviewing a contract implements
-nothing. P1-5 stays NOT IMPLEMENTED in the matrix.
+nothing. P1-5 stays NOT IMPLEMENTED in the matrix, and stayed so through P1-3 —
+a seam that makes work possible is not that work.
 
 ### P2 — ACCEPTANCE / HARDENING
 
@@ -457,44 +503,67 @@ P3-3  Eight expected sections live behind three tabs as drawers — owner design
 | P1-1 · a child that produces new analysis | `7f54d6ea` | `numeric_breakdown`: disjoint slices, different answers, each independently verified; unsplittable plans refused at commission; unknown operations rejected; default unchanged. 202 passed across the six delegation suites |
 | P0-4 · CI runs, and can finish | `437febf4` | run 34516120281 green on all three jobs; the 30-minute Windows cap that cancelled run 34510366536 was raised to 120 in both workflows, `ci.yml` included, where it would have cancelled main PRs too |
 | P0-5 · owner acceptance build | `4d9ff737` | :8806 on an immutable SHA, disposable data, zero external calls, 10 screenshots, click-by-click route |
+| P1-2 - the commitment is visible on the task | `7b2a5c37`, `f80c6856` | «Поручение»: goal, approval mode, risk, deadline, workspace, required evidence, reviewer; live on :8809. Amendment withdrawn rather than widening `finalized_record_immutable` - see P1-2 |
+| P1-3 - three reputation scopes over one typed subject | `84ddb2e7` | 9 scope cases on real Model/AgentRole/Decision records + 6 rendering cases over the shipped page code; live on :8809 - model `measured` at 4, role `NEW` at 0 for the same class, no shared evidence |
+| P1-3 - a measurement is a function of its evidence | `b06c5f55` | The window was stamped with the wall clock, so two reads of the same rows disagreed. Caught by two regressions that compare one task's detail twice |
+| P1-3 - a diagnostic is not an observed score | `84ddb2e7` | Found on the running build, not in a test: 4 synthetic runs headlined as a green «100%». `basis` now names diagnostic / mixed / field and the headline follows it |
 
 ## NEXT AGENT START HERE
 
 ```text
-Last safe commit: 7f54d6ea — P1-1, 202 passed across the six delegation suites.
-                  CI was last green at 437febf4; 7f54d6ea has NOT had a full
-                  regression or a CI run yet. Do that before calling it verified.
+Last safe commit: 84ddb2e7 - P1-3 complete.
+  Full regression PASS at b06c5f55 (the commit before it): 5493 / 0 / 117, 1:31:06.
+  Focused PASS at 84ddb2e7: 618 across every UI and reputation suite; 17 across
+  the two reputation suites. The full run at 84ddb2e7 and CI run 34641854998
+  were both started at this checkpoint - read their results before calling
+  84ddb2e7 verified, and record them here.
 
 Uncommitted files: none. Re-check `git status` before assuming that.
 
 Active processes:
-  PID 20328 — Local 8765, code 2b6d0112, owner data root. DO NOT switch or restart.
-  PID 8852  — old acceptance instance :8804, code 92d873e3. Superseded by :8806;
-              it still holds the historical stuck task ef1b1052 as evidence of
-              the behaviour P0-2 replaced. Stop it only deliberately.
-  :8806      — current acceptance build, SHA 4d9ff737, disposable data root.
+  PID 20328 - Local 8765, code 2b6d0112, owner data root. DO NOT switch or restart.
+  :8809      - acceptance build at 84ddb2e7, disposable data root. Current.
+  :8808      - b06c5f55. Keeps the reputation headline defect as evidence.
+  :8806      - 4d9ff737, the P0 acceptance build.
+  :8804      - 92d873e3, holds the historical stuck task ef1b1052.
+  Stop any of the last four only deliberately; none of them touches owner data.
 
-Tests currently running:
-  None. CI run 34516120281 on 437febf4 finished green on all three jobs.
+Tests currently running: the full regression at 84ddb2e7, and CI 34641854998.
 
-Known failures: none at the current head.
+Known failures: none at 84ddb2e7 in any suite run so far.
 
 Do not touch:
   - Local 8765 and the owner data root under NT-Analyzer/data
-  - The bases of PR #280–#284
+  - The bases of PR #280-#285; PR #285 is not to be moved onto `main`
   - Any Codex branch other than codex/agent-world-unified-acceptance
-  - deploy/testing/acceptance.env or any generated DSN — never into Git
+  - deploy/testing/acceptance.env or any generated DSN - never into Git
 
 Exact next action:
-  1. Full regression + a CI dispatch at 7f54d6ea, since P1-1 changed runtime
-     code in delegation, coordinator and task_review.
-  2. Then P1-2: make the Intent visible — goal, constraints, required evidence,
-     approval mode, scope and status in the Task Inspector, with open, cancel,
-     and amend-by-new-revision before execution starts. It is a layer over the
-     existing Intent contract, not a second workflow.
+  1. Read the two runs above. If both are green, the P1-3 evidence is complete.
+  2. The browser pass that both new rows are waiting on. It is the only thing
+     between 65% and a higher acceptance number, and it is small: open a task on
+     :8809, read «Поручение» on Обзор, then the Оценка tab, and confirm the
+     model card says «диагностика · 4 из 4» rather than a green percentage.
+     Note for whoever does it: the in-app browser tool could not click that
+     drawer tab - its coordinate frame disagrees with the page's own layout, and
+     ref clicks were reported as outside the viewport at x~2013 on an 800-wide
+     frame. That is a tooling problem, not a page defect; the panel renders
+     correctly from the running server's own payload, checked by feeding that
+     payload straight into the shipped renderer. Use a real browser.
+  3. Then P1-5, which is unblocked. Give the executor the handoff sentence
+     recorded in the P1-5 section verbatim; the seam it names is the whole
+     dependency.
 
-Note for whoever does P1-1 follow-up work: three places re-derive the same work
-and compare — `reconcile` stores the aggregate proof, `task_review` rebuilds it,
-`propose` rebuilds the node labels. They are meant to disagree loudly. If one is
-changed, change all three, and never relax a comparison to make them agree.
+Two notes for anyone changing this area:
+
+Three places re-derive the same work and compare - `reconcile` stores the
+aggregate proof, `task_review` rebuilds it, `propose` rebuilds the node labels.
+They are meant to disagree loudly. If one is changed, change all three, and
+never relax a comparison to make them agree.
+
+A panel written inside the page's runtime closure cannot be tested. Everything
+that renders sits above the `module.exports` line; that is the boundary the UI
+suite loads. `reputationPanel` and `intentPanel` were written below it, which is
+exactly why a green «100%» over four synthetic runs reached a running build with
+a full green suite behind it. Put new render functions above the line.
 ```
