@@ -447,6 +447,10 @@ remain with the integrator; no parallel Evaluation implementation permitted.
 rejecting duplicate/malformed skills. Native wiring still blocked on integration SHA.
 Latest focused rerun: **70 passed / 0 failed / 0 skipped**, 10.32 s; previous 64-case
 evidence above belongs to the reviewed checkpoint, not the subsequent changes.
+Next independent checkpoint: bound adapter cancellation (same authority/spec/remote-ID
+checks as polling), no fabricated cancellation success, test agent terminal-state
+preservation. Native cleanup after revoke remains unwired; no shared ownership changed.
+Cancellation checkpoint focused result: **75 passed / 0 failed / 0 skipped**, 13.37 s.
 
 ```text
 Last safe commit: 437febf4 — pushed, CI green on all three jobs. Later commits

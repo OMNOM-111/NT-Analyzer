@@ -93,6 +93,25 @@ missing user key. Existing PostgreSQL/CI/full-suite results do not cover this co
 
 ## Next operation / rollback
 
+### Bound cancellation checkpoint
+
+Added `ExternalAgentAdapter.cancel` using the same current admission, owner,
+connection revision, approved spec and remote-task binding as polling. Foreign IDs,
+revoked connections and withdrawn admission refuse before network access. Cancel
+does not create verification/Evaluation; it returns the actual remote state, including
+completion winning the race. No credential resurrection or auto-retry after revoke.
+The Development HTTP agent now preserves terminal canceled/completed states. Initial
+test run: 74 passed / 1 failed exposed its terminal-state overwrite; corrected fixture
+and added subsequent polling assertions. No shared service/repository/codec changes.
+Final focused tests: **75 passed / 0 failed / 0 skipped**, 13.37 s.
+
+Host integration prerequisite remains explicit: cancel must be requested while the
+task/connection is still admitted, before revoke/local terminalization. Cleanup after
+authority expiry is NOT enabled by this adapter; an integrator-owned cleanup policy
+and native budget/audit/queue composition are still required. Consequently the four
+requested final integration milestones also include native API/worker composition;
+these ports are not a claim that only enum edits remain. No second evaluation format.
+
 ### 2026-09-11 — integrator answer and non-overlapping hardening
 
 Fetched `origin/codex/agent-world-unified-acceptance` at

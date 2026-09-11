@@ -18,6 +18,8 @@
 - Integrator answer read at `61ff7a38` (2026-09-11): reviewed checkpoint `97095b00`,
   shared ownership unchanged; await typed Evaluation/native kind integration SHA.
   Subsequent isolated protocol/role-ownership hardening: 70 focused tests passed.
+  Next bound-cancel checkpoint: 75 passed; terminal-state preservation checked.
+  Native cleanup after revoke and API/worker composition still require integration.
 
 - Parallel P1-5 only: branch `codex/agent-world-external-agent-onboarding`, base
   `9ae183f65149c9cc7253490810667fc75cbf9cf6`. Separate A2A 0.3 bounded connection,

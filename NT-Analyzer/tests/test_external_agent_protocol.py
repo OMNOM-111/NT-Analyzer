@@ -82,7 +82,8 @@ def agent():
                     error = {"code": -32001, "message": "Absent"}
                 else:
                     result = row[1]
-                    result["status"]["state"] = "canceled" if method == "tasks/cancel" else "completed"
+                    if result["status"]["state"] not in {"canceled", "completed", "failed", "rejected"}:
+                        result["status"]["state"] = "canceled" if method == "tasks/cancel" else "completed"
             else:
                 error = {"code": -32601, "message": "Unsupported"}
             output = {"jsonrpc": "2.0", "id": packet["id"], **({"error": error} if error else {"result": result})}

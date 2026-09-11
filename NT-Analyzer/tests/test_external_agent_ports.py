@@ -142,6 +142,35 @@ def test_guarded_adapter_checks_result_not_model_quality_and_prevents_resend(age
     assert len(agent[2]) == before
 
 
+@pytest.mark.parametrize("mode", ["cancel", "foreign_id", "revoked", "admission", "completed"])
+def test_adapter_cancel_is_bound_and_never_assumes_remote_stopped(agent, mode):
+    parts = setup(agent[0]); adapter, args, binding, live, row = execution(parts)
+    sent = adapter.send(**args)
+    binding["remote_task_id"] = sent.remote.task_id
+    remote = sent.remote
+    if mode == "foreign_id":
+        remote = replace(remote, task_id="foreign-task")
+    elif mode == "revoked":
+        parts[0].revoke(context=args["context"], connection_id=row["id"], expected_revision=3, idempotency_key="revoke-cancel")
+    elif mode == "admission":
+        live["allowed"] = False
+    elif mode == "completed":
+        adapter.poll(**args, remote=remote, connection_revision=3)
+    before = len(agent[2])
+    if mode in {"foreign_id", "revoked", "admission"}:
+        with pytest.raises(ContractError):
+            adapter.cancel(**args, remote=remote, connection_revision=3)
+        assert len(agent[2]) == before
+    else:
+        result = adapter.cancel(**args, remote=remote, connection_revision=3)
+        assert result.remote.state == ("completed" if mode == "completed" else "canceled")
+        assert result.verification is None
+        observed = adapter.poll(**args, remote=remote, connection_revision=3)
+        assert observed.remote.state == result.remote.state
+        if mode == "cancel":
+            assert observed.verification is None
+
+
 @pytest.mark.parametrize("failure", ["budget", "admission", "revoked", "spec", "capability", "timeout", "late-revoke"])
 def test_worker_step_refuses_without_new_authority_or_silent_retry(agent, failure):
     parts = setup(agent[0]); adapter, args, binding, live, row = execution(parts)

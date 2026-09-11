@@ -105,6 +105,25 @@ class ExternalAgentAdapter:
                 or (remote_id is not None and binding.get("remote_task_id") != remote_id)):
             raise ContractError("external_agent_approved_scope_changed")
 
+    def cancel(self, *, context, connection_id, task, intent, role, capability, values, remote, request_id, connection_revision):
+        """Cancel a bound remote task, not an arbitrary user-supplied task ID.
+
+        Revoked credentials are never resurrected for cleanup. The host must
+        request cancellation before revocation; a remote completion can win.
+        Cancellation observations do not constitute an Evaluation or review.
+        """
+        bound = dict(context=context, connection_id=connection_id, task=task, intent=intent, role=role,
+                     capability=capability, expected_revision=connection_revision)
+        connection = self._bound(**bound)
+        if not isinstance(remote, RemoteTask) or remote.context_id != str(intent.header.entity_id):
+            raise ContractError("external_agent_task_binding_invalid")
+        spec = prepare("json_arithmetic", json.dumps(values))
+        self._binding(context, task, connection, spec, remote_id=remote.task_id)
+        result = self.client.cancel(connection.endpoint, self.read_secret(connection.credential.key),
+            task_id=remote.task_id, context_id=remote.context_id, request_id=request_id)
+        self._bound(**bound)
+        return AdapterResult(result, str(connection.header.entity_id), connection.header.revision, connection.synthetic, None)
+
     @staticmethod
     def _result(remote, connection, spec):
         proof = evaluate(spec, remote.data_json) if remote.state == "completed" else None
