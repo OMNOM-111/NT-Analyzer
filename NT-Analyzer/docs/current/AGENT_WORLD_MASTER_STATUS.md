@@ -13,11 +13,11 @@
 PROGRAM: Agent World / AI Center
 STATUS: IN DEVELOPMENT
 
-CURRENT IMPLEMENTATION COVERAGE: 86%
-CURRENT OWNER ACCEPTANCE READINESS: 64%
+CURRENT IMPLEMENTATION COVERAGE: 87%
+CURRENT OWNER ACCEPTANCE READINESS: 65%
 
 CURRENT INTEGRATION BRANCH: codex/agent-world-unified-acceptance
-CURRENT INTEGRATION SHA: 437febf4 — CI green on all three jobs. Tip is 1059bc99+ (docs only).
+CURRENT INTEGRATION SHA: 7f54d6ea — P1-1. CI last green at 437febf4; this SHA needs its own run.
 CURRENT WIP: clean
 CURRENT LOCAL 8765 SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (48 commits behind, not switched)
 CURRENT ACCEPTANCE INSTANCE: http://127.0.0.1:8806/ui/ai-command-center.html — SHA 4d9ff737,
@@ -43,15 +43,17 @@ A percentage that **falls** after a defect is found is correct and must be
 recorded as such.
 
 ```text
-IMPLEMENTATION COVERAGE: 86%   (31.0 / 36)
-OWNER ACCEPTANCE READINESS: 64%   (23.0 / 36)
+IMPLEMENTATION COVERAGE: 87%   (31.5 / 36)
+OWNER ACCEPTANCE READINESS: 65%   (23.5 / 36)
 
 P0 REMAINING: 0
 
 CHANGE SINCE PREVIOUS CHECKPOINT:
-Implementation: +1 pp  — CI is configured and actually runs; no new capability
-Acceptance:     +8 pp  — Persona, SF Chat, Execution and Outcomes walked live on
-                         the acceptance build, and CI verifies the exact SHA
+Implementation: +1 pp  — Task Graph moves 0.5 to 1.0: a delegated child now
+                         produces new analysis, so the graph is no longer one
+                         operation repeated
+Acceptance:     +1 pp  — the same row, proven by the existing lifecycle route
+                         rather than only in the new cases
 ```
 
 > The independent audit of 2026-09-10 reported 84% / 54% on a 34-row basis.
@@ -76,8 +78,8 @@ Marks: `Y` yes · `P` partial · `N` no.
 | PostgreSQL / RLS | Y | Y | Y | Y | Y | DONE + VERIFIED | e45 runtime harness: API → worker → SQL → replay → restart → RLS; 69+41+7 suite PASS; 10 FORCE RLS tables; no SQLite fallback | Never run as Local's backend |
 | Event ledger / outbox / idempotency | Y | Y | Y | Y | Y | DONE + VERIFIED | Idempotent replay and restart in the same harness | — |
 | Intent | Y | Y | N | Y | P | PARTIAL | Record created per task and per decision, correlated end to end | No user-visible goal capture, amend or cancel — P1-2 |
-| Coordinator | Y | Y | Y | Y | P | PARTIAL | `coordinator.commission`; 40 focused PASS; full lifecycle integration test | Hard-coded to one `json_arithmetic` goal; not a planner — P1-1 |
-| Task Graph | Y | Y | Y | Y | P | PARTIAL | Real parent → subtasks → contributions → aggregate, depth ≤3, typed deps | No descendant produces new analysis — P1-1 |
+| Coordinator | Y | Y | Y | Y | P | PARTIAL | `coordinator.commission`; 202 PASS across coordinator, delegation, handoff, integration, review and UI | Two closed operation classes, caller-named rather than inferred from the goal; still not a general planner |
+| Task Graph | Y | Y | Y | Y | P | IMPLEMENTED | Real parent → subtasks → contributions → aggregate, depth ≤3, typed deps. Two operation classes: `verify_fact_transfer` restates and is graded on exactness, `numeric_breakdown` gives each child its own slice and a different answer | Live browser route for the second operation |
 | Delegation | Y | Y | Y | Y | P | PARTIAL | Grant-bound, depth-bounded, cycle- and restart-safe; 61 handoff/delegation PASS | Roots only on Coordinator task or verified application result |
 | Persona | Y | Y | Y | Y | Y | DONE + VERIFIED | Identity survives restart and model change; the selected-Persona chat path walked live on 8806 to a completed, accepted result with the identity intact | Audible voice check — P2-5 |
 | Voice / TTS / lip-sync | Y | Y | Y | Y | N | PARTIAL | 8 TTS profiles, 6 reused `speaking.webm`, browser speech default, owner TTS opt-in | Audio never heard; phoneme lip-sync absent by design — P2 |
@@ -397,15 +399,16 @@ P3-3  Eight expected sections live behind three tabs as drawers — owner design
 | P0-2 · the page shows it | `2a2e402e` | refusal rendered through the shipped page code; asserts the queue label and decision wording are absent |
 | P0-3 · Persona → chat → result → decision | `4d9ff737` | completion case on the enabled V2 path, plus the live walk on :8806 ending «Проверка завершена» |
 | Master status introduced | `c3a79675` | this file |
+| P1-1 · a child that produces new analysis | `7f54d6ea` | `numeric_breakdown`: disjoint slices, different answers, each independently verified; unsplittable plans refused at commission; unknown operations rejected; default unchanged. 202 passed across the six delegation suites |
 | P0-4 · CI runs, and can finish | `437febf4` | run 34516120281 green on all three jobs; the 30-minute Windows cap that cancelled run 34510366536 was raised to 120 in both workflows, `ci.yml` included, where it would have cancelled main PRs too |
 | P0-5 · owner acceptance build | `4d9ff737` | :8806 on an immutable SHA, disposable data, zero external calls, 10 screenshots, click-by-click route |
 
 ## NEXT AGENT START HERE
 
 ```text
-Last safe commit: 437febf4 — pushed, CI green on all three jobs. Later commits
-                  are documentation only. Local full regression was also green
-                  at c3a79675 (5463 / 0 / 117).
+Last safe commit: 7f54d6ea — P1-1, 202 passed across the six delegation suites.
+                  CI was last green at 437febf4; 7f54d6ea has NOT had a full
+                  regression or a CI run yet. Do that before calling it verified.
 
 Uncommitted files: none. Re-check `git status` before assuming that.
 
@@ -428,11 +431,15 @@ Do not touch:
   - deploy/testing/acceptance.env or any generated DSN — never into Git
 
 Exact next action:
-  P1-1 — give the Coordinator a second operation class whose children produce
-  new analysis rather than another fact-transfer check. `coordinator.commission`
-  currently hard-codes `prepare("json_arithmetic", ...)` as the root and
-  overwrites every node with `operation="verify_fact_transfer",
-  produces_new_analysis=False`. The graph machinery underneath already supports
-  more; the constraint is in that one function. Prove it the way the existing
-  lifecycle test does, in tests/test_agent_world_coordinator_integration.py.
+  1. Full regression + a CI dispatch at 7f54d6ea, since P1-1 changed runtime
+     code in delegation, coordinator and task_review.
+  2. Then P1-2: make the Intent visible — goal, constraints, required evidence,
+     approval mode, scope and status in the Task Inspector, with open, cancel,
+     and amend-by-new-revision before execution starts. It is a layer over the
+     existing Intent contract, not a second workflow.
+
+Note for whoever does P1-1 follow-up work: three places re-derive the same work
+and compare — `reconcile` stores the aggregate proof, `task_review` rebuilds it,
+`propose` rebuilds the node labels. They are meant to disagree loudly. If one is
+changed, change all three, and never relax a comparison to make them agree.
 ```
