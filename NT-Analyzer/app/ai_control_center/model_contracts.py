@@ -15,13 +15,10 @@ from .states import ContractError, EntityKind
 # What can be evaluated. A subject outside this set is refused rather than
 # stored as an untyped reference nobody can interpret later.
 #
-# An external agent connection belongs here too and is deliberately absent: in
-# this codebase an EntityKind means a storable record, and the codec round-trip
-# covers every declared kind. Minting the kind before its record exists would
-# leave a member nothing can store. P1-5 adds the kind, its states, its codec
-# entry and its record together, and appends it to this one line — the seam is
-# the typed subject below, which needs no further change to accept it.
+# P1-5 registers its external connection record, states and codec atomically
+# with this subject entry. All kinds continue to use this single contract.
 SUBJECT_KINDS = frozenset({
+    EntityKind.EXTERNAL_AGENT_CONNECTION,
     EntityKind.MODEL,
     EntityKind.AGENT_ROLE,
     EntityKind.DECISION,

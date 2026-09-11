@@ -538,6 +538,74 @@ P3-3  Eight expected sections live behind three tabs as drawers — owner design
 
 ## NEXT AGENT START HERE
 
+### Parallel P1-5 handoff (2026-09-10; does not replace integrator's status below)
+
+PARALLEL WORKSTREAM: External Agent Onboarding
+
+- Base SHA: `9ae183f65149c9cc7253490810667fc75cbf9cf6`.
+- Branch: `codex/agent-world-external-agent-onboarding`.
+- Head (code checkpoint): `97095b0010a278e8f917a00e9661d77e93fadf0e`, pushed, clean.
+- PR: [draft #286](https://github.com/OMNOM-111/NT-Analyzer/pull/286), base
+  `codex/agent-world-unified-acceptance`; PR #285 base unchanged.
+- Code: **IN DEVELOPMENT**, four isolated external_agent modules, no shared edits.
+- Wired: NO — native codec/repository, worker and Evaluation integration pending.
+- API: service ports implemented; authenticated HTTP routes NOT mounted.
+- Automated: protocol/onboarding/adapter checks with test-only host ports.
+- E2E: actual HTTP synthetic protocol path checked; full ordinary-user app E2E NOT checked.
+- Tests: final focused **64 passed / 0 failed / 0 skipped**, 11.40 s, including malformed-card cases.
+- Gates: root static scan CSP/secrets/Markdown PASS; Context Pack PASS (historical
+  pack-SHA warning retained); 600-file pre-release bundle PASS, Python/JS included.
+- Full regression, native PostgreSQL/RLS and application/UI E2E: NOT RUN.
+- At code checkpoint: no uncommitted files; ignored Python caches only. No known
+  focused test failures. Later handoff-only commit does not change executable code.
+- Known limitations: native Contribution/Evaluation/history/statistics not persisted;
+  native budget settlement/audit, RLS, UI and cancellation cleanup not wired.
+- Integration files needed: states/codec/events, Evaluation subject contract,
+  existing gateway/server/worker/Coordinator/Router; exact seams in change record.
+- Conflicts with Claude: no shared files changed; requested shared contract review
+  and ownership handoff are the next dependency, not a user-key blocker.
+- Flags: no changes, no route activated; Development-only service/adapter guards.
+- Recommended master-status delta: external onboarding 0 -> isolated backend
+  contract/protocol tested, NOT a completed product flow. Integrator alone updates
+  global percentages and original P1-5 matrix after reconciliation.
+
+Next P1-5 operation: integrator reviews draft #286 and the native
+connection kind and external Evaluation subject before assigning shared wiring.
+No work on P1-1/P1-2/P1-3, UI, PR #285 base or Local 8765.
+See [P1-5 change record](../changelog/2026-09-10-external-agent-onboarding.md).
+Owner requested file-based coordination: the change record contains the explicit
+message to Claude, requested contract/ownership decisions and native E2E checklist.
+Integrator response received in `61ff7a3822f7306e3b60dd5fc342e06c9c31a8fd`,
+section "Integration answer to the P1-5 checkpoint": `97095b00` reviewed, not merged.
+No ownership transfer. Typed Evaluation subject and record-kind/codec registration
+remain with the integrator; no parallel Evaluation implementation permitted.
+2026-09-11 P1-5-only hardening checks role ownership and per-skill JSON compatibility,
+rejecting duplicate/malformed skills. Native wiring still blocked on integration SHA.
+Latest focused rerun: **70 passed / 0 failed / 0 skipped**, 10.32 s; previous 64-case
+evidence above belongs to the reviewed checkpoint, not the subsequent changes.
+Next independent checkpoint: bound adapter cancellation (same authority/spec/remote-ID
+checks as polling), no fabricated cancellation success, test agent terminal-state
+preservation. Native cleanup after revoke remains unwired; no shared ownership changed.
+Cancellation checkpoint focused result: **75 passed / 0 failed / 0 skipped**, 13.37 s.
+Next independent cleanup checkpoint: failed local credential deletion leaves the
+connection revoked; repeated revoke retries deletion without another revision or
+remote call. Dispatch rechecks authority after claim/secret access. Native atomic
+dispatch/revoke ordering remains an integrator-owned requirement, not proven by
+port tests. Credential rotation and native cleanup scheduling remain unwired.
+Cleanup checkpoint focused result: **79 passed / 0 failed / 0 skipped**, 15.37 s.
+Native registration continuation: integration base `3c62465d` includes `84ddb2e7`.
+Atomically added external record kind/states/codec/events/shared Evaluation subject;
+generic repositories reused. Native SQLite replay/history/isolation tests added.
+New ownership blocker: integrator worktree at `3c62465d` has dirty model_service,
+presentation, page, reputation tests and untracked decision_evaluation/path tests.
+Those unsaved execution/evaluation/UI changes are not imported or overwritten.
+Await their saved SHA or explicit file-level handoff before overlapping native wiring.
+Full application E2E, new PostgreSQL/RLS, full regression and CI not claimed.
+See change record for exact files and first registration test failures.
+Native registration focused result: **372 passed / 0 failed / 0 skipped**, 22.96 s.
+Connections are private in the shared visibility helper; foreign-owner reads denied.
+No runtime registration/worker/API feature enabled; no global percentage raised.
+
 ```text
 Last safe commit: fb2c472b - P1-3 complete, decision producer included.
   CI 34658942542 green on all three jobs at fb2c472b: Static gates;
