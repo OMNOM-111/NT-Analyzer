@@ -78,7 +78,7 @@ def record(kind=EntityKind.TASK, **changes):
                                                rationale=snapshot(), provider_key="test_provider", model_key="sample/model-v1",
                                                model_version="fixture-v1", failure_domain="fixture-domain")),
         EntityKind.EVALUATION: (Evaluation, dict(task=ref(EntityKind.TASK), outcome=ref(EntityKind.OUTCOME),
-                                                evidence=snapshot(), model=ref(EntityKind.MODEL), rubric_key="fixture-rubric-v1")),
+                                                evidence=snapshot(), subject=ref(EntityKind.MODEL), rubric_key="fixture-rubric-v1")),
     }
     cls, values = definitions[kind]
     return cls(**{**values, "header": header(), "status": INITIAL_STATES[kind], **changes})
@@ -359,3 +359,67 @@ def test_superseding_an_approved_decision_preserves_its_original_evidence():
 def test_repository_pagination_is_bounded(limit):
     with pytest.raises(ContractError, match="invalid_page_limit"):
         PageRequest(limit=limit)
+
+
+@pytest.mark.parametrize("kind", [EntityKind.MODEL, EntityKind.AGENT_ROLE, EntityKind.DECISION])
+def test_an_evaluation_accepts_every_declared_subject_kind(kind):
+    """One contract, several kinds of thing to be good at."""
+    from app.ai_control_center.model_contracts import SUBJECT_KINDS
+
+    assert kind in SUBJECT_KINDS
+    item = record(EntityKind.EVALUATION, subject=ref(kind))
+    assert item.subject.kind is kind
+    validate_commit(**commit_args(item))
+
+
+@pytest.mark.parametrize("kind", [EntityKind.TASK, EntityKind.OUTCOME, EntityKind.PERSONA,
+                                  EntityKind.INTENT, EntityKind.MEMORY])
+def test_an_evaluation_refuses_a_subject_kind_nobody_measures(kind):
+    with pytest.raises(ContractError) as refused:
+        record(EntityKind.EVALUATION, subject=ref(kind))
+    assert refused.value.code == "evaluation_subject_kind_unsupported"
+
+
+def test_a_subject_must_be_a_typed_reference_at_all():
+    with pytest.raises(ContractError) as refused:
+        record(EntityKind.EVALUATION, subject=snapshot())
+    assert refused.value.code == "reference_kind_mismatch"
+
+
+def test_one_subject_score_is_never_readable_as_another():
+    """The compatibility accessor refuses rather than quietly answering.
+
+    A caller asking a role's evaluation for its "model" has made a mistake, and
+    returning the role would put an agent-role score where a model score is
+    displayed — the exact conflation these scopes exist to prevent.
+    """
+    model_eval = record(EntityKind.EVALUATION, subject=ref(EntityKind.MODEL))
+    assert model_eval.model == model_eval.subject
+
+    for kind in (EntityKind.AGENT_ROLE, EntityKind.DECISION):
+        other = record(EntityKind.EVALUATION, subject=ref(kind))
+        with pytest.raises(ContractError) as refused:
+            _ = other.model
+        assert refused.value.code == "evaluation_subject_not_a_model"
+
+
+def test_an_evaluation_written_before_subjects_existed_still_decodes():
+    """Stored bytes are not rewritten; the old field name is mapped on read."""
+    import json
+    from app.ai_control_center import contracts as c
+    from app.ai_control_center.storage_codec import decode_record, encode_record
+
+    item = record(EntityKind.EVALUATION, subject=ref(EntityKind.MODEL))
+    legacy = json.loads(encode_record(item))
+    legacy["model"] = legacy.pop("subject")          # exactly what old rows hold
+    assert "subject" not in legacy
+
+    restored = decode_record(json.dumps(legacy))
+    assert restored == item
+    assert restored.subject.kind is EntityKind.MODEL
+    assert restored.model == item.subject
+    # And a row carrying both names is refused rather than guessed at.
+    both = json.loads(encode_record(item))
+    both["model"] = both["subject"]
+    with pytest.raises(ContractError):
+        decode_record(json.dumps(both))

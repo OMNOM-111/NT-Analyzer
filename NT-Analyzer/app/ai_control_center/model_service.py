@@ -636,7 +636,8 @@ class ModelService:
         if outcome.status == "pending":
             outcome = self._change(context, outcome, "verified" if evaluation["passed"] else "disputed", verification=proof)
         self._ensure(context, Evaluation, _id(context, f"evaluation:{task.header.entity_id}"), correlation, policy,
-            task=task.ref(), outcome=outcome.ref(), evidence=proof, model=model.ref(), rubric_key=checkpoint["spec"]["rubric_key"])
+            task=task.ref(), outcome=outcome.ref(), evidence=proof, subject=model.ref(),
+            rubric_key=checkpoint["spec"]["rubric_key"])
         waiting_for_application = bool(checkpoint.get("application_request") and evaluation["passed"])
         task = self._change(context, task, "waiting" if waiting_for_application else "succeeded" if evaluation["passed"] else "review")
         intent = self._get(context, EntityKind.INTENT, task.intent.entity_id)

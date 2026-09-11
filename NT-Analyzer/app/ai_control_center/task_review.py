@@ -291,7 +291,7 @@ def submit(service, *, context, task_id, payload, expected_revision, idempotency
                 raise ContractError("task_review_stale")
         committed = service._ensure(context, Evaluation, _identity(service, context, task),
             task.header.correlation_id, task.header.policy, task=task.ref(), outcome=outcome.ref(),
-            model=model.ref(), evidence=proof, rubric_key=RUBRIC)
+            subject=model.ref(), evidence=proof, rubric_key=RUBRIC)
         # _ensure is deliberately reusable/idempotent and can return a record
         # created by another process after our read. Never report its opposite
         # decision as success for this request (the ledger remains untouched).

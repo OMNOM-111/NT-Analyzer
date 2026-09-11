@@ -105,7 +105,12 @@ def decode_record(raw: str) -> c.Record:
         value = _parse(raw)
         if type(value) is not dict:
             raise ContractError("stored_contract_invalid")
-        cls = _RECORD_TYPES[EntityKind(value.pop("kind"))]
+        kind = EntityKind(value.pop("kind"))
+        cls = _RECORD_TYPES[kind]
+        if kind is EntityKind.EVALUATION and "model" in value and "subject" not in value:
+            # Written before an evaluation could name anything but a Model.
+            # The bytes on disk are left alone; only this reading maps them.
+            value["subject"] = value.pop("model")
         return _decode(cls, value)
     except (ValueError, TypeError, KeyError, RecursionError) as exc:
         raise ContractError("stored_contract_invalid") from exc
