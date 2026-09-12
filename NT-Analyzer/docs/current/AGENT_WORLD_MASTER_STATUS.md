@@ -18,8 +18,11 @@ CURRENT OWNER ACCEPTANCE READINESS: 68%
 
 CURRENT INTEGRATION BRANCH: codex/agent-world-unified-acceptance
 CURRENT INTEGRATION SHA: fb2c472b — P1-3 complete, including the decision producer.
-  At fb2c472b: CI run 34658942542 dispatched; 228 passed locally across the completion,
-  handoff, shared-security and reputation suites, plus 13 new decision-path cases.
+  At fb2c472b: CI run 34658942542 SUCCESS on all three jobs — Static gates;
+  Tests (ubuntu-latest) 5515 passed / 0 failed / 116 skipped, 18:54;
+  Tests (windows-self-hosted) 5512 passed / 0 failed / 119 skipped, 1:37:59.
+  Locally: 228 passed across the completion, handoff, shared-security and
+  reputation suites, plus 13 new decision-path cases.
   Previous checkpoint 84ddb2e7 — P1-3 scopes. Full regression at b06c5f55 (the commit
   before the honesty fix): 5493 passed / 0 failed / 117 skipped, 1:31:06.
   At 84ddb2e7: CI run 34641854998 SUCCESS on all three jobs — Static gates;
@@ -537,12 +540,11 @@ P3-3  Eight expected sections live behind three tabs as drawers — owner design
 
 ```text
 Last safe commit: fb2c472b - P1-3 complete, decision producer included.
-  CI 34641854998 was green on all three jobs at 84ddb2e7 (the previous
-  checkpoint): Static gates; ubuntu 5502 / 0 / 116; windows self-hosted
-  5499 / 0 / 119. CI 34658942542 was dispatched at fb2c472b - read it before
-  calling this SHA verified, and record the result here.
+  CI 34658942542 green on all three jobs at fb2c472b: Static gates;
+  ubuntu 5515 / 0 / 116; windows self-hosted 5512 / 0 / 119.
   Locally at fb2c472b: 228 passed across the completion, handoff,
   shared-security and reputation suites, plus 13 decision-path cases.
+  P1-3 is closed on every count.
 
 Uncommitted files: none. Re-check `git status` before assuming that.
 
@@ -555,7 +557,7 @@ Active processes:
   :8804      - 92d873e3, holds the historical stuck task ef1b1052.
   Stop any but the first only deliberately; none of them touches owner data.
 
-Tests currently running: CI 34658942542 at fb2c472b.
+Tests currently running: none.
 
 Known failures: none at fb2c472b in any suite run so far.
 
@@ -568,7 +570,7 @@ Do not touch:
   - deploy/testing/acceptance.env or any generated DSN - never into Git
 
 Exact next action:
-  1. Read CI 34658942542. If green, P1-3 is closed on every count and the
+  1. DONE - CI 34658942542 green at fb2c472b. P1-3 is closed and the
      Reputation row's evidence is complete.
   2. P1-4 (BYOK) is the next owner-blocking item and needs a real key and a
      permitted endpoint - owner action, not an executor's.
