@@ -20,8 +20,8 @@ HANDOFF: P1-3 accepted and closed by the owner at f1fe393f.
   which suspends the ownership line below for the duration.
   ACTIVE OWNER OF THE SHARED AGENT WORLD FILES: Codex, until P1-5 is integrated.
 
-CURRENT IMPLEMENTATION COVERAGE: 93%
-CURRENT OWNER ACCEPTANCE READINESS: 68%
+CURRENT IMPLEMENTATION COVERAGE: 95%
+CURRENT OWNER ACCEPTANCE READINESS: 70%
 
 CURRENT INTEGRATION BRANCH: codex/agent-world-unified-acceptance
 CURRENT INTEGRATION SHA: fb2c472b — P1-3 complete, including the decision producer.
@@ -66,8 +66,8 @@ A percentage that **falls** after a defect is found is correct and must be
 recorded as such.
 
 ```text
-IMPLEMENTATION COVERAGE: 93%   (33.5 / 36)
-OWNER ACCEPTANCE READINESS: 68%   (24.5 / 36)
+IMPLEMENTATION COVERAGE: 95%   (34.5 / 36)
+OWNER ACCEPTANCE READINESS: 70%   (25.5 / 36)
 
 P0 REMAINING: 0
 
@@ -131,7 +131,7 @@ Marks: `Y` yes · `P` partial · `N` no.
 | SF Social | Y | Y | Y | Y | P | IMPLEMENTED | Prepare → explicit publish; verified sources only; corrupted receipts never attested; private memory never publishable | One real publication is an owner decision |
 | Owner Preview | Y | Y | Y | Y | P | IMPLEMENTED | Isolated synthetic operator with its own domains; deliberately no provider, worker, Router, Court, publication or routine execution | Manual route not re-run on final code |
 | Ordinary-user model onboarding | Y | P | Y | P | N | PARTIAL | Wizard driven in a browser with a placeholder key against the local executor | Real key, real endpoint, real BYOK E2E — P1-4 |
-| External-agent onboarding | Y | Y | Y | Y | Y | IMPLEMENTED · PENDING INTEGRATION | Native route walked end to end on :8812 over real HTTP and read from the live DOM: add → verify → ACTIVE → Coordinator picks a compatible role → dispatch through the existing durable worker → Contribution/Outcome/Evaluation(subject=EXTERNAL_AGENT_CONNECTION) → performance → revoke → next dispatch refused `409 external_agent_revoked`, history kept. 20 native cases (E2E, hardening, UI) beside the 85 contract cases | Lives on `codex/agent-world-external-native-e2e`, not yet on the integration branch. Only the Development agent exists: a real remote agent is refused with `external_agent_remote_budget_not_configured` until a paid allowance contract is agreed — owner decision |
+| External-agent onboarding | Y | Y | Y | Y | Y | DONE + VERIFIED · PENDING INTEGRATION | Native route walked end to end on :8812 over real HTTP and read from the live DOM: add → verify → ACTIVE → Coordinator picks a compatible role → dispatch through the existing durable worker → Contribution/Outcome/Evaluation(subject=EXTERNAL_AGENT_CONNECTION) → performance → revoke → next dispatch refused `409 external_agent_revoked`, history kept. 20 native cases (E2E, hardening, UI) beside the 85 contract cases | Lives on `codex/agent-world-external-native-e2e`, not yet on the integration branch. Only the Development agent exists: a real remote agent is refused with `external_agent_remote_budget_not_configured` until a paid allowance contract is agreed — owner decision |
 | UI / UX | Y | Y | Y | Y | N | PARTIAL | All eight expected sections exist as drawer panels behind three tabs | Header counter lag, narrow-column wrapping, structure vs mockups — P3 |
 | Security / tenant isolation | Y | Y | Y | Y | Y | DONE + VERIFIED | FORCE RLS; foreign workspace reads 0 and inserts fail `42501`; device and session re-checked per request; SSRF guard; no secret in Git | — |
 | Restart / idempotency | Y | Y | Y | Y | Y | DONE + VERIFIED | Stop/restart/re-read against PostgreSQL; duplicate dispatch and replay refused | — |
@@ -638,7 +638,9 @@ No runtime registration/worker/API feature enabled; no global percentage raised.
 
 ```text
 Last safe commit on THIS branch (codex/agent-world-external-native-e2e):
-  cd29d744 - P1-5 native route complete. CI 34677045628 dispatched at it.
+  c16b511d - P1-5 native route complete and verified. CI 34678502093 green on
+  all three jobs: Static gates; ubuntu 5658 / 0 / 117, 20:14; windows
+  self-hosted 5655 / 0 / 120, 1:20:01.
   Locally: 20 native cases (3 E2E, 10 hardening, 7 UI) plus the 85 contract
   cases from 4f536f69, and 180 across the UI suites. The route was walked over
   real HTTP on :8812 and read from the live DOM.
@@ -673,13 +675,14 @@ Do not touch:
   - deploy/testing/acceptance.env or any generated DSN - never into Git
 
 Exact next action for P1-5:
-  1. Read CI 34677045628 at cd29d744. Full pytest lives there; do not start a
-     local full regression while a self-hosted job is running - they share this
-     machine and each roughly doubles the other's wall time.
-  2. Percentages move only after that is green. The pending move is
-     External-agent onboarding 0 -> 1.0 on both metrics, which is
-     93 -> 95 and 68 -> 70 on the same 36-row method. Do not apply it earlier.
-  3. Then the owner decision this now waits on: a real remote agent is refused
+  1. DONE - the full suite is green on both platforms at c16b511d.
+  2. DONE - External-agent onboarding moved 0 -> 1.0 on both metrics, which is
+     93 -> 95 and 68 -> 70 on the same 36-row method.
+  3. DONE - CI 34678502093 green on all three jobs at c16b511d: Static gates;
+     ubuntu 5658 passed / 0 failed / 117 skipped, 20:14; windows self-hosted
+     5655 passed / 0 failed / 120 skipped, 1:20:01. Percentages moved to 95 / 70
+     on that evidence, not before it.
+  4. Then the owner decision this now waits on: a real remote agent is refused
      with `external_agent_remote_budget_not_configured` because no paid external
      allowance contract exists. Only the Development agent runs today, and it is
      synthetic by construction - default off, allowlisted workspace, no socket.
