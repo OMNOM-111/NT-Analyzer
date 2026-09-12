@@ -176,8 +176,13 @@ def test_a_kind_nobody_measures_is_refused_rather_than_scored(scopes):
 
 
 def test_every_declared_scope_maps_to_exactly_one_subject_kind():
+    """One scope per subject kind, and no kind measured by two scopes.
+
+    Four since P1-5 added the external agent. The number matters less than the
+    equality: two scopes sharing a kind would be two names for one measurement.
+    """
     kinds = list(reputation.SCOPES.values())
-    assert len(kinds) == len(set(kinds)) == 3
+    assert len(kinds) == len(set(kinds)) == 4
     for name, kind in reputation.SCOPES.items():
         assert reputation.scope_for(kind) == name
 
