@@ -67,12 +67,16 @@ class ExternalAgentService:
             with self.repository.guard(self.context, cid):
                 row = self.onboarding(payload.get("endpoint")).create(context=self.context, payload=payload, idempotency_key=key)
             return self.detail(row["id"])
+        extra = {}
         with self.repository.guard(self.context, identity):
             row = self.connection(identity)
             service = self.onboarding(row.endpoint)
             args = dict(context=self.context, connection_id=str(identity), expected_revision=revision, idempotency_key=key)
             if action == "verify" and not payload: service.verify(**args)
-            elif action == "revoke" and not payload: service.revoke(**args)
+            elif action == "revoke" and not payload:
+                # Whether the retired secret is gone or still queued for
+                # deletion is part of what happened, and the page shows it.
+                extra["credential_cleanup"] = service.revoke(**args).get("credential_cleanup")
             elif action == "rotate" and set(payload) == {"credential"}: service.rotate_credential(**args, credential=payload["credential"])
             elif action == "disable" and not payload:
                 if row.header.revision != revision: raise ContractError("external_agent_revision_conflict")
@@ -83,7 +87,7 @@ class ExternalAgentService:
                 from .coordinator import commission_external
                 return commission_external(self, row, payload, key)
             else: raise ContractError("external_agent_action_invalid")
-        return self.detail(identity)
+        return {**self.detail(identity), **extra}
 
     def list(self):
         self.admit(operation="read")
@@ -120,6 +124,14 @@ class ExternalAgentService:
     def assign(self, row, payload, key):
         """Called only by Coordinator after compatible-role selection."""
         if type(payload) is not dict or set(payload) != {"input_text"}: raise ContractError("external_agent_task_payload_invalid")
+        # Whether this agent can be dispatched at all is answered before the
+        # numbers are judged. A disabled agent replying "your numbers are
+        # wrong" sends the person to fix the wrong thing — and a revoked one
+        # refused as "no compatible role" is true about the wrong thing too.
+        if row.status == "revoked":
+            raise ContractError("external_agent_revoked")
+        if row.status != "active":
+            raise ContractError("external_agent_not_active")
         spec = prepare("json_arithmetic", payload["input_text"])
         if not row.synthetic:
             # No paid external-agent allowance/pricing contract is installed.

@@ -126,25 +126,34 @@ class ExternalAgentOnboarding:
         self._access(context, "revoke")
         row = self._get(context, connection_id)
         if row.status == "revoked":
-            self._cleanup_or_enqueue(context, row)
-            return row.public()
+            return {**row.public(), "credential_cleanup": self._cleanup_or_enqueue(context, row)}
         if row.header.revision != expected_revision:
             raise ContractError("external_agent_revision_conflict")
         row = self._save(context, row.transition("revoked", now=datetime.now(timezone.utc)), expected_revision, idempotency_key)
         # Revoke first: no later task can use this connection even if deletion
         # fails. Remote cancellation needs an explicit host cleanup decision.
-        self._cleanup_or_enqueue(context, row)
-        return row.public()
+        return {**row.public(), "credential_cleanup": self._cleanup_or_enqueue(context, row)}
 
     def _cleanup_or_enqueue(self, context, row):
+        """Delete the retired secrets, or hand the job to the worker. Says which.
+
+        The revocation itself is already durable by the time this runs, so a
+        secret store that is briefly unavailable must not be reported as a
+        failed revocation: that would tell the person the agent still has
+        access, which is the opposite of what happened. It is only an error
+        when nothing exists to retry it.
+        """
         try:
             self._cleanup_credential(row)
+            return "clean"
         except ContractError:
-            if self.enqueue_cleanup is not None:
-                # Only the existing worker enqueuer may implement this port.
-                # The revoked native record remains the durable retry anchor.
-                self.enqueue_cleanup(context=context, connection_id=str(row.header.entity_id))
-            raise
+            if self.enqueue_cleanup is None:
+                # No durable retry behind us, so the caller has to hear it.
+                raise
+            # Only the existing worker enqueuer may implement this port.
+            # The revoked native record remains the durable retry anchor.
+            self.enqueue_cleanup(context=context, connection_id=str(row.header.entity_id))
+            return "pending"
 
     def cleanup_revoked(self, *, context, connection_id):
         self._access(context, "cleanup")

@@ -275,17 +275,29 @@ def history_models(authorized):
 def external_agents(authorized, repo=None):
     from .external_agent_native import ExternalAgentService
     from .. import worker_router
+    def _enqueue(job_id, payload, **kw):
+        # Same idiom as delegation._queue: a repeated enqueue of the identical
+        # job is the queue already holding it, not a failure. Only a different
+        # payload under the same id is a real conflict.
+        try:
+            return worker_router.enqueue("agent_world_external", payload, job_id=job_id,
+                workspace_id=authorized["context"].scope.workspace_id,
+                user_id=authorized["chat_scope"]["user_id"], **kw)
+        except sqlite3.IntegrityError:
+            old = worker_router.get(job_id, workspace_id=authorized["context"].scope.workspace_id) or {}
+            if old.get("kind") != "agent_world_external" or old.get("payload") != payload:
+                raise ContractError("external_agent_job_conflict") from None
+            return old
     def queue(task_id):
         authorized["admit"]()
-        return worker_router.enqueue("agent_world_external", {"scope": authorized["chat_scope"], "task_id": str(task_id)},
-            workspace_id=authorized["context"].scope.workspace_id, user_id=authorized["chat_scope"]["user_id"],
-            job_id="wj_aw_external_" + UUID(str(task_id)).hex, max_attempts=1, timeout_sec=120)
+        return _enqueue("wj_aw_external_" + UUID(str(task_id)).hex,
+            {"scope": authorized["chat_scope"], "task_id": str(task_id)}, max_attempts=1, timeout_sec=120)
     def cleanup(**kw):
         context, identity = kw["context"], kw["connection_id"]
         if context != authorized["context"]: raise ContractError("external_agent_scope_invalid")
-        return worker_router.enqueue("agent_world_external", {"scope": authorized["chat_scope"], "connection_id": str(identity), "phase": "external_cleanup"},
-            workspace_id=context.scope.workspace_id, user_id=authorized["chat_scope"]["user_id"],
-            job_id="wj_aw_external_cleanup_" + UUID(str(identity)).hex, max_attempts=5, timeout_sec=60)
+        return _enqueue("wj_aw_external_cleanup_" + UUID(str(identity)).hex,
+            {"scope": authorized["chat_scope"], "connection_id": str(identity), "phase": "external_cleanup"},
+            max_attempts=5, timeout_sec=60)
     return ExternalAgentService(authorized, models(authorized, repo), enqueue=queue, enqueue_cleanup=cleanup)
 
 
