@@ -13,6 +13,14 @@
 PROGRAM: Agent World / AI Center
 STATUS: IN DEVELOPMENT
 
+HANDOFF: P1-3 accepted and closed by the owner at f1fe393f.
+  ACTIVE OWNER OF THE SHARED AGENT WORLD FILES: Codex, until P1-5 is integrated.
+  That is contracts.py, model_contracts.py, states.py, storage_codec.py, both
+  repositories, domain_gateway.py, model_service.py and the Aurora page. Three
+  of them — states.py, storage_codec.py, model_contracts.py — are what the P1-5
+  atomic commit rewrites, so an edit there is a merge conflict by construction.
+  Anything else in the programme may proceed; these wait for Codex to land.
+
 CURRENT IMPLEMENTATION COVERAGE: 93%
 CURRENT OWNER ACCEPTANCE READINESS: 68%
 
@@ -548,14 +556,20 @@ Last safe commit: fb2c472b - P1-3 complete, decision producer included.
 
 Uncommitted files: none. Re-check `git status` before assuming that.
 
-Active processes:
-  PID 20328 - Local 8765, code 2b6d0112, owner data root. DO NOT switch or restart.
-  :8810      - acceptance build at fb2c472b, disposable data root. Current.
-  :8809      - 84ddb2e7, the P1-3 scopes build.
-  :8808      - b06c5f55. Keeps the reputation headline defect as evidence.
-  :8806      - 4d9ff737, the P0 acceptance build.
-  :8804      - 92d873e3, holds the historical stuck task ef1b1052.
-  Stop any but the first only deliberately; none of them touches owner data.
+Active processes (re-checked at the handoff, not carried over):
+  PID 7412 - Local 8765, `python -m app.server 8765`, code 2b6d0112, owner data
+             root. DO NOT switch or restart. The PID changed from 20328: the
+             machine restarted between sessions and Local came back on its own.
+             Nothing in this programme switched or restarted it, and the
+             worktree it serves is still at 2b6d0112.
+
+  No acceptance instance is running. :8804, :8806, :8808, :8809 and :8810 all
+  ended with that restart. Their launchers survive under
+  .artifacts/acceptance-<sha>/run_aurora.py, so any of them comes back with one
+  command, and a build at any other SHA comes from
+  scratchpad/owner_acceptance_build.py <sha> <port>. Each uses a disposable data
+  root and makes no external call. The evidence they were raised for is already
+  recorded here and in Git; none of it depends on a live process.
 
 Tests currently running: none.
 
