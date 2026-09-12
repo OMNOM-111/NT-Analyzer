@@ -239,7 +239,7 @@ def _execute(job: Dict[str, Any], *, heartbeat=None, cancelled=None) -> Dict[str
             path = runtime_env.data_path("runtime", name, project_root=root)
             indexed.append(durable.record_telemetry_file(root, name=name, path=path, updated_at_utc=_now_iso()))
         return {"ok": bool(rotation.get("ok", True)), "rotation": rotation, "indexed": indexed}
-    if kind in {"agent_world_model", "agent_world_followup"}:
+    if kind in {"agent_world_model", "agent_world_followup", "agent_world_external"}:
         from .ai_control_center.domain_gateway import execute_worker
         return execute_worker(job, cancelled, heartbeat)
     if kind == "ai_orchestrator":

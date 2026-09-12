@@ -159,7 +159,12 @@ def test_agent_world_now_has_both_repository_implementations():
     assert "PostgresAgentWorldRepository" in source, (
         "the gateway should be able to select the PostgreSQL adapter" + REPLACE)
     package = ROOT / "app" / "ai_control_center"
-    implementations = {path.name for path in package.glob("*repository*.py")}
+    # Storage backends, not every file whose name contains "repository". The
+    # external-agent ports wrap this repository to add a cross-process lock and
+    # are not a third place a record can live; asserting on the filename made
+    # that indistinguishable from a new backend.
+    implementations = {path.name for path in package.glob("*repository*.py")
+                       if "AgentWorldRepository" in path.read_text(encoding="utf-8", errors="ignore")}
     assert implementations == MERGED["agent_world_repositories"], REPLACE
 
 

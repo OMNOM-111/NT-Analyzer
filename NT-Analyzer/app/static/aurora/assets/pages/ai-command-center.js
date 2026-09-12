@@ -10,7 +10,8 @@
     routines: { title: 'Рутины', description: 'Предложения повторяющейся работы. Принятие предложения не включает фоновое исполнение.', create: 'Предложить рутину' },
     calendar: { title: 'Календарь', description: 'Согласованные события рабочего пространства. Время вводится локально и сохраняется в UTC.', create: 'Добавить событие' },
     publications: { title: 'Публикация в SF Social', description: 'Только проверенный результат или решение: сначала снимок для просмотра, затем отдельное подтверждение публикации. Личная память и сырые ответы не публикуются.', create: 'Подготовить публикацию' },
-    models: { title: 'Модели и подключения', description: 'Ваши подключения и внешние агенты. Persona, учётная запись провайдера и модель — отдельные сущности.', create: 'Подключить модель' },
+    models: { title: 'Модели и подключения', description: 'Подключения LLM API. Persona, учётная запись провайдера и модель — отдельные сущности.', create: 'Подключить модель' },
+    external_agents: { title: 'Внешние агенты', description: 'Самостоятельное A2A-подключение, не модель и не Persona. Возможности подтверждает сервер; MCP-инструмент не является агентом.', create: 'Добавить внешнего агента' },
     model_tasks: { title: 'История моделей', description: 'Фактические ответы и независимые проверки. Неизвестная стоимость не равна нулевой.', create: '' },
     tasks: { title: 'Действия задачи', description: 'Изменение выполняет сервер после повторной проверки прав и состояния.', create: '' },
     experiments: { title: 'Эксперименты', description: 'Одно проверяемое задание для 2–3 моделей. Сравнение строится по фактическим ответам, не по самооценке.', create: 'Сравнить модели' },
@@ -18,9 +19,9 @@
     router: { title: 'Выбор подключения · Router', description: 'Кандидаты и источник выбора для конкретной задачи. Предпросмотр ничего не запускает; повторное задание требует отдельного разрешения.', create: '' },
     system: { title: 'Система', description: 'Доступность, ограничения и состояние текущего рабочего пространства. Чтение не меняет флаги или бюджет.', create: '' },
   });
-  const ACTION_LABELS = Object.freeze({ preview: 'Предпросмотр выбора', apply: 'Разрешить новый запуск', seed_preview: 'Создать учебные записи Preview', create: 'Создать', connect: 'Подключить', bind_existing: 'Связать Local-подключение', update: 'Изменить', activate: 'Активировать', suspend: 'Приостановить', archive: 'В архив', promote: 'Продвинуть', publish_to_workspace: 'Опубликовать в workspace', propose_consensus: 'Собрать решение по вкладам', suggest_routine: 'Предложить по результатам', prepare: 'Подготовить снимок', publish: 'Опубликовать в SF Social', revoke: 'Отозвать разрешение', propose: 'Проверить расписание', enable: 'Включить по расписанию', commission: 'Новое поручение Координатору', preview_commission: 'Проверить план делегирования', approve_commission: 'Разрешить этот план', reconcile: 'Проверить продолжение', version: 'Новая версия', accept: 'Принять', dismiss: 'Отклонить', review: 'Проверить через Court', review_result: 'Проверить полученный результат', withdraw: 'Отозвать решение', test: 'Проверить соединение', task: 'Первое задание', disconnect: 'Отключить', cancel: 'Отменить задачу', retry: 'Новая безопасная попытка', handoff: 'Передать факты агенту', open_chat: 'Открыть ручной разбор в SF Chat' });
+  const ACTION_LABELS = Object.freeze({ verify: 'Проверить агента', disable: 'Выключить подключение', rotate: 'Заменить секрет', preview: 'Предпросмотр выбора', apply: 'Разрешить новый запуск', seed_preview: 'Создать учебные записи Preview', create: 'Создать', connect: 'Подключить', bind_existing: 'Связать Local-подключение', update: 'Изменить', activate: 'Активировать', suspend: 'Приостановить', archive: 'В архив', promote: 'Продвинуть', publish_to_workspace: 'Опубликовать в workspace', propose_consensus: 'Собрать решение по вкладам', suggest_routine: 'Предложить по результатам', prepare: 'Подготовить снимок', publish: 'Опубликовать в SF Social', revoke: 'Отозвать разрешение', propose: 'Проверить расписание', enable: 'Включить по расписанию', commission: 'Новое поручение Координатору', preview_commission: 'Проверить план делегирования', approve_commission: 'Разрешить этот план', reconcile: 'Проверить продолжение', version: 'Новая версия', accept: 'Принять', dismiss: 'Отклонить', review: 'Проверить через Court', review_result: 'Проверить полученный результат', withdraw: 'Отозвать решение', test: 'Проверить соединение', task: 'Первое задание', disconnect: 'Отключить', cancel: 'Отменить задачу', retry: 'Новая безопасная попытка', handoff: 'Передать факты агенту', open_chat: 'Открыть ручной разбор в SF Chat' });
   const STATUS = {
-    running: ['В работе', 'good'], working: ['В работе', 'good'], active: ['Активен', 'good'], healthy: ['Работает', 'good'], succeeded: ['Завершено', 'good'], completed: ['Завершено', 'good'], verified: ['Проверено', 'good'], passed: ['Проверено', 'good'], accepted: ['Принято', 'good'], submitted: ['Вклад записан', 'info'],
+    verifying: ['Проверяется', 'info'], degraded: ['Требует внимания', 'warning'], running: ['В работе', 'good'], working: ['В работе', 'good'], active: ['Активен', 'good'], healthy: ['Работает', 'good'], succeeded: ['Завершено', 'good'], completed: ['Завершено', 'good'], verified: ['Проверено', 'good'], passed: ['Проверено', 'good'], accepted: ['Принято', 'good'], submitted: ['Вклад записан', 'info'],
     planned: ['Запланировано', 'neutral'], ready: ['В очереди', 'neutral'], queued: ['В очереди', 'neutral'], waiting: ['Ожидает', 'neutral'], pending: ['Ожидает', 'neutral'], free: ['Свободен', 'neutral'], available: ['Свободен', 'neutral'], idle: ['Свободен', 'neutral'],
     review: ['Нужна проверка', 'review'], awaiting_owner: ['Решение владельца', 'review'], approval_required: ['Нужно подтверждение', 'review'], court: ['Разбор Court', 'review'],
     blocked: ['Заблокировано', 'warning'], paused: ['На паузе', 'warning'], warning: ['Внимание', 'warning'],
@@ -154,6 +155,12 @@
   }
   function domainFormFields(domain, action, catalog) {
     if (!knownDomain(domain)) return [];
+    if (domain === 'external_agents') {
+      if (action === 'create') return [field('display_name', 'Название подключения', 'text', { required: true, max: 80 }), field('protocol', 'Протокол', 'select', { required: true, options: [['a2a-0.3-jsonrpc-bounded', 'A2A 0.3 · ограниченный JSON-RPC']] }), field('endpoint', 'HTTPS endpoint внешнего агента', 'url', { required: true, max: 350, hint: 'Публичный HTTPS:443. Внутренние адреса, перенаправления и metadata endpoints запрещены.' }), field('credential', 'Секрет подключения', 'password', { required: true, max: 4096, hint: 'Введите самостоятельно. Секрет не возвращается в карточке и не копируется из owner-подключений.' }), field('capability', 'Запрашиваемая возможность', 'select', { required: true, options: [['stratforge.json_arithmetic.v1', 'Диагностика: арифметика JSON']], hint: 'Не оценка профессионального качества. Сервер пересечёт запрос с проверенными возможностями агента.' })];
+      if (action === 'rotate') return [field('credential', 'Новый секрет подключения', 'password', { required: true, max: 4096, hint: 'Старый секрет не показывается. После замены требуется новая проверка подключения.' })];
+      if (action === 'task') return [field('input_text', 'Входные данные диагностики', 'textarea', { required: true, max: 4000, hint: 'JSON-массив 3–20 целых чисел, например [1,2,3]. Задание проходит штатный Координатор; результат не считается Model Performance.' })];
+      return [];
+    }
     if (['tasks', 'model_tasks'].includes(domain) && action === 'review_result') return [field('decision', 'Ваше решение по этому результату', 'select', { required: true, options: [['', 'Выберите решение'], ['accept', 'Результат проверен и принят'], ['reject', 'Результат проверен и отклонён']] }), field('comment', 'Комментарий к проверке', 'textarea', { max: 2000, hint: 'Решение относится только к этому результату. Оно не выставляет профессиональную оценку модели и не разрешает дальнейшее исполнение.' })];
     if (domain === 'publications') {
       if (action === 'prepare') return [field('source', 'Проверенный источник', 'publication-source', { required: true, hint: 'Сервер предоставил только разрешённые источники. На этом шаге пост не создаётся.' })];
@@ -164,7 +171,7 @@
     if (['tasks', 'model_tasks'].includes(domain) && action === 'handoff') return [field('target_model_id', 'Другой агент / подключённая модель', 'model', { required: true, hint: 'Передаются только проверенные факты и метки источника. Это проверка точности передачи, не анализ стратегии или изображения. Автономное делегирование не включается.' })];
     if (domain === 'models') {
       if (action === 'bind_existing') return [field('registry_id', 'Разрешённое Local-подключение', 'binding', { required: true, hint: 'Список сформирован сервером только для текущего владельца. Исходный ключ и существующий бюджет не меняются.' }), field('persona_id', 'Активная Persona', 'persona', { required: true }), field('label', 'Название связи (необязательно)', 'text', { max: 80 })];
-      if (action === 'connect') return [field('label', 'Название подключения', 'text', { required: true, max: 80 }), field('connection_kind', 'Тип подключения', 'select', { required: true, options: [['model', 'Своя модель'], ['external_agent', 'Внешний агент']] }), field('provider', 'Провайдер', 'provider', { required: true }), field('model', 'Идентификатор модели', 'text', { required: true, max: 120 }), field('base_url', 'Endpoint (для совместимого провайдера)', 'url', { max: 250, hint: 'Только разрешённый сервером HTTPS endpoint. Для стандартного провайдера оставьте пустым.' }), field('api_key', 'Ключ подключения', 'password', { required: true, max: 4096 }), field('persona_id', 'Persona', 'persona', { required: true })];
+      if (action === 'connect') return [field('label', 'Название подключения', 'text', { required: true, max: 80 }), field('connection_kind', 'Тип подключения', 'select', { required: true, options: [['model', 'Своя модель']] }), field('provider', 'Провайдер', 'provider', { required: true }), field('model', 'Идентификатор модели', 'text', { required: true, max: 120 }), field('base_url', 'Endpoint (для совместимого провайдера)', 'url', { max: 250, hint: 'Только разрешённый сервером HTTPS endpoint. Для стандартного провайдера оставьте пустым.' }), field('api_key', 'Ключ подключения', 'password', { required: true, max: 4096 }), field('persona_id', 'Persona', 'persona', { required: true })];
       if (action === 'task') return [rubricField(true), field('input_text', 'Задание / входные данные', 'textarea', { max: 4000, hint: 'Ответ помощника: обычный текст, один ограниченный ответ без tools; содержание проверяете вы, автоматического рейтинга нет. Соединение: пусто. Арифметика: JSON-массив 3–20 целых чисел. Факты: 2–12 строк city=Paris. Секреты не отправляйте.' })];
     }
     if (domain === 'experiments' && action === 'create') return [field('title', 'Название сравнения', 'text', { required: true, max: 80 }), field('model_ids', 'Модели (выберите 2–3)', 'models', { required: true, minItems: 2, maxItems: 3 }), rubricField(), field('input_text', 'Одинаковые входные данные', 'textarea', { max: 4000, hint: 'Соединение: пусто. Арифметика: JSON-массив целых чисел. Факты: строки key=value. Один вход будет отправлен всем выбранным моделям.' })];
@@ -260,6 +267,7 @@
       payload.max_depth = chain ? targets.length : 1;
       delete payload.topology;
     }
+    if (domain === 'external_agents' && action === 'create') { payload.allowed_capabilities = [payload.capability]; delete payload.capability; }
     return payload;
   }
   function validPublicationPreview(prepared, source) {
@@ -283,6 +291,55 @@
   }
   function connectionLabel(model) {
     return model.can_execute_test_only === true ? 'SYNTHETIC · только локальный тестовый исполнитель' : model.connected === true ? 'Реальное соединение проверено' : model.test_executor_verified === true ? 'Локальный тест сохранён; реальное соединение не проверено' : 'Реальное соединение не проверено';
+  }
+  const EXTERNAL_ERRORS = Object.freeze({
+    external_agent_reverification_required: 'Секрет заменён. Подключение выключено до повторной проверки.',
+    external_agent_revoked_or_changed: 'Подключение было отозвано или изменено, пока задача ждала запуска.',
+    external_agent_reply_uncertain: 'Исполнитель остановился до ответа. Неизвестно, дошёл ли запрос; повторно он не отправляется.',
+    external_agent_timeout: 'Агент не ответил вовремя.',
+    external_agent_credential_cleanup_pending: 'Отзыв выполнен. Удаление старого секрета отложено и будет повторено.',
+    external_agent_unavailable: 'Подключение сейчас недоступно для запуска.',
+    external_agent_verification_required: 'Агент не подтвердил запрошенные возможности.',
+  });
+  const EXTERNAL_STATES = Object.freeze({
+    draft: 'Создано, не проверено', verifying: 'Идёт проверка', active: 'Проверено и доступно',
+    degraded: 'Проверка не прошла', disabled: 'Выключено', revoked: 'Отозвано',
+  });
+  function externalAgentCard(item) {
+    const stat = item.statistics || {}, tasks = rows(item.tasks);
+    const capabilityLabel = value => value === 'stratforge.json_arithmetic.v1'
+      ? 'Диагностика: арифметика JSON' : 'Неподдерживаемая возможность · см. детали';
+    const code = item.last_error || item.last_error_code;
+    const current = item.current_task;
+    const taskRow = row => `<div class="aw-text">${badge(row.status)} <span class="aw-hash">${esc(String(row.id).slice(0, 8))}</span>`
+      + `${row.synthetic === true ? ' <span class="aw-status aw-info">SYNTHETIC</span>' : ''}`
+      + `${row.error_code ? ' <span class="aw-status aw-warning">' + esc(row.error_code) + '</span>' : ''}`
+      + `${row.evaluation_id ? ' · оценка записана' : ' · без оценки'}`
+      + `<button class="aw-link-button" data-aw-task="${esc(row.id)}">Задача и доказательства →</button></div>`;
+    return `<section class="aw-detail-section"><h3>${esc(item.display_name || item.name || 'Внешний агент')}</h3>`
+      + `<div class="aw-inline">${badge(item.status)}<span class="aw-status aw-info">ревизия ${count(item.revision)}</span></div>`
+      + `<dl class="aw-detail-grid">`
+      + `<div><dt>Тип</dt><dd>External Agent · отдельно от Model</dd></div>`
+      + `<div><dt>Состояние</dt><dd>${esc(EXTERNAL_STATES[item.status] || item.status || 'не указано')}</dd></div>`
+      + `<div><dt>Протокол</dt><dd>${esc(item.protocol)}</dd></div>`
+      + `<div><dt>Модель внутри агента</dt><dd>unknown / externally managed</dd></div>`
+      + `<div><dt>Последняя проверка</dt><dd>${esc(date(item.last_verified_at || item.last_verification))}</dd></div>`
+      + `<div><dt>Задержка</dt><dd>${number(item.latency_ms ?? item.last_latency_ms) == null ? 'Не измерена' : count(item.latency_ms ?? item.last_latency_ms) + ' мс'}</dd></div>`
+      + `<div><dt>Текущая задача</dt><dd>${current ? esc(String(current.id).slice(0, 8)) + ' · ' + esc(statusMeta(current.status)[0]) : 'Нет'}</dd></div>`
+      + `<div><dt>Завершено задач</dt><dd>${count(stat.tasks_completed)}</dd></div>`
+      + `</dl>`
+      + `<p class="aw-text">Подтверждённые возможности: ${rows(item.allowed_capabilities).map(capabilityLabel).map(esc).join(', ') || 'Нет'}</p>`
+      + (item.synthetic === true ? '<p class="aw-note">SYNTHETIC · Development-агент. Не реальная модель и не рабочий benchmark.</p>' : '')
+      + (code ? `<p class="aw-status aw-warning">${esc(EXTERNAL_ERRORS[code] || 'Последняя операция завершилась ошибкой.')} <span class="aw-hash">${esc(code)}</span></p>` : '')
+      + (item.credential_cleanup === 'pending' ? '<p class="aw-note">Доступ отозван. Удаление старого секрета поставлено в очередь и будет повторено.</p>' : '')
+      + reputationPanel({ external_agent_performance: item.performance })
+      + `<p class="aw-note">Результаты внешнего агента не записываются как Model Performance.</p>`
+      + (tasks.length ? `<h4>История задач</h4>${tasks.map(taskRow).join('')}` : '<p class="aw-note">Задач ещё не было.</p>')
+      + `<details class="aw-technical"><summary>Протокол, возможности и диагностика</summary><pre class="aw-result-text">${esc(publicJSON({
+          endpoint: item.endpoint, advertised_capabilities: item.advertised_capabilities,
+          requested_capabilities: item.requested_capabilities, allowed_capabilities: item.allowed_capabilities,
+          last_error: code, performance: item.performance, statistics: stat }))}</pre></details>`
+      + `</section>`;
   }
   function modelProtocolCard(model) {
     const caps = model?.capabilities;
@@ -556,6 +613,7 @@
   const APPROVAL_LABELS = Object.freeze({ advice: 'только совет, исполнение не разрешено', draft: 'черновик',
     reversible_execution: 'обратимое исполнение', approval_required: 'требуется подтверждение', forbidden: 'запрещено' });
   const SCOPE_LABELS = Object.freeze({
+    external_agent_performance: 'Внешний агент',
     model_performance: 'Модель',
     agent_role_performance: 'Рабочая роль',
     decision_performance: 'Решение',
@@ -624,7 +682,7 @@
       + `<p class="aw-field-hint">Поручение не редактируется после создания задачи: его значением связаны запрос, ответ и проверка. Пока работа не началась, поручение можно остановить — «Отменить задачу». Нужны другие условия — отправьте новый запрос; прежнее поручение и его история сохраняются.</p>`
       + `</section>`;
   }
-  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, rows, items, taskMatches, taskState, taskTitle, taskClass, taskBadge, evaluationMeta, phaseOf, phaseLabel, rubricLabel, stageName, machineKey, availabilityMeta, occupancyMeta, readinessGrid, technicalSplit, technicalDetails, AVATAR_KEYS, applicationRows, applicationTable, safeArtifactUrl, sourceMeta, overviewOutcomes, realChatCommands, canRunDemo, flagRows, captureChart, knownDomain, allowedDomainActions, domainFormFields, domainPayload, actionLabel, domainError, publicJSON, handoffCard, followupCard, modelConnectionGuide, modelProtocolCard, personaVoiceFields, personaReadText, personaCanSpeak, personaSpeechEnvelope, personaAudioStatus, personaPresentationCard, processCandidatePayload, processCandidateCard, processIntelligencePanel, reputationPanel, intentPanel, validCoordinatorPreview, coordinatorApproval, connectionLabel }; return; }
+  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, rows, items, taskMatches, taskState, taskTitle, taskClass, taskBadge, evaluationMeta, phaseOf, phaseLabel, rubricLabel, stageName, machineKey, availabilityMeta, occupancyMeta, readinessGrid, technicalSplit, technicalDetails, AVATAR_KEYS, applicationRows, applicationTable, safeArtifactUrl, sourceMeta, overviewOutcomes, realChatCommands, canRunDemo, flagRows, captureChart, knownDomain, allowedDomainActions, domainFormFields, domainPayload, actionLabel, domainError, publicJSON, externalAgentCard, handoffCard, followupCard, modelConnectionGuide, modelProtocolCard, personaVoiceFields, personaReadText, personaCanSpeak, personaSpeechEnvelope, personaAudioStatus, personaPresentationCard, processCandidatePayload, processCandidateCard, processIntelligencePanel, reputationPanel, intentPanel, validCoordinatorPreview, coordinatorApproval, connectionLabel }; return; }
 
   root.UI.ready(async function () {
     const UI = root.UI, API = root.API.http;
@@ -1001,6 +1059,7 @@
       return allowedDomainActions(domainState?.data, item).map(action => `<button class="btn sm${['disconnect', 'revoke', 'archive', 'withdraw', 'cancel'].includes(action) ? ' aw-danger-action' : ''}" data-aw-domain-action="${esc(action)}" data-aw-entity="${esc(recordId(item))}">${esc(actionLabel(action))}</button>`).join('');
     }
     function domainItemCard(item) {
+      if (domainState.key === 'external_agents') return `<article class="aw-domain-card"><div class="aw-domain-card-head"><button class="aw-table-title" data-aw-domain-item="${esc(recordId(item))}">${esc(item.display_name || 'Внешний агент')}</button>${badge(item.status)}</div>${externalAgentCard(item)}<div class="aw-actions">${domainActionButtons(item)}</div></article>`;
       const id = recordId(item), metrics = item.observed_eval || item.evaluation;
       const title = esc(item.title || item.label || item.name || item.model || 'Запись');
       const heading = domainState.key === 'system' ? `<strong>${title}</strong>` : `<button class="aw-table-title" data-aw-domain-item="${esc(id)}">${title}</button>`;
@@ -1115,7 +1174,7 @@
       const comparisons = key === 'experiments' && comparison.length ? `<section class="aw-detail-section"><h3>Сопоставимые результаты</h3><div class="aw-domain-grid">${comparison.map(result => `<article class="aw-domain-card"><strong>${esc(result.model || result.label || result.model_id || 'Модель')}</strong>${badge(result.status)}<dl class="aw-detail-grid"><div><dt>Результат проверки</dt><dd>${esc(pct(result.score_pct ?? result.evaluation?.score_pct ?? result.evaluation?.observed_score_pct ?? result.observed_eval?.score_pct))}</dd></div><div><dt>Длительность</dt><dd>${number(result.latency_ms) == null ? 'не измерена' : esc(count(result.latency_ms)) + ' мс'}</dd></div><div><dt>Стоимость</dt><dd>${esc(cost(result.cost_usd))}</dd></div></dl>${result.task_id || result.id ? `<button class="aw-link-button" data-aw-model-task="${esc(result.task_id || result.id)}">Ответ и доказательства →</button>` : ''}</article>`).join('')}</div></section>` : '';
       const modelTaskLink = key === 'model_tasks' && (item.id || item.task_id) ? `<button class="btn" data-aw-task-chat="${esc(recordId(item))}">Открыть в SF Chat</button>` : '';
       const metaFields = `<dl class="aw-detail-grid"><div><dt>Ревизия</dt><dd>${count(item.revision)}</dd></div><div><dt>Обновлено</dt><dd>${esc(date(item.updated_at || item.created_at))}</dd></div>${item.model ? `<div><dt>Запрошенная модель</dt><dd>${esc(item.model)}</dd></div>` : ''}${key === 'models' ? `<div><dt>Ключ</dt><dd>${item.credentials_configured === true ? 'Настроен · не выводится' : 'Не настроен'}</dd></div>` : ''}${key === 'model_tasks' ? `<div><dt>Model ID от провайдера</dt><dd>${esc(item.actual_model || 'Не предоставлен')}</dd></div><div><dt>Измеренная стоимость</dt><dd>${esc(cost(item.cost_usd))}</dd></div><div><dt>Длительность</dt><dd>${number(item.latency_ms) == null ? 'не измерена' : count(item.latency_ms) + ' мс'}</dd></div>` : ''}</dl>`;
-      const personaBody = key === 'personas' ? personaPresentationCard(item, avatar(item, 'lg')) : key === 'models' ? modelProtocolCard(item) : '';
+      const personaBody = key === 'external_agents' ? externalAgentCard(item) : key === 'personas' ? personaPresentationCard(item, avatar(item, 'lg')) : key === 'models' ? modelProtocolCard(item) : '';
       openDrawer(meta.title + ' · ' + (item.title || item.label || item.name || 'Запись'), `${domainNav(key)}<div class="aw-actions"><button class="aw-link-button" data-aw-domain="${key}">← Все записи</button>${domainActionButtons(item)}${modelTaskLink}</div><h2 class="aw-inspector-title">${esc(item.title || item.label || item.name || item.model || 'Запись')}</h2><div class="aw-inline">${badge(item.status)}${item.synthetic === true ? '<span class="aw-status aw-info">SYNTHETIC</span>' : ''}</div>${domainLimitations(item)}${item.summary ? `<p class="aw-text">${esc(item.summary)}</p>` : ''}${metaFields}${personaBody}<dl class="aw-detail-grid">${description}</dl>${resultBody}${evaluationBody}${sourceBody}${versionBody}${courtBody}${comparisons}<div class="aw-hash">ID ${esc(recordId(item))}${item.correlation_id ? '<br>CORRELATION ' + esc(item.correlation_id) : ''}</div>`);
     }
     async function openDomainItem(id) {
@@ -1206,12 +1265,13 @@
         if (specs.some(spec => ['models', 'model'].includes(spec.type))) dependencies.models = await API.aiControlCenterDomain('models', { limit: 100 }, { signal });
         if (specs.some(spec => spec.type === 'source_task')) dependencies.tasks = await API.aiControlCenterDomain('model_tasks', { limit: 100 }, { signal });
         if (disposed || request !== detailGeneration) return;
-        const external = ['test', 'task', 'review', 'handoff', 'commission'].includes(action) || key === 'experiments';
+        const external = ['verify', 'test', 'task', 'review', 'handoff', 'commission'].includes(action) || key === 'experiments';
         const confirm = external ? 'Разрешаю отправить это задание выбранным подключениям в пределах существующего бюджета.' : action === 'publish_to_workspace' ? 'Разрешаю участникам этого рабочего пространства читать содержание и происхождение опубликованной записи.' : ['archive', 'revoke', 'withdraw', 'disconnect', 'cancel', 'dismiss', 'suspend'].includes(action) ? 'Подтверждаю это изменение выбранной записи.' : '';
         const warning = external ? note('Режим каждого подключения указан при выборе. SYNTHETIC проверяет механику без внешнего вызова и не подтверждает качество модели. Для реального подключения сервер проверяет существующий бюджет; измеренная стоимость может быть неизвестна до ответа. Не отправляйте секреты или личные данные.') : action === 'publish_to_workspace' ? note('Будет создана отдельная общая запись в текущем workspace. Личный источник сохраняется. Не публикуйте секреты или чужие личные данные; отзыв общей записи или её источника прекращает доступ.') : action === 'bind_existing' ? note('Только связь с одним существующим разрешённым Local-подключением. Ключ не копируется; новый бюджет не создаётся. Отключение связи не удаляет исходное подключение владельца.') : key === 'routines' || key === 'calendar' ? note('Это запись предложения / события, не запуск фонового исполнителя. Автоматизация остаётся выключенной.') : '';
         const back = key === 'tasks' ? `<button type="button" class="btn" data-aw-task="${esc(id)}">Назад к задаче</button>` : `<button type="button" class="btn" data-aw-domain="${key}">Отмена</button>`;
         openDrawer(DOMAINS[key].title + ' · ' + actionLabel(action), `<div class="aw-domain-heading"><div><h2>${esc(actionLabel(action))}</h2><p>${esc(record?.title || record?.label || record?.name || DOMAINS[key].description)}</p></div></div>${warning}<form class="aw-form" id="aw-domain-form" autocomplete="off"><div class="aw-form-grid">${specs.map(spec => formField(spec, record, dependencies)).join('')}</div>${!specs.length ? '<p class="aw-text">Действие относится только к выбранной записи. История и права проверяются сервером.</p>' : ''}${confirm ? `<label class="aw-confirm"><input type="checkbox" name="confirmation" required><span>${esc(confirm)}</span></label>` : ''}<p class="aw-form-error" id="aw-form-error" role="alert" hidden></p><div class="aw-actions"><button type="submit" class="btn primary">${esc(actionLabel(action))}</button>${back}</div><p class="aw-field-hint">Ни workspace, ни права, ни бюджет не принимаются из формы. ${record ? 'Изменение привязано к ревизии ' + count(record.revision) + '.' : ''}</p></form>`);
         if (key === 'models' && action === 'connect') qs('#aw-domain-form', currentDrawer)?.insertAdjacentHTML('beforebegin', modelConnectionGuide());
+        if (key === 'external_agents' && action === 'create' && domainState?.data.test_connection) qs('#aw-domain-form', currentDrawer)?.insertAdjacentHTML('beforebegin', '<p class="aw-note">SYNTHETIC · только разрешённое Development-пространство.</p><button type="button" class="btn" data-aw-external-test-fill>Заполнить Development-агентом</button>');
       } catch (error) { if (error?.name !== 'AbortError' && request === detailGeneration && !disposed) openDrawer(actionLabel(action), readError(error)); }
     }
     async function openRouterTask(id) {
@@ -1322,12 +1382,13 @@
           return;
         }
         actionForm = null;
-        const keyInput = form.elements.namedItem('api_key'); if (keyInput) keyInput.value = '';
+        for (const secretName of ['api_key', 'credential']) { const keyInput = form.elements.namedItem(secretName); if (keyInput) keyInput.value = ''; }
         mutationBusy = false;
         await refresh();
         const resultItem = result.item || result.task || result;
         announce(resultItem.status === 'failed' || resultItem.status === 'external_blocked' ? 'Сервер записал неуспешный результат. Откройте историю и ограничения.' : 'Ответ сервера сохранён. Проверьте состояние и результат записи; принятие запроса не означает завершение задачи.');
-        if (state.domain === 'router' && state.action === 'apply' && resultItem.started_task_id) await openTask(resultItem.started_task_id);
+        if (state.domain === 'external_agents' && state.action === 'task' && resultItem.started_task_id) await openTask(resultItem.started_task_id);
+        else if (state.domain === 'router' && state.action === 'apply' && resultItem.started_task_id) await openTask(resultItem.started_task_id);
         else if (state.domain === 'automation' || state.action === 'seed_preview') await openDomain(state.domain);
         else if (state.action === 'open_chat') { await openDomain(state.domain); await openDomainItem(state.id); }
         else if (state.domain === 'tasks') await openTask(taskId(resultItem) || state.id);
@@ -1445,6 +1506,13 @@
       if (target.tagName === 'A' || target.dataset.awTaskChat || target.dataset.awFollowupChat || target.dataset.awChartChat || target.hasAttribute('data-aw-real-chat')) stopPersonaAudio();
       // A control may carry both: open the tab already narrowed to that filter.
       if (target.dataset.awTab) { if (target.dataset.awFilter) filter = target.dataset.awFilter; selectTab(target.dataset.awTab, true); }
+      else if (target.hasAttribute('data-aw-external-test-fill')) {
+        const test = domainState?.key === 'external_agents' && domainState?.data.test_connection;
+        const form = qs('#aw-domain-form', currentDrawer);
+        if (test && form && actionForm?.action === 'create') {
+          for (const [key, value] of Object.entries({ display_name: 'Development · внешний агент', protocol: 'a2a-0.3-jsonrpc-bounded', endpoint: test.endpoint, credential: test.credential, capability: 'stratforge.json_arithmetic.v1' })) { const input = form.elements.namedItem(key); if (input) input.value = value || ''; }
+        }
+      }
       else if (target.dataset.awDomain) openDomain(target.dataset.awDomain);
       else if (target.dataset.awDomainItem) openDomainItem(target.dataset.awDomainItem);
       else if (target.dataset.awRouterTask) openRouterTask(target.dataset.awRouterTask);

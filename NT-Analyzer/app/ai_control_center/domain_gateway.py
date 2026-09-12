@@ -23,6 +23,7 @@ from . import presentation
 from .states import ContractError, EntityKind
 
 DOMAINS = frozenset({"personas", "memory", "projects", "routines", "calendar", "decisions", "court",
+                     "external_agents",
                      "models", "model_tasks", "experiments", "system", "tasks", "publications", "automation", "router"})
 
 
@@ -269,6 +270,35 @@ def history_models(authorized):
     return ModelService(repository(authorized),
         chat_scope=authorized["chat_scope"],
         admit=lambda context, operation, estimate: _model_admit(authorized, context, operation, estimate))
+
+
+def external_agents(authorized, repo=None):
+    from .external_agent_native import ExternalAgentService
+    from .. import worker_router
+    def _enqueue(job_id, payload, **kw):
+        # Same idiom as delegation._queue: a repeated enqueue of the identical
+        # job is the queue already holding it, not a failure. Only a different
+        # payload under the same id is a real conflict.
+        try:
+            return worker_router.enqueue("agent_world_external", payload, job_id=job_id,
+                workspace_id=authorized["context"].scope.workspace_id,
+                user_id=authorized["chat_scope"]["user_id"], **kw)
+        except sqlite3.IntegrityError:
+            old = worker_router.get(job_id, workspace_id=authorized["context"].scope.workspace_id) or {}
+            if old.get("kind") != "agent_world_external" or old.get("payload") != payload:
+                raise ContractError("external_agent_job_conflict") from None
+            return old
+    def queue(task_id):
+        authorized["admit"]()
+        return _enqueue("wj_aw_external_" + UUID(str(task_id)).hex,
+            {"scope": authorized["chat_scope"], "task_id": str(task_id)}, max_attempts=1, timeout_sec=120)
+    def cleanup(**kw):
+        context, identity = kw["context"], kw["connection_id"]
+        if context != authorized["context"]: raise ContractError("external_agent_scope_invalid")
+        return _enqueue("wj_aw_external_cleanup_" + UUID(str(identity)).hex,
+            {"scope": authorized["chat_scope"], "connection_id": str(identity), "phase": "external_cleanup"},
+            max_attempts=5, timeout_sec=60)
+    return ExternalAgentService(authorized, models(authorized, repo), enqueue=queue, enqueue_cleanup=cleanup)
 
 
 def _model_source(job):
@@ -746,6 +776,9 @@ def list_domain(authorized, domain, *, identity=None, limit=50, cursor=None):
         raise ContractError("unknown_domain")
     context = authorized["context"]
     admit = domain_admission(authorized, domain)
+    if domain == "external_agents":
+        service = external_agents(authorized)
+        return service.detail(identity) if identity else service.list()
     if domain == "system":
         return system(authorized)
     model_service = models(authorized)
@@ -1037,6 +1070,8 @@ def mutate(authorized, domain, identity, action, body):
         raise ContractError("invalid_idempotency_key")
     context, service = authorized["context"], models(authorized)
     admit = domain_admission(authorized, domain, action)
+    if domain == "external_agents":
+        return external_agents(authorized).mutate(identity, action, payload, body.get("expected_revision"), key)
     if domain in {"automation", "router"}:
         return _mechanism_gateway().mutate(authorized, service, domain, identity, action, payload,
             expected_revision=body.get("expected_revision"), idempotency_key=key)
@@ -1144,6 +1179,18 @@ def execute_worker(job, cancelled, heartbeat):
     if (str(scope.get("workspace_id") or "") != str(job.get("workspace_id") or "")
             or str(scope.get("user_id") or "") != str(job.get("user_id") or "")):
         raise ContractError("model_worker_scope_required")
+    if job.get("kind") == "agent_world_external":
+        authorized = worker_authority(job)
+        authorized["admit"]()
+        service = external_agents(authorized)
+        if payload.get("phase") == "external_cleanup":
+            identity = payload.get("connection_id")
+            with service.repository.guard(authorized["context"], identity):
+                row = service.connection(identity)
+                service.onboarding(row.endpoint).cleanup_revoked(context=authorized["context"], connection_id=identity)
+            return {"ok": True, "status": "cleaned"}
+        if payload.get("phase"): raise ContractError("external_agent_worker_phase_invalid")
+        return service.execute(payload.get("task_id"), cancelled, heartbeat)
     delivery = job.get("kind") == "agent_world_model" and payload.get("phase") == "delivery"
     followup_delivery = job.get("kind") == "agent_world_followup" and payload.get("phase") == "chat_delivery"
     coordinator_phase = job.get("kind") == "agent_world_followup" and payload.get("phase") in {"coordinator_delivery", "coordinator_continue"}

@@ -10,6 +10,8 @@ import pytest
 from app.ai_control_center import contracts as c
 from app.ai_control_center.domain_contracts import CalendarItem, CourtCase, CourtVote, Routine, StrategyProject
 from app.ai_control_center.model_contracts import Evaluation
+from app.ai_control_center.external_agent_contracts import ExternalAgentConnection
+from app.ai_control_center.external_agent_protocol import PROTOCOL, CAPABILITIES
 from app.ai_control_center.events import (EventData, EventEnvelope, MutationIdentity,
                                          is_replay)
 from app.ai_control_center.repositories import PageRequest, validate_commit
@@ -45,6 +47,9 @@ def header(**changes):
 
 def record(kind=EntityKind.TASK, **changes):
     definitions = {
+        EntityKind.EXTERNAL_AGENT_CONNECTION: (ExternalAgentConnection, dict(
+            display_name="External fixture", protocol=PROTOCOL, endpoint="https://agent.example/a2a",
+            credential=external(c.ExternalAuthority.CREDENTIAL), requested_capabilities=tuple(sorted(CAPABILITIES)))),
         EntityKind.PERSONA: (c.Persona, dict(display_name="Марина", profile=snapshot())),
         EntityKind.AGENT_ROLE: (c.AgentRole, dict(role_key="accountant", responsibilities=snapshot(),
                                                capability_ceiling=("ai_lab",), autonomy_ceiling=c.Autonomy.ADVICE)),
@@ -334,6 +339,8 @@ def test_each_entity_can_be_created_only_through_its_initial_state(kind):
 ])
 def test_each_declared_edge_can_commit_with_preserved_evidence_and_a_revision_event(kind, before, after):
     proof = {
+        EntityKind.EXTERNAL_AGENT_CONNECTION: {"advertised_capabilities": tuple(sorted(CAPABILITIES)),
+            "allowed_capabilities": tuple(sorted(CAPABILITIES)), "last_verification": NOW, "card_sha256": "a" * 64},
         EntityKind.DECISION: {"approval": snapshot()},
         EntityKind.EXECUTION: {"receipt": snapshot()},
         EntityKind.OUTCOME: {"verification": snapshot()},

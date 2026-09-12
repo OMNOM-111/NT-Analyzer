@@ -14,18 +14,19 @@ PROGRAM: Agent World / AI Center
 STATUS: IN DEVELOPMENT
 
 HANDOFF: P1-3 accepted and closed by the owner at f1fe393f.
-  ACTIVE OWNER OF THE SHARED AGENT WORLD FILES: Codex, until P1-5 is integrated.
-  That is contracts.py, model_contracts.py, states.py, storage_codec.py, both
-  repositories, domain_gateway.py, model_service.py and the Aurora page. Three
-  of them — states.py, storage_codec.py, model_contracts.py — are what the P1-5
-  atomic commit rewrites, so an edit there is a merge conflict by construction.
-  Anything else in the programme may proceed; these wait for Codex to land.
+  Owner mandate 2026-09-12: one integrator for the entire programme.
+  Shared-file handoff at 9365695a is accepted. P1-5 saved work at 5511c8f8
+  was completed at c16b511d and documented at 4d8ee514; history is preserved.
+  ACTIVE OWNER OF SHARED FILES: this integration task; subagents have bounded
+  file assignments only. Earlier ownership/handoff sections below are history.
 
-CURRENT IMPLEMENTATION COVERAGE: 93%
-CURRENT OWNER ACCEPTANCE READINESS: 68%
-
-CURRENT INTEGRATION BRANCH: codex/agent-world-unified-acceptance
-CURRENT INTEGRATION SHA: fb2c472b — P1-3 complete, including the decision producer.
+CURRENT IMPLEMENTATION COVERAGE: 95%
+CURRENT OWNER ACCEPTANCE READINESS: 70%
+CURRENT INTEGRATION BRANCH: codex/agent-world-final-acceptance
+CURRENT INTEGRATION INPUTS: 9365695a + 4d8ee514 (both histories, no duplicate picks).
+CURRENT VERIFICATION: final unified regression, PostgreSQL and browser acceptance
+  are pending. Historical PASS below does not certify this integration.
+PREVIOUS INTEGRATION CODE SHA: fb2c472b — P1-3 including the decision producer.
   At fb2c472b: CI run 34658942542 SUCCESS on all three jobs — Static gates;
   Tests (ubuntu-latest) 5515 passed / 0 failed / 116 skipped, 18:54;
   Tests (windows-self-hosted) 5512 passed / 0 failed / 119 skipped, 1:37:59.
@@ -67,8 +68,8 @@ A percentage that **falls** after a defect is found is correct and must be
 recorded as such.
 
 ```text
-IMPLEMENTATION COVERAGE: 93%   (33.5 / 36)
-OWNER ACCEPTANCE READINESS: 68%   (24.5 / 36)
+IMPLEMENTATION COVERAGE: 95%   (34.5 / 36)
+OWNER ACCEPTANCE READINESS: 70%   (25.5 / 36)
 
 P0 REMAINING: 0
 
@@ -132,7 +133,7 @@ Marks: `Y` yes · `P` partial · `N` no.
 | SF Social | Y | Y | Y | Y | P | IMPLEMENTED | Prepare → explicit publish; verified sources only; corrupted receipts never attested; private memory never publishable | One real publication is an owner decision |
 | Owner Preview | Y | Y | Y | Y | P | IMPLEMENTED | Isolated synthetic operator with its own domains; deliberately no provider, worker, Router, Court, publication or routine execution | Manual route not re-run on final code |
 | Ordinary-user model onboarding | Y | P | Y | P | N | PARTIAL | Wizard driven in a browser with a placeholder key against the local executor | Real key, real endpoint, real BYOK E2E — P1-4 |
-| External-agent onboarding | N | N | N | N | N | NOT IMPLEMENTED | — | No remote tools/tasks, MCP or A2A — P1-5, needs an owner product decision |
+| External-agent onboarding | Y | Y | Y | Y | Y | DONE + VERIFIED · PENDING INTEGRATION | Native route walked end to end on :8812 over real HTTP and read from the live DOM: add → verify → ACTIVE → Coordinator picks a compatible role → dispatch through the existing durable worker → Contribution/Outcome/Evaluation(subject=EXTERNAL_AGENT_CONNECTION) → performance → revoke → next dispatch refused `409 external_agent_revoked`, history kept. 20 native cases (E2E, hardening, UI) beside the 85 contract cases | Lives on `codex/agent-world-external-native-e2e`, not yet on the integration branch. Only the Development agent exists: a real remote agent is refused with `external_agent_remote_budget_not_configured` until a paid allowance contract is agreed — owner decision |
 | UI / UX | Y | Y | Y | Y | N | PARTIAL | All eight expected sections exist as drawer panels behind three tabs | Header counter lag, narrow-column wrapping, structure vs mockups — P3 |
 | Security / tenant isolation | Y | Y | Y | Y | Y | DONE + VERIFIED | FORCE RLS; foreign workspace reads 0 and inserts fail `42501`; device and session re-checked per request; SSRF guard; no secret in Git | — |
 | Restart / idempotency | Y | Y | Y | Y | Y | DONE + VERIFIED | Stop/restart/re-read against PostgreSQL; duplicate dispatch and replay refused | — |
@@ -431,9 +432,32 @@ Target truth: An ordinary user connects an external agent, it does bounded work,
 Evidence required: the native end-to-end route below
 Owner action required: YES for accepting the protocol into scope
 Assigned to: P1-5 executor (contracts), integrator (shared seams)
-Status: UNBLOCKED at 84ddb2e7 — the typed Evaluation subject is delivered,
-        and CI 34641854998 is green on all three jobs at that SHA.
-        Integration SHA for the executor: 84ddb2e7.
+Status: NATIVE ROUTE COMPLETE on codex/agent-world-external-native-e2e.
+        Was: UNBLOCKED at 84ddb2e7 — the typed Evaluation subject delivered,
+        CI 34641854998 green on all three jobs at that SHA.
+
+        Codex integrated 05f88d02 onto f1fe393f as 4f536f69 and registered the
+        kind atomically as agreed: enum + record + states + codec + Evaluation
+        subject allowlist, in one commit. `EXTERNAL_AGENT_CONNECTION` is a real
+        subject now, and no fake Model ID exists anywhere: the connection reports
+        `model: "unknown / externally managed"`, `model_id: null` and
+        `real_benchmark_eligible: false`.
+
+        Takeover found the WIP larger than its note: 12 files and +647/-14, not
+        8 and +336/-1. Saved verbatim at 5511c8f8 before anything continued.
+
+        Four defects were found by driving the route rather than by reading it:
+        a repeat dispatch crashed on a duplicate worker job id; a revoked agent
+        was refused as "no compatible role" and a disabled one as "your numbers
+        are invalid"; a revocation whose secret deletion failed was reported as a
+        failed revocation, which tells a person the agent still has access; and a
+        worker that died mid-dispatch left the task in `running` with no error
+        for ever. The last one is the stuck task this programme already removed
+        once from the model path.
+
+        The fifth was found only in a browser: every test passed while the
+        feature was unreachable, because the tool tiles are static markup and
+        nothing had been added to it.
         `EXTERNAL_AGENT_CONNECTION` добавляется атомарно при интеграции P1-5:
         enum + record + states + codec + Evaluation subject allowlist.
         That kind is NOT registered today, and registering it alone breaks the
@@ -546,13 +570,88 @@ P3-3  Eight expected sections live behind three tabs as drawers — owner design
 
 ## NEXT AGENT START HERE
 
+### Parallel P1-5 handoff (2026-09-10; does not replace integrator's status below)
+
+PARALLEL WORKSTREAM: External Agent Onboarding
+
+- Base SHA: `9ae183f65149c9cc7253490810667fc75cbf9cf6`.
+- Branch: `codex/agent-world-external-agent-onboarding`.
+- Head (code checkpoint): `97095b0010a278e8f917a00e9661d77e93fadf0e`, pushed, clean.
+- PR: [draft #286](https://github.com/OMNOM-111/NT-Analyzer/pull/286), base
+  `codex/agent-world-unified-acceptance`; PR #285 base unchanged.
+- Code: **IN DEVELOPMENT**, four isolated external_agent modules, no shared edits.
+- Wired: NO — native codec/repository, worker and Evaluation integration pending.
+- API: service ports implemented; authenticated HTTP routes NOT mounted.
+- Automated: protocol/onboarding/adapter checks with test-only host ports.
+- E2E: actual HTTP synthetic protocol path checked; full ordinary-user app E2E NOT checked.
+- Tests: final focused **64 passed / 0 failed / 0 skipped**, 11.40 s, including malformed-card cases.
+- Gates: root static scan CSP/secrets/Markdown PASS; Context Pack PASS (historical
+  pack-SHA warning retained); 600-file pre-release bundle PASS, Python/JS included.
+- Full regression, native PostgreSQL/RLS and application/UI E2E: NOT RUN.
+- At code checkpoint: no uncommitted files; ignored Python caches only. No known
+  focused test failures. Later handoff-only commit does not change executable code.
+- Known limitations: native Contribution/Evaluation/history/statistics not persisted;
+  native budget settlement/audit, RLS, UI and cancellation cleanup not wired.
+- Integration files needed: states/codec/events, Evaluation subject contract,
+  existing gateway/server/worker/Coordinator/Router; exact seams in change record.
+- Conflicts with Claude: no shared files changed; requested shared contract review
+  and ownership handoff are the next dependency, not a user-key blocker.
+- Flags: no changes, no route activated; Development-only service/adapter guards.
+- Recommended master-status delta: external onboarding 0 -> isolated backend
+  contract/protocol tested, NOT a completed product flow. Integrator alone updates
+  global percentages and original P1-5 matrix after reconciliation.
+
+Next P1-5 operation: integrator reviews draft #286 and the native
+connection kind and external Evaluation subject before assigning shared wiring.
+No work on P1-1/P1-2/P1-3, UI, PR #285 base or Local 8765.
+See [P1-5 change record](../changelog/2026-09-10-external-agent-onboarding.md).
+Owner requested file-based coordination: the change record contains the explicit
+message to Claude, requested contract/ownership decisions and native E2E checklist.
+Integrator response received in `61ff7a3822f7306e3b60dd5fc342e06c9c31a8fd`,
+section "Integration answer to the P1-5 checkpoint": `97095b00` reviewed, not merged.
+No ownership transfer. Typed Evaluation subject and record-kind/codec registration
+remain with the integrator; no parallel Evaluation implementation permitted.
+2026-09-11 P1-5-only hardening checks role ownership and per-skill JSON compatibility,
+rejecting duplicate/malformed skills. Native wiring still blocked on integration SHA.
+Latest focused rerun: **70 passed / 0 failed / 0 skipped**, 10.32 s; previous 64-case
+evidence above belongs to the reviewed checkpoint, not the subsequent changes.
+Next independent checkpoint: bound adapter cancellation (same authority/spec/remote-ID
+checks as polling), no fabricated cancellation success, test agent terminal-state
+preservation. Native cleanup after revoke remains unwired; no shared ownership changed.
+Cancellation checkpoint focused result: **75 passed / 0 failed / 0 skipped**, 13.37 s.
+Next independent cleanup checkpoint: failed local credential deletion leaves the
+connection revoked; repeated revoke retries deletion without another revision or
+remote call. Dispatch rechecks authority after claim/secret access. Native atomic
+dispatch/revoke ordering remains an integrator-owned requirement, not proven by
+port tests. Credential rotation and native cleanup scheduling remain unwired.
+Cleanup checkpoint focused result: **79 passed / 0 failed / 0 skipped**, 15.37 s.
+Native registration continuation: integration base `3c62465d` includes `84ddb2e7`.
+Atomically added external record kind/states/codec/events/shared Evaluation subject;
+generic repositories reused. Native SQLite replay/history/isolation tests added.
+New ownership blocker: integrator worktree at `3c62465d` has dirty model_service,
+presentation, page, reputation tests and untracked decision_evaluation/path tests.
+Those unsaved execution/evaluation/UI changes are not imported or overwritten.
+Await their saved SHA or explicit file-level handoff before overlapping native wiring.
+Full application E2E, new PostgreSQL/RLS, full regression and CI not claimed.
+See change record for exact files and first registration test failures.
+Native registration focused result: **372 passed / 0 failed / 0 skipped**, 22.96 s.
+Connections are private in the shared visibility helper; foreign-owner reads denied.
+No runtime registration/worker/API feature enabled; no global percentage raised.
+
 ```text
-Last safe commit: fb2c472b - P1-3 complete, decision producer included.
-  CI 34658942542 green on all three jobs at fb2c472b: Static gates;
-  ubuntu 5515 / 0 / 116; windows self-hosted 5512 / 0 / 119.
-  Locally at fb2c472b: 228 passed across the completion, handoff,
-  shared-security and reputation suites, plus 13 decision-path cases.
-  P1-3 is closed on every count.
+Last safe commit on THIS branch (codex/agent-world-external-native-e2e):
+  c16b511d - P1-5 native route complete and verified. CI 34678502093 green on
+  all three jobs: Static gates; ubuntu 5658 / 0 / 117, 20:14; windows
+  self-hosted 5655 / 0 / 120, 1:20:01.
+  Locally: 20 native cases (3 E2E, 10 hardening, 7 UI) plus the 85 contract
+  cases from 4f536f69, and 180 across the UI suites. The route was walked over
+  real HTTP on :8812 and read from the live DOM.
+  5511c8f8 is Codex's working tree saved verbatim, before any continuation.
+
+  The integration branch is still codex/agent-world-unified-acceptance at
+  f1fe393f - P1-3, CI 34658942542 green on all three jobs at fb2c472b:
+  ubuntu 5515 / 0 / 116; windows self-hosted 5512 / 0 / 119. Nothing here has
+  been merged into it.
 
 Uncommitted files: none. Re-check `git status` before assuming that.
 
@@ -582,6 +681,41 @@ Do not touch:
     P1-5: those three are what its atomic commit rewrites
   - Any Codex branch other than codex/agent-world-unified-acceptance
   - deploy/testing/acceptance.env or any generated DSN - never into Git
+
+Exact next action for P1-5:
+  1. DONE - the full suite is green on both platforms at c16b511d.
+  2. DONE - External-agent onboarding moved 0 -> 1.0 on both metrics, which is
+     93 -> 95 and 68 -> 70 on the same 36-row method.
+  3. DONE - CI 34678502093 green on all three jobs at c16b511d: Static gates;
+     ubuntu 5658 passed / 0 failed / 117 skipped, 20:14; windows self-hosted
+     5655 passed / 0 failed / 120 skipped, 1:20:01. Percentages moved to 95 / 70
+     on that evidence, not before it.
+  4. Then the owner decision this now waits on: a real remote agent is refused
+     with `external_agent_remote_budget_not_configured` because no paid external
+     allowance contract exists. Only the Development agent runs today, and it is
+     synthetic by construction - default off, allowlisted workspace, no socket.
+
+Known gap, recorded rather than papered over:
+
+  No disposable PostgreSQL is configured on this machine, so the
+  test_agent_world_postgres* suites skip (77 skipped) and the PostgreSQL branch
+  of `NativeExternalRepository.guard` has never actually run against a server.
+  `test_external_agent_guard_postgres_shape.py` drives that branch against a
+  recording client and pins what would be silently wrong there — the lock is
+  `pg_try_advisory_xact_lock`, not a session-scoped lock that a pooled
+  connection leaks to whoever gets it next, and it is taken inside a
+  workspace-scoped transaction. That is the part provable here. Run the real
+  PostgreSQL harness before this reaches anything but development.
+
+Two things not to undo here:
+
+  A failed execution never becomes a bad external agent, and an interrupted
+  dispatch is never resent. At-most-once is the right contract for someone
+  else's agent; the task says `external_agent_reply_uncertain` instead.
+
+  Every refusal names the thing that actually stopped it. A revoked agent
+  reported as "no compatible role" was true and useless, and that is exactly the
+  class of defect P0-2 existed to remove.
 
 Exact next action:
   1. DONE - CI 34658942542 green at fb2c472b. P1-3 is closed and the

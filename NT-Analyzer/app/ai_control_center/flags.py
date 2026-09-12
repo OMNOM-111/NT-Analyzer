@@ -17,6 +17,8 @@ from .states import ContractError
 
 
 class Flag(str, Enum):
+    AI_EXTERNAL_AGENT_V1 = "AI_EXTERNAL_AGENT_V1"
+    AI_EXTERNAL_AGENT_TEST_V1 = "AI_EXTERNAL_AGENT_TEST_V1"
     AI_COMMAND_CENTER_UI = "AI_COMMAND_CENTER_UI"
     AI_CONTROL_CENTER_READ_MODEL = "AI_CONTROL_CENTER_READ_MODEL"
     AI_TASK_GRAPH_V2 = "AI_TASK_GRAPH_V2"
@@ -41,6 +43,8 @@ class FlagDefinition:
 
 REGISTRY = MappingProxyType({
     flag: FlagDefinition(flag, dependencies) for flag, dependencies in (
+        (Flag.AI_EXTERNAL_AGENT_V1, (Flag.AI_TASK_GRAPH_V2,)),
+        (Flag.AI_EXTERNAL_AGENT_TEST_V1, (Flag.AI_EXTERNAL_AGENT_V1,)),
         (Flag.AI_CONTROL_CENTER_READ_MODEL, ()),
         (Flag.AI_COMMAND_CENTER_UI, (Flag.AI_CONTROL_CENTER_READ_MODEL,)),
         (Flag.AI_TASK_GRAPH_V2, (Flag.AI_CONTROL_CENTER_READ_MODEL,)),

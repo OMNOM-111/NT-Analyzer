@@ -88,6 +88,18 @@ def commission(authorized, service, payload, key, *, conversation_id=None, user_
     return projection(authorized, service, identity)
 
 
+def commission_external(service, connection, payload, key):
+    """A bounded external assignment in this Coordinator, not a Model alias.
+
+    The connection advertises data skills, never authority. The native service
+    pins a compatible low-risk role, then uses the existing durable worker.
+    """
+    service.admit()
+    if service.context.actor.kind != c.ActorKind.HUMAN:
+        raise ContractError("coordinator_human_required")
+    return service.assign(connection, payload, key)
+
+
 def _validate_operation(operation, nodes, values):
     """Refuse a plan whose specialists could not actually do the work.
 
