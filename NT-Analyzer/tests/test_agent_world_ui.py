@@ -109,7 +109,9 @@ def test_domain_tools_remain_accessible_on_one_page_and_load_only_on_request():
     parser = Tags()
     parser.feed(PAGE.read_text(encoding="utf-8"))
     launcher = [attrs["data-aw-domain"] for tag, attrs in parser.tags if "data-aw-domain" in attrs]
-    assert launcher == ["decisions", "memory", "experiments", "models", "projects", "routines", "calendar", "publications", "system"]
+    # An external agent is reachable as its own tool, never folded into Модели.
+    assert launcher == ["decisions", "memory", "experiments", "models", "external_agents",
+                        "projects", "routines", "calendar", "publications", "system"]
     assert "capability('can_view_system') ? flagRows(overview.flags) : []" in script
     assert "API.aiControlCenterSection(" not in script
     for method in ["Domain", "DomainItem", "DomainAction"]:
