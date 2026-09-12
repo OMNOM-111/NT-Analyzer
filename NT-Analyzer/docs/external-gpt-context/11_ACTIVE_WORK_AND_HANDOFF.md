@@ -23,7 +23,7 @@
   scheduler provenance, real ordinary-user PostgreSQL tests and isolated browser
   acceptance. See [master status](../current/AGENT_WORLD_MASTER_STATUS.md).
   No owner credential, Local switch, main merge or deploy is authorized.
-  Saved unified checkpoint is `d7b48060`, draft PR #287. Current follow-up closes
+  Saved unified checkpoint is `8ae95783`, draft PR #287. Current follow-up closes
   explicit Memory context-scope enforcement and honest synthetic Social
   publication, including known-artifact and fresh-authority negative checks.
   d7b48060 PostgreSQL: 129 passed, no skips. CI 34703741359 Linux failed one
@@ -32,6 +32,12 @@
   weakening session-expiry assertions. Temporary QA8815 is not final acceptance.
   Chat-first, accepted schedule-source binding, Court JSON candidate metadata
   and in-app QA dialog/layout corrections require a new unified-SHA full run.
+  Windows CI ended at the unchanged 120-minute limit, not a PASS. Current fixes
+  add native external-task shared reads, manual-review counters and saved-receipt
+  SF Chat delivery; schedule approval rejects a changed preview hash. Correlated
+  synthetic programme rerun is 9 PASS in 319.50 seconds. Restart only temporary
+  QA8815 after committing, repeat its browser cases, then run final unified gates;
+  protected 8765 and final acceptance 8814 remain untouched/unstarted.
 
 - Historical integrator answer read at `61ff7a38` (2026-09-11): reviewed checkpoint `97095b00`,
   shared ownership unchanged; await typed Evaluation/native kind integration SHA.

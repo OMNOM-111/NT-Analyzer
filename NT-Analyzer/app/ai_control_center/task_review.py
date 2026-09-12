@@ -29,7 +29,8 @@ def fingerprint(task, checkpoint, dto):
 
 
 def projection(service, context, task, checkpoint, dto):
-    if (dto.get("status") != "succeeded" or not dto.get("evaluation_id")
+    external = checkpoint.get("source") == "external_agent_task_v1"
+    if (dto.get("status") not in ({"review"} if external else {"succeeded"}) or not dto.get("evaluation_id")
             or dto.get("task_class") in {"connection_exact", "court_vote"}):
         return {"status": "not_required", "quality_claim": False}
     if checkpoint.get("application_request") and not dto.get("application_evaluation_id"):
@@ -47,7 +48,8 @@ def projection(service, context, task, checkpoint, dto):
     if (found.rubric_key != RUBRIC or found.task != task.ref()
             or found.header.created_by.kind != c.ActorKind.HUMAN
             or found.header.owner_user_uuid != context.user_uuid
-            or str(found.model.entity_id) != checkpoint["model_id"]
+            or found.subject.kind != (EntityKind.EXTERNAL_AGENT_CONNECTION if external else EntityKind.MODEL)
+            or str(found.subject.entity_id) != checkpoint["connection_id" if external else "model_id"]
             or str(found.outcome.entity_id) != expected_outcome
             or proof.get("version") != "human-review-v1"
             or proof.get("task_revision") != task.header.revision
@@ -248,10 +250,15 @@ def submit(service, *, context, task_id, payload, expected_revision, idempotency
             raise ContractError("task_review_stale")
         checkpoint = service._json(context, task.checkpoint)
         aggregate = checkpoint.get("source") == "agent_world_delegation"
+        external = checkpoint.get("source") == "external_agent_task_v1"
         authorized = service.mechanism_authorized
-        if aggregate and (not isinstance(authorized, dict) or authorized.get("context") != context):
+        if (aggregate or external) and (not isinstance(authorized, dict) or authorized.get("context") != context):
             raise ContractError("task_review_authority_required")
+        if external:
+            from .domain_gateway import external_agents
+            external_service = external_agents(authorized)
         detail = (_aggregate_detail(authorized, service, task) if aggregate else
+                  external_service.task_detail(task_id) if external else
                   service.task_detail(context=context, task_id=task_id))
         state = detail["human_review"]
         if state["status"] in {"not_required", "blocked"} or state.get("blocked_reason") or state.get("source_sha256") != payload.get("source_sha256"):
@@ -278,11 +285,11 @@ def submit(service, *, context, task_id, payload, expected_revision, idempotency
             proof_data["source_snapshot"] = c.primitive(service._put(context, source))
             model_id = source["model"]["entity_id"]
         else:
-            model_id = checkpoint["model_id"]
+            model_id = checkpoint["connection_id" if external else "model_id"]
         proof = service._put(context, proof_data)
         outcome_id = (detail.get("application_result") or {}).get("outcome_id") or detail["outcome_id"]
         outcome = service._get(context, EntityKind.OUTCOME, outcome_id)
-        model = service._get(context, EntityKind.MODEL, model_id)
+        model = service._get(context, EntityKind.EXTERNAL_AGENT_CONNECTION if external else EntityKind.MODEL, model_id)
         # Authorization may have been revoked while the exact source was read.
         service._access(context, "review")
         if aggregate:
@@ -297,7 +304,7 @@ def submit(service, *, context, task_id, payload, expected_revision, idempotency
         # decision as success for this request (the ledger remains untouched).
         if (committed.evidence != proof or committed.header.created_by != context.actor
                 or committed.task != task.ref() or committed.outcome != outcome.ref()
-                or committed.model != model.ref() or committed.rubric_key != RUBRIC):
+                or committed.subject != model.ref() or committed.rubric_key != RUBRIC):
             raise ContractError("task_review_already_recorded")
     if aggregate:
         result = _aggregate_detail(authorized, service, task)
@@ -307,4 +314,4 @@ def submit(service, *, context, task_id, payload, expected_revision, idempotency
         if result["human_review"]["status"] != {"accept": "accepted", "reject": "rejected"}[payload["decision"]]:
             raise ContractError("task_review_stale")
         return result
-    return service.task_detail(context=context, task_id=task_id)
+    return external_service.task_detail(task_id) if external else service.task_detail(context=context, task_id=task_id)

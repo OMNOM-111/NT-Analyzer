@@ -64,3 +64,28 @@ def test_owner_credentials_and_environment_are_not_inherited(launcher, monkeypat
     with pytest.raises(OSError, match="external_network_denied"):
         launcher.loopback_guard("socket.connect", (None, ("203.0.113.1", 443)))
     launcher.loopback_guard("socket.connect", (None, ("127.0.0.1", 8814)))
+
+
+def test_restart_does_not_restore_revoked_user_capabilities(launcher, monkeypatch, tmp_path):
+    from app import account_auth, test_auth, workspaces
+    users, grants = {}, []
+    monkeypatch.setattr(account_auth, "ensure_owner", lambda uid: {"id": launcher.OWNER_UUID})
+    monkeypatch.setattr(account_auth, "find_active_user", lambda uid: users.get(uid))
+    def create(**kw):
+        uid = kw["telegram_id"]
+        users[uid] = {"user_uuid": str(uid), "is_virtual": True, "is_owner": False}
+    monkeypatch.setattr(test_auth, "create_virtual_user", create)
+    monkeypatch.setattr(account_auth, "set_user_permission", lambda *args: grants.append(args))
+    monkeypatch.setattr(workspaces, "ensure_owner_workspace", lambda uid: {"workspace_id": "ws_qa_owner"})
+    monkeypatch.setattr(workspaces, "ensure_personal_workspace", lambda uid, **kw: {"workspace_id": "ws_qa_" + str(uid)})
+    monkeypatch.setenv("STRATFORGE_GIT_COMMIT_SHA", "0" * 40)
+    monkeypatch.setenv("STRATFORGE_BUILD_DIRTY", "false")
+    monkeypatch.setenv("STRATFORGE_DEVELOPMENT_ORIGIN", "http://127.0.0.1:8815")
+    # seed intentionally exports these keys; ensure the test restores them.
+    for key in ("STRATFORGE_AGENT_WORLD_LOCAL_WORKSPACES", "STRATFORGE_AGENT_WORLD_TEST_EXECUTOR", "STRATFORGE_AGENT_WORLD_LOCAL_MECHANISMS"):
+        monkeypatch.setenv(key, "")
+    launcher.seed(tmp_path)
+    assert len(grants) == 4
+    grants.clear()  # Represents subsequent owner permission edits, including revoke.
+    launcher.seed(tmp_path)
+    assert grants == []

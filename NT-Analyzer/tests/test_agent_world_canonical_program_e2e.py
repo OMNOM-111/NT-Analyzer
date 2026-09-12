@@ -147,6 +147,7 @@ def test_canonical_chat_to_typed_evidence_memory_and_process_consent(completed_p
     proposed = _mutate(env, "automation", routine["id"], "propose", schedule_request, routine["revision"], "canonical-schedule")
     assert proposed["approved"] is False
     assert proposed["plan"]["synthetic"] is True
+    schedule_request["approved_plan_sha256"] = proposed["approved_plan_sha256"]
     scheduled = _mutate(env, "automation", routine["id"], "enable", schedule_request, routine["revision"], "canonical-schedule")
     assert scheduled["approved"] is True
     scheduler.scan_due(env.authorized, env.service)

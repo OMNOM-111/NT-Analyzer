@@ -104,9 +104,7 @@ class ExternalAgentService:
             if not task.checkpoint: continue
             cp = self.records._json(self.context, task.checkpoint)
             if cp.get("source") != SOURCE or cp.get("connection_id") != str(identity): continue
-            tasks.append({"id": str(task.header.entity_id), "status": task.status,
-                "error_code": cp.get("error"), "contribution_id": cp.get("contribution_id"),
-                "evaluation_id": cp.get("evaluation_id"), "synthetic": cp["synthetic"], "requires_human_review": True})
+            tasks.append({**self.task_detail(task.header.entity_id)["task"], "requires_human_review": True})
         performance = reputation.measure(self.records, self.context, subject_kind=row.KIND,
             subject_id=row.header.entity_id, task_class="json_arithmetic", now=datetime.now(timezone.utc))
         # Diagnostic numbers stay evidence, not the headline professional score.
@@ -117,9 +115,69 @@ class ExternalAgentService:
             "latency_ms": row.last_latency_ms, "actions": actions, "tasks": tasks,
             "current_task": next((t for t in tasks if t["status"] in {"ready", "running", "waiting"}), None),
             "performance": performance, "statistics": {"tasks_completed": sum(t["evaluation_id"] is not None for t in tasks),
+                "results_received": sum(t["result_received"] is True for t in tasks),
+                "reviews_completed": sum(t["human_review"]["status"] in {"accepted", "rejected"} for t in tasks),
+                "awaiting_review": sum(t["display_status"] == "awaiting_review" for t in tasks),
                 "sample_size": performance["sample_size"], "passed": performance["quality"]["passed"],
                 "failed": performance["sample_size"] - performance["quality"]["passed"],
                 "synthetic_count": performance["provenance"]["synthetic_observations"]}}
+
+    def task_detail(self, identity):
+        """Native task read model; a connection is never projected as a Model."""
+        from . import task_presentation, task_review
+        self.admit(operation="read")
+        ctx, db = self.context, self.records
+        task = db._get(ctx, EntityKind.TASK, identity)
+        cp = db._json(ctx, task.checkpoint)
+        if cp.get("source") != SOURCE:
+            raise ContractError("external_agent_task_not_found")
+        connection = self.connection(cp["connection_id"])
+        receipt = db._json(ctx, cp["receipt"]) if cp.get("receipt") else {}
+        evaluation = {}
+        if cp.get("evaluation_id"):
+            ev = db._get(ctx, EntityKind.EVALUATION, cp["evaluation_id"])
+            outcome = db._get(ctx, EntityKind.OUTCOME, cp["outcome_id"])
+            if (ev.subject.kind != EntityKind.EXTERNAL_AGENT_CONNECTION
+                    or ev.subject.entity_id != connection.header.entity_id
+                    or ev.task.entity_id != task.header.entity_id
+                    or ev.outcome != outcome.ref() or outcome.verification != ev.evidence):
+                raise ContractError("external_agent_evidence_mismatch")
+            evaluation = db._json(ctx, ev.evidence)
+            if (evaluation.get("receipt") != cp.get("receipt")
+                    or evaluation.get("connection_id") != cp["connection_id"]
+                    or evaluation.get("synthetic") is not cp["synthetic"]):
+                raise ContractError("external_agent_evidence_mismatch")
+        dto = {"id": str(task.header.entity_id), "task_id": str(task.header.entity_id),
+            "revision": task.header.revision, "status": task.status,
+            "title": connection.display_name + " · Диагностика внешнего агента",
+            "summary": "Результат требует отдельной проверки" if evaluation else "Задание внешнему агенту",
+            "source_kind": SOURCE, "synthetic": cp["synthetic"], "task_class": "json_arithmetic",
+            "connection_id": cp["connection_id"], "model_id": None, "model": "unknown / externally managed",
+            "performance_scope": "external_agent_performance", "quality_claim": False,
+            "lead": {"id": cp["connection_id"], "display_name": connection.display_name, "role": "external_agent"},
+            "conversation_id": cp.get("conversation_id"), "message_id": cp.get("message_id"),
+            "correlation_id": str(task.header.correlation_id), "intent_id": str(task.intent.entity_id),
+            "contribution_id": cp.get("contribution_id"), "outcome_id": cp.get("outcome_id"),
+            "evaluation_id": cp.get("evaluation_id"), "error_code": cp.get("error"),
+            "external_call": not cp["synthetic"] if receipt else None,
+            "provider_result_received": bool(receipt), "evidence_count": 1 if evaluation else 0,
+            "created_at": task.header.created_at.isoformat(), "updated_at": task.header.updated_at.isoformat()}
+        review = task_review.projection(db, ctx, task, cp, dto)
+        dto = task_presentation.project(dto, evaluation=evaluation, human_review=review)
+        dto["actions"] = ["review_result"] if review["status"] == "pending" else []
+        return {**dto, "task": dto, "human_review": review, "evaluation": evaluation,
+            "result_text": json.dumps(receipt.get("response"), ensure_ascii=False) if receipt else "",
+            "graph": {"nodes": [], "edges": []}, "artifacts": []}
+
+    def tasks(self):
+        self.admit(operation="read")
+        result = []
+        for task in self.records._all(self.context, EntityKind.TASK):
+            if task.header.owner_user_uuid != self.context.user_uuid or not task.checkpoint:
+                continue
+            if self.records._json(self.context, task.checkpoint).get("source") == SOURCE:
+                result.append(self.task_detail(task.header.entity_id)["task"])
+        return result
 
     def assign(self, row, payload, key):
         """Called only by Coordinator after compatible-role selection."""
@@ -158,12 +216,23 @@ class ExternalAgentService:
         intent = db._walk(ctx, intent, "ready")
         cp = {"source": SOURCE, "connection_id": str(row.header.entity_id), "connection_revision": row.header.revision,
               "spec": spec, "synthetic": row.synthetic, "capability": sorted(CAPABILITIES)[0], "coordinator": "compatible_external_role_v1"}
+        from . import external_agent_chat
+        cp.update(external_agent_chat.bind(self.authorized, task_id, row.display_name, payload["input_text"]))
         task = db._ensure(ctx, c.Task, task_id, task_id, policy, intent=intent.ref(), role=role.ref(), checkpoint=db._put(ctx, cp))
         task = db._walk(ctx, task, "ready")
         self.enqueue(task_id)
         return {"task_id": str(task_id), "started_task_id": str(task_id), "status": task.status}
 
     def execute(self, task_id, cancelled, heartbeat):
+        # Delivery failure cannot rewrite a verified result as execution failure.
+        # Retrying this same durable job reads the terminal receipt, never sends again.
+        result = self._execute(task_id, cancelled, heartbeat)
+        if result.get("status") in {"review", "succeeded", "failed", "blocked", "cancelled"}:
+            from . import external_agent_chat
+            external_agent_chat.deliver(self.authorized, self, task_id)
+        return result
+
+    def _execute(self, task_id, cancelled, heartbeat):
         ctx, db = self.context, self.records
         task = db._get(ctx, EntityKind.TASK, task_id)
         cp = db._json(ctx, task.checkpoint)

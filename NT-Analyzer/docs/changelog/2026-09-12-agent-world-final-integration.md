@@ -43,6 +43,14 @@ the shared typed Evaluation remain distinct.
   separate approval. Court evidence pickers receive the validated artifact MIME.
 - QA impersonation confirms inside the application; drawers respect the actual
   test-banner height rather than hiding their close button beneath it.
+- Shared task cards and manual review include native external-agent tasks using
+  their actual typed subject. Received results and completed reviews stay distinct.
+- External SF Chat delivery retries the saved receipt, not the provider call.
+- Schedule approval is pinned to the plan shown to the user; stale configuration
+  or source consent is refused before granting automation authority.
+- Restarting the disposable QA launcher preserves subsequent permission
+  revocations. Connection metadata uses actual revisions and Persona names;
+  technical workspace/verifier codes stay in accessible collapsed details.
 
 ## Verification boundary
 
@@ -56,6 +64,9 @@ At candidate `d7b480604871c9744e425185375a579240d6bd17`, real PostgreSQL was
 was 5745 passed / 1 failed / 128 skipped: an older security scenario omitted the
 new explicit clarification step. The corrected scenario retains its authority
 and session-expiry assertions. Final rerun is required; this is not release PASS.
+The Windows job reached its unchanged 120-minute limit and was cancelled;
+interrupted tests are not counted as PASS. Follow-up scoped and synthetic chain
+results are recorded separately in Master Status.
 
 Release impact: version `0.10.0-beta.96` unchanged; no signed artifact, Canary or
 Production publication. Rollback of testing is stopping only the new acceptance

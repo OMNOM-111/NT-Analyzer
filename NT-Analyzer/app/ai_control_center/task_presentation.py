@@ -70,7 +70,7 @@ def project(task: dict, *, evaluation=None, human_review=None) -> dict:
         display = "blocked"
     elif execution_blocked:
         display = "blocked"
-    elif aggregate and raw == "review":
+    elif (aggregate or task.get("source_kind") == "external_agent_task_v1") and raw == "review":
         display = {"accepted": "completed", "rejected": "rejected", "stale": "blocked"}.get(
             review.get("status"), "blocked" if review.get("status") == "blocked" and review.get("blocked_reason") != "delegation_required_reviews_pending" else "awaiting_review")
     elif raw in {"succeeded", "completed"}:

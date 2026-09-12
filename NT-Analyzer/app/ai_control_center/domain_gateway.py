@@ -291,7 +291,7 @@ def external_agents(authorized, repo=None):
     def queue(task_id):
         authorized["admit"]()
         return _enqueue("wj_aw_external_" + UUID(str(task_id)).hex,
-            {"scope": authorized["chat_scope"], "task_id": str(task_id)}, max_attempts=1, timeout_sec=120)
+            {"scope": authorized["chat_scope"], "task_id": str(task_id)}, max_attempts=5, timeout_sec=120)
     def cleanup(**kw):
         context, identity = kw["context"], kw["connection_id"]
         if context != authorized["context"]: raise ContractError("external_agent_scope_invalid")
@@ -770,6 +770,8 @@ def task_detail(authorized, identity, service=None):
     # admission still rejects every execution/mutation operation on this service.
     service = service or models(authorized)
     record = service._get(authorized["context"], EntityKind.TASK, identity)
+    if record.checkpoint and service._json(authorized["context"], record.checkpoint).get("source") == "external_agent_task_v1":
+        return external_agents(authorized).task_detail(identity)
     return _aggregate_detail(authorized, service, record) or service.task_detail(context=authorized["context"], task_id=identity)
 
 
@@ -944,6 +946,9 @@ def enrich_overview(authorized, base=None):
     people = domains(authorized, model_service.repository).list(context=context, admit=authorized["admit"], domain="personas")["items"]
     tasks, folded = _application_workflows(list(base.get("tasks") or []), model_rows)
     tasks += [row["task"] for row in _aggregate_tasks(authorized, model_service)]
+    from .flags import Flag, current_snapshot, resolve
+    if resolve(Flag.AI_EXTERNAL_AGENT_V1, scope=context.scope, snapshot=current_snapshot(authorized)).enabled:
+        tasks += external_agents(authorized).tasks()
     from . import task_presentation
     tasks = [projected_task(row) for row in tasks]
     tasks.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
@@ -1122,6 +1127,9 @@ def mutate(authorized, domain, identity, action, body):
             history = refresh_authority(authorized, read_only=True)
             if service._json(context, service._get(context, EntityKind.TASK, identity).checkpoint).get("source") == "real_model_task":
                 enqueue_model_delivery(history, history_models(history), identity)
+            elif service._json(context, service._get(context, EntityKind.TASK, identity).checkpoint).get("source") == "external_agent_task_v1":
+                from . import external_agent_chat
+                external_agent_chat.deliver(history, external_agents(history), identity)
             delivery_result = coordinator_delivery.related(history, identity)
             problems.extend(delivery_result["blocked"])
         except ContractError as exc:

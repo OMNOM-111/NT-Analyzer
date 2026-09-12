@@ -19,7 +19,7 @@ def preview_check(result, source, payload):
 def fixture():
     source = {"domain": "routines", "id": "11111111-1111-4111-8111-111111111111", "revision": 2, "status": "accepted"}
     payload = {"model_id": "22222222-2222-4222-8222-222222222222", "rubric_key": "json_arithmetic", "occurrences": 2}
-    result = {"approved": False, "actions": ["enable"], "plan": {"source": {"entity_id": source["id"], "revision": 2},
+    result = {"approved": False, "actions": ["enable"], "approved_plan_sha256": "a" * 64, "plan": {"source": {"entity_id": source["id"], "revision": 2},
         "domain": "routines", "model_id": payload["model_id"], "synthetic": True,
         "due_at": ["2026-09-13T01:00:00Z", "2026-09-13T01:01:00Z"], "spec": {"rubric_key": "json_arithmetic"}}}
     return result, source, payload
@@ -52,7 +52,7 @@ def test_source_entrypoint_preserves_identity_revision_and_two_step_consent():
     assert "scheduleSource: source" in source
     assert "payload.source_domain = state.scheduleSource.domain" in source
     assert "revision: state.scheduleSource.revision" in source
-    assert "scheduleApproval: { payload }" in source
+    assert "approved_plan_sha256: result.approved_plan_sha256" in source
     assert "state.scheduleApproval ? { ...state.scheduleApproval.payload }" in source
     assert "data-aw-schedule-source" in source
     assert "Разрешаю именно эти запуски" in source

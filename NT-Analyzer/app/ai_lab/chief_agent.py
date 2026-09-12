@@ -2016,12 +2016,15 @@ def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery
     source_kind = envelope.get("source_kind")
     if _delivery_job is not None and not history_delivery:
         raise ChiefAgentError("Доставка требует сохранённый результат и активное задание очереди.")
-    if history_delivery or source_kind in {"synthetic_model_response", "bounded_delegation_result"}:
-        if source_kind not in {"real_model_response", "synthetic_model_response", "bounded_delegation_result"}:
+    if history_delivery or source_kind in {"synthetic_model_response", "bounded_delegation_result", "external_agent_task_v1"}:
+        if source_kind not in {"real_model_response", "synthetic_model_response", "bounded_delegation_result", "external_agent_task_v1"}:
             raise ChiefAgentError("История требует сохранённый результат модели.")
         authorized = (domain_gateway.history_delivery_authority(_delivery_job) if _delivery_job is not None
             else domain_gateway.access(envelope.get("scope"), read_only=True))
-        if source_kind == "bounded_delegation_result":
+        if source_kind == "external_agent_task_v1":
+            from ..ai_control_center import external_agent_chat
+            saved = external_agent_chat.validate(authorized, envelope)
+        elif source_kind == "bounded_delegation_result":
             saved = coordinator.validate_history_envelope(authorized, envelope)
         elif source_kind == "synthetic_model_response":
             saved = model_chat.validate_synthetic_envelope(authorized, envelope)
@@ -2039,7 +2042,7 @@ def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery
     key = _agent_world_request_key(envelope.get("request_id"))
     verification = envelope.get("verification") or {}
     status = str(envelope.get("status") or ("completed" if verification.get("passed") is True else "blocked"))
-    sealed_kind = source_kind in {"synthetic_model_response", "bounded_delegation_result"}
+    sealed_kind = source_kind in {"synthetic_model_response", "bounded_delegation_result", "external_agent_task_v1"}
     origin_correction = source_kind == "ninjatrader_report" and envelope.get("synthetic") is True
     if origin_correction:
         from ..ai_control_center.live_backtests import validate_rejected_envelope
@@ -2067,6 +2070,7 @@ def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery
                 "assistant", str(envelope.get("text") or ""), source="agent_world_local", request_id=key,
                 agent_id=str(envelope.get("agent_id") or ""), agent_name=str(envelope.get("agent_name") or ""),
                 model=(str(envelope.get("actual_model") or "model pending") if source_kind in {"real_model_response", "synthetic_model_response"} else
+                       "unknown / externally managed" if source_kind == "external_agent_task_v1" else
                        "Проверенная передача фактов · не оценка модели" if source_kind == "bounded_delegation_result" else
                        "Отклонённый отчёт · источник не подтверждён" if origin_correction else
                        "NinjaTrader historical backtest" if envelope["source_kind"] == "ninjatrader_report" else "Desktop chart capture"),

@@ -357,7 +357,9 @@
       + `<div><dt>Последняя проверка</dt><dd>${esc(date(item.last_verified_at || item.last_verification))}</dd></div>`
       + `<div><dt>Задержка</dt><dd>${number(item.latency_ms ?? item.last_latency_ms) == null ? 'Не измерена' : count(item.latency_ms ?? item.last_latency_ms) + ' мс'}</dd></div>`
       + `<div><dt>Текущая задача</dt><dd>${current ? esc(String(current.id).slice(0, 8)) + ' · ' + esc(statusMeta(current.status)[0]) : 'Нет'}</dd></div>`
-      + `<div><dt>Завершено задач</dt><dd>${count(stat.tasks_completed)}</dd></div>`
+      + `<div><dt>Получено результатов</dt><dd>${count(stat.results_received ?? stat.tasks_completed)}</dd></div>`
+      + `<div><dt>Ожидает вашей проверки</dt><dd>${count(stat.awaiting_review)}</dd></div>`
+      + `<div><dt>Проверено пользователем</dt><dd>${count(stat.reviews_completed)}</dd></div>`
       + `</dl>`
       + `<p class="aw-text">Подтверждённые возможности: ${rows(item.allowed_capabilities).map(capabilityLabel).map(esc).join(', ') || 'Нет'}</p>`
       + (item.synthetic === true ? '<p class="aw-note">SYNTHETIC · Development-агент. Не реальная модель и не рабочий benchmark.</p>' : '')
@@ -653,6 +655,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
   function validSchedulePreview(result, source, payload) {
     const plan = result?.plan, ref = plan?.source;
     return result?.approved === false && rows(result.actions).includes('enable')
+      && /^[0-9a-f]{64}$/.test(result.approved_plan_sha256 || '')
       && ['routines', 'calendar'].includes(source?.domain) && source.status === 'accepted'
       && ref?.entity_id === source.id && ref?.revision === source.revision && plan.domain === source.domain
       && plan.model_id === payload.model_id && typeof plan.synthetic === 'boolean'
@@ -725,10 +728,10 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       + `<div><dt>Режим согласования</dt><dd>${esc(APPROVAL_LABELS[intent.approval_mode] || intent.approval_mode || 'не указан')}</dd></div>`
       + `<div><dt>Уровень риска</dt><dd>${esc(RISK_LABELS[limits.risk] || limits.risk || 'не указан')}</dd></div>`
       + `<div><dt>Срок</dt><dd>${esc(date(limits.deadline))}</dd></div>`
-      + `<div><dt>Рабочее пространство</dt><dd>${esc((intent.scope || {}).workspace_id || '')}</dd></div>`
       + `<div><dt>Требуемое доказательство</dt><dd>${esc(evidence.rubric_label || evidence.rubric_key || 'не указано')}</dd></div>`
       + `</dl>`
-      + `<p class="aw-field-hint">Проверяет: ${esc(evidence.verified_by || 'не указано')}. Приёмка человеком — отдельное решение и не является оценкой качества.</p>`
+      + `<p class="aw-field-hint">${evidence.verified_by === 'independent_local_evidence_verifier' ? 'Независимая проверка сохранённых доказательств.' : 'Проверяющий механизм указан в технических деталях.'} Приёмка человеком — отдельное решение и не является оценкой качества.</p>`
+      + `<details class="aw-technical"><summary>Технические сведения поручения</summary><dl class="aw-detail-grid"><div><dt>Workspace</dt><dd>${esc((intent.scope || {}).workspace_id || 'Не указан')}</dd></div><div><dt>Verifier</dt><dd>${esc(evidence.verified_by || 'Не указан')}</dd></div></dl></details>`
       + (request ? `<details class="aw-technical"><summary>Что именно было запрошено</summary><pre>${esc(request)}</pre></details>` : '')
       + `<p class="aw-field-hint">Поручение не редактируется после создания задачи: его значением связаны запрос, ответ и проверка. Пока работа не началась, поручение можно остановить — «Отменить задачу». Нужны другие условия — отправьте новый запрос; прежнее поручение и его история сохраняются.</p>`
       + `</section>`;
@@ -1210,8 +1213,8 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const fields = domainFormFields(key, key === 'models' ? 'connect' : 'create').filter(spec => spec.type !== 'password' && !(key === 'personas' && spec.optionalIfMissing));
       const description = fields.filter(spec => recordValue(item, spec.key) !== undefined && recordValue(item, spec.key) !== null && recordValue(item, spec.key) !== '').map(spec => {
         const raw = recordValue(item, spec.key);
-        const value = spec.type === 'datetime-local' ? date(raw) : spec.type === 'select' ? spec.options.find(([id]) => id === raw)?.[1] || 'Не указано' : typeof raw === 'object' ? publicJSON(raw) : String(raw);
-        return `<div><dt>${esc(spec.label)}</dt><dd class="aw-pre-wrap">${esc(value)}</dd></div>`;
+        const value = spec.type === 'persona' ? (item.persona_name || 'Persona недоступна') : spec.type === 'datetime-local' ? date(raw) : spec.type === 'select' ? spec.options.find(([id]) => id === raw)?.[1] || 'Не указано' : typeof raw === 'object' ? publicJSON(raw) : String(raw);
+        return `<div><dt>${esc(spec.label)}</dt><dd class="aw-pre-wrap">${esc(value)}${spec.type === 'persona' ? `<details class="aw-technical"><summary>Идентификатор Persona</summary><code>${esc(raw)}</code></details>` : ''}</dd></div>`;
       }).join('');
       const verification = item.observed_eval || item.evaluation;
       const evaluationBody = verification ? evaluations([verification]) : '';
@@ -1471,7 +1474,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         if (state.domain === 'automation' && state.action === 'propose' && state.scheduleSource) {
           if (!validSchedulePreview(result, state.scheduleSource, payload)) throw new Error('Источник или план расписания изменился. Откройте форму заново.');
           mutationBusy = false;
-          actionForm = { ...state, action: 'enable', scheduleApproval: { payload }, revision: state.scheduleSource.revision };
+          actionForm = { ...state, action: 'enable', scheduleApproval: { payload: { ...payload, approved_plan_sha256: result.approved_plan_sha256 } }, revision: state.scheduleSource.revision };
           openDrawer('Разрешить проверенное расписание', `${domainNav('automation')}<h2>${esc(state.scheduleSource.title)}</h2><p class="aw-note">${result.plan.synthetic === true ? 'SYNTHETIC · без внешнего провайдера; не оценка качества модели.' : 'Исполнение выбранным подключением в пределах существующих прав и бюджета.'} Предложение принято ранее; расписание ещё не включено.</p><ol>${rows(result.plan.due_at).map(value => `<li>${esc(date(value))}</li>`).join('')}</ol><p>Вызовов: ${count(result.plan.due_at.length)} · потолок вызова: ${esc(payload.max_call_cost_usd)} USD · разрешение: ${count(payload.grant_hours)} ч.</p><details><summary>Проверяемый план</summary><pre>${esc(publicJSON(result.plan))}</pre></details><form id="aw-domain-form"><label class="aw-confirm"><input type="checkbox" name="confirmation" required>Разрешаю именно эти запуски и выбранное подключение.</label><p id="aw-form-error" role="alert" hidden></p><button class="btn primary" type="submit">Включить по расписанию</button><button type="button" class="btn" data-aw-domain="automation">Отмена</button></form>`);
           return;
         }

@@ -330,6 +330,8 @@ class ModelService:
         from . import test_executor
         can_execute_test_only = verified_test and test_executor.enabled(context.scope.workspace_id)
         return {"id": str(model.header.entity_id), "title": profile["label"], "label": profile["label"],
+            "revision": model.header.revision, "created_at": model.header.created_at.isoformat(),
+            "updated_at": model.header.updated_at.isoformat(),
             "status": model.status, "model": model.model_key, "provider": model.provider_key,
             "persona_id": profile["persona_id"], "provider_account_id": str(account.header.entity_id),
             "persona_name": self._persona_name(context, profile["persona_id"]),

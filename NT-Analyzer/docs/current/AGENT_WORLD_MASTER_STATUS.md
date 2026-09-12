@@ -24,7 +24,7 @@ CURRENT IMPLEMENTATION COVERAGE: 95%
 CURRENT OWNER ACCEPTANCE READINESS: 70%
 CURRENT INTEGRATION BRANCH: codex/agent-world-final-acceptance
 CURRENT INTEGRATION INPUTS: 9365695a + 4d8ee514 (both histories, no duplicate picks).
-SAVED INTEGRATION CHECKPOINT: d7b480604871c9744e425185375a579240d6bd17; task draft PR #287.
+SAVED INTEGRATION CHECKPOINT: 8ae95783a9498761f24c30a249732d7a0ca6b550; task draft PR #287.
 CURRENT VERIFICATION: final unified regression, PostgreSQL and browser acceptance
   are pending. Historical PASS below does not certify this integration.
 PREVIOUS INTEGRATION CODE SHA: fb2c472b — P1-3 including the decision producer.
@@ -104,7 +104,8 @@ reconciled on a final immutable code SHA.
 - Legacy runner: 13/13; compile, JS, repository CSP/secrets/Markdown,
   Context Pack, diff and 609-file production-bundle checks passed.
 - CI `34703741359`: static gates PASS; Linux **5745 passed / 1 failed /
-  128 skipped**, 1303.84 seconds. Windows still running at this update.
+  128 skipped**, 1303.84 seconds. Windows was cancelled at the unchanged
+  120-minute limit; its interrupted run is not a regression PASS.
   The failure is the old ordinary-user automation security test expecting an
   immediate task rather than the new semantic clarification. Its correction
   follows plan → explicit choice → commission, retaining session-expiry checks.
@@ -118,6 +119,37 @@ reconciled on a final immutable code SHA.
   identity/revision binding into schedule approval; actual JSON MIME in Court
   evidence candidates; in-app QA confirmation and drawer offset under its banner.
   No new queue, evaluator, permission engine or automatic approval was added.
+
+#### Browser-discovered follow-up after 8ae95783
+
+- Temporary ordinary-user browser testing exposed an External Agent task read
+  gap: creation succeeded but the shared task drawer returned not found and
+  Overview omitted it. Native task projection now joins the existing shared
+  presentation and human-review contract with the external connection as its
+  typed subject. Received results, pending reviews and completed reviews are
+  separate; the original ledger and error history are retained.
+- External task SF Chat delivery now binds an owned conversation/message before
+  enqueue. Delivery retries consume the saved, revalidated receipt rather than
+  invoking the provider again. Old unbound tasks are preserved, not rewritten.
+- Schedule approval now requires the exact normalized-plan hash returned by
+  preview. Changed connection configuration, execution mode or source consent
+  cannot silently receive a new server-generated approval.
+- Scoped evidence: external shared read/review 65 PASS; additive counters 5 PASS;
+  external chat/native hardening 18 PASS and explicit scoped delivery 2 PASS;
+  stale schedule approval 20 PASS. Correlated programme suite rerun: 9 PASS in
+  319.50 seconds including exact preview hash, scheduled execution, revoke and
+  cooldown. These are Development fixtures, not real-provider quality evidence.
+- Temporary browser observations: two ordinary users have separate Memory
+  lists; a known foreign memory ID is denied. Persona creation, activation and
+  browser TTS completion were observed; actual audible acceptance remains
+  pending. An ordinary-user BYOK wizard was captured with an empty secret field.
+  External task read/review/chat must be repeated after the candidate restart.
+- Final exact-SHA regression, PostgreSQL rerun, CI and immutable acceptance
+  browser pass remain pending. Coverage remains 95% / 70% until reconciliation.
+- QA launcher restart preserves later permission revocations; only newly seeded
+  users receive initial diagnostic capabilities. Launcher isolation: 11 PASS.
+  Connection details now show actual revision/timestamps and the owned Persona
+  name; workspace/verifier codes remain accessible in collapsed details.
 - Focused corrections: chat-first 3 PASS, shared security 54 PASS, schedule/UI
   111 + 258 PASS, Court/domain 58 PASS, QA/dialog 68 PASS. Full final-SHA rerun
   and browser completion are still required; percentages are unchanged.

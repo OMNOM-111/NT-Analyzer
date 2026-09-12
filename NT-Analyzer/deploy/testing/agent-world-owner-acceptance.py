@@ -101,6 +101,7 @@ def seed(root):
     people = []
     for index, uid in enumerate(USERS, 1):
         user = account_auth.find_active_user(uid)
+        created = user is None
         if user is None:
             test_auth.create_virtual_user(preset="ordinary", display_name=f"Acceptance User {index}",
                 telegram_id=uid, google_email=f"acceptance{index}@example.invalid")
@@ -110,8 +111,11 @@ def seed(root):
         if user.get("is_owner") or not user.get("is_virtual", user.get("virtual", False)):
             raise RuntimeError("acceptance_ordinary_identity_invalid")
         workspace = workspaces.ensure_personal_workspace(uid, require_entitlement=False)["workspace_id"]
-        for capability in ("ai_lab", "ai_pro_models"):
-            account_auth.set_user_permission(OWNER, uid, capability, True)
+        # A restart must retain an owner's later revocation in this QA dataset.
+        # Seed initial capabilities only for a freshly created disposable user.
+        if created:
+            for capability in ("ai_lab", "ai_pro_models"):
+                account_auth.set_user_permission(OWNER, uid, capability, True)
         people.append({"user_id": uid, "user_uuid": user["user_uuid"], "workspace_id": workspace,
                        "label": f"Acceptance User {index}", "is_owner": False})
     scopes = [owner_workspace, *(person["workspace_id"] for person in people)]

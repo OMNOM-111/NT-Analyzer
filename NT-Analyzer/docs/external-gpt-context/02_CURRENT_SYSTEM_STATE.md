@@ -25,13 +25,17 @@
   acceptance now has real isolated-server tests, separate from prior shape tests.
   The [master status](../current/AGENT_WORLD_MASTER_STATUS.md) is the sole
   operational source. Local 8765, version and deployed environments are unchanged.
-  Saved unified checkpoint: `d7b48060`, draft PR #287. Follow-up work adds six
+  Saved unified checkpoint: `8ae95783`, draft PR #287. Follow-up work adds six
   context-bound Memory scopes and named Development-only diagnostic publication;
   these do not relax real provider diversity, remote budgets or private access.
   At d7b48060: real PostgreSQL 129 passed / 0 skipped; CI 34703741359 Linux
   5745 passed / 1 failed / 128 skipped (old security fixture omitted semantic
   confirmation). Final regression is not PASS. Follow-up fixes preserve explicit
   chat continuation, accepted schedule-source binding and in-app QA confirmation.
+  Windows CI reached the unchanged 120-minute timeout; no full PASS is claimed.
+  Browser-discovered follow-up joins external tasks to shared task/review/chat
+  presentation and pins schedule approval to its shown plan hash. Final exact-SHA
+  regression and browser acceptance remain pending; no second evaluator is added.
 
 - Parallel P1-5 (2026-09-10 historical checkpoint): **IN DEVELOPMENT**, isolated external-agent protocol
   and service ports; not mounted or deployed. Native Evaluation/registry integration

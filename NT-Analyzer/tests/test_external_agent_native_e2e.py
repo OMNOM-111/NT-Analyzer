@@ -33,9 +33,12 @@ MECHANISMS = ("AI_EXTERNAL_AGENT_V1", "AI_EXTERNAL_AGENT_TEST_V1", "AI_EXECUTION
 
 
 @pytest.fixture
-def external(world, monkeypatch):  # noqa: F811
+def external(world, monkeypatch, tmp_path):  # noqa: F811
     """An owner session with the external-agent mechanisms switched on."""
     assert world.capability(True)
+    from app.ai_lab import chief_agent
+    monkeypatch.setattr(chief_agent.paths, "REGISTRY_DIR", tmp_path / "external-chat-registry")
+    monkeypatch.setattr(chief_agent.paths, "PROJECT_ROOT", tmp_path)
     monkeypatch.setenv(live_gateway.MECHANISMS_ENV, world.mechanisms(*MECHANISMS))
     monkeypatch.setattr(live_gateway, "_SNAPSHOTS", {})
     # A socket here would mean the "synthetic" agent reached the network.
