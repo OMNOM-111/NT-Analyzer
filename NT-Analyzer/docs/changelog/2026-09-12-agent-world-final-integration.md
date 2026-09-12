@@ -51,6 +51,10 @@ the shared typed Evaluation remain distinct.
 - Restarting the disposable QA launcher preserves subsequent permission
   revocations. Connection metadata uses actual revisions and Persona names;
   technical workspace/verifier codes stay in accessible collapsed details.
+- External history and task views use the same human-review state, distinguish
+  verified output from pending acceptance, and retain unknown historical costs.
+  PostgreSQL worker tests share the actual isolated SF Chat paths across spawn
+  and verify persisted delivery, rather than substituting a fake source message.
 
 ## Verification boundary
 

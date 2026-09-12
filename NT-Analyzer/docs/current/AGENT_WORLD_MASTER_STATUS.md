@@ -24,7 +24,7 @@ CURRENT IMPLEMENTATION COVERAGE: 95%
 CURRENT OWNER ACCEPTANCE READINESS: 70%
 CURRENT INTEGRATION BRANCH: codex/agent-world-final-acceptance
 CURRENT INTEGRATION INPUTS: 9365695a + 4d8ee514 (both histories, no duplicate picks).
-SAVED INTEGRATION CHECKPOINT: 8ae95783a9498761f24c30a249732d7a0ca6b550; task draft PR #287.
+SAVED INTEGRATION CHECKPOINT: 519245388c80c8a5653086d16c4471ce3faaf6e7; task draft PR #287.
 CURRENT VERIFICATION: final unified regression, PostgreSQL and browser acceptance
   are pending. Historical PASS below does not certify this integration.
 PREVIOUS INTEGRATION CODE SHA: fb2c472b — P1-3 including the decision producer.
@@ -153,6 +153,27 @@ reconciled on a final immutable code SHA.
 - Focused corrections: chat-first 3 PASS, shared security 54 PASS, schedule/UI
   111 + 258 PASS, Court/domain 58 PASS, QA/dialog 68 PASS. Full final-SHA rerun
   and browser completion are still required; percentages are unchanged.
+
+#### Candidate 51924538 — actual PostgreSQL and browser repeat
+
+- Exact-code PostgreSQL groups: 77 Agent World/Persona, 29 legacy storage/chat
+  and 12 workers PASS, zero skips. External group initially had 10 PASS / 1 FAIL:
+  its spawned-process fixture omitted the parent's new isolated SF Chat paths.
+  The corrected fixture shares those exact paths and verifies a real saved
+  message after worker/revoke race: all 11 external PG cases PASS in 140.33 s.
+  The failed receipt is retained; the corrected run is not mislabeled exact-code
+  evidence for 51924538. A final unified-SHA rerun remains required.
+- QA8815 now runs clean 51924538 with its original synthetic users/data. A cold
+  backup is retained at `.artifacts/owner-acceptance-backup-8815-before-51924538`.
+  Ordinary-user browser review accepted the old arithmetic result without
+  rewriting the old task. A new external task has its real SF Chat binding.
+- Follow-up presentation corrections distinguish successful machine verification
+  from pending human review, remove double JSON encoding and an irrelevant
+  delegation panel, and use the shared review status in connection history.
+  Old tasks without chat binding do not offer a broken chat action. Missing
+  historical cost stays unknown, not invented zero. Scoped presentation: 58 PASS.
+- Final CI remains unstarted for the follow-up until exact source and PG gates
+  are reconciled. No Local switch, release or owner-acceptance claim.
 
 ### Remote external-agent allowance — OWNER DECISION REQUIRED
 

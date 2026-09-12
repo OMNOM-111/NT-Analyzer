@@ -16,6 +16,7 @@ import pytest
 
 from app.ai_control_center import domain_gateway as gateway, live_gateway
 from app import account_auth, workspaces
+from app.ai_lab import chief_agent
 from app.ai_control_center.external_agent_repository import NativeExternalRepository
 from app.ai_control_center.postgres_repository import PostgresAgentWorldRepository
 from app.ai_control_center.states import ContractError, EntityKind
@@ -35,9 +36,11 @@ from tests.test_external_agent_native_hardening import (
 
 
 @pytest.fixture
-def external(world, repo, monkeypatch):  # noqa: F811
+def external(world, repo, monkeypatch, tmp_path):  # noqa: F811
     # Persist an ordinary non-owner, confirmed device/session and personal
     # workspace. Initial registration is fixture state, not registration QA.
+    monkeypatch.setattr(chief_agent.paths, "REGISTRY_DIR", tmp_path / "external-chat-registry")
+    monkeypatch.setattr(chief_agent.paths, "PROJECT_ROOT", tmp_path)
     uid, identity, device = 990102, str(uuid4()), str(uuid4())
     session = "pg-external-ordinary-session"
     document = account_auth._read_doc()
@@ -201,11 +204,15 @@ def test_pg_guard_timeout_is_bounded_and_other_workspace_is_not_blocked(external
             holder.join(5)
 
 
-def _native_process(root, scope, identity, operation, entered, release, finished, results):
+def _native_process(root, chat_roots, scope, identity, operation, entered, release, finished, results):
     """Spawn native gateway/worker with the parent's isolated fixture stores."""
     from pathlib import Path
     from app import secure_store, subscriptions
     from app.ai_control_center import external_agent_development as development
+    # Spawn does not inherit monkeypatches. Share the exact disposable paths
+    # whose original user message the parent persisted before enqueueing.
+    chief_agent.paths.REGISTRY_DIR = Path(chat_roots["registry"])
+    chief_agent.paths.PROJECT_ROOT = Path(chat_roots["project"])
     for module in (account_auth, subscriptions, workspaces):
         module._root = lambda: Path(root)
     secure_store.available = lambda: True
@@ -247,11 +254,12 @@ def _native_process(root, scope, identity, operation, entered, release, finished
 
 def test_pg_native_worker_transmission_and_revoke_in_separate_processes(external):
     detail = connected(external, "native-process-race")
-    act(external, detail["id"], "task", {"input_text": "[1,3,5]"}, key="native-pg-process-task")
+    started = act(external, detail["id"], "task", {"input_text": "[1,3,5]"}, key="native-pg-process-task")
     mp = multiprocessing.get_context("spawn")
     transmitting, revoke_started, release = mp.Event(), mp.Event(), mp.Event()
     worker_done, revoke_done, results = mp.Event(), mp.Event(), mp.Queue()
-    args = (str(account_auth._root()), external.authorized["chat_scope"], detail["id"])
+    chat_roots = {"registry": str(chief_agent.paths.REGISTRY_DIR), "project": str(chief_agent.paths.PROJECT_ROOT)}
+    args = (str(account_auth._root()), chat_roots, external.authorized["chat_scope"], detail["id"])
     worker = mp.Process(target=_native_process,
         args=(*args, "worker", transmitting, release, worker_done, results))
     revoke = mp.Process(target=_native_process,
@@ -270,6 +278,13 @@ def test_pg_native_worker_transmission_and_revoke_in_separate_processes(external
             "native_worker_completed", "native_revoke_completed"}
         after = gateway.list_domain(external.authorized, "external_agents", identity=detail["id"])
         assert after["status"] == "revoked" and after["statistics"]["tasks_completed"] == 1
+        task = gateway.external_agents(external.authorized).task_detail(started["started_task_id"])
+        messages = chief_agent.read_jsonl(chief_agent._conversation_file(task["conversation_id"], scope=external.authorized["chat_scope"]))
+        assert any(row.get("role") == "user" and row.get("message_id") == task["message_id"] for row in messages)
+        delivered = [row for row in messages if row.get("source") == "agent_world_local"]
+        assert len(delivered) == 1
+        assert delivered[0]["actions"][0]["task_id"] == started["started_task_id"]
+        assert delivered[0]["actions"][0]["status"] == "awaiting_review"
         with pytest.raises(ContractError, match="external_agent_revoked"):
             act(external, detail["id"], "task", {"input_text": "[9]"}, key="native-pg-next-denied")
     finally:

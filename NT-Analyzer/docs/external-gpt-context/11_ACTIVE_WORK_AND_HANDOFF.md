@@ -23,7 +23,7 @@
   scheduler provenance, real ordinary-user PostgreSQL tests and isolated browser
   acceptance. See [master status](../current/AGENT_WORLD_MASTER_STATUS.md).
   No owner credential, Local switch, main merge or deploy is authorized.
-  Saved unified checkpoint is `8ae95783`, draft PR #287. Current follow-up closes
+  Saved unified checkpoint is `51924538`, draft PR #287. Current follow-up closes
   explicit Memory context-scope enforcement and honest synthetic Social
   publication, including known-artifact and fresh-authority negative checks.
   d7b48060 PostgreSQL: 129 passed, no skips. CI 34703741359 Linux failed one
@@ -38,6 +38,11 @@
   synthetic programme rerun is 9 PASS in 319.50 seconds. Restart only temporary
   QA8815 after committing, repeat its browser cases, then run final unified gates;
   protected 8765 and final acceptance 8814 remain untouched/unstarted.
+  QA8815 was restarted on clean 51924538 with preserved data and cold backup.
+  PostgreSQL 118 PASS plus initial external 10/1 are retained separately from the
+  corrected external fixture 11 PASS. Follow-up fixes shared external status/history
+  presentation without changing old evidence. Commit, rerun exact-SHA PG and CI,
+  then final isolated acceptance; no release or owner-key use.
 
 - Historical integrator answer read at `61ff7a38` (2026-09-11): reviewed checkpoint `97095b00`,
   shared ownership unchanged; await typed Evaluation/native kind integration SHA.

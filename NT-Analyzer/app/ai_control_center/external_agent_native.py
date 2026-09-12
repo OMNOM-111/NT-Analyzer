@@ -160,14 +160,16 @@ class ExternalAgentService:
             "contribution_id": cp.get("contribution_id"), "outcome_id": cp.get("outcome_id"),
             "evaluation_id": cp.get("evaluation_id"), "error_code": cp.get("error"),
             "external_call": not cp["synthetic"] if receipt else None,
+            "cost_usd": receipt.get("cost_usd"),
             "provider_result_received": bool(receipt), "evidence_count": 1 if evaluation else 0,
             "created_at": task.header.created_at.isoformat(), "updated_at": task.header.updated_at.isoformat()}
         review = task_review.projection(db, ctx, task, cp, dto)
         dto = task_presentation.project(dto, evaluation=evaluation, human_review=review)
         dto["actions"] = ["review_result"] if review["status"] == "pending" else []
         return {**dto, "task": dto, "human_review": review, "evaluation": evaluation,
-            "result_text": json.dumps(receipt.get("response"), ensure_ascii=False) if receipt else "",
-            "graph": {"nodes": [], "edges": []}, "artifacts": []}
+            "result_text": (receipt["response"] if isinstance(receipt.get("response"), str)
+                            else json.dumps(receipt.get("response"), ensure_ascii=False)) if receipt else "",
+            "artifacts": []}
 
     def tasks(self):
         self.admit(operation="read")

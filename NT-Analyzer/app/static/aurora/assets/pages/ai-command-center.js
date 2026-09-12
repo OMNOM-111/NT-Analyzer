@@ -342,7 +342,7 @@
       ? 'Диагностика: арифметика JSON' : 'Неподдерживаемая возможность · см. детали';
     const code = item.last_error || item.last_error_code;
     const current = item.current_task;
-    const taskRow = row => `<div class="aw-text">${badge(row.status)} <span class="aw-hash">${esc(String(row.id).slice(0, 8))}</span>`
+    const taskRow = row => `<div class="aw-text">${taskBadge(row)} <span class="aw-hash">${esc(String(row.id).slice(0, 8))}</span>`
       + `${row.synthetic === true ? ' <span class="aw-status aw-info">SYNTHETIC</span>' : ''}`
       + `${row.error_code ? ' <span class="aw-status aw-warning">' + esc(row.error_code) + '</span>' : ''}`
       + `${row.evaluation_id ? ' · оценка записана' : ' · без оценки'}`
@@ -371,7 +371,8 @@
       + `<details class="aw-technical"><summary>Протокол, возможности и диагностика</summary><pre class="aw-result-text">${esc(publicJSON({
           endpoint: item.endpoint, advertised_capabilities: item.advertised_capabilities,
           requested_capabilities: item.requested_capabilities, allowed_capabilities: item.allowed_capabilities,
-          last_error: code, performance: item.performance, statistics: stat }))}</pre></details>`
+          last_error: code, performance: item.performance, statistics: stat,
+          task_states: tasks.map(row => ({ id: row.id, ledger_status: row.ledger_status || row.status, display_status: row.display_status })) }))}</pre></details>`
       + `</section>`;
   }
   function modelProtocolCard(model) {
@@ -714,6 +715,10 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       + `<p class="aw-field-hint">Каждая оценка относится к своему субъекту и классу задач. `
       + `Оценка модели не является оценкой рабочей роли, и наоборот; они не складываются.</p>`
       + `<div class="aw-domain-grid">${cards}</div></section>`;
+  }
+  function externalTaskProvenance(task) {
+    if (task.source_kind !== 'external_agent_task_v1') return '';
+    return `<section class="aw-detail-section"><h3>Внешний агент · происхождение результата</h3><p>Модель: unknown / externally managed. Результат не входит в Model Performance.</p>${task.external_call === false ? `<p class="aw-note">Внешний сервис не вызывался.${task.cost_usd == null ? ' Денежная стоимость в сохранённой квитанции не записана; неизвестное значение не заменяется нулём.' : ''}</p>` : ''}</section>`;
   }
   function intentPanel(intent) {
     // Everything here is the server's own Intent record. The panel neither
@@ -1545,11 +1550,11 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       else if (detailTab === 'decisions') body = detailRows(rows(detail.decisions), 'У этой задачи нет записанных решений. Проверочный сценарий не имитирует разрешение владельца или Court.');
       else body = detailRows(rows(detail.errors), task.status === 'failed' ? 'Подробности ошибки не опубликованы.' : 'Зарегистрированных ошибок нет.');
       if (detailTab === 'summary' && detail.result_text) body += `<details class="aw-technical"><summary>Полный ответ и технические данные</summary><pre>${esc(detail.result_text)}</pre></details>`;
-      if (detailTab === 'summary') body += intentPanel(detail.intent);
+      if (detailTab === 'summary') body += intentPanel(detail.intent) + externalTaskProvenance(task);
       if (detailTab === 'evaluations') body += reputationPanel(detail.reputation);
       if (detailTab === 'summary') body += transportVerificationNote(task);
       if (detailTab === 'summary' && task.source_kind === 'real_model_response') body += `<section class="aw-detail-section"><h3>Исполнитель и происхождение результата</h3><dl class="aw-detail-grid"><div><dt>Запрошенная модель</dt><dd>${esc(task.model || 'Не предоставлена')}</dd></div><div><dt>Model ID от провайдера</dt><dd>${esc(detail.actual_model || 'Не предоставлен')}</dd></div><div><dt>Провайдер</dt><dd>${detail.external_call === false ? esc((task.provider || 'провайдер') + ' — не вызывался') : esc(task.provider || 'Не предоставлен')}</dd></div>${detail.executor ? `<div><dt>Ответ получен от</dt><dd>${esc(detail.executor)}</dd></div>` : ''}</dl>${detail.external_call === false ? '<p class="aw-note">Ответ вычислен локально: внешнее обращение не выполнялось, поэтому этот результат ничего не говорит о доступности провайдера.</p>' : ''}<details class="aw-technical"><summary>Связанные записи</summary>${['intent_id', 'execution_id', 'contribution_id', 'outcome_id', 'evaluation_id', 'conversation_id', 'message_id'].filter(key => task[key]).map(key => `<div class="aw-hash">${esc(key.toUpperCase())} ${esc(task[key])}</div>`).join('')}</details></section>`;
-      if (detailTab === 'summary' && detail.graph) {
+      if (detailTab === 'summary' && task.source_kind === 'bounded_delegation_result' && detail.graph) {
         const review = detail.graph.human_review || {};
         const labels = { pending: 'Ожидается отдельная проверка', accepted: 'Принят', rejected: 'Отклонён', not_ready: 'Результат ещё не готов', stale: 'Источник изменился' };
         body += `<section class="aw-detail-section"><h3>Участники и обязательные проверки</h3><p class="aw-note">Проверка передачи фактов не означает приёмку всех вкладов или профессиональную оценку. Каждый исходный результат открывается отдельно.</p><div class="aw-stack">${rows(review.required_reviews).map((entry, index) => `<article class="aw-domain-card"><h4>${index ? 'Проверка ' + index : 'Исходная работа Координатора'}</h4><p>${esc(labels[entry.status] || 'Требует проверки источника')}</p><button class="btn" data-aw-task="${esc(entry.task_id)}">Открыть результат и проверку</button></article>`).join('')}</div><details class="aw-technical"><summary>План, роли и происхождение вкладов</summary><pre>${esc(publicJSON(detail.graph))}</pre></details></section>`;
@@ -1557,7 +1562,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (task.model_id && task.conversation_id) body += `<div class="aw-actions"><button class="btn" data-aw-router-task="${esc(taskId(task))}">Выбор подключения · Router</button></div>`;
       body += handoffCard(task);
       const taskActions = rows(task.allowed_actions || task.actions).filter(action => ['cancel', 'retry', 'handoff', 'review_result'].includes(action)).map(action => `<button class="btn${action === 'cancel' ? ' aw-danger-action' : ''}" data-aw-task-action="${action}">${esc(actionLabel(action))}</button>`).join('');
-      const controls = `<div class="aw-actions"><button class="btn" data-aw-task-chat="${esc(taskId(task))}">Открыть в SF Chat</button>${source.reportUrl ? `<a class="btn" href="${esc(source.reportUrl)}">Открыть исходный отчёт</a>` : ''}${svg ? `<button class="btn primary" data-aw-chart-chat="${esc(taskId(task))}">Снимок графика → SF Chat</button>` : ''}${taskActions}</div>`;
+      const controls = `<div class="aw-actions">${task.conversation_id ? `<button class="btn" data-aw-task-chat="${esc(taskId(task))}">Открыть в SF Chat</button>` : '<span class="aw-note">У исторической задачи нет связанного диалога.</span>'}${source.reportUrl ? `<a class="btn" href="${esc(source.reportUrl)}">Открыть исходный отчёт</a>` : ''}${svg ? `<button class="btn primary" data-aw-chart-chat="${esc(taskId(task))}">Снимок графика → SF Chat</button>` : ''}${taskActions}</div>`;
       const tabs = `<nav class="aw-tabs" role="tablist" aria-label="Разделы задачи">${Object.entries(labels).map(([key, label]) => `<button role="tab" aria-selected="${detailTab === key}" tabindex="${detailTab === key ? 0 : -1}" data-aw-detail-tab="${key}">${label}</button>`).join('')}</nav>`;
       openDrawer('Задача · ' + taskTitle(task), `${controls}${tabs}<div role="tabpanel">${body}</div><details class="aw-technical"><summary>Идентификаторы и состояние журнала</summary><div class="aw-hash">TASK ${esc(taskId(task))}${task.correlation_id ? `<br>CORRELATION ${esc(task.correlation_id)}` : ''}<br>LEDGER ${esc(task.ledger_status || task.status)}</div></details>`);
     }

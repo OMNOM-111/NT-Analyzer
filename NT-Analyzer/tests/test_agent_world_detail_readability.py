@@ -37,3 +37,27 @@ assert.ok(main.includes('Независимая проверка сохранё�
     source = (root / "app/static/aurora/assets/pages/ai-command-center.js").read_text(encoding="utf-8")
     assert "spec.type === 'persona' ? (item.persona_name || 'Persona недоступна')" in source
     assert '<summary>Идентификатор Persona</summary>' in source
+
+
+def test_external_task_html_uses_native_status_and_historical_cost_and_chat_truth():
+    root = Path(__file__).resolve().parents[1]
+    script = r'''
+const assert=require('node:assert/strict'), fs=require('node:fs');
+const source=fs.readFileSync('./app/static/aurora/assets/pages/ai-command-center.js','utf8');
+const body=source.split('function externalTaskProvenance(task) {')[1].split('\n  }')[0];
+const render=new Function('task',body);
+const old=render({source_kind:'external_agent_task_v1',external_call:false,cost_usd:null});
+assert.ok(old.includes('не записана')); assert.ok(old.includes('не заменяется нулём'));
+assert.ok(!render({source_kind:'external_agent_task_v1',external_call:false,cost_usd:0}).includes('не записана'));
+assert.equal(render({source_kind:'real_model_response'}),'');
+const ui=require('./app/static/aurora/assets/pages/ai-command-center.js');
+const html=ui.externalAgentCard({id:'connection',status:'active',statistics:{results_received:1,reviews_completed:1,awaiting_review:0},
+ tasks:[{id:'task',status:'review',ledger_status:'review',display_status:'completed',display_status_label:'Проверка завершена',synthetic:true}]});
+assert.ok(html.includes('Проверка завершена')); assert.ok(!html.includes('Нужна проверка'));
+assert.ok(html.includes('ledger_status'));
+assert.ok(source.includes("detailTab === 'summary' && task.source_kind === 'bounded_delegation_result' && detail.graph"));
+assert.ok(source.includes('task.conversation_id ? `<button class="btn" data-aw-task-chat='));
+assert.ok(source.includes('У исторической задачи нет связанного диалога.'));
+'''
+    result = subprocess.run(["node", "-e", script], cwd=root, capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, result.stdout + result.stderr

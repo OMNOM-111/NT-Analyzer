@@ -24,6 +24,10 @@ def test_external_task_known_id_overview_explicit_review_and_foreign_denial(exte
     assert detail["task"]["status"] == "review"
     assert detail["task"]["display_status"] == "awaiting_review"
     assert detail["human_review"]["status"] == "pending"
+    assert "graph" not in detail
+    assert detail["result_text"].startswith("{") and "\\\"" not in detail["result_text"]
+    assert detail["task"]["verification_status"] == "passed"
+    assert detail["task"]["cost_usd"] is None  # Old receipts do not record measured money.
     connection_view = gateway.list_domain(env.authorized, "external_agents", identity=connection["id"])
     assert connection_view["statistics"]["tasks_completed"] == 1
     assert connection_view["statistics"]["results_received"] == 1
@@ -33,6 +37,9 @@ def test_external_task_known_id_overview_explicit_review_and_foreign_denial(exte
     row = next(row for row in overview["tasks"] if row["id"] == identity)
     assert row["human_review"] == detail["human_review"]
     assert row["display_status"] == "awaiting_review"
+    attention = next(row for row in overview["attention"] if row["id"] == identity)
+    assert "автоматическая проверка пройдена" in attention["reason"]
+    assert "не подтвердила формат" not in attention["reason"]
     assert detail["evaluation"]["performance_scope"] == "external_agent_performance"
     with pytest.raises(ContractError, match="task_review_result_required"):
         gateway.mutate(env.authorized, "tasks", identity, "review_result", {

@@ -1031,6 +1031,12 @@ def enrich_overview(authorized, base=None):
             continue
         phase = presentation.task_phase(row.get("display_status"))
         reason, action = presentation.attention_reason(phase)
+        if row.get("human_review", {}).get("status") == "pending" and row.get("verification_status") == "passed":
+            reason = "Результат получен, автоматическая проверка пройдена. Ожидается ваша отдельная проверка."
+            action = "Откройте сохранённый результат и примите или отклоните его. Профессиональное качество автоматически не оценивается."
+        elif row.get("source_kind") == "external_agent_task_v1" and row.get("display_status") == "awaiting_review":
+            reason = "Результат внешнего агента ожидает проверки."
+            action = "Откройте результат и сохранённые доказательства проверки."
         if row.get("enqueue_rejected"):
             # Nothing here is waiting on a decision: the server already refused
             # it. Saying "confirm the next step" would invent one.
