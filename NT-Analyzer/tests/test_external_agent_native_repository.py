@@ -67,8 +67,13 @@ def test_failed_cleanup_queues_existing_worker_and_retry_is_idempotent(agent):
     service.enqueue_cleanup = lambda **kw: queued.append(kw)
     delete = secrets.delete_secret
     secrets.delete_secret = lambda key: (_ for _ in ()).throw(OSError("test-secret-not-exposed"))
-    with pytest.raises(ContractError, match="cleanup_pending"):
-        service.revoke(context=context, connection_id=active["id"], expected_revision=3, idempotency_key="revoke-retry")
+    # The revocation itself succeeded and is durable, so it is reported as what
+    # it is. Raising here would tell the person the agent still has access,
+    # which is the opposite of what happened; the retired secret is what is
+    # still pending, and the answer says so.
+    revoked = service.revoke(context=context, connection_id=active["id"], expected_revision=3,
+                             idempotency_key="revoke-retry")
+    assert revoked["status"] == "revoked" and revoked["credential_cleanup"] == "pending"
     assert store.records[active["id"]].status == "revoked" and queued[0]["connection_id"] == active["id"]
     secrets.delete_secret = delete
     service.cleanup_revoked(context=context, connection_id=active["id"])
