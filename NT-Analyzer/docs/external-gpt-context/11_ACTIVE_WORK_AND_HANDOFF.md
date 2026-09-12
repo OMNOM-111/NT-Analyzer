@@ -23,9 +23,15 @@
   scheduler provenance, real ordinary-user PostgreSQL tests and isolated browser
   acceptance. See [master status](../current/AGENT_WORLD_MASTER_STATUS.md).
   No owner credential, Local switch, main merge or deploy is authorized.
-  Saved unified checkpoint is `e13dcb67`, draft PR #287. Current follow-up closes
+  Saved unified checkpoint is `d7b48060`, draft PR #287. Current follow-up closes
   explicit Memory context-scope enforcement and honest synthetic Social
   publication, including known-artifact and fresh-authority negative checks.
+  d7b48060 PostgreSQL: 129 passed, no skips. CI 34703741359 Linux failed one
+  older security scenario that omitted the new semantic confirmation; 5745
+  passed / 128 skipped. That scenario now explicitly confirms the plan without
+  weakening session-expiry assertions. Temporary QA8815 is not final acceptance.
+  Chat-first, accepted schedule-source binding, Court JSON candidate metadata
+  and in-app QA dialog/layout corrections require a new unified-SHA full run.
 
 - Historical integrator answer read at `61ff7a38` (2026-09-11): reviewed checkpoint `97095b00`,
   shared ownership unchanged; await typed Evaluation/native kind integration SHA.

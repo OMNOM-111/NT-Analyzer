@@ -24,7 +24,7 @@ CURRENT IMPLEMENTATION COVERAGE: 95%
 CURRENT OWNER ACCEPTANCE READINESS: 70%
 CURRENT INTEGRATION BRANCH: codex/agent-world-final-acceptance
 CURRENT INTEGRATION INPUTS: 9365695a + 4d8ee514 (both histories, no duplicate picks).
-SAVED INTEGRATION CHECKPOINT: e13dcb67; task draft PR #287.
+SAVED INTEGRATION CHECKPOINT: d7b480604871c9744e425185375a579240d6bd17; task draft PR #287.
 CURRENT VERIFICATION: final unified regression, PostgreSQL and browser acceptance
   are pending. Historical PASS below does not certify this integration.
 PREVIOUS INTEGRATION CODE SHA: fb2c472b — P1-3 including the decision producer.
@@ -94,6 +94,33 @@ reconciled on a final immutable code SHA.
   are pending. UI plus diagnostic Social native tests: 306 passed.
 - Final PostgreSQL/HTTP/browser/CI evidence, screenshots and final acceptance
   identity remain pending. Historical receipts are not silently promoted.
+
+#### Candidate d7b48060 — verification and functional corrections
+
+- Real disposable PostgreSQL: **129 passed, 0 skipped** on this exact SHA:
+  88 Agent World/External Agent/Persona and 41 legacy storage/worker cases.
+  JUnit receipts are isolated under `.artifacts/pg-runtime-acceptance-final-p15/`
+  with `d7b48060-` filenames; no Local database migration or SQLite fallback.
+- Legacy runner: 13/13; compile, JS, repository CSP/secrets/Markdown,
+  Context Pack, diff and 609-file production-bundle checks passed.
+- CI `34703741359`: static gates PASS; Linux **5745 passed / 1 failed /
+  128 skipped**, 1303.84 seconds. Windows still running at this update.
+  The failure is the old ordinary-user automation security test expecting an
+  immediate task rather than the new semantic clarification. Its correction
+  follows plan → explicit choice → commission, retaining session-expiry checks.
+  This is **not** a full-regression PASS.
+- Temporary browser QA is on **8815**, not the final acceptance instance and
+  not Local 8765. Its disposable identities and network guard are separate.
+  It started at d7b48060; later static-file edits make it a mixed candidate,
+  never immutable final-SHA evidence. Final server remains unstarted.
+- Browser-route review found and corrected four integration gaps: SF Chat-first
+  continuation into the existing Coordinator form; accepted Routine/Calendar
+  identity/revision binding into schedule approval; actual JSON MIME in Court
+  evidence candidates; in-app QA confirmation and drawer offset under its banner.
+  No new queue, evaluator, permission engine or automatic approval was added.
+- Focused corrections: chat-first 3 PASS, shared security 54 PASS, schedule/UI
+  111 + 258 PASS, Court/domain 58 PASS, QA/dialog 68 PASS. Full final-SHA rerun
+  and browser completion are still required; percentages are unchanged.
 
 ### Remote external-agent allowance — OWNER DECISION REQUIRED
 

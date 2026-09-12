@@ -1556,9 +1556,18 @@
     });
   }
 
+  let impersonationLayoutCleanup = null;
+  function syncImpersonationLayout() {
+    const bar = qs('#impersonation-banner');
+    const bottom = bar ? Math.max(0, Math.ceil(bar.getBoundingClientRect().bottom)) : 0;
+    document.body.style.setProperty('--qa-drawer-top', bottom + 'px');
+  }
   function renderImpersonationBanner(auth) {
+    if (impersonationLayoutCleanup) impersonationLayoutCleanup();
+    impersonationLayoutCleanup = null;
     const old = qs('#impersonation-banner');
     if (old) old.remove();
+    syncImpersonationLayout();
     if (!auth || !auth.impersonating) return;
     const user = auth.user || {};
     const label = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username || user.id || user.user_id || 'пользователь';
@@ -1567,6 +1576,14 @@
       <button type="button" class="btn sm" id="impersonation-return">Вернуться в админку</button>
     </div>`);
     document.body.appendChild(bar);
+    syncImpersonationLayout();
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(syncImpersonationLayout) : null;
+    if (observer) observer.observe(bar);
+    window.addEventListener('resize', syncImpersonationLayout);
+    impersonationLayoutCleanup = () => {
+      if (observer) observer.disconnect();
+      window.removeEventListener('resize', syncImpersonationLayout);
+    };
     const btn = qs('#impersonation-return', bar);
     if (btn) btn.onclick = async () => {
       btn.disabled = true;
@@ -4787,9 +4804,15 @@
         catch (e) { reportError(e); create.disabled = false; }
       };
       qsa('[data-stg-as]', node).forEach(btn => btn.onclick = async () => {
-        if (!confirm('Открыть приложение как этот пользователь?')) return;
+        if (btn.disabled) return;
         btn.disabled = true;
-        try { await API.http.ownerImpersonate(Number(btn.dataset.stgAs)); toast('Открываю'); setTimeout(() => location.reload(), 300); }
+        try {
+          if (!await confirmDialog('Открыть приложение как этот пользователь? Действия будут выполняться в его тестовой сессии.', {
+            title: 'Открыть тестовую сессию', confirmLabel: 'Открыть как пользователь',
+          })) { btn.disabled = false; return; }
+          if (!btn.isConnected) return;
+          await API.http.ownerImpersonate(Number(btn.dataset.stgAs)); toast('Открываю'); setTimeout(() => location.reload(), 300);
+        }
         catch (e) { reportError(e); btn.disabled = false; }
       });
       qsa('[data-stg-google]', node).forEach(btn => btn.onclick = async () => {
@@ -10243,6 +10266,10 @@
     // lives in the footer marks instead of repeating above every bubble.
     const items = row.actions.filter(action => action && typeof action === 'object').slice(0, 8).map(action => {
       const name = String(action.name || action.action || 'vitek_task');
+      if (name === 'coordinator_clarification' && action.conversation_id && action.source_message_id) {
+        const route = '/ui/ai-command-center.html#tab=overview&domain=automation&chat_conversation=' + encodeURIComponent(action.conversation_id) + '&chat_message=' + encodeURIComponent(action.source_message_id);
+        return `<a class="btn sm" href="${esc(route)}">Уточнить данные и ожидаемый результат</a>`;
+      }
       const status = String(action.status || 'running');
       const state = ORCH_ACTION_STATES[status] || [status || 'Выполняется', 'running'];
       const label = String(action.owner_label || action.summary || ORCH_ACTION_LABELS[name] || 'Работа по поручению');

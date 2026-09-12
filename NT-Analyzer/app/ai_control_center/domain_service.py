@@ -741,7 +741,7 @@ class DomainService:
                         continue
                     seen.add(reference.artifact_id)
                     result.append({"id": str(reference.artifact_id), "title": f"{kind.value} · {record.header.entity_id}",
-                                   "sha256": reference.sha256, "source_kind": kind.value,
+                                   "sha256": reference.sha256, "media_type": found[1], "source_kind": kind.value,
                                    "source_id": str(record.header.entity_id), "source_status": record.status})
                     if len(result) == limit:
                         self._guard(context, admit)

@@ -37,6 +37,12 @@ the shared typed Evaluation remain distinct.
   diversity checks still deny them; advisory votes are clearly diagnostic.
 - Explicit synthetic Social publication preserves diagnostic provenance without
   turning local arithmetic checks into professional or market performance.
+- An ordinary explicitly addressed SF Chat request now continues through the
+  existing semantic Coordinator form, retaining its owned original message.
+- Scheduling starts from an accepted Routine/Calendar revision and still needs
+  separate approval. Court evidence pickers receive the validated artifact MIME.
+- QA impersonation confirms inside the application; drawers respect the actual
+  test-banner height rather than hiding their close button beneath it.
 
 ## Verification boundary
 
@@ -44,6 +50,12 @@ New final-SHA full regression, legacy runner, bundle/static/context, CI and
 browser evidence remain pending. Interim evidence is recorded in the canonical
 developer-only `docs/current/AGENT_WORLD_MASTER_STATUS.md`; it does not close the
 programme. Historical P1-5 CI 34678502093 belongs to `c16b511d` only.
+
+At candidate `d7b480604871c9744e425185375a579240d6bd17`, real PostgreSQL was
+129/0/0, legacy runner 13/13, bundle/static/context PASS. CI `34703741359` Linux
+was 5745 passed / 1 failed / 128 skipped: an older security scenario omitted the
+new explicit clarification step. The corrected scenario retains its authority
+and session-expiry assertions. Final rerun is required; this is not release PASS.
 
 Release impact: version `0.10.0-beta.96` unchanged; no signed artifact, Canary or
 Production publication. Rollback of testing is stopping only the new acceptance

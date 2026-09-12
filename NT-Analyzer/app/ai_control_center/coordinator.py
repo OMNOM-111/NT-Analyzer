@@ -67,7 +67,7 @@ def _sync_control_intent(service, context, control):
 
 
 def commission(authorized, service, payload, key, *, conversation_id=None, user_message=None,
-               _intent_selection=None, _supersedes=None):
+               _intent_selection=None, _supersedes=None, _chat_source=None):
     """One explicit new goal -> pinned finite plan -> normal SF Chat model root."""
     context = delegation.gate(authorized, "AI_DELEGATION_V2")
     if context.actor.kind != c.ActorKind.HUMAN:
@@ -111,6 +111,8 @@ def commission(authorized, service, payload, key, *, conversation_id=None, user_
             for node in nodes], "actual_evidence": "per-task receipt required"}}
     if _intent_selection is not None:
         plan["intent_selection"] = _intent_selection
+    if _chat_source is not None:
+        plan["chat_source"] = _chat_source
     if _supersedes is not None:
         plan["supersedes"] = _supersedes
     control = delegation.create_controller(service, context, identity, plan, source=SOURCE,
@@ -520,8 +522,67 @@ def deliver(authorized, service, *, task_id, event_id, checkpoint_sha256, events
     return {"ok": True, "status": "delivered", "task_id": str(task_id), "replayed": result.get("idempotent_replay") is True}
 
 
+def chat_seed(authorized, source):
+    """Reload only an owned persisted user request; URL text is never authority."""
+    from ..ai_lab import chief_agent
+    authorized["admit"]()
+    if type(source) is not dict or set(source) != {"conversation_id", "source_message_id"}:
+        raise ContractError("coordinator_chat_source_invalid")
+    result_handoff._source_message(authorized, source)
+    rows = chief_agent.read_jsonl(chief_agent._conversation_file(source["conversation_id"], scope=authorized["chat_scope"]))
+    row = next(row for row in rows if row.get("message_id") == source["source_message_id"] and row.get("role") == "user")
+    match = re.fullmatch(r"Координатор\s*:\s*([\s\S]{1,400})", row["content"], re.I)
+    if not match:
+        raise ContractError("coordinator_chat_source_invalid")
+    if chief_agent._conversation_is_closed(source["conversation_id"], scope=authorized["chat_scope"]):
+        raise ContractError("coordinator_chat_closed")
+    return {"goal": match[1].strip(), "original_message": row["content"], "chat_source": source}
+
+
+def chat_commission(authorized, service, payload, key):
+    seed = chat_seed(authorized, payload.get("chat_source"))
+    body = {name: value for name, value in payload.items() if name != "chat_source"}
+    if body.get("goal") != seed["goal"]:
+        raise ContractError("coordinator_chat_goal_changed")
+    if "selection" not in body:
+        return plan_request(authorized, service, body)
+    return commission_request(authorized, service, body,
+        "chat.coordinator." + seed["chat_source"]["source_message_id"],
+        conversation_id=seed["chat_source"]["conversation_id"], user_message=seed["original_message"],
+        _chat_source=seed["chat_source"])
+
+
 def try_chat(message, *, scope, conversation_id, request_id, source):
     if source != "app": return None
+    ordinary = re.fullmatch(r"Координатор\s*:\s*([^\n]{1,400})", message, re.I)
+    if ordinary:
+        from ..ai_lab import chief_agent
+        from . import domain_gateway
+        authorized = domain_gateway.access(scope)
+        delegation.gate(authorized, "AI_DELEGATION_V2")
+        cid = chief_agent._safe_conversation_id(conversation_id)
+        with chief_agent._LOCK:
+            if chief_agent._conversation_is_closed(cid, scope=authorized["chat_scope"]):
+                raise ContractError("coordinator_chat_closed")
+            path = chief_agent._conversation_file(cid, scope=authorized["chat_scope"])
+            rows = chief_agent.read_jsonl(path)
+            user = next((row for row in rows if row.get("request_id") == request_id and row.get("role") == "user"), None)
+            if user is not None and user["content"] != message:
+                raise ContractError("coordinator_chat_request_changed")
+            prior = next((row for row in rows if row.get("request_id") == request_id and row.get("role") == "assistant"), None)
+            if prior:
+                return {"ok": True, "conversation_id": cid, "reply": prior["content"], "message": prior, "actions": prior["actions"], "idempotent_replay": True}
+            if user is None:
+                user = chief_agent._append_conversation("user", message, source="app", request_id=request_id, path=path, scope=authorized["chat_scope"])
+            action = {"name": "coordinator_clarification", "status": "awaiting_review", "conversation_id": cid,
+                      "source_message_id": user["message_id"], "owner_label": "Уточнить данные и ожидаемый результат"}
+            reply = "Уточните исходные числа, подключения и ожидаемый результат в форме поручения. " + LIMITATION + " Заданий пока не запущено."
+            saved = chief_agent._append_conversation("assistant", reply, source="app", agent_name="Координатор",
+                request_id=request_id, actions=[action], path=path, scope=authorized["chat_scope"])
+            chief_agent._touch_conversation(cid, title_hint=message, scope=authorized["chat_scope"])
+            chief_agent._set_conversation_work_state(cid, "awaiting_owner", reply, scope=authorized["chat_scope"])
+            return {"ok": True, "conversation_id": cid, "reply": reply, "message": saved,
+                    "status": "clarification_required", "actions": [action]}
     match = re.fullmatch(r"Координатор\s*:\s*([^\n]{1,400})\n([\s\S]+)", message, re.I)
     if not match: return None
     try:

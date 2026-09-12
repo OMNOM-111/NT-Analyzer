@@ -5028,14 +5028,14 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
             on_thinking("Анализирую задачу…")
     scope_info = _normalize_conversation_scope(scope)
     from ..ai_control_center import live_gateway, coordinator, persona_identity
-    persona_turn = persona_identity.try_chat(clean, scope=scope, conversation_id=conversation_id,
-        request_id=request_key, source=source, persona_id=persona_id)
-    if persona_turn is not None:
-        return persona_turn
     coordinated_turn = coordinator.try_chat(clean, scope=scope, conversation_id=conversation_id,
                                             request_id=request_key, source=source)
     if coordinated_turn is not None:
         return coordinated_turn
+    persona_turn = persona_identity.try_chat(clean, scope=scope, conversation_id=conversation_id,
+        request_id=request_key, source=source, persona_id=persona_id)
+    if persona_turn is not None:
+        return persona_turn
     live_turn = live_gateway.try_chat(clean, scope=scope, conversation_id=conversation_id,
                                       request_id=request_key, source=source)
     if live_turn is not None:
