@@ -24,6 +24,7 @@ CURRENT IMPLEMENTATION COVERAGE: 95%
 CURRENT OWNER ACCEPTANCE READINESS: 70%
 CURRENT INTEGRATION BRANCH: codex/agent-world-final-acceptance
 CURRENT INTEGRATION INPUTS: 9365695a + 4d8ee514 (both histories, no duplicate picks).
+SAVED INTEGRATION CHECKPOINT: e13dcb67; task draft PR #287.
 CURRENT VERIFICATION: final unified regression, PostgreSQL and browser acceptance
   are pending. Historical PASS below does not certify this integration.
 PREVIOUS INTEGRATION CODE SHA: fb2c472b — P1-3 including the decision producer.
@@ -80,6 +81,17 @@ reconciled on a final immutable code SHA.
   registration evidence. No real provider quality or diversity is inferred.
 - Default-off Development diagnostic gates stay workspace-scoped. Diagnostic
   data is not field evidence or real Model Performance.
+- Court: 7 native Development cases and 167 existing Court/model regressions
+  passed. Three isolated sessions share one truthful local failure domain;
+  advisory quorum/dissent works, critical provider-diversity approval is denied.
+- Synthetic Social: 52 cases passed (10 named diagnostic/provenance cases and
+  42 existing publication regressions). Explicit publication uses the existing
+  store, preserves the synthetic marker and never claims model/market quality.
+- Six Memory context scopes are integrated independently of lifecycle classes:
+  120 scoped/domain/loopback HTTP/Preview cases passed, including 14 new scope
+  tests. Session/governance/reference checks apply to reads and artifact
+  consumption, not merely a UI label. Final full regression and browser repeat
+  are pending. UI plus diagnostic Social native tests: 306 passed.
 - Final PostgreSQL/HTTP/browser/CI evidence, screenshots and final acceptance
   identity remain pending. Historical receipts are not silently promoted.
 
@@ -169,7 +181,7 @@ percentage changes are made while final browser/regression gates are pending.
 | Task Graph | Y | Y | Y | Y | P | IMPLEMENTED | Real parent → subtasks → contributions → aggregate, depth ≤3, typed deps. Two operation classes: `verify_fact_transfer` restates and is graded on exactness, `numeric_breakdown` gives each child its own slice and a different answer | Live browser route for the second operation |
 | Delegation | Y | Y | Y | Y | P | PARTIAL | Grant-bound, depth-bounded, cycle- and restart-safe; 61 handoff/delegation PASS | Roots only on Coordinator task or verified application result |
 | Persona | Y | Y | Y | Y | Y | DONE + VERIFIED | Identity survives restart and model change; the selected-Persona chat path walked live on 8806 to a completed, accepted result with the identity intact | Audible voice check — P2-5 |
-| Voice / TTS / lip-sync | Y | Y | Y | Y | N | PARTIAL | 8 TTS profiles, 6 reused `speaking.webm`, browser speech default, owner TTS opt-in | Audio never heard; phoneme lip-sync absent by design — P2 |
+| Voice / TTS / lip-sync | Y | Y | Y | Y | N | PARTIAL | 8 TTS profiles, 6 reused `speaking.webm`, browser speech default, owner TTS opt-in | Audible acceptance still required; phoneme/viseme lip-sync is NOT IMPLEMENTED, an explicit functional gap — P2 |
 | Model Registry | Y | Y | Y | Y | P | IMPLEMENTED | Persona / account / model separate; own-key wizard; capabilities, cost, latency | Only ever exercised with the named local test executor |
 | Router | Y | Y | Y | Y | P | IMPLEMENTED | Candidates, exclusions, reason codes, shadow vs active, apply pinned to the exact preview; test-executor observations disqualified from real routing | No comparison between two real providers |
 | Outcomes | Y | Y | Y | Y | Y | DONE + VERIFIED | Outcome and evaluation produced, displayed and accepted on the live route | — |
@@ -179,7 +191,7 @@ percentage changes are made while final browser/regression gates are pending.
 | Court | Y | Y | Y | Y | P | IMPLEMENTED | 3 isolated sessions from one sealed packet, unweighted 2-of-3, failure-domain diversity, provenance-checked votes, revocation re-checked after the call, judges cannot execute | Never three genuinely different providers — P2 |
 | Execution | Y | Y | Y | Y | Y | DONE + VERIFIED | Immutable approved decision, capability/device re-check, budget, idempotency, cancel, restart. V2 enabled path walked live: prepare → queue → worker → receipt → completion | — |
 | Deviation | Y | Y | Y | Y | P | IMPLEMENTED | Provider and application deviations recorded; material deviation returns to review | Live route |
-| Memory | Y | Y | Y | Y | P | IMPLEMENTED | 10 HTTP E2E cases, two real cookie sessions: share, revoke, expire, foreign-workspace refusal, per-request re-check | No visual two-user route; not on PostgreSQL |
+| Memory | Y | Y | Y | Y | P | IMPLEMENTED | 120 scoped/domain/HTTP/Preview tests; six explicit context scopes with shared lifecycle classes retained. Session/governance/project/task bindings, artifact access and evidence reuse guarded | Final full regression and visual two-user route pending; HTTP evidence is not browser acceptance |
 | Strategy Projects | Y | Y | Y | Y | P | IMPLEMENTED | Versioned records, comparison jobs | Real comparisons need permitted connections |
 | Process Intelligence | Y | Y | Y | Y | P | IMPLEMENTED | Read-only pattern detection with cooldown → explicit proposals; no transcript reader, no model call, no auto-enable | Live route |
 | Routines | Y | Y | Y | Y | P | IMPLEMENTED | Per-routine consent separate from automation permission and budget | Live route |

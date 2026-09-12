@@ -22,6 +22,15 @@ SOURCE_TASK = "33333333-3333-3333-3333-333333333333"
 STARTED_TASK = "99999999-9999-9999-9999-999999999999"
 
 
+def test_clarify_existing_intent_uses_same_public_payload_seam():
+    values = {"goal": "Уточнённая цель", "input_text": "[1,2,3]",
+              "coordinator_model_id": ROOT_MODEL, "target_model_ids": TARGETS,
+              "topology": "chain", "operation": "client_must_not_choose"}
+    result = base.evaluate(f"ui.domainPayload('automation','clarify_commission',{json.dumps(values)})")
+    assert result["parent_indices"] == [-1, 0, 1]
+    assert result["goal"] == values["goal"] and "operation" not in result
+
+
 def router_prepared():
     return {"task_id": SOURCE_TASK, "source_revision": 7,
         "preview_ref": {"artifact_id": TARGETS[2], "sha256": "b" * 64,

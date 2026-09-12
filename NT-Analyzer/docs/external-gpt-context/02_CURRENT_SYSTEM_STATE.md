@@ -25,6 +25,9 @@
   acceptance now has real isolated-server tests, separate from prior shape tests.
   The [master status](../current/AGENT_WORLD_MASTER_STATUS.md) is the sole
   operational source. Local 8765, version and deployed environments are unchanged.
+  Saved unified checkpoint: `e13dcb67`, draft PR #287. Follow-up work adds six
+  context-bound Memory scopes and named Development-only diagnostic publication;
+  these do not relax real provider diversity, remote budgets or private access.
 
 - Parallel P1-5 (2026-09-10 historical checkpoint): **IN DEVELOPMENT**, isolated external-agent protocol
   and service ports; not mounted or deployed. Native Evaluation/registry integration

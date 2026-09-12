@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid5
 
 from . import contracts as c
+from . import memory_policy
 from .domain_contracts import CalendarItem, CourtCase, CourtVote, JudgeContext, JudgeResult, Routine, StrategyProject
 from .events import EventData, EventEnvelope, MutationIdentity
 from .repositories import PageRequest
@@ -102,11 +103,12 @@ def _utc(value):
 
 
 class DomainService:
-    def __init__(self, repository, *, judge_runner=None, enqueue=None, now=None):
+    def __init__(self, repository, *, judge_runner=None, enqueue=None, now=None, memory_authority=None):
         self.repository = repository
         self.judge_runner = judge_runner
         self.enqueue = enqueue
         self.now = now or (lambda: datetime.now(timezone.utc))
+        self.memory_authority = memory_authority
 
     def _guard(self, context, admit, *, write=False):
         if not isinstance(context, c.RequestContext) or not callable(admit):
@@ -154,8 +156,15 @@ class DomainService:
         result = []
         for identity in source_ids:
             found = self.repository.get_artifact_by_id(context=context, artifact_id=_uuid(identity))
+            found = memory_policy.artifact_allowed(self, context, found)
             if found is None:
                 raise ContractError("domain_evidence_unavailable")
+            # Context-bound content may not be copied into a less restricted
+            # domain, even while the originating context is still authorized.
+            if found[2] == "application/json":
+                source_data = json.loads(found[1])
+                if isinstance(source_data, dict) and source_data.get("_memory_policy") and not memory_policy.shareable(source_data):
+                    raise ContractError("memory_context_evidence_not_exportable")
             if found[0] not in result:
                 result.append(found[0])
         return tuple(result)
@@ -213,7 +222,7 @@ class DomainService:
                     **{key: value for key, value in normalize_fields(data).items() if key in data}}
         if domain == "memory":
             data = _fields(payload, ("title", "content", "purpose", "retention_days"),
-                           ("source_ids", "memory_class", "task_id", "verified_outcome_id"))
+                           ("source_ids", "memory_class", "task_id", "verified_outcome_id", "memory_scope", "strategy_project_id"))
             if type(data["retention_days"]) is not int or not 1 <= data["retention_days"] <= 365:
                 raise ContractError("invalid_memory_retention")
             memory_class = data.get("memory_class", "private")
@@ -254,6 +263,9 @@ class DomainService:
         self._guard(context, admit, write=True)
         data = self._create_input(domain, payload)
         key, operation = self._key(context, idempotency_key), "domain." + domain + ".create"
+        identity = self._id(context, operation + ":" + key)
+        if domain == "memory":
+            data = memory_policy.prepare(self, context, data, identity)
         digest = _hash({"domain": domain, "action": "create", "payload": data})
         replay = self._replay(context, operation, key, digest)
         if replay:
@@ -329,6 +341,9 @@ class DomainService:
         if replay:
             return self._result(context, replay.record, replayed=True)
         record = self._owned(context, _DOMAINS[domain], identity)
+        if domain == "memory":
+            memory_policy.check(self, context, record, self._json(context, record.content),
+                                published=record.memory_class == c.MemoryClass.WORKSPACE)
         resumed_review = (domain == "decisions" and action == "review"
                           and self._replay(context, operation + ".enter", key, digest) is not None)
         if record.header.revision != expected_revision and not resumed_review:
@@ -347,6 +362,10 @@ class DomainService:
                 previous = self._json(context, record.profile)
                 clean = {**{key: previous[key] for key in ("description", "style", "application_role", "avatar_key", *VOICE_FIELDS, *IDENTITY_FIELDS)
                             if key in previous and key not in clean}, **clean}
+            if domain == "memory":
+                previous = self._json(context, record.content)
+                clean = {**{field: previous[field] for field in ("memory_scope", "strategy_project_id", "memory_class", "task_id", "verified_outcome_id")
+                            if field in previous and field not in clean}, **clean}
             data = self._create_input(domain, clean)
             if domain == "personas" and "application_role" not in clean:
                 # Older clients can rename a Persona without unassigning its role.
@@ -355,6 +374,15 @@ class DomainService:
                 raise ContractError("finalized_record_immutable")
             if domain == "memory" and record.retention_until <= self.now():
                 raise ContractError("memory_expired")
+            if domain == "memory":
+                previous = self._json(context, record.content)
+                for field in ("memory_scope", "strategy_project_id"):
+                    if field not in clean and field in previous:
+                        data[field] = previous[field]
+                data = memory_policy.prepare(self, context, data, identity)
+                old_policy = previous.get("_memory_policy")
+                if old_policy is not None and data["_memory_policy"] != old_policy:
+                    raise ContractError("memory_scope_immutable")
             definition = self._put(context, admit, data)
             if domain == "personas":
                 following = self._change(record, display_name=data["name"], profile=definition)
@@ -438,6 +466,12 @@ class DomainService:
         items = []
         for record in page.items:
             if record.header.owner_user_uuid == context.user_uuid:
+                if domain == "memory":
+                    try:
+                        memory_policy.check(self, context, record, self._json(context, record.content),
+                                            published=record.memory_class == c.MemoryClass.WORKSPACE)
+                    except ContractError:
+                        continue
                 items.append(self._dto(context, record))
             elif domain == "memory":
                 shared = self._shared_memory_dto(context, record)
@@ -489,7 +523,11 @@ class DomainService:
                         "suspended": ["activate", "archive"]}.get(status, [])
         elif isinstance(record, c.Memory):
             data = self._json(context, record.content)
+            memory_policy.check(self, context, record, data, published=record.memory_class == c.MemoryClass.WORKSPACE)
             title, summary = data.get("title", "Memory"), data.get("purpose", "")
+            if data.get("memory_scope") == "operational":
+                summary = {"task_result": "Результат задачи", "error_recovery": "Восстановление после ошибки",
+                           "runtime_status": "Состояние выполнения"}.get(summary, summary)
             expired = record.retention_until <= self.now()
             if expired and status in {"draft", "active"}:
                 data["stored_status"], status = status, "expired"
@@ -509,7 +547,9 @@ class DomainService:
                     data["verification_artifact_url"] = prefix + str(record.verification.artifact_id)
             actions = ["update", "promote", "revoke"] if status == "draft" else ["revoke"] if status in {"active", "review"} else []
             if status == "active" and record.memory_class != c.MemoryClass.WORKSPACE:
-                actions.append("publish_to_workspace")
+                if memory_policy.shareable(data):
+                    actions.append("publish_to_workspace")
+            data = memory_policy.public(data, published=record.memory_class == c.MemoryClass.WORKSPACE)
         elif isinstance(record, (StrategyProject, Routine, CalendarItem)):
             data = self._json(context, record.definition)
             title, summary = record.title, data.get("description", "")
@@ -548,7 +588,7 @@ class DomainService:
                 "created_at": c.primitive(record.header.created_at), "updated_at": c.primitive(record.header.updated_at),
                 "revision": record.header.revision, "actions": actions, "correlation_id": str(record.header.correlation_id)}
 
-    def retrieve_memory(self, *, context, admit, purpose, limit=50, task_id=None):
+    def retrieve_memory(self, *, context, admit, purpose, limit=50, task_id=None, strategy_project_id=None):
         """TTL and purpose-filtered retrieval, not access to a raw transcript."""
         self._guard(context, admit)
         purpose = _text(purpose, limit=160)
@@ -566,6 +606,13 @@ class DomainService:
             if record.memory_class == c.MemoryClass.TASK and (task is None or record.task.entity_id != task.header.entity_id):
                 continue
             data = self._json(context, record.content)
+            try:
+                memory_policy.check(self, context, record, data, published=record.memory_class == c.MemoryClass.WORKSPACE)
+            except ContractError:
+                continue
+            policy = data.get("_memory_policy") or {}
+            if policy.get("scope") == "strategy" and policy.get("strategy_project_id") != str(strategy_project_id):
+                continue
             if data.get("purpose") == purpose and self._memory_source_valid(context, record, data):
                 result.append({"id": str(record.header.entity_id), "content": data["content"],
                                "provenance": [c.primitive(ref) for ref in record.provenance]})
@@ -575,6 +622,9 @@ class DomainService:
     def _publish_memory(self, context, admit, record, payload, operation, key, digest):
         reason = _text(_fields(payload, ("reason",))["reason"], limit=1000)
         data = self._json(context, record.content)
+        memory_policy.check(self, context, record, data)
+        if not memory_policy.shareable(data):
+            raise ContractError("memory_scope_not_publishable")
         if (record.status != "active" or record.retention_until <= self.now()
                 or record.memory_class == c.MemoryClass.WORKSPACE or not self._memory_source_valid(context, record, data)):
             raise ContractError("memory_not_publishable")
@@ -611,10 +661,15 @@ class DomainService:
         if content is None or proof is None or content[2] != "application/json":
             return None
         data, publication = json.loads(content[1]), json.loads(proof[1])
+        try:
+            memory_policy.check(self, context, record, data, published=True)
+        except ContractError:
+            return None
         # Only explicitly published content and its publication provenance; no
         # private source artifacts, history, task checkpoint or owner context.
         return {"id": str(record.header.entity_id), "title": data["title"], "content": data["content"],
                 "summary": data["purpose"], "purpose": data["purpose"], "status": "active", "memory_class": "workspace",
+                "memory_scope": "workspace", "memory_scope_policy_version": (data.get("_memory_policy") or {}).get("version", 0),
                 "visibility": "workspace", "sensitivity": record.sensitivity.value, "provenance": [publication],
                 "owner_user_uuid": str(record.header.owner_user_uuid), "retention_until": c.primitive(record.retention_until),
                 "created_at": c.primitive(record.header.created_at), "updated_at": c.primitive(record.header.updated_at),

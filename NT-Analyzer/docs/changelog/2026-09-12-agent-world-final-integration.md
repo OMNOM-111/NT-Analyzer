@@ -30,6 +30,13 @@ the shared typed Evaluation remain distinct.
   old read-side discrepancies are exposed rather than rewritten or auto-accepted.
 - The workflow's repository-wide static scan runs from the Git root, including
   tracked files above `NT-Analyzer`; the test jobs retain their 120-minute limit.
+- Memory context scopes are orthogonal to existing private/shared/lifecycle
+  classes. Explicit session, project, governance and operational bindings do not
+  grant visibility or instruction authority; legacy records retain their policy.
+- Named Development Court votes retain one actual local failure domain. Critical
+  diversity checks still deny them; advisory votes are clearly diagnostic.
+- Explicit synthetic Social publication preserves diagnostic provenance without
+  turning local arithmetic checks into professional or market performance.
 
 ## Verification boundary
 

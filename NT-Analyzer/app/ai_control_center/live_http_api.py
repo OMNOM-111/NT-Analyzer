@@ -51,6 +51,12 @@ def handle_get(handler, path, qs):
                 domain_gateway.domain_admission(authorized, "memory")
                 found = domain_gateway.repository(authorized).read_memory_artifact(context=authorized["context"],
                           memory_id=UUID(parts[1]), artifact_id=UUID(parts[2]))
+                if found is not None:
+                    try:
+                        domain_gateway.domains(authorized).get(context=authorized["context"],
+                            admit=domain_gateway.domain_admission(authorized, "memory"), domain="memory", entity_id=parts[1])
+                    except ContractError:
+                        found = None
                 if found is None:
                     handler._err(404, "Публикация памяти недоступна или отозвана.", code="memory_artifact_not_found")
                 else:
@@ -60,6 +66,7 @@ def handle_get(handler, path, qs):
                 return
             if parts[0] == "artifacts" and len(parts) == 2:
                 found = domain_gateway.repository(authorized).get_artifact_by_id(context=authorized["context"], artifact_id=UUID(parts[1]))
+                found = domain_gateway.scoped_memory_artifact(authorized, found)
                 if found is None:
                     handler._err(404, "Артефакт не найден.", code="artifact_not_found")
                 else:

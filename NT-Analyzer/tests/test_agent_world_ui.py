@@ -476,6 +476,31 @@ def test_domain_form_payloads_match_actual_service_fields(domain, action, values
     assert evaluate(f"ui.domainPayload({json.dumps(domain)},{json.dumps(action)},{json.dumps(values)})") == expected
 
 
+@pytest.mark.parametrize("scope", ["user", "workspace", "strategy", "session", "governance", "operational"])
+def test_memory_scope_form_uses_scoped_server_fields_not_session_or_authority(scope):
+    identity = "11111111-1111-4111-8111-111111111111"
+    values = {"title": "Note", "content": "Observed", "purpose": "Review", "retention_days": "1",
+              "memory_scope": scope, "session_id": "must-not-send", "role": "owner"}
+    if scope == "strategy": values["strategy_project_id"] = identity
+    if scope == "operational": values.update(task_id=identity, operational_purpose="error_recovery")
+    result = evaluate(f"ui.domainPayload('memory','create',{json.dumps(values)})")
+    assert result["memory_scope"] == scope
+    assert not {"session_id", "role", "operational_purpose"} & result.keys()
+    if scope == "session": assert result["memory_class"] == "working"
+    if scope == "operational": assert result["memory_class"] == "task" and result["purpose"] == "error_recovery"
+
+
+@pytest.mark.parametrize("extra", [
+    {"memory_scope": "session", "retention_days": "2"},
+    {"memory_scope": "strategy"}, {"memory_scope": "operational"},
+    {"memory_scope": "user", "strategy_project_id": "11111111-1111-4111-8111-111111111111"},
+    {"memory_scope": "session", "session_id": "forged", "purpose": ""},
+])
+def test_memory_scope_missing_or_conflicting_binding_is_not_submitted(extra):
+    values = {"title": "Note", "content": "Observed", "purpose": "Review", "retention_days": "1", **extra}
+    assert evaluate(f"(() => {{try {{ui.domainPayload('memory','create',{json.dumps(values)});return false;}}catch (_){{return true;}}}})()") is True
+
+
 @pytest.mark.parametrize("domain,action,values", [
     ("memory", "create", {"title": "Note", "content": "x", "purpose": "Review", "retention_days": "0"}),
     ("memory", "create", {"title": "Note", "content": "x", "purpose": "Review", "retention_days": "366"}),
@@ -893,6 +918,27 @@ def test_publication_action_cannot_be_opened_without_prepare_even_if_forged_in_c
       return {unchanged:before===drawer.innerHTML,posts:calls.filter(call=>call.method==='post').length};
     """)
     assert result == {"unchanged": True, "posts": 0}
+
+
+@pytest.mark.parametrize("change,allowed", [({}, True), ({"synthetic": True, "diagnostic_mode": "untrusted"}, False),
+    ({"external_call": True}, False), ({"paid_call": True}, False), ({"cost_usd": 1}, False),
+    ({"quality_claim": True}, False), ({"market_performance_claim": True}, False),
+    ({"source_kind": "real_model_response"}, False), ({"title": "Professional quality"}, False)])
+def test_synthetic_publication_requires_explicit_named_diagnostic_envelope(change, allowed):
+    snapshot = {"title": "SYNTHETIC · mechanism check", "summary": "Not model quality", "source_id": "33333333-3333-3333-3333-333333333333",
+        "source_revision": 7, "synthetic": True, "source_kind": "synthetic_model_response",
+        "diagnostic_mode": "named_development_executor", "quality_claim": False, "market_performance_claim": False,
+        "external_call": False, "paid_call": False, "cost_usd": 0, **change}
+    result = run_domain_ui("""
+      previewOverrides={snapshot:SNAPSHOT};
+      await click({awDomain:'publications'},'shell');
+      await click({awDomainAction:'prepare',awEntity:'new'});
+      await submit(form({source:'outcome:'+ids.task}));
+      return {html:drawer.innerHTML,posts:calls.filter(call=>call.method==='post').length};
+    """.replace("SNAPSHOT", json.dumps(snapshot)))
+    assert ("постоянного снимка" in result["html"]) is allowed
+    assert result["posts"] == 1  # Preparing a diagnostic never publishes it.
+    if allowed: assert "SYNTHETIC" in result["html"] and "Not model quality" in result["html"]
 
 
 @pytest.mark.parametrize("source", ["memory:11111111-1111-1111-1111-111111111111", "outcome:garbage", "decision:../../other", "backtest:a?owner=true", "https://external.invalid"])

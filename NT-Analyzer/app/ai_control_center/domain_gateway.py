@@ -543,8 +543,21 @@ def domains(authorized, repo=None):
     from .domain_service import DomainService
     repo = repo or repository(authorized)
     model_service = models(authorized, repo)
-    return DomainService(repo, judge_runner=model_service.judge,
+    def memory_authority(context):
+        if context != authorized["context"]:
+            raise ContractError("memory_context_mismatch")
+        current = access(authorized["chat_scope"], read_only=True)
+        domain_admission(current, "memory")
+        user = account_auth.find_active_user(current["source_scope"]["user_id"]) or {}
+        return {"session_id": current["chat_scope"].get("auth_session_id"),
+                "governance_allowed": user.get("is_owner") is True or user.get("role") in {"owner", "admin"}}
+    return DomainService(repo, judge_runner=model_service.judge, memory_authority=memory_authority,
                          enqueue=lambda **kw: _followup(authorized, **kw))
+
+
+def scoped_memory_artifact(authorized, found):
+    from .memory_policy import artifact_allowed
+    return artifact_allowed(domains(authorized), authorized["context"], found)
 
 
 def social(authorized, repo=None):
@@ -839,6 +852,12 @@ def list_domain(authorized, domain, *, identity=None, limit=50, cursor=None):
     if domain == "personas":
         from . import persona_voice
         result["presentation_catalog"] = persona_voice.catalog()
+    if domain == "memory":
+        projects = service.list(context=context, admit=admit, domain="projects", limit=100)
+        result["strategy_project_candidates"] = [{"id": row["id"], "title": row["title"]}
+            for row in projects["items"] if row["status"] in {"draft", "active"}]
+        result["task_candidates"] = [{"id": row["id"], "title": row.get("goal") or row.get("title") or "Задача"}
+            for row in model_service.tasks(context=context)["items"]]
     if domain in {"routines", "calendar"}:
         result["items"] = [_followup_projection(authorized, service, domain, row) for row in result["items"]]
         from .process_intelligence import ProcessIntelligence

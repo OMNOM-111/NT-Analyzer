@@ -23,6 +23,9 @@
   scheduler provenance, real ordinary-user PostgreSQL tests and isolated browser
   acceptance. See [master status](../current/AGENT_WORLD_MASTER_STATUS.md).
   No owner credential, Local switch, main merge or deploy is authorized.
+  Saved unified checkpoint is `e13dcb67`, draft PR #287. Current follow-up closes
+  explicit Memory context-scope enforcement and honest synthetic Social
+  publication, including known-artifact and fresh-authority negative checks.
 
 - Historical integrator answer read at `61ff7a38` (2026-09-11): reviewed checkpoint `97095b00`,
   shared ownership unchanged; await typed Evaluation/native kind integration SHA.

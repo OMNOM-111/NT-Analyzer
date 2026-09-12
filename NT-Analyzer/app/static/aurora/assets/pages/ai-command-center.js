@@ -132,6 +132,12 @@
     return `<dl class="aw-readiness">${cells}${mode}</dl>${item.note ? `<p class="aw-field-hint">${esc(item.note)}</p>` : ''}`;
   }
   const canRunDemo = data => data?.enabled === true && data?.capabilities?.can_run_demo === true;
+  function memoryScopeCard(item) {
+    const names = { user: 'Личная', workspace: 'Рабочее пространство', strategy: 'Проект стратегии', session: 'Текущая сессия', governance: 'Управление', operational: 'Выполнение задачи' };
+    const scope = Object.prototype.hasOwnProperty.call(names, item.memory_scope) ? names[item.memory_scope] : 'Личная · прежняя запись';
+    const purposes = { task_result: 'Результат задачи', error_recovery: 'Восстановление после ошибки', runtime_status: 'Состояние выполнения' };
+    return `<dl class="aw-detail-grid"><div><dt>Область памяти</dt><dd>${esc(scope)}</dd></div><div><dt>Срок хранения</dt><dd>${esc(date(item.retention_until))}</dd></div><div><dt>Видимость</dt><dd>${item.visibility === 'workspace' ? 'Участники пространства' : 'Личная; область сама по себе не открывает доступ'}</dd></div></dl>${item.session_bound ? '<p class="aw-note">Привязана к текущей подтверждённой сессии; другая сессия не получает содержимое.</p>' : ''}${purposes[item.purpose] ? `<p class="aw-note">Назначение: ${esc(purposes[item.purpose])}</p>` : ''}${item.scope_binding && Object.keys(item.scope_binding).length ? `<details class="aw-technical"><summary>Связанный проект или задача</summary><pre>${esc(publicJSON(item.scope_binding))}</pre></details>` : ''}`;
+  }
   const knownDomain = value => Object.prototype.hasOwnProperty.call(DOMAINS, String(value || ''));
   const actionLabel = value => value === 'clarify_commission' ? 'Уточнить новым поручением' : Object.prototype.hasOwnProperty.call(ACTION_LABELS, value) ? ACTION_LABELS[value] : 'Действие';
   function allowedDomainActions(data, item) {
@@ -212,14 +218,21 @@
     const title = field('title', 'Название', 'text', { required: true, max: 160 });
     const description = field('description', 'Описание', 'textarea', { max: 4000, sendEmpty: true });
     const sources = field('source_ids', 'UUID исходных артефактов', 'ids', { maxItems: 20, hint: 'Необязательно. По одному UUID в строке; принадлежность проверит сервер.' });
-    if (domain === 'memory') return [title, field('content', 'Содержание', 'textarea', { required: true, max: 12000 }), field('purpose', 'Для чего хранится', 'text', { required: true, max: 160 }), field('retention_days', 'Срок хранения (дни)', 'number', { required: true, min: 1, max: 365 }), sources];
+    if (domain === 'memory') return [title,
+      field('memory_scope', 'Область памяти', 'select', { default: 'user', optionalIfMissing: true, options: [['user', 'Личная'], ['workspace', 'Рабочее пространство'], ['strategy', 'Проект стратегии'], ['session', 'Текущая сессия'], ['governance', 'Управление · только владелец/администратор'], ['operational', 'Выполнение задачи']], hint: 'Область не выдаёт права. Общая видимость появляется только после отдельной публикации; сессионную, управленческую и операционную память публиковать нельзя.' }),
+      field('content', 'Содержание', 'textarea', { required: true, max: 12000 }),
+      field('purpose', 'Для чего хранится', 'text', { max: 160, hint: 'Обязательно, кроме области выполнения задачи — там выберите назначение ниже.' }),
+      field('operational_purpose', 'Назначение при выполнении задачи', 'select', { optionalIfMissing: true, options: [['', 'Не применяется'], ['task_result', 'Результат задачи'], ['error_recovery', 'Восстановление после ошибки'], ['runtime_status', 'Состояние выполнения']] }),
+      field('strategy_project_id', 'Проект (для памяти стратегии)', 'record', { source: 'strategy_project_candidates' }),
+      field('task_id', 'Задача (для оперативной памяти)', 'record', { source: 'task_candidates' }),
+      field('retention_days', 'Срок хранения (дни)', 'number', { required: true, min: 1, max: 365, hint: 'Память текущей сессии — не дольше одного дня и только в этой сессии.' }), sources];
     if (domain === 'projects') return [title, description, field('strategy_key', 'Ключ стратегии', 'text', { required: true, max: 120 })];
     if (domain === 'routines') return [title, description, field('interval_minutes', 'Интервал (минуты)', 'number', { required: true, min: 5, max: 525600 }), sources];
     if (domain === 'calendar') return [title, description, field('starts_at', 'Начало (местное время)', 'datetime-local', { required: true }), field('ends_at', 'Окончание (местное время)', 'datetime-local', { required: true }), sources];
     return [];
   }
   function domainPayload(domain, action, values) {
-    if (!knownDomain(domain) || !Object.prototype.hasOwnProperty.call(ACTION_LABELS, action)) throw new Error('Неизвестное действие.');
+    if (!knownDomain(domain) || !(domain === 'automation' && action === 'clarify_commission') && !Object.prototype.hasOwnProperty.call(ACTION_LABELS, action)) throw new Error('Неизвестное действие.');
     const payload = {};
     for (const spec of domainFormFields(domain, action)) {
       const raw = values?.[spec.key];
@@ -242,7 +255,7 @@
       } else if (['models', 'ids', 'evidence', 'records'].includes(spec.type)) {
         value = Array.from(new Set((Array.isArray(value) ? value : value.split(/[\s,]+/)).map(String).filter(Boolean)));
         if (value.some(id => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) || value.length < (spec.minItems || 0) || value.length > spec.maxItems) throw new Error('Проверьте UUID и количество в поле «' + spec.label + '».');
-      } else if (['persona', 'model', 'source_task'].includes(spec.type) && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new Error('Выберите сохранённую запись.');
+      } else if (['persona', 'model', 'source_task', 'record'].includes(spec.type) && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new Error('Выберите сохранённую запись.');
       else if (spec.type === 'provider' && !/^[a-z][a-z0-9_-]{1,40}$/.test(value)) throw new Error('Выберите поддерживаемого провайдера.');
       else if (spec.type === 'binding' && !/^AGT-[A-Z0-9]{12}$/.test(value)) throw new Error('Выберите разрешённое Local-подключение.');
       else if (spec.type === 'select' && !spec.options.some(([key]) => key === value)) throw new Error('Выберите допустимое значение «' + spec.label + '».');
@@ -268,11 +281,28 @@
       payload.max_depth = chain ? targets.length : 1;
       delete payload.topology;
     }
+    if (domain === 'memory' && ['create', 'update'].includes(action)) {
+      const scope = payload.memory_scope || 'user';
+      if (scope === 'session') { payload.memory_class = 'working'; if (payload.retention_days !== 1) throw new Error('Для памяти сессии выберите срок один день.'); }
+      if (scope === 'operational') {
+        payload.memory_class = 'task'; payload.purpose = payload.operational_purpose;
+        if (!payload.task_id || !payload.purpose) throw new Error('Выберите задачу и назначение оперативной памяти.');
+      } else if (payload.task_id) throw new Error('Связь с задачей доступна только для оперативной памяти.');
+      if (!payload.purpose) throw new Error('Укажите, для чего хранится память.');
+      if (scope === 'strategy' && !payload.strategy_project_id) throw new Error('Выберите проект стратегии.');
+      if (scope !== 'strategy' && payload.strategy_project_id) throw new Error('Связь с проектом доступна только для памяти стратегии.');
+      delete payload.operational_purpose;
+    }
     if (domain === 'external_agents' && action === 'create') { payload.allowed_capabilities = [payload.capability]; delete payload.capability; }
     return payload;
   }
   function validPublicationPreview(prepared, source) {
-    return prepared?.permanent === true && prepared?.requires_explicit_confirmation === true && prepared?.snapshot?.synthetic === false && typeof prepared.snapshot.title === 'string' && typeof prepared.snapshot.summary === 'string' && prepared.snapshot.source_id === source?.source_id && /^[0-9a-f]{64}$/.test(prepared.snapshot_sha256 || '') && Number.isSafeInteger(prepared.source_revision) && prepared.source_revision > 0 && prepared.snapshot.source_revision === prepared.source_revision;
+    const snapshot = prepared?.snapshot;
+    const diagnostic = snapshot?.synthetic === true && snapshot.source_kind === 'synthetic_model_response'
+      && snapshot.diagnostic_mode === 'named_development_executor' && snapshot.quality_claim === false
+      && snapshot.market_performance_claim === false && snapshot.external_call === false
+      && snapshot.paid_call === false && snapshot.cost_usd === 0 && String(snapshot.title || '').startsWith('SYNTHETIC');
+    return prepared?.permanent === true && prepared?.requires_explicit_confirmation === true && (snapshot?.synthetic === false || diagnostic) && typeof snapshot.title === 'string' && typeof snapshot.summary === 'string' && snapshot.source_id === source?.source_id && /^[0-9a-f]{64}$/.test(prepared.snapshot_sha256 || '') && Number.isSafeInteger(prepared.source_revision) && prepared.source_revision > 0 && snapshot.source_revision === prepared.source_revision;
   }
   function validCoordinatorPreview(prepared, source) {
     return prepared?.approved === false && prepared?.dispatches === 0 && prepared?.coordinator_id === (source?.id || source?.entity_id || '')
@@ -352,6 +382,16 @@
   function domainError(error) {
     const code = String(error?.code || error?.data?.error || error?.error || '');
     const messages = {
+      memory_scope_invalid: 'Область памяти не распознана. Обновите форму.',
+      memory_scope_immutable: 'Область существующей памяти нельзя менять. Создайте новую запись, сохранив историю.',
+      memory_authenticated_session_required: 'Для этой памяти нужна подтверждённая пользовательская сессия.',
+      memory_session_mismatch: 'Эта запись принадлежит другой сессии и недоступна здесь.',
+      memory_session_ttl_required: 'Память сессии хранится не дольше одного дня.',
+      memory_governance_denied: 'Управленческая память доступна только уполномоченному владельцу или администратору.',
+      memory_strategy_changed: 'Проект стратегии изменён. Проверьте источник и создайте актуальную запись памяти.',
+      memory_strategy_unavailable: 'Проект стратегии недоступен или архивирован.',
+      memory_scope_not_publishable: 'Эту область памяти нельзя публиковать в рабочее пространство.',
+      memory_operational_context_required: 'Выберите свою задачу и назначение оперативной памяти.',
       budget_exceeded: 'Лимит расходов не разрешает этот запрос. Бюджет не изменён.', budget_denied: 'Лимит расходов не разрешает этот запрос. Бюджет не изменён.',
       invalid_api_key: 'Провайдер отклонил ключ. Проверьте подключение; ключ не сохранён в интерфейсе.', provider_auth_failed: 'Провайдер отклонил авторизацию. Проверьте ключ подключения.',
       endpoint_unavailable: 'Endpoint недоступен. Проверьте адрес и повторите проверку.', endpoint_not_allowed: 'Этот endpoint не разрешён сервером.',
@@ -1064,7 +1104,7 @@
       const id = recordId(item), metrics = item.observed_eval || item.evaluation;
       const title = esc(item.title || item.label || item.name || item.model || 'Запись');
       const heading = domainState.key === 'system' ? `<strong>${title}</strong>` : `<button class="aw-table-title" data-aw-domain-item="${esc(id)}">${title}</button>`;
-      const component = domainState.key === 'models' ? modelProtocolCard(item) : domainState.key === 'system' && typeof item.implemented === 'boolean' ? `<dl class="aw-detail-grid"><div><dt>Код реализован</dt><dd>${item.implemented ? 'Да' : 'Нет'}</dd></div><div><dt>Флаг</dt><dd>${item.enabled ? 'Включён' : 'Выключен'}</dd></div><div><dt>Фактический режим</dt><dd>${esc(item.mode)}</dd></div><div><dt>Доступность сейчас</dt><dd>${item.available ? 'Подтверждена' : 'Не подтверждена'}</dd></div></dl><p class="aw-note">${esc(item.note || '')}</p>` : '';
+      const component = domainState.key === 'memory' ? memoryScopeCard(item) : domainState.key === 'models' ? modelProtocolCard(item) : domainState.key === 'system' && typeof item.implemented === 'boolean' ? `<dl class="aw-detail-grid"><div><dt>Код реализован</dt><dd>${item.implemented ? 'Да' : 'Нет'}</dd></div><div><dt>Флаг</dt><dd>${item.enabled ? 'Включён' : 'Выключен'}</dd></div><div><dt>Фактический режим</dt><dd>${esc(item.mode)}</dd></div><div><dt>Доступность сейчас</dt><dd>${item.available ? 'Подтверждена' : 'Не подтверждена'}</dd></div></dl><p class="aw-note">${esc(item.note || '')}</p>` : '';
       return `<article class="aw-domain-card"><div class="aw-domain-card-head">${heading}${item.display_status ? taskBadge(item) : badge(item.status)}</div>${item.summary || item.description ? `<p class="aw-text">${esc(item.summary || item.description)}</p>` : ''}<div class="aw-domain-card-meta">${item.model ? `<span>Model: ${esc(item.model)}</span>` : ''}${item.provider ? `<span>${esc(item.provider)}</span>` : ''}${item.synthetic === true ? '<span class="aw-status aw-info">SYNTHETIC</span>' : ''}<time>${esc(date(item.updated_at || item.created_at))}</time></div>${domainState.key === 'models' ? `<p class="aw-field-hint">${esc(connectionLabel(item))}</p>` : ''}${metrics ? `<div class="aw-domain-card-meta"><span>Проверка ответа: ${esc(pct(metrics.score_pct ?? metrics.observed_score_pct))}</span>${number(metrics.sample_size) == null ? '' : `<span>n = ${count(metrics.sample_size)}</span>`}</div><p class="aw-note">Результат указанной проверки, не общий процент профессионального качества.</p>` : ''}${item.result_text ? `<p class="aw-result-excerpt">${esc(String(item.result_text).slice(0, 240))}</p>` : ''}${component}${domainState.key === 'system' && item.fields ? `<details class="aw-technical"><summary>Технические детали</summary><pre class="aw-result-text">${esc(publicJSON(item.fields))}</pre></details>` : ''}<div class="aw-actions">${domainActionButtons(item)}</div></article>`;
     }
     const GRANT_KINDS = { schedule: 'Расписание', delegation: 'Делегирование' };
@@ -1175,7 +1215,7 @@
       const comparisons = key === 'experiments' && comparison.length ? `<section class="aw-detail-section"><h3>Сопоставимые результаты</h3><div class="aw-domain-grid">${comparison.map(result => `<article class="aw-domain-card"><strong>${esc(result.model || result.label || result.model_id || 'Модель')}</strong>${badge(result.status)}<dl class="aw-detail-grid"><div><dt>Результат проверки</dt><dd>${esc(pct(result.score_pct ?? result.evaluation?.score_pct ?? result.evaluation?.observed_score_pct ?? result.observed_eval?.score_pct))}</dd></div><div><dt>Длительность</dt><dd>${number(result.latency_ms) == null ? 'не измерена' : esc(count(result.latency_ms)) + ' мс'}</dd></div><div><dt>Стоимость</dt><dd>${esc(cost(result.cost_usd))}</dd></div></dl>${result.task_id || result.id ? `<button class="aw-link-button" data-aw-model-task="${esc(result.task_id || result.id)}">Ответ и доказательства →</button>` : ''}</article>`).join('')}</div></section>` : '';
       const modelTaskLink = key === 'model_tasks' && (item.id || item.task_id) ? `<button class="btn" data-aw-task-chat="${esc(recordId(item))}">Открыть в SF Chat</button>` : '';
       const metaFields = `<dl class="aw-detail-grid"><div><dt>Ревизия</dt><dd>${count(item.revision)}</dd></div><div><dt>Обновлено</dt><dd>${esc(date(item.updated_at || item.created_at))}</dd></div>${item.model ? `<div><dt>Запрошенная модель</dt><dd>${esc(item.model)}</dd></div>` : ''}${key === 'models' ? `<div><dt>Ключ</dt><dd>${item.credentials_configured === true ? 'Настроен · не выводится' : 'Не настроен'}</dd></div>` : ''}${key === 'model_tasks' ? `<div><dt>Model ID от провайдера</dt><dd>${esc(item.actual_model || 'Не предоставлен')}</dd></div><div><dt>Измеренная стоимость</dt><dd>${esc(cost(item.cost_usd))}</dd></div><div><dt>Длительность</dt><dd>${number(item.latency_ms) == null ? 'не измерена' : count(item.latency_ms) + ' мс'}</dd></div>` : ''}</dl>`;
-      const personaBody = key === 'external_agents' ? externalAgentCard(item) : key === 'personas' ? personaPresentationCard(item, avatar(item, 'lg')) : key === 'models' ? modelProtocolCard(item) : '';
+      const personaBody = key === 'memory' ? memoryScopeCard(item) : key === 'external_agents' ? externalAgentCard(item) : key === 'personas' ? personaPresentationCard(item, avatar(item, 'lg')) : key === 'models' ? modelProtocolCard(item) : '';
       openDrawer(meta.title + ' · ' + (item.title || item.label || item.name || 'Запись'), `${domainNav(key)}<div class="aw-actions"><button class="aw-link-button" data-aw-domain="${key}">← Все записи</button>${domainActionButtons(item)}${modelTaskLink}</div><h2 class="aw-inspector-title">${esc(item.title || item.label || item.name || item.model || 'Запись')}</h2><div class="aw-inline">${badge(item.status)}${item.synthetic === true ? '<span class="aw-status aw-info">SYNTHETIC</span>' : ''}</div>${domainLimitations(item)}${item.summary ? `<p class="aw-text">${esc(item.summary)}</p>` : ''}${metaFields}${personaBody}<dl class="aw-detail-grid">${description}</dl>${resultBody}${evaluationBody}${sourceBody}${versionBody}${courtBody}${comparisons}<div class="aw-hash">ID ${esc(recordId(item))}${item.correlation_id ? '<br>CORRELATION ' + esc(item.correlation_id) : ''}</div>`);
     }
     async function openDomainItem(id) {
@@ -1212,15 +1252,20 @@
       openDrawer('Рассмотреть повторяющуюся работу', `${domainNav(domain)}${processCandidateCard(candidate, domain, false)}<form class="aw-form" id="aw-domain-form" autocomplete="off"><p class="aw-note">Сохранится предложение для отдельного принятия или отклонения. Права, бюджет и расписание не изменятся; ожидающие проверки останутся открытыми.</p><p class="aw-form-error" id="aw-form-error" role="alert" hidden></p><div class="aw-actions"><button type="submit" class="btn primary">Сохранить предложение</button><button type="button" class="btn" data-aw-domain="${esc(domain)}">Отмена</button></div></form>`);
     }
     function formField(spec, record, dependencies) {
-      const id = 'aw-field-' + spec.key, prior = (actionForm?.action === 'update' ? recordValue(record, spec.key) : undefined) ?? spec.default;
+      const id = 'aw-field-' + spec.key, prior = (actionForm?.action === 'update' ? (spec.key === 'operational_purpose' && record?.memory_scope === 'operational' ? record.purpose : spec.key === 'purpose' && record?.memory_scope === 'operational' ? '' : recordValue(record, spec.key)) : undefined) ?? spec.default;
       let value = prior == null || spec.type === 'password' ? '' : Array.isArray(prior) ? prior.join('\n') : typeof prior === 'object' ? publicJSON(prior) : String(prior);
       if (spec.type === 'datetime-local' && value) { const parsed = new Date(value); if (Number.isFinite(parsed.getTime())) value = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
-      const required = spec.required ? ' required' : '', attrs = `id="${id}" name="${esc(spec.key)}"${required}${spec.max && spec.type !== 'number' ? ` maxlength="${spec.max}"` : ''}`;
+      const frozenMemoryBinding = actionForm?.domain === 'memory' && actionForm?.action === 'update' && ['memory_scope', 'strategy_project_id', 'task_id'].includes(spec.key);
+      const required = spec.required ? ' required' : '', attrs = `id="${id}" name="${esc(spec.key)}"${required}${frozenMemoryBinding ? ' disabled' : ''}${spec.max && spec.type !== 'number' ? ` maxlength="${spec.max}"` : ''}`;
       let input;
       if (spec.type === 'publication-source') {
         const sources = rows(dependencies.collection?.source_candidates);
         input = `<select ${attrs}><option value="">Выберите проверенный источник</option>${sources.map(source => `<option value="${esc(source.source_kind + ':' + source.source_id)}">${esc(source.title || source.source_id)} · ${esc(source.source_kind)}</option>`).join('')}</select>`;
         if (!sources.length) input += '<p class="aw-field-hint">Проверенных источников ещё нет. Публикация станет доступной после сохранения и проверки результата.</p>';
+      } else if (spec.type === 'record') {
+        const candidates = rows(dependencies.collection?.[spec.source]);
+        input = `<select ${attrs}><option value="">Не выбрано</option>${candidates.map(source => `<option value="${esc(recordId(source))}"${value === recordId(source) ? ' selected' : ''}>${esc(source.title || source.summary || 'Сохранённая запись')}</option>`).join('')}</select>`;
+        if (!candidates.length) input += '<p class="aw-field-hint">Доступных записей пока нет. Создайте проект или выполните задачу в этом пространстве.</p>';
       } else if (spec.type === 'records') {
         const candidates = rows(dependencies.collection?.[spec.source]);
         input = candidates.length ? `<div class="aw-choice-list">${candidates.map(source => `<label><input type="checkbox" name="${esc(spec.key)}" value="${esc(recordId(source))}"><span><strong>${esc(source.title || source.summary || 'Сохранённый результат')}</strong><small>${esc(recordId(source))}</small></span></label>`).join('')}</div>` : '<p class="aw-field-hint">Нет доступных подтверждённых источников. Сначала выполните и проверьте задачи.</p>';
