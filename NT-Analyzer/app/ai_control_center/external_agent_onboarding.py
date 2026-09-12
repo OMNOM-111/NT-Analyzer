@@ -5,6 +5,7 @@ The composition owner wires this to the existing Agent World unit of work,
 auth/device admission and secure_store after shared contract registration.
 """
 from datetime import datetime, timezone
+from dataclasses import replace
 import json
 import time
 from uuid import UUID, uuid5
@@ -20,13 +21,14 @@ NAMESPACE = UUID("2bcb64e4-0592-4fb1-9984-1c0aa397c462")
 
 
 class ExternalAgentOnboarding:
-    def __init__(self, *, repository, admit, policy, secrets=secure_store, client=None, validate_endpoint=target, synthetic_workspace=None):
+    def __init__(self, *, repository, admit, policy, secrets=secure_store, client=None, validate_endpoint=target, synthetic_workspace=None, enqueue_cleanup=None):
         if not callable(admit) or not callable(policy):
             raise ContractError("external_agent_composition_required")
         self.repository, self.admit, self.policy = repository, admit, policy
         self.secrets, self.client, self.validate_endpoint = secrets, client or A2AClient(), validate_endpoint
         # Trusted test composition only, no payload switch or remote claim.
         self.synthetic_workspace = synthetic_workspace
+        self.enqueue_cleanup = enqueue_cleanup
 
     def _access(self, context, operation):
         if not isinstance(context, c.RequestContext) or context.scope.environment != c.Environment.DEVELOPMENT:
@@ -124,21 +126,92 @@ class ExternalAgentOnboarding:
         self._access(context, "revoke")
         row = self._get(context, connection_id)
         if row.status == "revoked":
-            self._cleanup_credential(row)
+            self._cleanup_or_enqueue(context, row)
             return row.public()
         if row.header.revision != expected_revision:
             raise ContractError("external_agent_revision_conflict")
         row = self._save(context, row.transition("revoked", now=datetime.now(timezone.utc)), expected_revision, idempotency_key)
         # Revoke first: no later task can use this connection even if deletion
         # fails. Remote cancellation needs an explicit host cleanup decision.
+        self._cleanup_or_enqueue(context, row)
+        return row.public()
+
+    def _cleanup_or_enqueue(self, context, row):
+        try:
+            self._cleanup_credential(row)
+        except ContractError:
+            if self.enqueue_cleanup is not None:
+                # Only the existing worker enqueuer may implement this port.
+                # The revoked native record remains the durable retry anchor.
+                self.enqueue_cleanup(context=context, connection_id=str(row.header.entity_id))
+            raise
+
+    def cleanup_revoked(self, *, context, connection_id):
+        self._access(context, "cleanup")
+        row = self._get(context, connection_id)
+        if row.status != "revoked":
+            raise ContractError("external_agent_cleanup_state_invalid")
         self._cleanup_credential(row)
         return row.public()
 
-    def _cleanup_credential(self, row):
+    def cleanup_credentials(self, *, context, connection_id):
+        """Worker retries retired keys, preserving the current live reference."""
+        self._access(context, "cleanup")
+        row = self._get(context, connection_id)
+        self._cleanup_credential(row, keep_current=row.status != "revoked")
+        return row.public()
+
+    def rotate_credential(self, *, context, connection_id, expected_revision, credential, idempotency_key):
+        self._access(context, "rotate")
+        c.require_token(idempotency_key, limit=120)
+        if type(credential) is not str or not 8 <= len(credential) <= 4096 or any(ord(ch) < 33 or ord(ch) > 126 for ch in credential):
+            raise ContractError("external_agent_credential_invalid")
+        row = self._get(context, connection_id)
+        if row.status == "revoked":
+            raise ContractError("external_agent_revoked")
+        key = f"aw_external.{row.header.entity_id}.revision.{expected_revision + 1}"
+        if row.header.revision == expected_revision + 1 and row.credential.key == key:
+            if self.secrets.get_secret(key) != credential:
+                raise ContractError("external_agent_idempotency_conflict")
+            return row.public()
+        if row.header.revision != expected_revision:
+            raise ContractError("external_agent_revision_conflict")
+        if credential in row.display_name or credential in row.endpoint:
+            raise ContractError("external_agent_credential_in_metadata")
+        if not self.secrets.available():
+            raise ContractError("external_agent_secure_storage_unavailable")
+        prior = self.secrets.get_secret(key)
+        if prior is not None and prior != credential:
+            raise ContractError("external_agent_idempotency_conflict")
+        # Publish a new opaque reference; never mutate credentials beneath an
+        # active revision. In-flight tasks pinned to the old revision fail.
+        disabled = (row.transition("disabled", now=datetime.now(timezone.utc)) if row.status != "disabled"
+            else replace(row, header=replace(row.header, revision=row.header.revision + 1, updated_at=datetime.now(timezone.utc))))
+        disabled = replace(disabled, credential=c.ExternalRef(authority=c.ExternalAuthority.CREDENTIAL, key=key, scope=context.scope),
+                           allowed_capabilities=(), last_error="external_agent_reverification_required")
+        self.secrets.set_secret(key, credential)
+        saved = self._save(context, disabled, expected_revision, idempotency_key)
+        # Old references are inert immediately. Best effort physical deletion;
+        # revoke cleanup deterministically revisits every historical key.
+        try:
+            self.secrets.delete_secret(row.credential.key)
+        except Exception:
+            if self.enqueue_cleanup is not None:
+                self.enqueue_cleanup(context=context, connection_id=str(row.header.entity_id))
+        return saved.public()
+
+    def _cleanup_credential(self, row, *, keep_current=False):
         # Retryable local cleanup only. Never contact the remote agent using
         # revoked credentials, restore authority or write another revision.
         try:
-            self.secrets.delete_secret(row.credential.key)
+            base = f"aw_external.{row.header.entity_id}"
+            keys = {base, row.credential.key}
+            # Include a credential staged immediately before a failed CAS or
+            # process exit; native service holds the connection guard here.
+            keys.update(f"{base}.revision.{revision}" for revision in range(1, row.header.revision + 2))
+            for key in sorted(keys):
+                if not keep_current or key != row.credential.key:
+                    self.secrets.delete_secret(key)
         except Exception:
             raise ContractError("external_agent_credential_cleanup_pending") from None
 
