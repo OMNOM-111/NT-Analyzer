@@ -24,10 +24,11 @@ CURRENT IMPLEMENTATION COVERAGE: 95% (published provisional; reconciliation pend
 CURRENT OWNER ACCEPTANCE READINESS: 70% (published provisional; reconciliation pending)
 CURRENT INTEGRATION BRANCH: codex/agent-world-final-acceptance
 CURRENT INTEGRATION INPUTS: 9365695a + 4d8ee514 (both histories, no duplicate picks).
-SAVED INTEGRATION CHECKPOINT: a091ce6794da75064a9012dfe97d50bfc140e978; task draft PR #287.
-CURRENT VERIFICATION: exact-SHA PostgreSQL 129 PASS / 0 skips, legacy 13/13,
-  static/context/diff and 610-file bundle PASS. CI 34714150028 Linux has
-  5776 passed / 4 failed / 128 skipped; Windows remains running;
+SAVED INTEGRATION CHECKPOINT: 81e92c1ad363ffb86e18499f78017ed6973b3626; task draft PR #287.
+CURRENT VERIFICATION: CI 34719653016 static PASS; Ubuntu 5781 passed /
+  2 failed / 128 skipped, 1662.25 s; Windows remains running.
+  Follow-up Persona process UI fixture correction: 9 focused PASS in 2.41 s;
+  no runtime-code change. Earlier PG/legacy/bundle evidence stays SHA-specific;
   final unified regression and browser acceptance are not yet closed.
   Historical PASS below does not certify this integration.
 PREVIOUS INTEGRATION CODE SHA: fb2c472b — P1-3 including the decision producer.
@@ -46,7 +47,7 @@ PREVIOUS INTEGRATION CODE SHA: fb2c472b — P1-3 including the decision producer
   both crawled. CI's Windows leg IS the full suite on this box. Its log,
   scratchpad/full_84ddb2e7.txt, ends mid-run with zero failures — that is a kill, not a
   red result.
-CURRENT WIP: saved a091ce67 under final verification; Git is authoritative.
+CURRENT WIP: saved 81e92c1a under verification; follow-up test-fixture/docs changes, Git authoritative.
 CURRENT LOCAL 8765 SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (not switched, not restarted)
 HISTORICAL ACCEPTANCE INSTANCE: http://127.0.0.1:8809/ui/ai-command-center.html — SHA 84ddb2e7,
   disposable data root, zero external calls. :8808 serves b06c5f55 and holds the evidence of
@@ -177,6 +178,29 @@ reconciled on a final immutable code SHA.
   historical cost stays unknown, not invented zero. Scoped presentation: 58 PASS.
 - Final CI remains unstarted for the follow-up until exact source and PG gates
   are reconciled. No Local switch, release or owner-acceptance claim.
+
+#### Candidate 81e92c1a — latest verification, not final acceptance
+
+- Source: `81e92c1ad363ffb86e18499f78017ed6973b3626`. CI **34719653016**:
+  static **PASS**; Ubuntu **5781 passed / 2 failed / 128 skipped**, **1662.25 s**;
+  Windows remains **RUNNING**. The failed result is retained, not full-suite PASS.
+- Follow-up changes correct only the Persona process UI test fixture's
+  multicast event/leave callbacks. **9 focused PASS in 2.41 s**; runtime code
+  is unchanged by that correction. Final saved-source CI/closeout remains open.
+- Complete corrected Persona process UI file: **65 passed in 11.43 s**;
+  repository CSP/secrets/Markdown and Context Pack checks passed. Browser
+  confirmed the same-page SF Chat continuation retains the original goal and
+  leaves dispatch consent unchecked, and Court displays local synthetic
+  provenance with 2 approvals, 1 dissent and execution prohibited.
+- Browser Preview on exact 81e92c1a completed synthetic Telegram, Google,
+  Email OTP and QR routes. Consent began unchecked; permanent and session
+  device paths plus new-browser OTP were exercised. Exit returned to the
+  **QA8815 test owner**, not the protected Local8765 owner. These are synthetic
+  QA mechanism observations, not real external-provider delivery, real owner
+  registration/consent or certification of existing Local owner data.
+- Published **95% / 70% remain provisional**. Earlier SHA-specific PG/legacy/
+  bundle receipts below are preserved separately; no automatic promotion of
+  those receipts to this candidate and no final programme acceptance is claimed.
 
 #### Candidate a091ce67 — saved exact-code evidence
 

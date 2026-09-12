@@ -15,7 +15,18 @@
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 
-- Current saved source: `a091ce6794da75064a9012dfe97d50bfc140e978`, task branch
+- Current saved source: `81e92c1ad363ffb86e18499f78017ed6973b3626`, task branch
+  `codex/agent-world-final-acceptance`, draft PR #287. CI **34719653016**:
+  static PASS, Ubuntu **5781 passed / 2 failed / 128 skipped**, 1662.25 s;
+  Windows still running. Follow-up Persona process UI fixture multicast
+  event/leave callback correction has **9 focused PASS in 2.41 s**, with no
+  runtime-code change. Preserve the failed CI receipt; final gates remain open.
+  Exact-81e92c1a synthetic Preview browser verification covered Telegram/Google/
+  Email OTP/QR, initially unchecked consent, permanent/session and new-browser
+  OTP; Exit restored QA8815 test owner only. Do not infer real provider/owner
+  registration or protected Local-data acceptance. **95% / 70% stay provisional**.
+
+- Earlier saved source: `a091ce6794da75064a9012dfe97d50bfc140e978`, task branch
   `codex/agent-world-final-acceptance`, draft PR #287. Exact-code disposable
   PostgreSQL **129 PASS / 0 skips** (88 Agent World/External/Persona, 29 legacy,
   12 workers); legacy runner **13/13**; static/context/diff and **610-file bundle

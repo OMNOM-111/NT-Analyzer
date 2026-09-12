@@ -17,7 +17,17 @@
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
-- Saved Agent World candidate: `a091ce6794da75064a9012dfe97d50bfc140e978`,
+- Current saved Agent World candidate: `81e92c1ad363ffb86e18499f78017ed6973b3626`,
+  CI **34719653016** static PASS, Ubuntu **5781 passed / 2 failed / 128 skipped**
+  in 1662.25 s; Windows remains running. A follow-up fixes only Persona process
+  UI fixture multicast event/leave callbacks (**9 focused PASS, 2.41 s**), not
+  runtime code. Exact-candidate Preview browser routes covered synthetic
+  Telegram/Google/Email OTP/QR, unchecked consent, permanent/session and new-
+  browser device OTP; Exit returned to QA8815 test owner, not protected Local.
+  This is synthetic QA evidence, not real owner/external-provider certification.
+  Full final verification remains open; **95% / 70% stay provisional**.
+
+- Earlier saved Agent World candidate: `a091ce6794da75064a9012dfe97d50bfc140e978`,
   `codex/agent-world-final-acceptance`, draft PR #287. Exact disposable PostgreSQL:
   **129 PASS / 0 skips** (88 Agent World/External/Persona + 29 legacy + 12 workers),
   legacy runner **13/13**, static/context/diff and **610-file bundle PASS**.

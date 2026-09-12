@@ -285,7 +285,9 @@ def test_process_retry_reuses_snapshot_and_idempotency_key(monkeypatch):
 def audio_setup():
     return f"""
       Object.assign(domains.personas.items[0],{json.dumps(persona())});
-      const audioEvents=[], utterances=[], rootListeners={{}};let leaveHandler, speechFailure=null, delayedSpeech=null, mediaReadyState=2;
+      const audioEvents=[], utterances=[], rootListeners={{}}, rootListenerSets=new Map(), leaveHandlers=[];
+      const leaveHandler=()=>{{for(const handler of leaveHandlers.splice(0))handler();}};
+      let speechFailure=null, delayedSpeech=null, mediaReadyState=2;
       const makeDrawer=window.UI.drawer;
       window.UI.drawer=(title,html)=>{{
         const result=makeDrawer(title,html), oldQuery=result.querySelector;
@@ -304,12 +306,16 @@ def audio_setup():
         }};return result;
       }};
       tabs.forEach(tab=>{{tab.focus=()=>{{}};tab.getAttribute=()=>tab.dataset.awTab==='overview'?'true':'false';}});
-      window.UI.onLeave=fn=>{{leaveHandler=fn;}};
+      window.UI.onLeave=fn=>{{leaveHandlers.push(fn);}};
       window.UI.agentSpeakStop=()=>audioEvents.push('legacy-stopped');
       window.UI.agentFacePlay=(face)=>{{if(face)face.classList.add('playing');audioEvents.push('face-play');}};
       window.UI.agentFacePause=(face)=>{{if(face)face.classList.remove('playing');audioEvents.push('face-pause');}};
-      window.addEventListener=(type,fn)=>{{rootListeners[type]=fn;}};
-      window.removeEventListener=(type)=>{{delete rootListeners[type];}};
+      window.addEventListener=(type,fn)=>{{
+        if(!rootListenerSets.has(type))rootListenerSets.set(type,new Set());
+        rootListenerSets.get(type).add(fn);
+        rootListeners[type]=event=>{{for(const handler of [...rootListenerSets.get(type)])handler(event);}};
+      }};
+      window.removeEventListener=(type,fn)=>{{rootListenerSets.get(type)?.delete(fn);}};
       window.setTimeout=setTimeout;window.clearTimeout=clearTimeout;
       window.PersonaAudio=require({json.dumps(str(AUDIO))});
       window.SpeechSynthesisUtterance=class {{constructor(text){{this.text=text;}}}};

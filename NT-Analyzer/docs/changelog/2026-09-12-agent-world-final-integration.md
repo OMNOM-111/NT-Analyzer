@@ -58,7 +58,23 @@ the shared typed Evaluation remain distinct.
 
 ## Verification boundary
 
-### Saved candidate a091ce67
+### Latest saved candidate 81e92c1a — verification remains open
+
+Source `81e92c1ad363ffb86e18499f78017ed6973b3626`, CI **34719653016**:
+static PASS; Ubuntu **5781 passed / 2 failed / 128 skipped**, **1662.25 s**;
+Windows still running. Follow-up corrects only multicast event/leave callbacks
+in the Persona process UI test fixture: **9 focused PASS, 2.41 s**. Runtime
+code is unchanged by that correction; the CI failures remain recorded and
+final saved-source verification is not closed.
+
+Exact-81e92c1a Preview browser observations: synthetic Telegram/Google/Email
+OTP/QR, initially unchecked consent, permanent/session device confirmation,
+new-browser OTP, and Exit restoring the QA8815 test-owner session. This is
+synthetic QA evidence, not real owner consent, external identity-provider
+certification or verification/restoration of the protected Local8765 data.
+Published 95% / 70% remain provisional; no final acceptance or release claim.
+
+### Earlier saved candidate a091ce67
 
 Exact source: `a091ce6794da75064a9012dfe97d50bfc140e978`, draft PR #287.
 Disposable PostgreSQL: **129 PASS / 0 FAIL / 0 ERROR / 0 SKIP** — **88** Agent
