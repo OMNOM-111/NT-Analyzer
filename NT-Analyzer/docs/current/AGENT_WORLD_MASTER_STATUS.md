@@ -13,6 +13,13 @@
 PROGRAM: Agent World / AI Center
 STATUS: IN DEVELOPMENT
 
+HANDOFF: P1-3 accepted and closed by the owner at f1fe393f.
+  P1-5 TAKEOVER: Codex stopped on a limit mid-integration. Its working tree was
+  saved untouched at 5511c8f8 before anything continued — see that commit for the
+  exact manifest. This seat is the single integrator of P1-5 until told otherwise,
+  which suspends the ownership line below for the duration.
+  ACTIVE OWNER OF THE SHARED AGENT WORLD FILES: Codex, until P1-5 is integrated.
+
 CURRENT IMPLEMENTATION COVERAGE: 93%
 CURRENT OWNER ACCEPTANCE READINESS: 68%
 
@@ -124,7 +131,7 @@ Marks: `Y` yes · `P` partial · `N` no.
 | SF Social | Y | Y | Y | Y | P | IMPLEMENTED | Prepare → explicit publish; verified sources only; corrupted receipts never attested; private memory never publishable | One real publication is an owner decision |
 | Owner Preview | Y | Y | Y | Y | P | IMPLEMENTED | Isolated synthetic operator with its own domains; deliberately no provider, worker, Router, Court, publication or routine execution | Manual route not re-run on final code |
 | Ordinary-user model onboarding | Y | P | Y | P | N | PARTIAL | Wizard driven in a browser with a placeholder key against the local executor | Real key, real endpoint, real BYOK E2E — P1-4 |
-| External-agent onboarding | N | N | N | N | N | NOT IMPLEMENTED | — | No remote tools/tasks, MCP or A2A — P1-5, needs an owner product decision |
+| External-agent onboarding | Y | Y | Y | Y | Y | IMPLEMENTED · PENDING INTEGRATION | Native route walked end to end on :8812 over real HTTP and read from the live DOM: add → verify → ACTIVE → Coordinator picks a compatible role → dispatch through the existing durable worker → Contribution/Outcome/Evaluation(subject=EXTERNAL_AGENT_CONNECTION) → performance → revoke → next dispatch refused `409 external_agent_revoked`, history kept. 20 native cases (E2E, hardening, UI) beside the 85 contract cases | Lives on `codex/agent-world-external-native-e2e`, not yet on the integration branch. Only the Development agent exists: a real remote agent is refused with `external_agent_remote_budget_not_configured` until a paid allowance contract is agreed — owner decision |
 | UI / UX | Y | Y | Y | Y | N | PARTIAL | All eight expected sections exist as drawer panels behind three tabs | Header counter lag, narrow-column wrapping, structure vs mockups — P3 |
 | Security / tenant isolation | Y | Y | Y | Y | Y | DONE + VERIFIED | FORCE RLS; foreign workspace reads 0 and inserts fail `42501`; device and session re-checked per request; SSRF guard; no secret in Git | — |
 | Restart / idempotency | Y | Y | Y | Y | Y | DONE + VERIFIED | Stop/restart/re-read against PostgreSQL; duplicate dispatch and replay refused | — |
@@ -423,9 +430,32 @@ Target truth: An ordinary user connects an external agent, it does bounded work,
 Evidence required: the native end-to-end route below
 Owner action required: YES for accepting the protocol into scope
 Assigned to: P1-5 executor (contracts), integrator (shared seams)
-Status: UNBLOCKED at 84ddb2e7 — the typed Evaluation subject is delivered,
-        and CI 34641854998 is green on all three jobs at that SHA.
-        Integration SHA for the executor: 84ddb2e7.
+Status: NATIVE ROUTE COMPLETE on codex/agent-world-external-native-e2e.
+        Was: UNBLOCKED at 84ddb2e7 — the typed Evaluation subject delivered,
+        CI 34641854998 green on all three jobs at that SHA.
+
+        Codex integrated 05f88d02 onto f1fe393f as 4f536f69 and registered the
+        kind atomically as agreed: enum + record + states + codec + Evaluation
+        subject allowlist, in one commit. `EXTERNAL_AGENT_CONNECTION` is a real
+        subject now, and no fake Model ID exists anywhere: the connection reports
+        `model: "unknown / externally managed"`, `model_id: null` and
+        `real_benchmark_eligible: false`.
+
+        Takeover found the WIP larger than its note: 12 files and +647/-14, not
+        8 and +336/-1. Saved verbatim at 5511c8f8 before anything continued.
+
+        Four defects were found by driving the route rather than by reading it:
+        a repeat dispatch crashed on a duplicate worker job id; a revoked agent
+        was refused as "no compatible role" and a disabled one as "your numbers
+        are invalid"; a revocation whose secret deletion failed was reported as a
+        failed revocation, which tells a person the agent still has access; and a
+        worker that died mid-dispatch left the task in `running` with no error
+        for ever. The last one is the stuck task this programme already removed
+        once from the model path.
+
+        The fifth was found only in a browser: every test passed while the
+        feature was unreachable, because the tool tiles are static markup and
+        nothing had been added to it.
         `EXTERNAL_AGENT_CONNECTION` добавляется атомарно при интеграции P1-5:
         enum + record + states + codec + Evaluation subject allowlist.
         That kind is NOT registered today, and registering it alone breaks the
@@ -607,12 +637,17 @@ Connections are private in the shared visibility helper; foreign-owner reads den
 No runtime registration/worker/API feature enabled; no global percentage raised.
 
 ```text
-Last safe commit: fb2c472b - P1-3 complete, decision producer included.
-  CI 34658942542 green on all three jobs at fb2c472b: Static gates;
-  ubuntu 5515 / 0 / 116; windows self-hosted 5512 / 0 / 119.
-  Locally at fb2c472b: 228 passed across the completion, handoff,
-  shared-security and reputation suites, plus 13 decision-path cases.
-  P1-3 is closed on every count.
+Last safe commit on THIS branch (codex/agent-world-external-native-e2e):
+  cd29d744 - P1-5 native route complete. CI 34677045628 dispatched at it.
+  Locally: 20 native cases (3 E2E, 10 hardening, 7 UI) plus the 85 contract
+  cases from 4f536f69, and 180 across the UI suites. The route was walked over
+  real HTTP on :8812 and read from the live DOM.
+  5511c8f8 is Codex's working tree saved verbatim, before any continuation.
+
+  The integration branch is still codex/agent-world-unified-acceptance at
+  f1fe393f - P1-3, CI 34658942542 green on all three jobs at fb2c472b:
+  ubuntu 5515 / 0 / 116; windows self-hosted 5512 / 0 / 119. Nothing here has
+  been merged into it.
 
 Uncommitted files: none. Re-check `git status` before assuming that.
 
@@ -636,6 +671,28 @@ Do not touch:
     P1-5: those three are what its atomic commit rewrites
   - Any Codex branch other than codex/agent-world-unified-acceptance
   - deploy/testing/acceptance.env or any generated DSN - never into Git
+
+Exact next action for P1-5:
+  1. Read CI 34677045628 at cd29d744. Full pytest lives there; do not start a
+     local full regression while a self-hosted job is running - they share this
+     machine and each roughly doubles the other's wall time.
+  2. Percentages move only after that is green. The pending move is
+     External-agent onboarding 0 -> 1.0 on both metrics, which is
+     93 -> 95 and 68 -> 70 on the same 36-row method. Do not apply it earlier.
+  3. Then the owner decision this now waits on: a real remote agent is refused
+     with `external_agent_remote_budget_not_configured` because no paid external
+     allowance contract exists. Only the Development agent runs today, and it is
+     synthetic by construction - default off, allowlisted workspace, no socket.
+
+Two things not to undo here:
+
+  A failed execution never becomes a bad external agent, and an interrupted
+  dispatch is never resent. At-most-once is the right contract for someone
+  else's agent; the task says `external_agent_reply_uncertain` instead.
+
+  Every refusal names the thing that actually stopped it. A revoked agent
+  reported as "no compatible role" was true and useless, and that is exactly the
+  class of defect P0-2 existed to remove.
 
 Exact next action:
   1. DONE - CI 34658942542 green at fb2c472b. P1-3 is closed and the
