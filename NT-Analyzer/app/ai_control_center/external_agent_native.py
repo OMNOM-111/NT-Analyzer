@@ -219,6 +219,14 @@ class ExternalAgentService:
             except ContractError as error:
                 latest = db._get(ctx, EntityKind.TASK, task_id)
                 return self.fail(latest, db._json(ctx, latest.checkpoint), error.code)
+            except Exception:
+                # The worker died between claiming the dispatch and reading a
+                # reply. Whether the agent ever saw the request is unknown, so
+                # it is never sent again on its own — but the task says that,
+                # instead of sitting in `running` with nothing to read.
+                latest = db._get(ctx, EntityKind.TASK, task_id)
+                self.fail(latest, db._json(ctx, latest.checkpoint), "external_agent_reply_uncertain")
+                raise
 
     def fail(self, task, cp, code):
         cp = {**cp, "error": code}

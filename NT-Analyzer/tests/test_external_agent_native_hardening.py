@@ -318,3 +318,44 @@ def test_the_queued_cleanup_finishes_once_the_secret_store_recovers(external, mo
     results = [result for job, result in drain() if job["payload"].get("phase") == "external_cleanup"]
     assert results and results[0].get("ok") is True, results
     assert broken["until"] == 0
+
+
+# --- an interrupted dispatch --------------------------------------------------
+
+def test_a_worker_that_dies_mid_dispatch_leaves_a_reason_and_never_resends(external, monkeypatch):
+    """At-most-once is the right contract for someone else's agent.
+
+    So the task is not retried. What it must not do is sit in `running` with no
+    error for ever, which is exactly the stuck task this programme already
+    removed once from the model path.
+    """
+    env = external
+    conn = connected(env, key="interrupt")
+    started = act(env, conn["id"], "task", {"input_text": "[1,2,3]"}, key="interrupt-task")
+
+    original = dev.client
+    def dying(authorized):
+        client = original(authorized)
+        def transport(endpoint, *, credential, packet, timeout):
+            if packet.get("method") == "message/send":
+                raise OSError("worker process died mid-dispatch")
+            return original(authorized).transport(endpoint, credential=credential, packet=packet, timeout=timeout)
+        client.transport = transport
+        return client
+    monkeypatch.setattr(dev, "client", dying)
+
+    with pytest.raises(OSError):
+        drain()
+
+    row = task_row(env, conn["id"], started["started_task_id"])
+    assert row["status"] == "blocked"
+    assert row["error_code"] == "external_agent_reply_uncertain"
+    assert row["evaluation_id"] is None
+    assert detail_of(env, conn["id"])["current_task"] is None
+
+    # And nothing re-sends it behind the person's back.
+    monkeypatch.setattr(dev, "client", original)
+    again = act(env, conn["id"], "task", {"input_text": "[1,2,3]"}, key="interrupt-task")
+    assert again["status"] == "blocked"
+    assert not [job for job, _ in drain() if job["kind"] == "agent_world_external"]
+    assert detail_of(env, conn["id"])["performance"]["sample_size"] == 0
