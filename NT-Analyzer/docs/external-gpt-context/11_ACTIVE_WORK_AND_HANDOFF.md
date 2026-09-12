@@ -8,17 +8,21 @@
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
 - Protected Local program snapshot: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. New unified-source evidence is separate below; full-program/owner acceptance remains open.
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
-- Protected Local branch snapshot: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; active unified source is PR #285 below
+- Protected Local branch snapshot: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; the active final branch is identified below, while #285 is an accepted integration input
 - Version: `0.10.0-beta.96`, `pre_release`; clean `2b6d0112` active on Local 8765, no Canary/Production promotion
 - Integration state: scoped model/domain/Chat/NT/Desktop, real fact handoff, manual discussion, separate application observations, Consensus and Court verified; owner-dependent and full-program work remain
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 
-- Current P1-5 continuation uses delivered `3c62465d` / code `84ddb2e7`; native
-  connection registration/private visibility/shared Evaluation allowlist added.
-  372 focused tests PASS. New dirty integrator execution/presentation files prevent
-  overlapping native wiring until saved SHA or explicit ownership handoff.
+- Current single-integrator task: `codex/agent-world-final-acceptance`, integration
+  commit `334f086f`, inputs `9365695a` and `4d8ee514`. Shared-file handoff is complete;
+  the old P1-5 ownership blocker no longer applies. Native P1-5 source CI is
+  34678502093 at `c16b511d`; final unified checks are still pending. Work now covers
+  public semantic clarification, immutable Intent replacement, synthetic process/
+  scheduler provenance, real ordinary-user PostgreSQL tests and isolated browser
+  acceptance. See [master status](../current/AGENT_WORLD_MASTER_STATUS.md).
+  No owner credential, Local switch, main merge or deploy is authorized.
 
 - Historical integrator answer read at `61ff7a38` (2026-09-11): reviewed checkpoint `97095b00`,
   shared ownership unchanged; await typed Evaluation/native kind integration SHA.
@@ -28,14 +32,14 @@
   rechecks after claim/secret access. Native atomic ordering remains unwired.
   Native cleanup after revoke and API/worker composition still require integration.
 
-- Parallel P1-5 only: branch `codex/agent-world-external-agent-onboarding`, base
+- Historical parallel P1-5 checkpoint only (not current next steps): branch `codex/agent-world-external-agent-onboarding`, base
   `9ae183f65149c9cc7253490810667fc75cbf9cf6`. Separate A2A 0.3 bounded connection,
   not Persona/Model/MCP. Shared integration files remain with the integrator.
   Next: agree native kind/codec and external Evaluation subject, then wire existing
   storage/queue/API. No complete app E2E claim. See
   [master parallel handoff](../current/AGENT_WORLD_MASTER_STATUS.md) and
   [P1-5 change record](../changelog/2026-09-10-external-agent-onboarding.md).
-- Latest saved/pushed executable source:
+- Historical saved/pushed executable source (superseded by the integration above):
   **`e45b64b0121014c5d796553ae8b512d98a5782ae`**, task branch
   `codex/agent-world-unified-acceptance`, draft PR #285. Clean immutable full
   **5416 PASS / 119 SKIP / 0 FAIL / 0 ERROR**, 5834.82 s; legacy **13/13 PASS**.

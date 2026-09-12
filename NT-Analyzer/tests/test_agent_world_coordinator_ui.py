@@ -68,6 +68,7 @@ def run_ui(monkeypatch, scenario, setup=""):
     fixture = f"""
       const coordinatorSource={json.dumps(source())}, coordinatorPrepared={json.dumps(prepared())};
       let previewResultOverride={{}}, approvalResult={{ok:true}}, approvalError=null, previewError=null;
+      let commissionResult={{ok:true,item:coordinatorSource}};
       let clock=Date.parse('2026-09-08T12:00:00Z');
       class ClockDate extends Date {{static now(){{return clock;}}}}
       domains.automation={{enabled:true,actions:['commission'],items:[],commissions:[coordinatorSource],
@@ -80,7 +81,7 @@ def run_ui(monkeypatch, scenario, setup=""):
           calls.push({{method:'post',domain,id,action,body:JSON.parse(JSON.stringify(body))}});
           if(action==='preview_commission'){{if(previewError)throw previewError;return JSON.parse(JSON.stringify({{...coordinatorPrepared,...previewResultOverride}}));}}
           if(action==='approve_commission'){{if(approvalError)throw approvalError;return JSON.parse(JSON.stringify(approvalResult));}}
-          return {{ok:true,item:coordinatorSource}};
+          return JSON.parse(JSON.stringify(commissionResult));
         }}
         return originalAction(domain,id,action,body);
       }};
@@ -225,6 +226,28 @@ def test_actual_commission_form_requires_user_gesture_and_narrow_graph_payload(m
     assert result["posts"][0]["body"]["payload"]["parent_indices"] == [-1, 0, 1]
     assert result["posts"][0]["body"]["payload"]["max_depth"] == 3
     assert not any(post["action"] in {"approve_commission", "apply", "enable"} for post in result["posts"])
+
+
+def test_public_commission_clarifies_meaning_before_any_task(monkeypatch):
+    plan = {"status": "clarification_required", "goal": "Разобрать данные", "question": "Какой результат нужен?",
+            "plan_sha256": PLAN_SHA, "choices": [{"id": "1", "label": "Проверить передачу", "available": True},
+                                                  {"id": "2", "label": "Разобрать участки", "available": True}]}
+    result = run_ui(monkeypatch, f"""
+      await click({{awDomain:'automation'}},'shell');
+      await click({{awDomainAction:'commission',awEntity:'new'}});
+      await submit(form({json.dumps(commission('parallel', TARGETS[:1]))},true));
+      const clarification=drawer.innerHTML;
+      commissionResult={{ok:true,item:coordinatorSource}};
+      await submit(form({{intent_choice:'2'}},true));
+      return {{clarification,posts:calls.filter(x=>x.method==='post')}};
+    """, "commissionResult=" + json.dumps(plan) + ";")
+    assert "Задания ещё не запущены" in result["clarification"]
+    assert "Разобрать участки" in result["clarification"]
+    assert len(result["posts"]) == 2
+    first, confirmed = [post["body"] for post in result["posts"]]
+    assert "selection" not in first["payload"] and "operation" not in first["payload"]
+    assert confirmed["payload"] == first["payload"] | {"selection": {"id": "2", "plan_sha256": PLAN_SHA}}
+    assert first["idempotency_key"] == confirmed["idempotency_key"]
 
 
 def test_open_plan_has_no_auto_dispatch_and_confirmation_starts_unchecked(monkeypatch):

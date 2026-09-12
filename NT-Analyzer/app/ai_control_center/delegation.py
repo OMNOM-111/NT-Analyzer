@@ -447,7 +447,7 @@ def propose(authorized, service, source_task_id, target_model_ids, max_depth, id
         ("source_outcome_id", "source_evaluation_id", "source_proof_sha256", "artifact_hashes", "facts", "facts_sha256")},
         "nodes": _graph(target_model_ids, parent_indices, max_depth, source["source_persona_id"], service, context),
         "max_depth": max_depth, "conversation_id": source["conversation_id"], "source_message_id": source["source_message_id"],
-        "synthetic": False}
+        "synthetic": source.get("synthetic") is True}
     if data_root:
         # The operation the commission asked for, labelled from the one registry
         # so the proposal and the commission describe identical work.

@@ -917,11 +917,20 @@ class DomainService:
                 or any(spec.get(key) != value for key, value in expected.items())):
             raise ContractError("judge_contribution_mismatch")
         receipt = self._json(context, contribution.result)
+        from .test_executor import EXECUTOR, enabled as development_executor_enabled
+        diagnostic = receipt.get("synthetic") is True
+        if diagnostic and (context.scope.environment != c.Environment.DEVELOPMENT
+                or not development_executor_enabled(context.scope.workspace_id)
+                or receipt.get("source") != "local_test_executor" or receipt.get("executor") != EXECUTOR
+                or receipt.get("actual_model") != EXECUTOR or receipt.get("external_call") is not False
+                or receipt.get("paid_call") is not False or receipt.get("cost_usd") != 0
+                or result.model_version != EXECUTOR or result.failure_domain != "local_test_executor:" + EXECUTOR):
+            raise ContractError("judge_contribution_mismatch")
         try:
             response = json.loads(receipt.get("response", ""))
         except (ValueError, TypeError):
             raise ContractError("judge_contribution_mismatch") from None
-        if (receipt.get("source") != "provider_response" or receipt.get("synthetic") is not False
+        if ((not diagnostic and (receipt.get("source") != "provider_response" or receipt.get("synthetic") is not False))
                 or receipt.get("task_id") != str(task.header.entity_id)
                 or receipt.get("request_sha256") != checkpoint.get("request_sha256")
                 or response != {"verdict": result.verdict, "confidence": result.confidence, "rationale": result.rationale}):

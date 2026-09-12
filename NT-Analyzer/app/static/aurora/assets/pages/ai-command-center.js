@@ -133,10 +133,10 @@
   }
   const canRunDemo = data => data?.enabled === true && data?.capabilities?.can_run_demo === true;
   const knownDomain = value => Object.prototype.hasOwnProperty.call(DOMAINS, String(value || ''));
-  const actionLabel = value => Object.prototype.hasOwnProperty.call(ACTION_LABELS, value) ? ACTION_LABELS[value] : 'Действие';
+  const actionLabel = value => value === 'clarify_commission' ? 'Уточнить новым поручением' : Object.prototype.hasOwnProperty.call(ACTION_LABELS, value) ? ACTION_LABELS[value] : 'Действие';
   function allowedDomainActions(data, item) {
     if (data?.enabled !== true) return [];
-    return rows(item ? item.actions : data.actions).filter(value => typeof value === 'string' && Object.prototype.hasOwnProperty.call(ACTION_LABELS, value));
+    return rows(item ? item.actions : data.actions).filter(value => typeof value === 'string' && (value === 'clarify_commission' || Object.prototype.hasOwnProperty.call(ACTION_LABELS, value)));
   }
   const field = (key, label, type, extra) => ({ key, label, type: type || 'text', ...(extra || {}) });
   const rubricField = (assistant = false) => field('rubric_key', 'Задание и проверка', 'select', { required: true, options: [['connection_exact', 'Точный ответ · соединение'], ['json_arithmetic', 'Арифметика · JSON'], ['extract_facts', 'Извлечение фактов'], ...(assistant ? [['assistant_response', 'Ответ помощника · ручная проверка']] : [])] });
@@ -155,6 +155,7 @@
   }
   function domainFormFields(domain, action, catalog) {
     if (!knownDomain(domain)) return [];
+    if (domain === 'automation' && action === 'clarify_commission') return domainFormFields(domain, 'commission', catalog);
     if (domain === 'external_agents') {
       if (action === 'create') return [field('display_name', 'Название подключения', 'text', { required: true, max: 80 }), field('protocol', 'Протокол', 'select', { required: true, options: [['a2a-0.3-jsonrpc-bounded', 'A2A 0.3 · ограниченный JSON-RPC']] }), field('endpoint', 'HTTPS endpoint внешнего агента', 'url', { required: true, max: 350, hint: 'Публичный HTTPS:443. Внутренние адреса, перенаправления и metadata endpoints запрещены.' }), field('credential', 'Секрет подключения', 'password', { required: true, max: 4096, hint: 'Введите самостоятельно. Секрет не возвращается в карточке и не копируется из owner-подключений.' }), field('capability', 'Запрашиваемая возможность', 'select', { required: true, options: [['stratforge.json_arithmetic.v1', 'Диагностика: арифметика JSON']], hint: 'Не оценка профессионального качества. Сервер пересечёт запрос с проверенными возможностями агента.' })];
       if (action === 'rotate') return [field('credential', 'Новый секрет подключения', 'password', { required: true, max: 4096, hint: 'Старый секрет не показывается. После замены требуется новая проверка подключения.' })];
@@ -258,7 +259,7 @@
       payload[spec.key] = spec.boolean ? value === 'true' : value;
     }
     if (domain === 'calendar' && payload.starts_at && payload.ends_at && payload.ends_at <= payload.starts_at) throw new Error('Окончание должно быть позже начала.');
-    if (domain === 'automation' && action === 'commission') {
+    if (domain === 'automation' && ['commission', 'clarify_commission'].includes(action)) {
       const targets = payload.target_model_ids || [];
       if (targets.includes(payload.coordinator_model_id)) throw new Error('Выберите для проверок другие подключения, не подключение Координатора.');
       const chain = payload.topology === 'chain';
@@ -1251,9 +1252,10 @@
     }
     async function openDomainAction(action, id, task) {
       const key = task ? 'tasks' : domainState?.key;
-      const record = task || (id === 'new' ? null : domainState?.item && recordId(domainState.item) === id ? domainState.item : [...items(domainState?.data), ...rows(domainState?.data.commissions), ...rows(domainState?.data.delegations), ...rows(domainState?.data.schedules)].find(item => recordId(item) === id));
+      let record = task || (id === 'new' ? null : domainState?.item && recordId(domainState.item) === id ? domainState.item : [...items(domainState?.data), ...rows(domainState?.data.commissions), ...rows(domainState?.data.delegations), ...rows(domainState?.data.schedules)].find(item => recordId(item) === id));
       const allowed = task ? rows(task.allowed_actions || task.actions) : allowedDomainActions(domainState?.data, record);
       if (!key || !allowed.includes(action) || mutationBusy || id !== 'new' && !record) return;
+      if (action === 'clarify_commission' && record?.request_seed) record = { ...record, ...record.request_seed, topology: rows(record.request_seed.parent_indices).some(index => index >= 0) ? 'chain' : 'parallel' };
       if (key === 'publications' && action === 'publish' || key === 'automation' && action === 'approve_commission') return; // Only a validated preview opens these approvals.
       if (key === 'router' && action === 'apply') return;
       const request = ++detailGeneration;
@@ -1327,7 +1329,13 @@
         values[spec.key] = spec.type === 'models' ? qsa(`input[name="${spec.key}"]:checked`, form).map(input => input.value) : ['evidence', 'records'].includes(spec.type) ? qsa(`input[name="${spec.key}"]:checked`, form).map(input => input.value).concat(String(form.elements.namedItem(spec.key + '_manual')?.value || '').split(/[\s,]+/).filter(Boolean)) : form.elements.namedItem(spec.key)?.value || '';
       }
       let payload;
-      try { payload = state.processCandidate ? processCandidatePayload(state.processCandidate, state.domain) : domainPayload(state.domain, state.action, values); }
+      try {
+        if (state.intentPlan) {
+          const choice = form.elements.namedItem('intent_choice')?.value;
+          if (!rows(state.intentPlan.prepared.choices).some(row => row.id === choice && row.available)) throw new Error('Выберите доступный ожидаемый результат.');
+          payload = { ...state.intentPlan.source, selection: { id: choice, plan_sha256: state.intentPlan.prepared.plan_sha256 } };
+        } else payload = state.processCandidate ? processCandidatePayload(state.processCandidate, state.domain) : domainPayload(state.domain, state.action, values);
+      }
       catch (error) { errorBox.textContent = error.message; errorBox.hidden = false; return; }
       if (state.domain === 'publications' && state.action === 'publish') {
         const publication = state.publication;
@@ -1358,6 +1366,13 @@
         const result = await API.aiControlCenterDomainAction(state.domain, state.id, state.action, body);
         if (disposed) return;
         if (result?.ok === false) throw { status: 409 };
+        if (state.domain === 'automation' && ['commission', 'clarify_commission'].includes(state.action) && result?.status === 'clarification_required') {
+          mutationBusy = false;
+          actionForm = { ...state, intentPlan: { prepared: result, source: payload } };
+          const choices = rows(result.choices).map(choice => `<label class="aw-confirm"><input type="radio" name="intent_choice" value="${esc(choice.id)}" required${choice.available ? '' : ' disabled'}><span>${esc(choice.label)}${choice.reason ? '<small>Недостаточно данных для разбиения между выбранными специалистами. Измените исходные данные или состав команды.</small>' : ''}</span></label>`).join('');
+          openDrawer('Уточнить ожидаемый результат', `${domainNav('automation')}<h2>${esc(result.goal)}</h2><p class="aw-text">${esc(result.question)}</p><p class="aw-note">Задания ещё не запущены. Вы выбираете ожидаемый результат; роли и внутренние операции определит Координатор. Исполнение дочерних заданий потребует отдельного разрешения.</p><form class="aw-form" id="aw-domain-form">${choices}<p class="aw-form-error" id="aw-form-error" role="alert" hidden></p><div class="aw-actions"><button type="submit" class="btn primary">Подтвердить поручение</button><button type="button" class="btn" data-aw-domain="automation">Отмена</button></div></form>`);
+          return;
+        }
         if (state.domain === 'router' && state.action === 'preview') {
           mutationBusy = false;
           openRouterPreview(result.item || result, state.item);

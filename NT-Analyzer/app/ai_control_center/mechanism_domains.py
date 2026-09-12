@@ -30,7 +30,7 @@ from .states import ContractError, EntityKind
 # error rather than a silent no-op.
 ACTIONS = {
     "automation": frozenset({"propose", "enable", "cancel", "revoke", "delegate", "reconcile",
-        "preview_delegation", "commission", "preview_commission", "approve_commission"}),
+        "preview_delegation", "commission", "clarify_commission", "preview_commission", "approve_commission"}),
     "router": frozenset({"preview", "apply"}),
 }
 
@@ -298,7 +298,14 @@ def mutate(authorized, service, domain, identity, action, payload, *, expected_r
         return _preview(authorized, service, identity, payload)
     from . import automation_authority, coordinator, delegation, scheduler
     if action == "commission":
-        return coordinator.commission(authorized, service, payload, idempotency_key)
+        if "selection" not in payload:
+            return coordinator.plan_request(authorized, service, payload)
+        return coordinator.commission_request(authorized, service, payload, idempotency_key)
+    if action == "clarify_commission":
+        if "selection" not in payload:
+            return coordinator.plan_request(authorized, service, payload)
+        return coordinator.clarify_request(authorized, service, identity, payload,
+            idempotency_key, expected_revision=expected_revision)
     if action == "preview_commission":
         return coordinator.preview(authorized, service, identity)
     if action == "approve_commission":

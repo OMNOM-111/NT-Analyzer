@@ -10,17 +10,21 @@
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`; not released to Canary/Production
 - Active Local 8765: clean `2b6d0112bef88c5bfb73970de64ec5518443e56b`, build `dev-0.10.0-beta.96-2b6d0112bef8`, original owner data, Preview=false
-- Active Agent World branch: `codex/agent-world-unified-acceptance`, draft PR #285; protected Local still uses `codex/agent-world-owner-preview` code 2b6d0112 from the separate #282/#281/#280 stack. The review/mechanisms work has been integrated in the task branch, not deployed. Source ownership and preserved independent review: [AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md).
+- Active Agent World branch: `codex/agent-world-final-acceptance`, integrating shared #285 and native P1-5 histories; protected Local still uses `codex/agent-world-owner-preview` code 2b6d0112 from the separate #282/#281/#280 stack. Nothing is deployed. Current ownership is in [master status](../current/AGENT_WORLD_MASTER_STATUS.md); preserved independent review is in [AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md).
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
-- P1-5 native registration on base `3c62465d`: separate record kind/states/codec,
-  private repository visibility and shared Evaluation subject, 372 focused tests
-  passed. No dispatch/API/E2E readiness claim; new active integrator file overlap
-  is recorded in [master handoff](../current/AGENT_WORLD_MASTER_STATUS.md).
+- Current Agent World integration: `codex/agent-world-final-acceptance` combines
+  `9365695a` and `4d8ee514` at `334f086f`, preserving both histories. P1-5 native
+  API/worker/typed Evaluation was verified on its source branch at `c16b511d`
+  (CI 34678502093). Final unified regression/CI/browser acceptance is in progress,
+  not inherited from those historical passes. PostgreSQL ordinary-user native
+  acceptance now has real isolated-server tests, separate from prior shape tests.
+  The [master status](../current/AGENT_WORLD_MASTER_STATUS.md) is the sole
+  operational source. Local 8765, version and deployed environments are unchanged.
 
 - Parallel P1-5 (2026-09-10 historical checkpoint): **IN DEVELOPMENT**, isolated external-agent protocol
   and service ports; not mounted or deployed. Native Evaluation/registry integration
@@ -28,9 +32,9 @@
   of [master status](../current/AGENT_WORLD_MASTER_STATUS.md) and
   [checkpoint evidence](../changelog/2026-09-10-external-agent-onboarding.md).
 
-## Active integration — 2026-09-09
+## Historical integration evidence — 2026-09-09
 
-Latest preserved/pushed executable source is
+The preserved executable source of that historical checkpoint was
 **`e45b64b0121014c5d796553ae8b512d98a5782ae`** on draft PR #285, with
 329 focused, root static/context and 593-file pre-release bundle PASS. Clean
 immutable full: **5416 PASS / 119 SKIP / 0 FAIL / 0 ERROR**, 5834.82 s;

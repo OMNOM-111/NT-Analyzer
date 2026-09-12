@@ -42,19 +42,71 @@ PREVIOUS INTEGRATION CODE SHA: fb2c472b — P1-3 including the decision producer
   both crawled. CI's Windows leg IS the full suite on this box. Its log,
   scratchpad/full_84ddb2e7.txt, ends mid-run with zero failures — that is a kill, not a
   red result.
-CURRENT WIP: clean
+CURRENT WIP: final integration changes under verification; Git is authoritative.
 CURRENT LOCAL 8765 SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (not switched, not restarted)
-CURRENT ACCEPTANCE INSTANCE: http://127.0.0.1:8809/ui/ai-command-center.html — SHA 84ddb2e7,
+HISTORICAL ACCEPTANCE INSTANCE: http://127.0.0.1:8809/ui/ai-command-center.html — SHA 84ddb2e7,
   disposable data root, zero external calls. :8808 serves b06c5f55 and holds the evidence of
   the reputation headline defect; :8806 serves 4d9ff737 (P0 acceptance); :8804 serves 92d873e3
   and still holds the historical stuck task. All superseded, none deleted.
 CURRENT VERSION: 0.10.0-beta.96 (pre_release)
 
-LAST VERIFIED: 2026-09-11
-UPDATED BY: Claude (P1-1, P1-2, P1-3)
+FINAL ACCEPTANCE INSTANCE: not started; final unified gates pending.
+LAST INTEGRATION STATUS UPDATE: 2026-09-12
+PREVIOUS VERIFIED SHARED HANDOFF: 2026-09-11 (P1-1, P1-2, P1-3)
 ```
 
 ## Percentage method — identical for every executor
+
+### Unified final acceptance in progress — 2026-09-12
+
+The current integration task supersedes the historical ownership and next-step
+notes below. Both accepted histories are present at `334f086f`; Local 8765 is
+unchanged. Coverage stays **95% / 70%** until the 36-row evidence matrix is
+reconciled on a final immutable code SHA.
+
+- New ordinary-user PostgreSQL tests use a distinct persisted non-owner,
+  session/device and personal workspace. They do not infer ordinary-user
+  acceptance from a test-owner fixture's misleading test name.
+- First unified focused run: 79 passed (External Agent native/hardening,
+  Persona execution, shared acceptance and Memory HTTP). This is not full regression.
+- Coordinator/Intent: 16 passed, including both bounded operation classes,
+  explicit semantic clarification, immutable replacement and controller-state
+  consistency. UI/refresh/acceptance-launcher: 137 passed. Legacy runner: 13/13.
+- Correlated programme harness: 9 passed in 471.94 s. SF Chat, native worker,
+  graph approval, four typed results and reviews, fail-closed Router preview,
+  Memory, synthetic process proposal, consent, actual scheduled occurrence,
+  explicit revoke and no next dispatch; dismissed calendar proposal cooldown.
+  The account bootstrap is a disposable test owner, not ordinary-user browser
+  registration evidence. No real provider quality or diversity is inferred.
+- Default-off Development diagnostic gates stay workspace-scoped. Diagnostic
+  data is not field evidence or real Model Performance.
+- Final PostgreSQL/HTTP/browser/CI evidence, screenshots and final acceptance
+  identity remain pending. Historical receipts are not silently promoted.
+
+### Remote external-agent allowance — OWNER DECISION REQUIRED
+
+Current behaviour remains fail-closed: `external_agent_remote_budget_not_configured`.
+The following is a proposal, not an enabled allowance or a budget increase.
+
+1. A workspace owner grants a named ordinary user's connection an explicit
+   allowance within the existing workspace budget; no connection inherits owner
+   keys, unlimited spending or the provider account's entire balance.
+2. Require a per-call ceiling and daily ceiling, currency, expiry and the exact
+   provider-account/workspace/connection scope. A lower existing budget wins.
+3. Reserve the maximum declared charge through the existing budget mechanism
+   before dispatch. Reject unknown pricing or an unavailable reservation.
+4. Settle only against authenticated usage/cost evidence. The agent's own
+   claimed cost is not sufficient. Unknown delivery/cost keeps a bounded pending
+   reservation for reconciliation; it never triggers an automatic paid resend.
+5. Revocation stops new reservations and dispatches. In-flight cost remains in
+   history; credential cleanup cannot reset spending or restore authority.
+6. Exceeding any ceiling denies the call with a human-readable reason. No auto
+   top-up, overdraft, fallback to owner funds or caller-supplied price override.
+
+Owner decisions: accepted pricing/evidence source, who may grant an allowance,
+per-call/daily ceilings, and reconciliation/expiry rules for unknown charges.
+Implementation of paid dispatch remains blocked on those product decisions.
+The zero-external-call Development scenario is a separate diagnostic mechanism.
 
 Applied to the 36 rows of the matrix below. **Never** raise a percentage
 because more tests exist.
@@ -101,6 +153,10 @@ Marks: `Y` yes · `P` partial · `N` no.
 
 ## Matrix
 
+Evidence naming older SHAs/ports below is historical, not final-build acceptance.
+The current integration section above and final receipts take precedence. No
+percentage changes are made while final browser/regression gates are pending.
+
 | Область | Code | Wired | UI/API | Automated | E2E | Status | Evidence | Что осталось |
 | --- | :-: | :-: | :-: | :-: | :-: | --- | --- | --- |
 | Foundation | Y | Y | Y | Y | Y | DONE + VERIFIED | Live on Local 8765 | — |
@@ -109,7 +165,7 @@ Marks: `Y` yes · `P` partial · `N` no.
 | PostgreSQL / RLS | Y | Y | Y | Y | Y | DONE + VERIFIED | e45 runtime harness: API → worker → SQL → replay → restart → RLS; 69+41+7 suite PASS; 10 FORCE RLS tables; no SQLite fallback | Never run as Local's backend |
 | Event ledger / outbox / idempotency | Y | Y | Y | Y | Y | DONE + VERIFIED | Idempotent replay and restart in the same harness | — |
 | Intent | Y | Y | Y | Y | Y | DONE + VERIFIED | «Поручение» read from the live DOM on :8809: goal, approval mode «только совет, исполнение не разрешено», risk, deadline, workspace, required evidence and verifier, with the request behind a disclosure. Six rendering cases over the shipped page code | Cancel was not caught in the browser: the local executor finishes a task within seconds of creation, so the control had already gone by the time the page opened. It is the task's pre-existing action, offered by the panel (`actions: ["cancel"]` observed on the unstarted task) and covered by the task suites. Amendment is refused by design, not missing: `EDITABLE_STATES[INTENT] == {"draft"}` and a started task has already left it, so an editable Intent would mean widening the immutability rule that binds request, receipt and evidence. The panel says so and points to «Отменить задачу» or a new request |
-| Coordinator | Y | Y | Y | Y | P | PARTIAL | `coordinator.commission`; 202 PASS across coordinator, delegation, handoff, integration, review and UI | Two closed operation classes, caller-named rather than inferred from the goal; still not a general planner |
+| Coordinator | Y | Y | Y | Y | P | IMPLEMENTED | Public typed clarification binds request/choice before native commission; caller operation names rejected; two worker graph classes, immutable replacement and consistent Intent states covered by 16 new cases | Bounded planner, not arbitrary analysis; final browser route pending |
 | Task Graph | Y | Y | Y | Y | P | IMPLEMENTED | Real parent → subtasks → contributions → aggregate, depth ≤3, typed deps. Two operation classes: `verify_fact_transfer` restates and is graded on exactness, `numeric_breakdown` gives each child its own slice and a different answer | Live browser route for the second operation |
 | Delegation | Y | Y | Y | Y | P | PARTIAL | Grant-bound, depth-bounded, cycle- and restart-safe; 61 handoff/delegation PASS | Roots only on Coordinator task or verified application result |
 | Persona | Y | Y | Y | Y | Y | DONE + VERIFIED | Identity survives restart and model change; the selected-Persona chat path walked live on 8806 to a completed, accepted result with the identity intact | Audible voice check — P2-5 |
@@ -133,8 +189,8 @@ Marks: `Y` yes · `P` partial · `N` no.
 | SF Social | Y | Y | Y | Y | P | IMPLEMENTED | Prepare → explicit publish; verified sources only; corrupted receipts never attested; private memory never publishable | One real publication is an owner decision |
 | Owner Preview | Y | Y | Y | Y | P | IMPLEMENTED | Isolated synthetic operator with its own domains; deliberately no provider, worker, Router, Court, publication or routine execution | Manual route not re-run on final code |
 | Ordinary-user model onboarding | Y | P | Y | P | N | PARTIAL | Wizard driven in a browser with a placeholder key against the local executor | Real key, real endpoint, real BYOK E2E — P1-4 |
-| External-agent onboarding | Y | Y | Y | Y | Y | DONE + VERIFIED · PENDING INTEGRATION | Native route walked end to end on :8812 over real HTTP and read from the live DOM: add → verify → ACTIVE → Coordinator picks a compatible role → dispatch through the existing durable worker → Contribution/Outcome/Evaluation(subject=EXTERNAL_AGENT_CONNECTION) → performance → revoke → next dispatch refused `409 external_agent_revoked`, history kept. 20 native cases (E2E, hardening, UI) beside the 85 contract cases | Lives on `codex/agent-world-external-native-e2e`, not yet on the integration branch. Only the Development agent exists: a real remote agent is refused with `external_agent_remote_budget_not_configured` until a paid allowance contract is agreed — owner decision |
-| UI / UX | Y | Y | Y | Y | N | PARTIAL | All eight expected sections exist as drawer panels behind three tabs | Header counter lag, narrow-column wrapping, structure vs mockups — P3 |
+| External-agent onboarding | Y | Y | Y | Y | Y | IMPLEMENTED · FINAL RECHECK PENDING | Accepted native P1-5 history is integrated at 334f086f, not an isolated branch. Historical :8812 create/verify/task/typed Evaluation/statistics/revoke/deny browser evidence is retained. New real ordinary-user PostgreSQL and process race tests supplement it | Final unified browser/CI repeat pending; real remote agent remains fail-closed until owner allowance decision |
+| UI / UX | Y | Y | Y | Y | N | PARTIAL | Eight areas behind three tabs; accepted refresh/column fixes retained; new clarification and Intent actions verified by UI tests | Final actual-window check pending; full mockup composition remains unaccepted P3 |
 | Security / tenant isolation | Y | Y | Y | Y | Y | DONE + VERIFIED | FORCE RLS; foreign workspace reads 0 and inserts fail `42501`; device and session re-checked per request; SSRF guard; no secret in Git | — |
 | Restart / idempotency | Y | Y | Y | Y | Y | DONE + VERIFIED | Stop/restart/re-read against PostgreSQL; duplicate dispatch and replay refused | — |
 | Documentation | Y | Y | Y | Y | Y | DONE + VERIFIED | Per-SHA receipts, file hashes, explicit withdrawn-claims section, skips never counted as passes | — |

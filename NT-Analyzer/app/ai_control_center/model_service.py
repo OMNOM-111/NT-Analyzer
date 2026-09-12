@@ -808,6 +808,7 @@ class ModelService:
             "request_id": checkpoint["task_id"], "response": response, "actual_model": actual_model,
             "provider_request_id": provider_request_id, "executor": executor,
             "external_call": external_call if type(external_call) is bool else None,
+            **({"paid_call": False} if provenance["synthetic"] else {}),
             "latency_ms": round(latency * 1000, 3), "cost_usd": cost,
             "cost_estimated": result.get("cost_estimated") is True if cost is not None else None,
             "observed_at": _now().isoformat(), **tokens}
@@ -1332,10 +1333,16 @@ class ModelService:
         vote = json.loads(result["result_text"])
         model = self._get(request.context, EntityKind.MODEL, request.model_id)
         profile = self._json(request.context, model.profile)
+        from .test_executor import EXECUTOR, enabled as development_executor_enabled
+        diagnostic = result.get("synthetic") is True
+        if diagnostic and (not development_executor_enabled(request.context.scope.workspace_id)
+                           or result.get("actual_model") != EXECUTOR):
+            raise ContractError("model_judge_synthetic_provenance_invalid")
         return JudgeResult(verdict=vote["verdict"], confidence=vote["confidence"], rationale=vote["rationale"],
             provider_key=model.provider_key, model_key=model.model_key,
             model_version=result.get("actual_model") or "provider_version_unreported",
-            failure_domain=model.provider_key + ":" + str(urlsplit(profile["base_url"]).hostname),
+            failure_domain=("local_test_executor:" + EXECUTOR if diagnostic else
+                            model.provider_key + ":" + str(urlsplit(profile["base_url"]).hostname)),
             contribution_id=_uuid(result["contribution_id"]))
 
     def plan_application(self, *, context, model_id, spec, kind, idempotency_key,
