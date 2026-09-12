@@ -15,6 +15,26 @@
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 
+- Current saved source: `a091ce6794da75064a9012dfe97d50bfc140e978`, task branch
+  `codex/agent-world-final-acceptance`, draft PR #287. Exact-code disposable
+  PostgreSQL **129 PASS / 0 skips** (88 Agent World/External/Persona, 29 legacy,
+  12 workers); legacy runner **13/13**; static/context/diff and **610-file bundle
+  PASS**. CI **34714150028 Linux: 5776 passed / 4 failed / 128 skipped**,
+  1480.45 s; Windows remains running. Three stale fixture corrections have
+  17 scoped + 1 aggregate PASS, not full-regression acceptance. Do not start a competing heavy full
+  regression while its Windows job uses this PC. Next: complete final browser
+  routes and CI, then reconcile the unchanged 36-row programme matrix.
+  Published **95% / 70% stay provisional**; Master explicitly records the
+  existing E2E arithmetic discrepancy, not a new scoring method or increase.
+  Use [OWNER_ACCEPTANCE_GUIDE.md](../current/OWNER_ACCEPTANCE_GUIDE.md), not its
+  deprecated historical Agent World guide. Exact receipt:
+  [final integration record](../changelog/2026-09-12-agent-world-final-integration.md).
+  No owner-key use, Local switch, merge, release or deployment is authorized.
+  QA8815 browser observations (synthetic Court, Only-me Social, Memory revoke)
+  remain pre-final: backend a091ce67 plus pending static changes. Preserve
+  device-guard denial for impersonation; a separate test email/device flow
+  awaits explicit owner permission. Final clean browser repeat is still needed.
+
 - Current single-integrator task: `codex/agent-world-final-acceptance`, integration
   commit `334f086f`, inputs `9365695a` and `4d8ee514`. Shared-file handoff is complete;
   the old P1-5 ownership blocker no longer applies. Native P1-5 source CI is
@@ -23,7 +43,7 @@
   scheduler provenance, real ordinary-user PostgreSQL tests and isolated browser
   acceptance. See [master status](../current/AGENT_WORLD_MASTER_STATUS.md).
   No owner credential, Local switch, main merge or deploy is authorized.
-  Saved unified checkpoint is `51924538`, draft PR #287. Current follow-up closes
+  Previous unified checkpoint is `51924538`, draft PR #287. Its follow-up closes
   explicit Memory context-scope enforcement and honest synthetic Social
   publication, including known-artifact and fresh-authority negative checks.
   d7b48060 PostgreSQL: 129 passed, no skips. CI 34703741359 Linux failed one
@@ -35,14 +55,15 @@
   Windows CI ended at the unchanged 120-minute limit, not a PASS. Current fixes
   add native external-task shared reads, manual-review counters and saved-receipt
   SF Chat delivery; schedule approval rejects a changed preview hash. Correlated
-  synthetic programme rerun is 9 PASS in 319.50 seconds. Restart only temporary
-  QA8815 after committing, repeat its browser cases, then run final unified gates;
+  synthetic programme rerun is 9 PASS in 319.50 seconds. The former next step was
+  to restart temporary QA8815 after committing and repeat browser/unified gates;
   protected 8765 and final acceptance 8814 remain untouched/unstarted.
   QA8815 was restarted on clean 51924538 with preserved data and cold backup.
   PostgreSQL 118 PASS plus initial external 10/1 are retained separately from the
   corrected external fixture 11 PASS. Follow-up fixes shared external status/history
-  presentation without changing old evidence. Commit, rerun exact-SHA PG and CI,
-  then final isolated acceptance; no release or owner-key use.
+  presentation without changing old evidence. The exact-SHA PG rerun is now
+  complete at a091ce67 above; CI and final isolated acceptance remain pending.
+  Earlier failed/corrected receipts remain separate; no release or owner-key use.
 
 - Historical integrator answer read at `61ff7a38` (2026-09-11): reviewed checkpoint `97095b00`,
   shared ownership unchanged; await typed Evaluation/native kind integration SHA.

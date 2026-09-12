@@ -9299,6 +9299,7 @@
 
     fab.addEventListener('click', () => { ORCH.open ? closeOrchestrator() : openOrchestrator(); });
     qs('#orch-close', panel).addEventListener('click', closeOrchestrator);
+    panel.addEventListener('click', orchFollowAgentWorldLink);
     qs('#orch-list-toggle', panel).addEventListener('click', () => { orchCloseSkinMenu(); panel.classList.toggle('show-convos'); });
     qs('#orch-drawer-scrim', panel).addEventListener('click', () => panel.classList.remove('show-convos'));
     qs('#orch-new', panel).addEventListener('click', () => { orchCloseSkinMenu(); orchNewConversation(); });
@@ -10259,6 +10260,16 @@
       return `<a class="orch-msg-shot" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.caption || 'Снимок графика')}"><img loading="lazy" src="${esc(a.url)}" alt="${esc(a.caption || 'Снимок графика')}"></a>`;
     }).join('');
   }
+  function orchFollowAgentWorldLink(event) {
+    const link = event.target.closest?.('[data-aw-chat-continuation]');
+    if (!link || event.button > 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const target = new URL(link.href, window.location.href);
+    if (target.origin !== window.location.origin || target.pathname !== window.location.pathname) return;
+    event.preventDefault();
+    closeOrchestrator();
+    if (target.hash === window.location.hash) window.dispatchEvent(new Event('aw-chat-navigate'));
+    else window.location.hash = target.hash;
+  }
   function orchActionsHtml(row, isUser) {
     if (isUser || !Array.isArray(row.actions) || !row.actions.length) return '';
     if (orchAgentWorldTaskId(row)) return orchAgentWorldCard(row);
@@ -10268,7 +10279,7 @@
       const name = String(action.name || action.action || 'vitek_task');
       if (name === 'coordinator_clarification' && action.conversation_id && action.source_message_id) {
         const route = '/ui/ai-command-center.html#tab=overview&domain=automation&chat_conversation=' + encodeURIComponent(action.conversation_id) + '&chat_message=' + encodeURIComponent(action.source_message_id);
-        return `<a class="btn sm" href="${esc(route)}">Уточнить данные и ожидаемый результат</a>`;
+        return `<a class="btn sm" data-aw-chat-continuation href="${esc(route)}">Уточнить данные и ожидаемый результат</a>`;
       }
       const status = String(action.status || 'running');
       const state = ORCH_ACTION_STATES[status] || [status || 'Выполняется', 'running'];

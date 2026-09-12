@@ -575,6 +575,7 @@ def test_aggregate_task_links_each_required_review_without_claiming_acceptance(m
     result = run_router_ui(monkeypatch, """
       await click({awTask:ids.task},'shell');return {html:drawer.innerHTML,calls};
     """, """
+      task.source_kind=response.source_kind='bounded_delegation_result';
       response.graph={human_review:{status:'pending',required_reviews:[
         {task_id:ids.task,status:'accepted'},
         {task_id:'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',status:'pending'},

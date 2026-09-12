@@ -20,13 +20,16 @@ HANDOFF: P1-3 accepted and closed by the owner at f1fe393f.
   ACTIVE OWNER OF SHARED FILES: this integration task; subagents have bounded
   file assignments only. Earlier ownership/handoff sections below are history.
 
-CURRENT IMPLEMENTATION COVERAGE: 95%
-CURRENT OWNER ACCEPTANCE READINESS: 70%
+CURRENT IMPLEMENTATION COVERAGE: 95% (published provisional; reconciliation pending)
+CURRENT OWNER ACCEPTANCE READINESS: 70% (published provisional; reconciliation pending)
 CURRENT INTEGRATION BRANCH: codex/agent-world-final-acceptance
 CURRENT INTEGRATION INPUTS: 9365695a + 4d8ee514 (both histories, no duplicate picks).
-SAVED INTEGRATION CHECKPOINT: 519245388c80c8a5653086d16c4471ce3faaf6e7; task draft PR #287.
-CURRENT VERIFICATION: final unified regression, PostgreSQL and browser acceptance
-  are pending. Historical PASS below does not certify this integration.
+SAVED INTEGRATION CHECKPOINT: a091ce6794da75064a9012dfe97d50bfc140e978; task draft PR #287.
+CURRENT VERIFICATION: exact-SHA PostgreSQL 129 PASS / 0 skips, legacy 13/13,
+  static/context/diff and 610-file bundle PASS. CI 34714150028 Linux has
+  5776 passed / 4 failed / 128 skipped; Windows remains running;
+  final unified regression and browser acceptance are not yet closed.
+  Historical PASS below does not certify this integration.
 PREVIOUS INTEGRATION CODE SHA: fb2c472b — P1-3 including the decision producer.
   At fb2c472b: CI run 34658942542 SUCCESS on all three jobs — Static gates;
   Tests (ubuntu-latest) 5515 passed / 0 failed / 116 skipped, 18:54;
@@ -43,7 +46,7 @@ PREVIOUS INTEGRATION CODE SHA: fb2c472b — P1-3 including the decision producer
   both crawled. CI's Windows leg IS the full suite on this box. Its log,
   scratchpad/full_84ddb2e7.txt, ends mid-run with zero failures — that is a kill, not a
   red result.
-CURRENT WIP: final integration changes under verification; Git is authoritative.
+CURRENT WIP: saved a091ce67 under final verification; Git is authoritative.
 CURRENT LOCAL 8765 SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (not switched, not restarted)
 HISTORICAL ACCEPTANCE INSTANCE: http://127.0.0.1:8809/ui/ai-command-center.html — SHA 84ddb2e7,
   disposable data root, zero external calls. :8808 serves b06c5f55 and holds the evidence of
@@ -174,6 +177,52 @@ reconciled on a final immutable code SHA.
   historical cost stays unknown, not invented zero. Scoped presentation: 58 PASS.
 - Final CI remains unstarted for the follow-up until exact source and PG gates
   are reconciled. No Local switch, release or owner-acceptance claim.
+
+#### Candidate a091ce67 — saved exact-code evidence
+
+- Source: `a091ce6794da75064a9012dfe97d50bfc140e978`. Disposable PostgreSQL
+  receipts `a091ce67-agent-world-postgres.xml`, `a091ce67-legacy-postgres.xml`
+  and `a091ce67-workers-postgres.xml` under
+  `.artifacts/pg-runtime-acceptance-final-p15/` record respectively **88, 29,
+  12 PASS**, all with **0 failures, 0 errors, 0 skips**. Total **129 PASS**.
+  This supplements generic PostgreSQL skips; it does not rewrite those receipts.
+- Legacy runner **13/13 PASS**. Repository static/context/diff checks and the
+  **610-file production-bundle check PASS**. No signed release or deployment.
+- CI `34714150028` targets this exact SHA. Linux completed with **5776 passed /
+  4 failed / 128 skipped**, **1480.45 s**; Windows remains **RUNNING** on this
+  same PC. This is **not full-regression PASS**. Three stale test fixtures have
+  been corrected in the follow-up worktree; small scoped verification is
+  **17 PASS**, plus **1 aggregate case PASS**. Those follow-up checks are not
+  exact-a091ce67 CI evidence and do not erase its four failures. A fresh saved
+  source and final gates remain required; no competing heavy local run starts.
+- Browser acceptance is still in progress. The current route is
+  [OWNER_ACCEPTANCE_GUIDE.md](OWNER_ACCEPTANCE_GUIDE.md); the older Agent World
+  guide is retained as historical evidence, not a competing current route.
+- Pre-final QA8815 observations: ordinary-user Court decision
+  `3c64e65a-aaf0-5996-9841-56efa1b46245` produced two approve votes and one dissent
+  from three sessions over one packet, without execution. Synthetic private
+  Social publication of Outcome `0afce3e8-5374-5ed2-8b00-30ab50bebdf5`, snapshot
+  `65069065e0ae33f35c9197aab752d6f130addc6d986d4e20186b9109af8c1164`, was observed
+  on its Only-me wall. User 1's own Memory record beginning `084c31dd` was
+  revoked at revision 3 with no publication action; earlier User 2 denial is
+  retained. These are **pre-final candidate browser observations**, not immutable
+  a091ce67 UI acceptance: backend is a091ce67 but pending static-file corrections
+  can be served after reload. Final clean 8814 acceptance remains separate.
+- Automation in the QA impersonation session is correctly denied by the
+  device guard, even after the scoped entitlement is granted. Linking the
+  disposable user's test email and completing its device flow awaits explicit
+  owner approval; no authentication bypass is authorized or counted as a fix.
+- The initial 51924538 external PostgreSQL fixture failure and corrected
+  separate run above remain in history. This new exact-code run closes that
+  PostgreSQL rerun requirement, not the entire programme or owner acceptance.
+- Published **95% / 70% remain provisional**, with no increase from additional
+  tests. Reconciliation found **17 Y, 16 P, 3 N** in the existing 36-row E2E
+  column: applying the unchanged 1 / 0.5 / 0 weights gives **25 / 36**, not the
+  previously printed **25.5 / 36**. The old implementation numerator 34.5 / 36
+  also needs explicit row attribution: Delegation is labelled PARTIAL while
+  its agreed bounded implementation columns are all Y. Retain the published
+  percentages as provisional history until final per-row evidence/weights are
+  reconciled; do not invent a half-point, change the method or infer progress.
 
 ### Remote external-agent allowance — OWNER DECISION REQUIRED
 

@@ -17,6 +17,24 @@
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
+- Saved Agent World candidate: `a091ce6794da75064a9012dfe97d50bfc140e978`,
+  `codex/agent-world-final-acceptance`, draft PR #287. Exact disposable PostgreSQL:
+  **129 PASS / 0 skips** (88 Agent World/External/Persona + 29 legacy + 12 workers),
+  legacy runner **13/13**, static/context/diff and **610-file bundle PASS**.
+  CI **34714150028 Linux: 5776 passed / 4 failed / 128 skipped** in 1480.45 s;
+  Windows remains running. Follow-up fixes to three stale fixtures have 17
+  scoped + 1 aggregate PASS, not a full CI PASS. Final regression/browser acceptance remains
+  open. Historical 51924538 fixture failure is retained, not overwritten.
+  Published **95% / 70% are provisional**, pending 36-row reconciliation under
+  unchanged weights; Master records the existing 25 vs 25.5 numerator discrepancy.
+  Current route: [OWNER_ACCEPTANCE_GUIDE.md](../current/OWNER_ACCEPTANCE_GUIDE.md).
+  [Exact candidate record](../changelog/2026-09-12-agent-world-final-integration.md)
+  is Development evidence only; Local 8765 and deployed environments are unchanged.
+  Pre-final QA8815 observed synthetic Court, Only-me Social publication and
+  Memory revoke. Its a091ce67 backend plus changed static files is not immutable
+  final browser evidence. Test email/device setup awaits owner approval;
+  impersonation does not bypass the automation device guard.
+
 - Current Agent World integration: `codex/agent-world-final-acceptance` combines
   `9365695a` and `4d8ee514` at `334f086f`, preserving both histories. P1-5 native
   API/worker/typed Evaluation was verified on its source branch at `c16b511d`
@@ -25,7 +43,7 @@
   acceptance now has real isolated-server tests, separate from prior shape tests.
   The [master status](../current/AGENT_WORLD_MASTER_STATUS.md) is the sole
   operational source. Local 8765, version and deployed environments are unchanged.
-  Saved unified checkpoint: `51924538`, draft PR #287. Follow-up work adds six
+  Previous unified checkpoint: `51924538`, draft PR #287. Follow-up work adds six
   context-bound Memory scopes and named Development-only diagnostic publication;
   these do not relax real provider diversity, remote budgets or private access.
   At d7b48060: real PostgreSQL 129 passed / 0 skipped; CI 34703741359 Linux
@@ -38,7 +56,7 @@
   regression and browser acceptance remain pending; no second evaluator is added.
   At 51924538, 118 non-external PG cases passed. External 10/1 exposed an isolated
   spawned-chat fixture path gap; the corrected fixture passed all 11. Receipts are
-  distinct and final exact-SHA PG rerun remains required. QA8815 preserves its
+  distinct; the exact a091ce67 PG rerun above now supersedes that requirement. QA8815 preserves its
   data with a cold backup; 8765 is untouched.
 
 - Parallel P1-5 (2026-09-10 historical checkpoint): **IN DEVELOPMENT**, isolated external-agent protocol

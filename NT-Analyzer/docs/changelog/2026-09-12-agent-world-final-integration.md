@@ -58,6 +58,39 @@ the shared typed Evaluation remain distinct.
 
 ## Verification boundary
 
+### Saved candidate a091ce67
+
+Exact source: `a091ce6794da75064a9012dfe97d50bfc140e978`, draft PR #287.
+Disposable PostgreSQL: **129 PASS / 0 FAIL / 0 ERROR / 0 SKIP** — **88** Agent
+World/External/Persona, **29** legacy storage/chat, **12** workers. The three
+`a091ce67-*-postgres.xml` receipts are retained in
+`.artifacts/pg-runtime-acceptance-final-p15/`. Legacy runner: **13/13 PASS**.
+Repository static/context/diff and **610-file production-bundle checks PASS**.
+CI **34714150028 Linux: 5776 passed / 4 failed / 128 skipped**, 1480.45 s;
+Windows is still running on this exact source and this same PC. Three stale
+fixtures were corrected in follow-up work; **17 scoped cases + 1 aggregate case
+PASS**, not a new full-suite PASS or a rewrite of the four failed CI cases.
+A competing heavy local regression is not started. Final browser and
+full-regression acceptance remain open. Earlier 51924538 fixture failure and
+its corrected separate run remain historical evidence in Master Status.
+
+Pre-final QA8815 browser evidence includes ordinary-user synthetic Court
+2-of-3/dissent with three sessions and no execution, explicit Only-me synthetic
+Social publication, and a private Memory revoke at revision 3 after prior
+foreign-user denial. Exact record/snapshot identities are in Master Status.
+These observations are not immutable-final-SHA UI acceptance: a091ce67 backend
+can serve changed static files. QA device guard denial is expected; separate
+test email/device setup requires owner approval, not a security bypass.
+
+Published 95% / 70% remain provisional: final 36-row reconciliation is pending,
+including the existing E2E-column arithmetic discrepancy (17 Y + 16 P + 3 N
+gives 25 / 36 under the unchanged weights, not the printed 25.5 / 36). No new
+percentage or methodology is introduced. The current click-through guide is
+`docs/current/OWNER_ACCEPTANCE_GUIDE.md`; the older Agent World guide now points
+there while retaining its historical observations.
+
+### Earlier candidate verification history
+
 New final-SHA full regression, legacy runner, bundle/static/context, CI and
 browser evidence remain pending. Interim evidence is recorded in the canonical
 developer-only `docs/current/AGENT_WORLD_MASTER_STATUS.md`; it does not close the

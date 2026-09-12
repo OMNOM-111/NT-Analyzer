@@ -716,6 +716,12 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       + `Оценка модели не является оценкой рабочей роли, и наоборот; они не складываются.</p>`
       + `<div class="aw-domain-grid">${cards}</div></section>`;
   }
+  function courtPanel(item) {
+    const cases = rows(item.court_cases), votes = rows(item.votes || item.packet?.votes).concat(cases.flatMap(entry => rows(entry.votes)));
+    const executor = 'agent-world-local-test-executor-v1';
+    const diagnostic = vote => vote.model_version === executor && vote.failure_domain === 'local_test_executor:' + executor;
+    return `<section class="aw-detail-section"><h3>Проверка Court</h3>${cases.map(entry => `<div class="aw-context"><span class="aw-context-mark">COURT</span><span>Вердикт: ${esc(entry.verdict || entry.status || 'не определён')} · кворум ${esc(entry.quorum || 'не указан')} · исполнение ${entry.execution_allowed === true ? 'проверяется отдельно сервером' : 'не разрешено'}</span></div><details class="aw-technical"><summary>Пакет доказательств Court</summary><code>${esc(entry.packet_sha256 || 'Не предоставлен')}</code></details>`).join('')}${votes.length ? votes.map(vote => `<article class="aw-domain-card"><div class="aw-inline"><strong>${diagnostic(vote) ? 'Локальный проверяющий · SYNTHETIC' : 'Проверяющий Court'}</strong>${badge(vote.status || vote.verdict)}</div><p class="aw-text">${esc(vote.summary || vote.rationale || vote.reason || '')}</p>${diagnostic(vote) ? '<p class="aw-note">Ответ получен от локального тестового исполнителя. Настроенный внешний провайдер не вызывался. Общий локальный failure domain не подтверждает независимость провайдеров.</p>' : ''}<div class="aw-domain-card-meta"><span>Уверенность: ${esc(vote.confidence ?? 'не измерена')}</span></div><details class="aw-technical"><summary>Настроенное подключение, исполнитель и идентификаторы</summary><dl class="aw-detail-grid"><div><dt>Настроенный провайдер</dt><dd>${esc(vote.provider_key || 'Не предоставлен')}</dd></div><div><dt>Настроенная модель</dt><dd>${esc(vote.model_key || vote.model || 'Не предоставлена')}</dd></div><div><dt>Фактический исполнитель / версия</dt><dd>${esc(vote.model_version || 'Не предоставлен')}</dd></div><div><dt>Failure domain</dt><dd>${esc(vote.failure_domain || 'Не предоставлен')}</dd></div></dl><div class="aw-hash">SESSION ${esc(vote.session_id || 'Не предоставлен')}<br>PACKET ${esc(vote.packet_sha256 || 'Не предоставлен')}</div></details>${vote.task_id ? `<button class="aw-link-button" data-aw-task="${esc(vote.task_id)}">Задание проверяющего →</button>` : ''}</article>`).join('') : '<p class="aw-note">Проверяющие ещё не представили результаты. Отсутствие голосов не является одобрением.</p>'}<p class="aw-note">В панели нет кнопки выдачи голоса от имени модели. Review запускает проверку backend; новые права и торговые действия не выдаются.</p></section>`;
+  }
   function externalTaskProvenance(task) {
     if (task.source_kind !== 'external_agent_task_v1') return '';
     return `<section class="aw-detail-section"><h3>Внешний агент · происхождение результата</h3><p>Модель: unknown / externally managed. Результат не входит в Model Performance.</p>${task.external_call === false ? `<p class="aw-note">Внешний сервис не вызывался.${task.cost_usd == null ? ' Денежная стоимость в сохранённой квитанции не записана; неизвестное значение не заменяется нулём.' : ''}</p>` : ''}</section>`;
@@ -1229,8 +1235,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const sourceBody = sources.length ? `<section class="aw-detail-section"><h3>Источники</h3>${sources.map(id => `<div class="aw-hash">ARTIFACT ${esc(id)}</div>`).join('')}</section>` : '';
       const versions = rows(item.versions);
       const versionBody = versions.length ? `<section class="aw-detail-section"><h3>История версий</h3>${versions.map(version => `<article class="aw-domain-card"><div class="aw-domain-card-meta"><strong>Версия ${esc(version.version || version.revision || '—')}</strong><time>${esc(date(version.created_at))}</time></div><p class="aw-text">${esc(version.notes || version.summary || '')}</p>${version.parameters ? `<pre class="aw-result-text">${esc(publicJSON(version.parameters))}</pre>` : ''}</article>`).join('')}</section>` : '';
-      const cases = rows(item.court_cases), votes = rows(item.votes || item.packet?.votes).concat(cases.flatMap(entry => rows(entry.votes)));
-      const courtBody = key === 'decisions' ? `<section class="aw-detail-section"><h3>Проверка Court</h3>${cases.map(entry => `<div class="aw-context"><span class="aw-context-mark">COURT</span><span>Вердикт: ${esc(entry.verdict || entry.status || 'не определён')} · кворум ${esc(entry.quorum || 'не указан')} · исполнение ${entry.execution_allowed === true ? 'проверяется отдельно сервером' : 'не разрешено'}<span class="aw-hash">${esc(entry.packet_sha256 || '')}</span></span></div>`).join('')}${votes.length ? votes.map(vote => `<article class="aw-domain-card"><div class="aw-inline"><strong>${esc(vote.model_key || vote.model || vote.model_id || vote.judge || 'Проверяющий')}</strong>${badge(vote.status || vote.verdict)}</div><p class="aw-text">${esc(vote.summary || vote.rationale || vote.reason || '')}</p><div class="aw-domain-card-meta"><span>${esc(vote.provider_key || '')}</span><span>Уверенность: ${esc(vote.confidence ?? 'не измерена')}</span></div><div class="aw-hash">SESSION ${esc(vote.session_id || 'не предоставлен')}<br>PACKET ${esc(vote.packet_sha256 || 'не предоставлен')}</div>${vote.task_id ? taskLink(vote.task_id, 'Задание проверяющего') : ''}</article>`).join('') : smallEmpty('Проверяющие ещё не представили результаты. Отсутствие голосов не является одобрением.')}<p class="aw-note">В панели нет кнопки выдачи голоса от имени модели. Review запускает проверку backend; новые права и торговые действия не выдаются.</p></section>` : '';
+      const courtBody = key === 'decisions' ? courtPanel(item) : '';
       const comparison = rows(item.results || item.comparison || item.tasks);
       const comparisons = key === 'experiments' && comparison.length ? `<section class="aw-detail-section"><h3>Сопоставимые результаты</h3><div class="aw-domain-grid">${comparison.map(result => `<article class="aw-domain-card"><strong>${esc(result.model || result.label || result.model_id || 'Модель')}</strong>${badge(result.status)}<dl class="aw-detail-grid"><div><dt>Результат проверки</dt><dd>${esc(pct(result.score_pct ?? result.evaluation?.score_pct ?? result.evaluation?.observed_score_pct ?? result.observed_eval?.score_pct))}</dd></div><div><dt>Длительность</dt><dd>${number(result.latency_ms) == null ? 'не измерена' : esc(count(result.latency_ms)) + ' мс'}</dd></div><div><dt>Стоимость</dt><dd>${esc(cost(result.cost_usd))}</dd></div></dl>${result.task_id || result.id ? `<button class="aw-link-button" data-aw-model-task="${esc(result.task_id || result.id)}">Ответ и доказательства →</button>` : ''}</article>`).join('')}</div></section>` : '';
       const modelTaskLink = key === 'model_tasks' && (item.id || item.task_id) ? `<button class="btn" data-aw-task-chat="${esc(recordId(item))}">Открыть в SF Chat</button>` : '';
@@ -1714,18 +1719,39 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     const locationParams = new URLSearchParams(root.location.hash.replace(/^#/, ''));
     tab = TABS.includes(locationParams.get('tab')) ? locationParams.get('tab') : 'overview';
     await refresh();
+    let chatRouteGeneration = 0, activeChatRoute = null;
+    async function applyChatRoute(params) {
+      const conversation = params.get('chat_conversation'), message = params.get('chat_message');
+      if (disposed || mutationBusy || !overview?.enabled || params.get('domain') !== 'automation' || !conversation || !message) return false;
+      const key = JSON.stringify([conversation, message]);
+      if (activeChatRoute === key) return true;
+      activeChatRoute = key;
+      const revision = ++chatRouteGeneration;
+      UI.closeOrchestrator?.();
+      const expectedDetail = detailGeneration + 1;
+      try {
+        await openDomain('automation');
+        if (disposed || revision !== chatRouteGeneration || detailGeneration !== expectedDetail) return true;
+        const seed = await API.aiControlCenterDomainAction('automation', 'new', 'chat_seed', { payload: { conversation_id: conversation, source_message_id: message }, idempotency_key: root.crypto.randomUUID() });
+        if (!disposed && revision === chatRouteGeneration && detailGeneration === expectedDetail) await openDomainAction('commission', 'new', null, seed);
+      } catch (error) { if (!disposed && revision === chatRouteGeneration && detailGeneration === expectedDetail) openDrawer('Поручение из SF Chat', readError(error)); }
+      finally { if (revision === chatRouteGeneration) activeChatRoute = null; }
+      return true;
+    }
+    function followChatRoute() {
+      void applyChatRoute(new URLSearchParams(root.location.hash.replace(/^#/, '')));
+    }
+    root.addEventListener?.('hashchange', followChatRoute);
+    root.addEventListener?.('aw-chat-navigate', followChatRoute);
+    UI.onLeave(() => { ++chatRouteGeneration; root.removeEventListener?.('hashchange', followChatRoute); root.removeEventListener?.('aw-chat-navigate', followChatRoute); });
     const linkedTask = locationParams.get('task') || new URLSearchParams(root.location.search).get('task');
     if (linkedTask && overview?.enabled) await openTask(linkedTask);
     else if (knownDomain(locationParams.get('domain')) && overview?.enabled) {
+      if (!await applyChatRoute(locationParams)) {
       await openDomain(locationParams.get('domain'));
-      if (locationParams.get('domain') === 'automation' && locationParams.get('chat_conversation') && locationParams.get('chat_message')) {
-        try {
-          const seed = await API.aiControlCenterDomainAction('automation', 'new', 'chat_seed', { payload: { conversation_id: locationParams.get('chat_conversation'), source_message_id: locationParams.get('chat_message') }, idempotency_key: root.crypto.randomUUID() });
-          await openDomainAction('commission', 'new', null, seed);
-        } catch (error) { openDrawer('Поручение из SF Chat', readError(error)); }
-      }
       const entity = locationParams.get('entity');
       if (/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(entity || '')) await openDomainItem(entity);
+      }
     }
     // Reuse Aurora's existing single-flight, onLeave-cleaned polling lifecycle.
     // Reading never enqueues, accepts, retries or changes a permission/flag.
