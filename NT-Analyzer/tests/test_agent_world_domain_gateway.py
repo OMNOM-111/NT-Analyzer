@@ -7,6 +7,7 @@ The existing Handler's JSON/origin/CSRF checks execute without a browser.
 from __future__ import annotations
 
 import copy
+import sys
 import hashlib
 import json
 import sqlite3
@@ -697,3 +698,93 @@ def test_publication_feature_flag_off_denies_get_prepare_and_publish_before_serv
             "payload": payload, "expected_revision": prepared["source_revision"], "idempotency_key": "social-flag-off-request"})
         assert result.status == 403 and result.result["code"] == "agent_world_domain_disabled"
     assert publication.posts == []
+
+@pytest.mark.parametrize("domain", ["automation", "router"])
+def test_a_mechanism_domain_answers_its_own_state_not_an_unhandled_crash(models, monkeypatch, domain):
+    """These two routes used to surface a 500 with no code at all.
+
+    They dispatch to `mechanism_gateway`, a module no branch contains, and the
+    import failure escaped the handler. `mechanism_domains` now stands in for it
+    while it is absent, so the route answers with state; when neither module is
+    importable it fails closed with a stable code instead of crashing. The
+    substitution order and the fail-closed case are pinned in
+    `test_agent_world_mechanism_domains`.
+    """
+    handler = http_get(models.account, "domains/" + domain)
+    assert handler.status in {200, 403, 409}
+    assert handler.result.get("error") != "internal server error"
+
+    monkeypatch.setitem(sys.modules, "app.ai_control_center.mechanism_gateway", None)
+    monkeypatch.setitem(sys.modules, "app.ai_control_center.mechanism_domains", None)
+    with pytest.raises(ContractError) as read:
+        gateway.list_domain(models.authorized, domain)
+    assert read.value.code == "mechanism_domain_unavailable"
+    with pytest.raises(ContractError) as write:
+        gateway.mutate(models.authorized, domain, "new", "create",
+                       {"payload": {}, "idempotency_key": "mechanism-domain-probe"})
+    assert write.value.code == "mechanism_domain_unavailable"
+
+    closed = http_get(models.account, "domains/" + domain)
+    assert closed.status == 409 and closed.result["code"] == "mechanism_domain_unavailable"
+    assert models.executions == [] and models.queue == {}
+
+
+def test_storage_backend_is_explicit_and_never_falls_back_to_sqlite(owner, monkeypatch):
+    """A misconfigured server storage mode is refused, not quietly downgraded.
+
+    Falling back would be the worst outcome available: the instance would keep
+    answering, from a different database than the operator configured, with
+    nothing in the response to say so.
+    """
+    authorized = gateway.access(owner.scope)
+
+    monkeypatch.delenv("STRATFORGE_AGENT_WORLD_STORAGE", raising=False)
+    assert isinstance(gateway.repository(authorized), SQLiteAgentWorldRepository)
+
+    monkeypatch.setenv("STRATFORGE_AGENT_WORLD_STORAGE", "postgres")
+    monkeypatch.delenv("STRATFORGE_AGENT_WORLD_DATABASE_URL", raising=False)
+    with pytest.raises(ContractError) as refused:
+        gateway.repository(authorized)
+    assert refused.value.code == "agent_world_postgres_not_configured"
+
+    for backend in ("mysql", "sqlite3", "POSTGRESQL", "none", "memory"):
+        monkeypatch.setenv("STRATFORGE_AGENT_WORLD_STORAGE", backend)
+        with pytest.raises(ContractError) as refused:
+            gateway.repository(authorized)
+        assert refused.value.code == "agent_world_storage_backend_invalid"
+
+
+def test_a_configured_postgres_dsn_is_never_served_from_the_sqlite_file(owner, monkeypatch):
+    """A configured DSN produces the PostgreSQL repository and nothing else.
+
+    Reachability is not decided here -- the client connects when it is used --
+    but which store answers is, and no local file is opened either way.
+    """
+    from app.ai_control_center.postgres_repository import PostgresAgentWorldRepository
+
+    monkeypatch.setenv("STRATFORGE_AGENT_WORLD_STORAGE", "postgres")
+    monkeypatch.setenv("STRATFORGE_AGENT_WORLD_DATABASE_URL",
+                       "postgresql://someone:secret@127.0.0.1:5432/nothing_here?sslmode=require")
+    authorized = gateway.access(owner.scope)
+    chosen = gateway.repository(authorized)
+    assert isinstance(chosen, PostgresAgentWorldRepository)
+    assert not isinstance(chosen, SQLiteAgentWorldRepository)
+
+
+def test_an_agent_headline_score_declares_it_is_the_models_not_the_roles(models):
+    """The number on an agent card is a model's observed rate.
+
+    Displaying it without saying whose it is, beside a persona's name, is how a
+    model score becomes read as the agent's own. The record therefore carries
+    the scope and subject it came from, so no reader has to assume.
+    """
+    result = gateway.enrich_overview(models.authorized)
+    assert result["agents"], "the fixture should expose at least one agent"
+    for agent in result["agents"]:
+        evaluation = agent["evaluation"]
+        assert evaluation["scope"] == "model_performance"
+        assert evaluation["subject_kind"] == "model"
+        # Never labelled as the role's, and never carrying a role subject.
+        assert evaluation["scope"] != "agent_role_performance"
+        for observation in agent["model_observations"]:
+            assert observation["model_id"]

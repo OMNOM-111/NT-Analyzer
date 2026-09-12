@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from .. import ai_budgets, secure_store
 from ..ai_lab import agent_registry, universal_llm
 from .states import ContractError
+from .connection_protocol import validate as validate_protocol
 
 
 def _number(value, maximum):
@@ -25,6 +26,7 @@ class PrivateRegistry:
     def __init__(self, *, context, model, account, profile, limits, secrets, revalidate,
                  usage_reader=None, usage_writer=None, pricing=None):
         self.context, self.model, self.account, self.profile = context, model, account, profile
+        validate_protocol(profile)
         self.secrets, self.revalidate = secrets, revalidate
         self.usage_reader = usage_reader or agent_registry.usage_rows
         self.usage_writer = usage_writer or agent_registry.record_usage

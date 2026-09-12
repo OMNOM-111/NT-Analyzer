@@ -890,3 +890,119 @@ def test_private_explicit_responses_endpoint_is_not_rewritten_to_chat():
     config = {"provider": "custom", "model": "configured-model", "base_url": "https://approved.example/v1/responses"}
     with universal_llm.registry_scope(Adapter()):
         assert universal_llm._endpoint(config) == config["base_url"]
+
+
+def test_connection_reports_the_persona_it_points_at_beside_its_own_label(setup):
+    """The owner's label read as a permanent Persona-to-model binding.
+
+    «Толик · DeepSeek Flash» is text the owner typed into one field. The Persona
+    this connection currently points at is a separate record, so the projection
+    states it separately and a rebind or rename cannot be mistaken for identity.
+    """
+    service, ctx = setup[0], setup[1]
+    detail = service.model_detail(context=ctx, model_id=connected(setup)["id"])
+    assert detail["label"] == "Own connection"
+    assert detail["persona_name"] == "Test Persona"
+    assert detail["persona_id"] and detail["provider_account_id"]
+    assert detail["persona_id"] != detail["provider_account_id"] != detail["id"]
+    assert detail["model"] == "deepseek-v4-flash" and detail["provider"] == "deepseek"
+
+
+def test_a_local_answer_is_not_attributed_to_the_connection_provider(setup):
+    """`executor` and `external_call` survive into what a reader is shown.
+
+    An executor that answers locally reports `external_call: False`. If that is
+    dropped, the task detail shows only the connection's provider beside the
+    answer, and a result produced without any call reads as one the provider
+    returned.
+    """
+    service, ctx, _payload, calls, *_ = setup
+    model = connected(setup)
+    calls.clear()
+    service.executor = lambda **kw: response(
+        actual_model="agent-world-local-test-executor-v1",
+        executor="agent-world-local-test-executor-v1",
+        provider="local_test_executor", external_call=False, paid_call=False,
+        cost_usd=0.0, cost_known=True)
+
+    pending = task(setup, model, key="local-executor-attribution")
+    result = service.execute(context=ctx, task_id=pending["id"])
+    assert result["status"] == "succeeded"
+
+    detail = service.task_detail(context=ctx, task_id=pending["id"])
+    assert detail["actual_model"] == "agent-world-local-test-executor-v1"
+    assert detail["executor"] == "agent-world-local-test-executor-v1"
+    assert detail["external_call"] is False
+    # The connection is still what it is; the answer is not claimed for it.
+    assert detail["fields"]["provider"] == "deepseek"
+
+
+def test_a_real_provider_answer_carries_no_local_executor(setup):
+    """The ordinary path is unchanged: nothing to report, nothing reported."""
+    service, ctx, *_ = setup
+    model = connected(setup)
+    pending = task(setup, model, key="ordinary-provider-attribution")
+    service.execute(context=ctx, task_id=pending["id"])
+    detail = service.task_detail(context=ctx, task_id=pending["id"])
+    assert detail["actual_model"] == "served-model"
+    assert detail["executor"] is None
+    assert detail["external_call"] is None
+
+
+def test_the_intent_a_task_came_from_is_visible_before_anything_runs(setup):
+    """Six things a person needs before work starts, none of them recomputed."""
+    service, ctx, *_ = setup
+    model = connected(setup)
+    pending = task(setup, model, key="intent-visible")
+    detail = service.task_detail(context=ctx, task_id=pending["id"])
+    intent = detail["intent"]
+
+    assert intent["status"] and intent["revision"] >= 1
+    assert intent["goal"]["text"] and intent["goal"]["request"] is not None
+    assert intent["constraints"]["risk"] == "low"
+    assert intent["constraints"]["deadline"] and intent["constraints"]["budget_key"]
+    assert intent["required_evidence"]["verified_by"] == "independent_local_evidence_verifier"
+    assert intent["approval_mode"] == "advice"
+    assert intent["scope"]["workspace_id"] == ctx.scope.workspace_id
+    # Stopping is the only pre-execution action; editing is not on offer.
+    assert intent["actions"] == ["cancel"]
+
+
+def test_the_intent_is_immutable_once_the_task_exists(setup):
+    """The contract allows editing an Intent only while it is a draft.
+
+    `start_task` walks it to `ready` at once, so a task's Intent has no editable
+    window at all. That is the rule rather than an oversight: the request hash
+    binds the request, the receipt and the evidence together, so changing what
+    was asked for would invalidate evidence already gathered against it. The
+    panel must never offer an edit, and the store must refuse one.
+    """
+    from datetime import timedelta
+    from app.ai_control_center.states import EDITABLE_STATES
+
+    service, ctx, *_ = setup
+    model = connected(setup)
+    pending = task(setup, model, key="intent-immutable")
+    detail = service.task_detail(context=ctx, task_id=pending["id"])
+    record = service._get(ctx, EntityKind.INTENT, UUID(detail["intent"]["id"]))
+
+    assert EDITABLE_STATES[EntityKind.INTENT] == frozenset({"draft"})
+    assert record.status == "ready" and record.status not in EDITABLE_STATES[EntityKind.INTENT]
+    assert detail["intent"]["amendable"] is False
+
+    # Refused by the store itself, not only hidden by the view.
+    with pytest.raises(ContractError) as refused:
+        service._change(ctx, record, deadline=record.deadline + timedelta(hours=2))
+    assert refused.value.code == "finalized_record_immutable"
+
+
+def test_a_finished_task_offers_no_intent_action_at_all(setup):
+    """Once an answer exists there is nothing left to stop either."""
+    service, ctx, *_ = setup
+    model = connected(setup)
+    pending = task(setup, model, key="intent-after-result")
+    service.execute(context=ctx, task_id=pending["id"])
+    detail = service.task_detail(context=ctx, task_id=pending["id"])
+
+    assert detail["intent"]["amendable"] is False
+    assert detail["intent"]["actions"] == []

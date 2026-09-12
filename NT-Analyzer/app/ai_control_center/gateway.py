@@ -27,8 +27,8 @@ _PREVIEW_FLAGS = (
 LIMITATIONS = [
     "Локальный проверочный контур: фиксированные synthetic-наборы, без вызова внешних моделей и без торговых команд.",
     "Оценки относятся только к локальным проверкам. Это не рейтинг качества LLM и не доказательство торговой доходности.",
-    "Router, Court, торговое исполнение, общая память и автоматическая публикация не активированы.",
-    "PostgreSQL/RLS и многопроцессные workers ещё не приняты. Canary/Production выключены.",
+    "В Preview доступны ручные синтетические персоны, память, проекты и предложения; Router, Court, исполнение и автопубликация выключены.",
+    "Этот Preview использует отдельный SQLite, без workers. Его проверки не являются доказательством PostgreSQL/RLS или готовности Canary/Production.",
 ]
 
 
@@ -109,6 +109,51 @@ def service_for(raw: dict, *, control_authorized: bool):
     return context, snapshot, DemoWorkflowService(repository, artifact_url_prefix=PREFIX + "artifacts/")
 
 
+def domain_service_for(handler):
+    """Compose the existing DomainService with fresh, isolated Preview admission.
+
+    Even reads refresh the session before opening storage. No live gateway,
+    credential resolver, judge, scheduler or enqueue adapter is imported here.
+    """
+    context = request_context(handler._remote_context or {},
+                              control_authorized=handler._preview_control_authorized())
+    root = preview_sandbox.isolated_root()
+
+    def fresh(*, write=False, operator=False):
+        preview_sandbox.require_enabled()
+        if preview_sandbox.isolated_root() != root:
+            raise ContractError("agent_world_context_changed")
+        raw = account_auth.authenticate_session(handler._cookie_value(runtime_env.session_cookie_name()))
+        if not raw:
+            raise ContractError("agent_world_session_expired")
+        raw = handler._decorate_workspace_context(raw)
+        raw["_request_method"] = "POST" if write else "GET"
+        permissions.enforce(PREFIX + "domains/personas", raw)
+        current = request_context(raw, control_authorized=handler._preview_control_authorized())
+        if current != context:
+            raise ContractError("agent_world_context_changed")
+        if subscriptions.trial_usage_for_user(raw.get("user_id")).get("expired"):
+            raise ContractError("agent_world_access_expired")
+        snapshot = flag_snapshot(context)
+        required = (Flag.AI_CONTROL_CENTER_READ_MODEL, Flag.AI_TASK_GRAPH_V2) if write else (Flag.AI_CONTROL_CENTER_READ_MODEL,)
+        if any(not resolve(flag, scope=context.scope, snapshot=snapshot).enabled for flag in required):
+            raise ContractError("agent_world_disabled")
+        if write and not ai_budgets.check_budget(context.scope.workspace_id, 0.0).get("ok"):
+            raise ContractError("agent_world_budget_denied")
+        if operator and not preview_sandbox.synthetic_operator_access_allowed(raw):
+            raise ContractError("agent_world_preview_operator_required")
+        return raw
+
+    fresh()
+    from .domain_service import DomainService
+    from .preview_domains import PreviewDomains
+    from .sqlite_repository import SQLiteAgentWorldRepository
+    repository = SQLiteAgentWorldRepository(root / "agent-world.sqlite3")
+    return PreviewDomains(context=context, service=DomainService(repository), fresh=fresh,
+                          flags=lambda: {flag.value: resolve(flag, scope=context.scope,
+                              snapshot=flag_snapshot(context)).enabled for flag in REGISTRY})
+
+
 def enrich(payload: dict, context: RequestContext, snapshot: FlagSnapshot) -> dict:
     stats = payload.get("stats") or {}
     agents = payload.get("agents") or []
@@ -127,7 +172,7 @@ def enrich(payload: dict, context: RequestContext, snapshot: FlagSnapshot) -> di
                       "completed_tasks": stats.get("completed", 0), "agents": len(agents), "attention": stats.get("failed", 0)},
             "scope": {"environment": context.scope.environment.value,
                       "workspace_id": context.scope.workspace_id, "synthetic": True},
-            "capabilities": {"can_run_demo": True, "can_view_models": False, "can_view_system": False},
+            "capabilities": {"can_run_demo": True, "can_view_models": False, "can_view_system": True},
             "flags": {flag.value: resolve(flag, scope=context.scope, snapshot=snapshot).enabled for flag in REGISTRY},
             "limitations": list(LIMITATIONS)}
 

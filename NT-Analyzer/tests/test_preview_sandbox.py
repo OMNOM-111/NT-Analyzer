@@ -395,7 +395,7 @@ def test_owner_preview_status_advertises_isolated_scenarios(preview_env):
     status = dev_preview.status(999)
     assert status["architecture"] == "isolated_process"
     assert {row["id"] for row in status["sandbox_scenarios"]} == {
-        "new_user", "active_user", "trusted_device", "pending_access",
+        "new_user", "active_user", "trusted_device", "pending_access", "agent_world_operator",
     }
     assert status["active_sandbox"] == {"running": False}
 

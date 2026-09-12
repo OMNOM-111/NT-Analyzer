@@ -68,7 +68,7 @@ def record_application_result(service, *, context, task_id, source_id, verificat
             model = service._get(context, EntityKind.MODEL, checkpoint["model_id"])
             service._ensure(context, Evaluation, _id(context, f"application-evaluation:{task.header.entity_id}"),
                 task.header.correlation_id, task.header.policy, task=task.ref(), outcome=existing.ref(),
-                evidence=existing.verification, model=model.ref(), rubric_key="application_execution")
+                evidence=existing.verification, subject=model.ref(), rubric_key="application_execution")
             _complete_task(service, context, task)
             return application_result(service, context, task)
         # Caller already verified actual bytes. Preserve that authority and
@@ -110,7 +110,7 @@ def record_application_result(service, *, context, task_id, source_id, verificat
         model = service._get(context, EntityKind.MODEL, checkpoint["model_id"])
         service._ensure(context, Evaluation, _id(context, f"application-evaluation:{task.header.entity_id}"),
             correlation, policy, task=task.ref(), outcome=outcome.ref(), evidence=proof,
-            model=model.ref(), rubric_key="application_execution")
+            subject=model.ref(), rubric_key="application_execution")
         _complete_task(service, context, task)
     return application_result(service, context, task)
 

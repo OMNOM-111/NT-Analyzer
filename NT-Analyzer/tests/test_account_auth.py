@@ -631,13 +631,18 @@ def test_local_owner_keeps_professional_mode_and_full_capabilities(monkeypatch) 
     assert context["active_workspace"]["workspace_id"] == "ws_local_owner"
     assert context["ux_mode"] == "professional"
     assert context["capabilities"]
-    assert all(context["capabilities"].values())
+    # ai_automation is granted separately, never by being the owner: it is what
+    # background agent work checks before it may write. Asserted explicitly so
+    # the deliberate exclusion cannot be quietly removed.
+    assert context["capabilities"]["ai_automation"] is False
+    assert all(value for key, value in context["capabilities"].items() if key != "ai_automation")
     payload = handler._augment_permissions(context, {
         "authenticated": True, "is_owner": True, "user": {},
     })
     assert payload["ux_mode"] == "professional"
     assert payload["ux_pending"] is False
-    assert all(payload["capabilities"].values())
+    assert payload["capabilities"]["ai_automation"] is False
+    assert all(value for key, value in payload["capabilities"].items() if key != "ai_automation")
 
 
 def test_register_via_telegram_activates_full_trial(auth_store) -> None:

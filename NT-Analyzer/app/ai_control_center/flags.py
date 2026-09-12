@@ -1,8 +1,9 @@
-"""One immutable, server-side flag registry; no loader or mutation endpoint.
+"""One immutable, server-side flag registry; no browser mutation endpoint.
 
 A deployment gate AND an exact workspace opt-in are required. Configuration
 must come from trusted server composition, with an existing audit reference.
-The future loader verifies that audit record. Flags never authorize actions.
+The Local composition records its exact opt-ins before publishing a snapshot.
+Flags never authorize actions.
 """
 from __future__ import annotations
 
@@ -20,6 +21,9 @@ class Flag(str, Enum):
     AI_CONTROL_CENTER_READ_MODEL = "AI_CONTROL_CENTER_READ_MODEL"
     AI_TASK_GRAPH_V2 = "AI_TASK_GRAPH_V2"
     AI_ROUTER_SHADOW_V2 = "AI_ROUTER_SHADOW_V2"
+    AI_ROUTER_V2 = "AI_ROUTER_V2"
+    AI_DELEGATION_V2 = "AI_DELEGATION_V2"
+    AI_SCHEDULER_V1 = "AI_SCHEDULER_V1"
     AI_EVALUATION_SHADOW = "AI_EVALUATION_SHADOW"
     AI_CONSENSUS_V2 = "AI_CONSENSUS_V2"
     AI_COURT_V1 = "AI_COURT_V1"
@@ -41,6 +45,9 @@ REGISTRY = MappingProxyType({
         (Flag.AI_COMMAND_CENTER_UI, (Flag.AI_CONTROL_CENTER_READ_MODEL,)),
         (Flag.AI_TASK_GRAPH_V2, (Flag.AI_CONTROL_CENTER_READ_MODEL,)),
         (Flag.AI_ROUTER_SHADOW_V2, (Flag.AI_TASK_GRAPH_V2,)),
+        (Flag.AI_ROUTER_V2, (Flag.AI_TASK_GRAPH_V2,)),
+        (Flag.AI_DELEGATION_V2, (Flag.AI_EXECUTION_V2,)),
+        (Flag.AI_SCHEDULER_V1, (Flag.AI_EXECUTION_V2,)),
         (Flag.AI_EVALUATION_SHADOW, (Flag.AI_TASK_GRAPH_V2,)),
         (Flag.AI_CONSENSUS_V2, (Flag.AI_TASK_GRAPH_V2,)),
         (Flag.AI_COURT_V1, (Flag.AI_CONSENSUS_V2,)),
@@ -123,3 +130,21 @@ def resolve(flag: Flag, *, scope: TenantScope,
                             revision=snapshot.revision, blocked_by=blocked_by)
 
     return decision(flag, frozenset())
+
+
+def current_snapshot(authorized):
+    """The snapshot to resolve against, re-read when authority can be refreshed.
+
+    A snapshot captured when the request was admitted is not a standing grant:
+    revoking a mechanism must take effect for work already in flight. execution_v2
+    already re-reads authority this way; delegation, the scheduler and the router
+    resolve through here so all four behave the same.
+    """
+    from .states import ContractError
+    refresh = authorized.get("refresh") if isinstance(authorized, dict) else None
+    if not callable(refresh):
+        return authorized.get("snapshot", DISABLED) if isinstance(authorized, dict) else DISABLED
+    current = refresh()
+    if not isinstance(current, dict) or current.get("context") != authorized.get("context"):
+        raise ContractError("mechanism_authority_denied")
+    return current.get("snapshot", DISABLED)

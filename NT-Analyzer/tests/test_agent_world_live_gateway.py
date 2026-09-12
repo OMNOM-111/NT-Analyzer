@@ -287,7 +287,8 @@ def test_overview_uses_authorized_service_scope_and_only_terminal_outcomes(owner
     authorized = gateway.access(owner.scope)
     tasks = [{"id": f"task-{status}", "title": status, "source_status": status,
               "status": "succeeded" if status == "done" else status, "evidence_count": 1 if status == "done" else 0,
-              "source_job_id": f"job-{status}", "updated_at": "2026-09-05T00:00:00Z"}
+              "source_job_id": f"job-{status}", "updated_at": "2026-09-05T00:00:00Z",
+              "synthetic": False, "source_confirmed": True}
              for status in ("queued", "running", "done", "failed")]
     calls = []
 

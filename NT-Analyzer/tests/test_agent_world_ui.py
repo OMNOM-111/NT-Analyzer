@@ -196,9 +196,25 @@ def test_real_chat_hints_reuse_existing_chat_not_a_backtest_composer():
 
 def test_canonical_ready_tasks_remain_visible_as_queued_in_active_and_waiting_views():
     result = evaluate("({label:ui.statusMeta('ready'),active:ui.taskMatches({status:'ready'},'active',''),waiting:ui.taskMatches({status:'ready'},'waiting',''),completed:ui.taskMatches({status:'ready'},'completed','')})")
-    assert result == {"label": ["В очереди", "neutral"], "active": True, "waiting": True, "completed": False}
-    source = SCRIPT.read_text(encoding="utf-8")
-    assert "['running', 'working', 'active', 'ready', 'queued', 'review', 'blocked', 'planned']" in source
+    # Integration narrowed the waiting filter: a queued task is execution, and
+    # "Ожидают" now means waiting for a result rather than waiting to start.
+    assert result == {"label": ["В очереди", "neutral"], "active": True, "waiting": False, "completed": False}
+    assert evaluate("ui.taskMatches({display_status:'waiting_result'},'waiting','')") is True
+    # A queued task belongs to execution. The overview panel used to widen this
+    # set with review/blocked/planned, which is why its heading contradicted the
+    # "В работе" metric; the phase split replaced that union.
+    # phaseOf now groups the single projection's display states, not raw ledger
+    # statuses: one computation on the server, one view of it on the page.
+    phases = evaluate("({queued:ui.phaseOf({display_status:'queued'}),running:ui.phaseOf({display_status:'running'}),"
+                      "waiting:ui.phaseOf({display_status:'waiting_result'}),"
+                      "review:ui.phaseOf({display_status:'awaiting_review'}),"
+                      "blocked:ui.phaseOf({display_status:'blocked'}),"
+                      "unconfirmed:ui.phaseOf({display_status:'result_received'}),"
+                      "auto:ui.phaseOf({display_status:'verified_automatically'}),"
+                      "done:ui.phaseOf({display_status:'completed'})})")
+    assert phases == {"queued": "executing", "running": "executing", "waiting": "executing",
+                      "review": "awaiting_review", "blocked": "awaiting_decision",
+                      "unconfirmed": "result_unconfirmed", "auto": "done", "done": "done"}
 
 
 def test_working_runtime_agent_alias_has_running_style_and_active_filter():
@@ -215,8 +231,8 @@ def test_compact_overview_boots_without_hidden_tab_nodes_or_extra_api_requests()
       const tabs = ['overview','work','agents'].map(key => ({dataset:{awTab:key},setAttribute(){}}));
       const node = key => {
         if (!nodes.has(key)) nodes.set(key,{innerHTML:'',textContent:'',hidden:false,
-          setAttribute(){},addEventListener(){},classList:{toggle(){}},
-          querySelectorAll(){return tabs;}});
+          setAttribute(){},addEventListener(){},classList:{toggle(){}},contains(){return false;},
+          querySelectorAll(selector){return selector.includes('[data-aw-tab]')?tabs:[];}});
         return nodes.get(key);
       };
       const document = {querySelector:node,addEventListener(){},removeEventListener(){}};
@@ -235,9 +251,13 @@ def test_compact_overview_boots_without_hidden_tab_nodes_or_extra_api_requests()
       return {requests,html:node('#aw-content').innerHTML,pulse:node('#aw-pulse').innerHTML};
     })()""".replace("PATH_TO_SCRIPT", json.dumps(str(SCRIPT))))
     assert result["requests"] == 1
-    assert all(name in result["html"] for name in ["aw-column-work", "aw-column-results", "aw-column-team"])
+    assert all(name in result["html"] for name in [
+        "aw-column-work", "aw-column-results", "aw-column-team",
+    ]), result["html"]
     assert "NEW" in result["html"]
-    assert "n = 1" in result["html"]
+    # The mini card leads with the observation count rather than "n = N";
+    # the claim it must keep making is that the sample size is visible.
+    assert "1 наблюдений" in result["html"]
     assert "<script>unsafe()" not in result["html"]
     assert "&lt;script&gt;unsafe()&lt;/script&gt;" in result["html"]
     assert "/ui/backtesting.html?job=nt-2" in result["html"]
@@ -394,7 +414,11 @@ def test_styles_do_not_redefine_global_shell_or_chart_engine():
 def test_source_does_not_invent_quality_ranks_or_execute_risky_actions():
     script = SCRIPT.read_text(encoding="utf-8")
     assert "Критерии конкретного класса задач" in script
-    assert "не доказывает качество LLM" in script
+    # The claim, not one phrasing of it: a passed check must never read as a
+    # judgement of the model in general. Integration reworded the sentences, so
+    # both surviving statements are pinned instead of the old exact string.
+    assert "общая оценка модели" in script
+    assert "не оценивает качество LLM" in script
     assert "shadow" not in script.lower() or "SHADOW" in script
     assert "court/approve" not in script
     assert "trade/execute" not in script
@@ -419,9 +443,21 @@ def test_domain_actions_require_enabled_server_projection_and_explicit_allowlist
 
 
 def test_persona_payload_is_distinct_from_model_credentials_scope_and_role_authority():
-    payload = {"name": "Research helper", "description": "Local comparison", "style": "Concise", "workspace_id": "foreign", "api_key": "secret", "permissions": ["admin"], "model": "injected", "role": "owner"}
+    payload = {"name": "Research helper", "description": "Local comparison", "style": "Concise", "avatar_key": "tolik", "workspace_id": "foreign", "api_key": "secret", "permissions": ["admin"], "model": "injected", "role": "owner"}
     result = evaluate(f"ui.domainPayload('personas','create',{json.dumps(payload)})")
-    assert result == {"name": "Research helper", "description": "Local comparison", "style": "Concise", "application_role": ""}
+    # A face is part of the Persona; credentials, scope, model and authority are not.
+    assert result == {"name": "Research helper", "description": "Local comparison",
+                      "style": "Concise", "avatar_key": "tolik", "application_role": ""}
+    assert not {"workspace_id", "api_key", "permissions", "model", "role"} & set(result)
+
+
+def test_persona_face_must_be_one_of_the_shipped_agent_assets():
+    """A free-text name must never let a Persona borrow another agent's face."""
+    from app.ai_control_center.presentation import avatar_key, AVATAR_KEYS
+    assert avatar_key("tolik") == "tolik" and avatar_key("TOLIK") == "tolik"
+    for value in ["", "../vitek", "unknown", "Толик", None, 7]:
+        assert avatar_key(value) == ""
+    assert set(evaluate("ui.AVATAR_KEYS")) == set(AVATAR_KEYS)
 
 
 @pytest.mark.parametrize("domain,action,values,expected", [
@@ -543,7 +579,7 @@ def run_domain_ui(scenario: str):
       const http={
         async aiControlCenterOverview(){calls.push({method:'overview'});return state;},
         async aiControlCenterTasks(){return {items:[task]};},
-        async aiControlCenterTask(id){calls.push({method:'task',id});return {task};},
+        async aiControlCenterTask(id){calls.push({method:'task',id});return {...response,task};},
         async aiControlCenterDomain(domain,params){calls.push({method:'list',domain,params});if(!domains[domain])throw {status:404};return JSON.parse(JSON.stringify(domains[domain]));},
         async aiControlCenterDomainItem(domain,id){calls.push({method:'detail',domain,id});const item=domains[domain].items.find(item=>item.id===id);if(!item)throw {status:404};return JSON.parse(JSON.stringify(item));},
         async aiControlCenterDomainAction(domain,id,action,body){calls.push({method:'post',domain,id,action,body:JSON.parse(JSON.stringify(body))});if(failPost)throw {status:500,message:'leaked credential must-not-render-error-secret'};
@@ -623,7 +659,8 @@ def test_persona_update_real_handler_sends_cas_revision_and_narrow_envelope():
     post = result["posts"][0]
     assert (post["domain"], post["action"]) == ("personas", "update")
     assert post["body"]["expected_revision"] == 7
-    assert post["body"]["payload"] == {"name": "Changed persona", "description": "Kept purpose", "style": "Concise", "application_role": ""}
+    assert post["body"]["payload"] == {"name": "Changed persona", "description": "Kept purpose",
+                                       "style": "Concise", "avatar_key": "", "application_role": ""}
     assert post["body"]["idempotency_key"]
     assert "Changed persona" in result["html"]
 
@@ -636,13 +673,15 @@ def test_external_model_task_requires_manual_consent_then_renders_actual_respons
       await submit(form({rubric_key:'connection_exact'},false));
       const before=calls.filter(call=>call.method==='post').length;
       await submit(form({rubric_key:'connection_exact'},true));
-      return {shown,before,posts:calls.filter(call=>call.method==='post'),html:drawer.innerHTML};
+      const resultHtml=drawer.innerHTML;
+      await click({awDetailTab:'evaluations'});
+      return {shown,before,posts:calls.filter(call=>call.method==='post'),resultHtml,html:drawer.innerHTML};
     """)
     assert 'name="confirmation" required' in result["shown"]
     assert result["before"] == 0
     assert len(result["posts"]) == 1
     assert result["posts"][0]["body"]["payload"] == {"rubric_key": "connection_exact"}
-    assert "ACTUAL_RESPONSE" in result["html"]
+    assert "ACTUAL_RESPONSE" in result["resultHtml"]
     assert "independent_local_evidence_verifier" in result["html"]
     assert "exact_response" in result["html"]
     assert "RESPONSE SHA256" in result["html"]

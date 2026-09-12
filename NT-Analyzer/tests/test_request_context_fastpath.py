@@ -113,7 +113,11 @@ def test_owner_permissions_skip_entitlement_repository(monkeypatch) -> None:
         999, {"user_id": 999, "is_owner": True, "role": "owner"},
     )
     assert resolved["is_owner"] is True
-    assert all(resolved["capabilities"].values())
+    # ai_automation is granted separately, never by being the owner: it is what
+    # background agent work checks before it may write. Asserted explicitly so
+    # the deliberate exclusion cannot be quietly removed.
+    assert resolved["capabilities"]["ai_automation"] is False
+    assert all(value for key, value in resolved["capabilities"].items() if key != "ai_automation")
 
 
 def test_http_json_safe_normalizes_postgresql_decimal_values() -> None:

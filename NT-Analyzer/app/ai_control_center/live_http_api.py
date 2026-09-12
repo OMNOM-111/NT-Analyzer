@@ -24,7 +24,7 @@ def _task_detail(authorized, identity):
     UUID(identity)
     if authorized.get("read_only") or authorized["chat_scope"].get("capabilities", {}).get("ai_pro_models"):
         try:
-            return domain_gateway.models(authorized).task_detail(context=authorized["context"], task_id=identity)
+            return domain_gateway.task_detail(authorized, identity)
         except ContractError as exc:
             if str(exc) not in {"model_record_not_found", "model_task_not_found"}:
                 raise
@@ -33,7 +33,12 @@ def _task_detail(authorized, identity):
         return None
     owner = gateway.access(scope)
     detail = LiveBacktestService().task_detail(**gateway.service_args(owner), entity_id=UUID(identity))
-    return detail or next((item for item in live_charts.details(owner) if item["task"]["id"] == identity), None)
+    detail = detail or next((item for item in live_charts.details(owner) if item["task"]["id"] == identity), None)
+    if detail:
+        # The inspector reads the same computed state as the card that opened
+        # it, instead of falling back to the adapter's own source status.
+        detail = {**detail, "task": domain_gateway.projected_task(detail["task"])}
+    return detail
 
 
 def handle_get(handler, path, qs):
@@ -104,6 +109,13 @@ def handle_post(handler, path):
             if len(parts) != 4:
                 raise ContractError("invalid_domain_request")
             authorized = domain_gateway.from_handler(handler)
+            if parts[1] == "personas" and parts[3] == "speak":
+                from ..ai_lab import agent_tts
+                try:
+                    handler._respond_tts(domain_gateway.speak_persona(authorized, parts[2], body))
+                except agent_tts.AgentTtsError:
+                    handler._err(409, "Озвучивание сейчас недоступно; текст и аватар сохранены.", code="persona_voice_unavailable")
+                return
             handler._json(200, domain_gateway.mutate(authorized, parts[1], parts[2], parts[3], body))
             return
         if route == "backtests":

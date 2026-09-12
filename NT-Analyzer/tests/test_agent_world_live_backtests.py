@@ -399,3 +399,64 @@ def test_read_paginates_past_unmarked_jobs_in_the_same_owner_scope(service):
         _write(target / "job.json", source)
     jobqueue.reset_caches()
     assert [task["id"] for task in service.work(**_args())] == [out["task_id"]]
+
+
+@pytest.mark.parametrize("claim", [
+    {"execution_source": "isolated_test_report", "synthetic": True},
+    {"execution_source": "ninjatrader", "synthetic": True},
+    {"execution_source": "ninjatrader", "trades_source": "synthetic_generator"},
+    {},
+])
+def test_unconfirmed_content_is_not_a_ninjatrader_result_just_for_claiming_one(service, claim):
+    """Saying `execution_source: ninjatrader` does not make a report authoritative.
+
+    The refusal already existed; what is pinned here is that nothing downstream
+    then goes on describing the same content as a NinjaTrader result.
+    """
+    out = _start(service)
+    path, result = _terminal(out)
+    result["source"] = claim
+    _write(path / "result.json", result)
+    detail = _get(service, out)
+
+    assert detail["verification"]["passed"] is False
+    assert "ninjatrader_source_required" in detail["verification"]["reasons"]
+    assert detail["verification"]["source_confirmed"] is False
+    assert detail["verification"]["synthetic"] is True
+    assert detail["task"]["source_confirmed"] is False
+    assert detail["task"]["synthetic"] is True
+    assert all(row["synthetic"] is True for row in detail["artifacts"])
+    assert all(row["synthetic"] is True for row in detail["activity"])
+    assert all(row["synthetic"] is True for row in detail["contributions"])
+    assert "Это результат NinjaTrader" not in detail["result_text"]
+    assert "Происхождение не подтверждено" in detail["result_text"]
+
+
+def test_a_real_run_with_damaged_evidence_keeps_its_confirmed_origin(service):
+    """Damaged evidence and a refuted origin are different findings.
+
+    A genuine run whose bars no longer match their fingerprint is still a
+    NinjaTrader run; it is the evidence that failed, not the provenance.
+    """
+    out = _start(service)
+    path, result = _terminal(out)
+    result["context"]["historical_data_fingerprint"]["value"] = "sha256:" + "b" * 64
+    _write(path / "result.json", result)
+    detail = _get(service, out)
+
+    assert detail["verification"]["passed"] is False
+    assert detail["verification"]["reasons"] == ["historical_bars_sha_mismatch"]
+    assert detail["verification"]["source_confirmed"] is True
+    assert detail["verification"]["synthetic"] is False
+    assert detail["task"]["synthetic"] is False
+    assert "Это результат NinjaTrader" in detail["result_text"]
+
+
+def test_a_running_job_asserts_nothing_about_its_origin_yet(service):
+    """Before a terminal state there is no file to have refuted anything."""
+    out = _start(service)
+    detail = _get(service, out)
+    assert detail["verification"]["state"] == "pending"
+    assert detail["verification"]["source_confirmed"] is True
+    assert detail["task"]["synthetic"] is False
+    assert detail["contributions"] == []

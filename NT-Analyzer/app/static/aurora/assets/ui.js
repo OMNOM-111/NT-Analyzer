@@ -222,7 +222,7 @@
 
   const BRAND_MARK = 'brand/stratforge-mark.png';
   // Staff faces: one webm per agent. Paused frame = avatar; hover/typing = play.
-  // Orchestrator message faces also TTS the message body (see agentSpeakFromFace).
+  // Chat speech is an explicit message action; hovering never starts audio.
   // Masters: `/Agents/<Имя>/`; served: `assets/agents/<id>/speaking.webm`.
   // Crop tuned per source framing (verified via tools/_avatar_preview.py).
   const AGENT_AVATAR_IDS = {
@@ -274,15 +274,28 @@
     const loop = !!(opts && opts.loop) || face.classList.contains('speaking');
     video.loop = loop;
     face.classList.add('playing');
-    const start = () => { video.play().catch(() => {}); };
+    const start = () => {
+      if (!face.isConnected || agentFaceReduceMotion()
+          || (!face.classList.contains('playing') && !face.classList.contains('speaking'))) return;
+      video.play().catch(() => {});
+    };
     if (video.readyState >= 2) start();
     else video.addEventListener('loadeddata', start, { once: true });
   }
-  // Hover TTS for Orchestrator message faces: loop webm while reading the
-  // message body via OpenAI Speech (or browser speechSynthesis fallback).
+  // Legacy transport helpers remain compatible; SF Chat binds only the
+  // explicit, scoped PersonaAudio action below, never this old hover path.
   const AGENT_SPEAK = { gen: 0, timer: null, audio: null, url: null, face: null, utter: null };
   const AGENT_SPEAK_HOVER_MS = 350;
+  const ORCH_SPEECH = { generation: 0, controller: null, module: null, message: '', button: null, status: null };
   function agentSpeakStop() {
+    ORCH_SPEECH.generation += 1;
+    if (ORCH_SPEECH.controller) ORCH_SPEECH.controller.stop();
+    if (ORCH_SPEECH.message) orchSpeechState({state: 'stopped'});
+    ORCH_SPEECH.message = '';
+    if (ORCH_SPEECH.button && ORCH_SPEECH.button.isConnected) {
+      ORCH_SPEECH.button.disabled = false; ORCH_SPEECH.button.textContent = 'Озвучить';
+      ORCH_SPEECH.button.setAttribute('aria-pressed', 'false');
+    }
     AGENT_SPEAK.gen += 1;
     if (AGENT_SPEAK.timer) { clearTimeout(AGENT_SPEAK.timer); AGENT_SPEAK.timer = null; }
     if (AGENT_SPEAK.audio) {
@@ -446,20 +459,13 @@
       });
       face.addEventListener('mouseenter', () => {
         if (face.classList.contains('speaking')) return;
-        if (face.classList.contains('orch-msg-face')) {
-          agentSpeakFromFace(face);
-          return;
-        }
+        if (face.classList.contains('orch-msg-face')) return;
         if (agentFaceReduceMotion()) return;
         agentFacePlay(face, { loop: false });
       });
       face.addEventListener('mouseleave', () => {
         if (face.classList.contains('speaking')) return;
-        if (face.classList.contains('orch-msg-face')) {
-          if (AGENT_SPEAK.face === face || AGENT_SPEAK.timer) agentSpeakStop();
-          else agentFacePause(face);
-          return;
-        }
+        if (face.classList.contains('orch-msg-face')) return;
         agentFacePause(face);
       });
       if (face.classList.contains('speaking')) agentFacePlay(face, { loop: true });
@@ -929,7 +935,15 @@
     wireA11y();
     wireRailResize(rail, app);
     renderDevPreviewBanner();
-    requestAnimationFrame(() => { authenticateAndStart(newsStrip); });
+    // A browser does not run requestAnimationFrame callbacks for a hidden
+    // document, so a page opened in a background tab used to sit on its loading
+    // skeleton with no error until the tab was focused. Schedule the same start
+    // through a timeout as well and let whichever fires first win; the latch
+    // keeps the auth exchange and shell build to exactly one run.
+    let shellStarted = false;
+    const startShell = () => { if (!shellStarted) { shellStarted = true; authenticateAndStart(newsStrip); } };
+    requestAnimationFrame(startShell);
+    setTimeout(startShell, 0);
   }
 
   // ---- Rail (sidebar) drag-resize ------------------------------------------
@@ -1613,6 +1627,7 @@
     if (PREVIEW_CONTEXT && PREVIEW_CONTEXT.enabled) {
       const scenarioLabels = {
         new_user: 'Новый пользователь',
+        agent_world_operator: 'Синтетический оператор Agent World',
         active_user: 'Активный пользователь',
         trusted_device: 'Доверенное устройство',
         pending_access: 'Новый неподтверждённый доступ',
@@ -8829,9 +8844,17 @@
     const d = back._d;
     d.style.width = '';
     d.classList.remove('wide', 'full', 'custom');
-    qs('.drawer-h', d).innerHTML = `<div class="drawer-title">${titleHtml}</div><div class="drawer-tools"><button class="btn sm ghost" data-drawer-size="wide">Шире</button><button class="btn sm ghost" data-drawer-size="full">На весь экран</button><button class="btn icon ghost" data-close-drawer aria-label="Закрыть">${icon('close')}</button></div>`;
+    qs('.drawer-h', d).innerHTML = `<div class="drawer-title" id="app-drawer-title">${titleHtml}</div><div class="drawer-tools"><button class="btn sm ghost" data-drawer-size="wide">Шире</button><button class="btn sm ghost" data-drawer-size="full">На весь экран</button><button class="btn icon ghost" data-close-drawer aria-label="Закрыть">${icon('close')}</button></div>`;
+    // This same drawer is reused by unrelated panels. Its accessible name
+    // follows the current visible heading, never a previous caller's label.
+    d.removeAttribute('aria-label');
+    d.setAttribute('aria-labelledby', 'app-drawer-title');
+    d.inert = false;
+    d.removeAttribute('aria-hidden');
     qs('.drawer-b', d).innerHTML = bodyHtml;
+    const opening = d._openGeneration = (d._openGeneration || 0) + 1;
     requestAnimationFrame(() => {
+      if (opening !== d._openGeneration) return;
       back.classList.add('open');
       d.classList.add('open');
       // After the class lands, so the measurement sees the real width.
@@ -8888,7 +8911,14 @@
   }
   function closeDrawer() {
     const back = qs('.drawer-back');
-    if (back) { back.classList.remove('open'); back._d.classList.remove('open'); }
+    if (back) {
+      back.classList.remove('open'); back._d.classList.remove('open');
+      back._d._openGeneration = (back._d._openGeneration || 0) + 1;
+      // Translated off screen is still reachable by Tab and screen readers.
+      // Keep the content/history, but make a closed drawer non-interactive.
+      back._d.inert = true;
+      back._d.setAttribute('aria-hidden', 'true');
+    }
     syncNoticeOffset();
   }
 
@@ -8921,6 +8951,7 @@
     mode: 'auto', messagesSignature: '', feedbackVoice: null, loadError: null,
     retryAfter: 0, transientError: null, viewerProfileId: '', aiAvailable: null,
     pendingAttachments: [], listQuery: '', listFilter: 'all',
+    personas: [], personaId: '', personaError: '', personaGeneration: 0,
   };
   const ORCH_KEY = lsKey('orch.currentConversationId');
   const ORCH_SKIN_KEY = lsKey('orch.skin');
@@ -9035,10 +9066,81 @@
   function orchLoadMode() {
     return 'auto';
   }
+  function orchPersonaOptions(personas, selected, error) {
+    const people = Array.isArray(personas) ? personas : [];
+    const main = people.filter(person => person.main_assistant === true);
+    const defaultLabel = main.length === 1 ? `Главный: ${main[0].title || main[0].name || 'Persona'}${main[0].status === 'active' ? '' : ' · приостановлен'}` : main.length > 1 ? 'Главный помощник: требуется уточнение' : 'Авто · главный помощник не назначен';
+    const options = [`<option value="">${esc(defaultLabel)}</option>`];
+    people.forEach(person => {
+      const id = String(person.id || '');
+      if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id) || !['active', 'suspended'].includes(person.status)) return;
+      const title = String(person.title || person.name || 'Persona');
+      options.push(`<option value="${esc(id)}"${id === selected ? ' selected' : ''}${person.status === 'active' ? '' : ' disabled'}>${esc(title)}${person.main_assistant === true ? ' · главный' : ''}${person.status === 'active' ? '' : ' · приостановлен'}</option>`);
+    });
+    if (selected && !people.some(person => person.id === selected)) options.push(`<option value="${esc(selected)}" selected disabled>Выбранная Persona недоступна — выберите другую</option>`);
+    return `<label for="orch-persona-select">Помощник <select class="btn sm" id="orch-persona-select" style="max-width:100%;min-width:0">${options.join('')}</select></label> <button class="btn sm" id="orch-persona-refresh" type="button" title="Обновить список Persona">Обновить</button><small style="display:block;overflow-wrap:anywhere">${esc(error || 'Выбирается личность, не модель. Доступны только поддерживаемые задания; имя не даёт новых прав.')}</small>`;
+  }
+  function orchRenderPersonaPicker() {
+    const wrap = qs('#orch-model-picker');
+    if (!wrap) return;
+    const hidden = orchIsHumanConversation(ORCH.currentId) || isGuest() || ORCH.aiAvailable === false;
+    wrap.hidden = hidden; wrap.setAttribute('aria-hidden', String(hidden));
+    if (hidden) return;
+    const html = orchPersonaOptions(ORCH.personas, ORCH.personaId, ORCH.personaError);
+    if (wrap._personaHtml !== html) {
+      wrap._personaHtml = html; wrap.innerHTML = html;
+      qs('#orch-persona-select', wrap)?.addEventListener('change', event => {
+        if (ORCH.sending) return;
+        const id = event.target.value;
+        if (id && !ORCH.personas.some(person => person.id === id && person.status === 'active')) return;
+        agentSpeakStop(); ORCH.personaId = id; ORCH.personaError = '';
+        orchRenderPersonaPicker();
+      });
+      qs('#orch-persona-refresh', wrap)?.addEventListener('click', () => orchLoadPersonas());
+    }
+    const select = qs('#orch-persona-select', wrap), refresh = qs('#orch-persona-refresh', wrap);
+    if (select) select.disabled = ORCH.sending;
+    if (refresh) refresh.disabled = ORCH.sending;
+  }
+  async function orchLoadPersonas() {
+    const generation = ++ORCH.personaGeneration, people = [], seen = new Set();
+    if (!window.API?.http?.aiControlCenterDomain || API.config.offline || isGuest()) return;
+    try {
+      let cursor = null;
+      for (let page = 0; page < 10; page += 1) {
+        const data = await API.http.aiControlCenterDomain('personas', { limit: 100, ...(cursor ? { cursor } : {}) }, { retries: 0 });
+        if (!Array.isArray(data?.items)) throw new Error('invalid_persona_catalog');
+        people.push(...data.items);
+        cursor = data.next_cursor || null;
+        if (!cursor) break;
+        if (seen.has(cursor) || page === 9) throw new Error('incomplete_persona_catalog');
+        seen.add(cursor);
+      }
+      if (generation !== ORCH.personaGeneration) return;
+      ORCH.personas = people; ORCH.personaError = '';
+    } catch (_) {
+      if (generation !== ORCH.personaGeneration) return;
+      ORCH.personas = [];
+      ORCH.personaError = 'Список личных помощников не получен. Обновите список; выбор не считается подтверждённым.';
+    }
+    orchRenderPersonaPicker();
+  }
+  function orchPersonaTransport(personas, selected) {
+    if (!selected) return {};
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(selected)
+        || !(Array.isArray(personas) ? personas : []).some(person => person.id === selected && person.status === 'active')) throw new Error('Выбранная Persona недоступна. Обновите список и выберите помощника.');
+    return { persona_id: selected };
+  }
+  function orchPendingPersonaFace(persona, label) {
+    const name = String(label || persona?.title || persona?.name || 'AI-помощник');
+    return persona && AGENT_AVATAR_IDS[persona.avatar_key] ? agentAvatarHtml(persona.avatar_key, {label: name, cls: 'orch-msg-face'})
+      : `<span class="orch-human-face orch-msg-face" title="${esc(name)} · AI-помощник">${esc(name.slice(0, 1))}</span>`;
+  }
   function orchLoadLastId() {
     try { return localStorage.getItem(ORCH_KEY) || 'default'; } catch (e) { return 'default'; }
   }
   function orchSaveCurrentId(cid) {
+    if (ORCH.currentId !== String(cid || '')) { agentSpeakStop(); ORCH.personaId = ''; }
     ORCH.currentId = String(cid || '');
     try {
       if (ORCH.currentId) localStorage.setItem(ORCH_KEY, ORCH.currentId);
@@ -9360,8 +9462,10 @@
     const wanted = ORCH.currentId;
     ORCH.historyRows = null; ORCH.historyMore = false; ORCH.historyBefore = undefined;
     const messagesFirst = wanted ? orchLoadMessages(wanted).catch(() => false) : null;
+    const personasFirst = orchLoadPersonas();
     const loaded = await orchLoadConversations();
     if (messagesFirst) await messagesFirst;
+    await personasFirst;
     if (!loaded) return;
     // orchLoadConversations may retarget currentId when the stored dialogue is
     // gone; in that case the prefetch above rendered nothing and the corrected
@@ -9392,6 +9496,9 @@
     return openOrchestrator(options || {});
   }
   function orchRenderAuthRequired(panel) {
+    agentSpeakStop();
+    ++ORCH.personaGeneration; ORCH.personas = []; ORCH.personaId = ''; ORCH.personaError = '';
+    const personaPicker = qs('#orch-model-picker'); if (personaPicker) { personaPicker.hidden = true; personaPicker.innerHTML = ''; personaPicker._personaHtml = ''; }
     const root = panel || qs('#orch-panel');
     if (!root) return;
     ORCH.loadError = { status: 401, message: 'Требуется вход через Telegram.' };
@@ -9491,6 +9598,7 @@
     const meta = ORCH_WORK_STATES[workState] || ORCH_WORK_STATES.open;
     const isDefault = !!(c && c.is_default);
     orchUpdateHeader();
+    orchRenderPersonaPicker();
     const badge = qs('#orch-task-state');
     if (badge) {
       if (!c || human || isDefault) {
@@ -9840,8 +9948,13 @@
       await orchLoadMessages(ORCH.currentId);
     });
   }
+  function orchIsAgentWorldMessage(row) {
+    if (!row || row.role === 'user' || row.sender_type === 'human' || row.sender_profile_id) return false;
+    return String(row.source || '').startsWith('agent_world_') || (Array.isArray(row.actions) && row.actions.some(action =>
+      String(action?.name || action?.action || '').startsWith('agent_world_')));
+  }
   function orchRatingHtml(row, isUser) {
-    if (isUser || !row.message_id) return '';
+    if (isUser || !row.message_id || orchIsAgentWorldMessage(row)) return '';
     const rating = Number(row.rating || 0);
     const comment = String(row.feedback_comment || '');
     const hasComment = !!comment.trim();
@@ -9884,6 +9997,12 @@
     return 'task';
   }
   function orchFulfillmentOf(row) {
+    // A completed transport/action is not an owner's acceptance. Historical
+    // feedback stays on the message; Agent World uses its canonical review.
+    if (orchIsAgentWorldMessage(row)) {
+      const review = row._awTask?.human_review?.status;
+      return review === 'accepted' ? 'done' : review === 'rejected' ? 'failed' : 'unset';
+    }
     const raw = String(row.fulfillment || '').trim();
     if (ORCH_FULFILL_LABELS[raw]) return raw;
     const kind = orchInferKind(row);
@@ -9926,6 +10045,171 @@
     blocked: ['Нужно внимание', 'blocked'], error: ['Ошибка', 'blocked'],
     completed: ['', 'done'], confirmed_connected: ['', 'done'],
   };
+  function orchAgentWorldTaskId(row) {
+    if (row?.source !== 'agent_world_local' || row.role !== 'assistant') return '';
+    const id = (row.actions || []).find(action => ['real_model_response', 'synthetic_model_response'].includes(action?.source_kind))?.task_id;
+    return /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(String(id || '')) ? id : '';
+  }
+  async function orchAgentWorldViews(messages, cid) {
+    if (typeof API.http.aiControlCenterTask !== 'function') return messages;
+    const last = new Map();
+    messages.forEach((row, index) => { const id = orchAgentWorldTaskId(row); if (id) last.set(id, index); });
+    const views = new Map(), entries = Array.from(last.entries()).slice(-20);
+    for (let offset = 0; offset < entries.length; offset += 4) {
+      await Promise.all(entries.slice(offset, offset + 4).map(async ([id, index]) => {
+        try {
+          const response = await API.http.aiControlCenterTask(id), task = response.task || response;
+          if (task.id === id && task.conversation_id === cid
+              && ['real_model_response', 'synthetic_model_response'].includes(task.source_kind)
+              && (task.source_kind !== 'synthetic_model_response' || task.synthetic === true)) views.set(index, task);
+        } catch (_) { /* Unavailable current state must never become a PASS. */ }
+      }));
+      if (ORCH.currentId !== cid) return messages;
+    }
+    return messages.map((row, index) => ({ ...row, _awTask: views.get(index) || null,
+      _awLatest: last.get(orchAgentWorldTaskId(row)) === index }));
+  }
+  function orchPersonaId(row) {
+    if (!row || row.role !== 'assistant' || row.sender_type === 'human' || row.sender_profile_id) return '';
+    const id = String(row.agent_id || '');
+    return /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id) ? id : '';
+  }
+  async function orchPersonaViews(messages, cid) {
+    const found = new Map(), ids = [...new Set(messages.map(orchPersonaId).filter(Boolean))];
+    if (typeof API.http.aiControlCenterDomainItem === 'function') {
+      for (let offset = 0; offset < ids.length; offset += 4) {
+        await Promise.all(ids.slice(offset, offset + 4).map(async id => {
+          try {
+            const response = await API.http.aiControlCenterDomainItem('personas', id), item = response.item || response;
+            if (item.id === id && Number.isInteger(item.revision) && item.presentation) found.set(id, item);
+          } catch (_) { /* A deleted/foreign/revoked Persona never becomes Vitek or inherits a provider voice. */ }
+        }));
+        if (ORCH.currentId !== cid) return messages;
+      }
+    }
+    return messages.map(row => ({...row, _persona: found.get(orchPersonaId(row)) || null}));
+  }
+  function orchSpeechPersona(row) {
+    if (orchPersonaId(row)) return row._persona || null;
+    const ref = String(row.agent_id || row.agent_name || '').toLowerCase();
+    const face = AGENT_AVATAR_IDS[ref];
+    if (!face) return null;
+    // Historical staff replies retain their assets. Without a persisted Persona
+    // voice they explicitly use a local device preset, never owner credentials.
+    return {id: 'legacy-' + face, revision: 1, title: row.agent_name || ref,
+      presentation: {resolved_voice_profile_id: face, voice_mode: 'browser',
+        voice_label: 'Голос устройства', voice_gender: face === 'marina' ? 'female' : 'male',
+        voice_speed: 1, voice_language: 'ru-RU', animation_mode: 'auto'}};
+  }
+  function orchSpeechHtml(row) {
+    if (row.role !== 'assistant' || row.sender_type === 'human' || row.sender_profile_id || !row.message_id || !row.content) return '';
+    const persona = orchSpeechPersona(row), configured = persona?.presentation?.resolved_voice_profile_id;
+    const available = !!configured && (!orchPersonaId(row) || ['active', 'draft'].includes(persona.status));
+    const hint = orchPersonaId(row) ? (available ? 'Озвучить сохранённый ответ голосом персоны' : 'Персона или её голос недоступны. История сохранена.')
+      : 'Исторический ответ: локальный голос устройства, без подключения провайдера';
+    return `<div class="orch-msg-meta"><button type="button" class="btn sm ghost" data-orch-speech="${esc(row.message_id)}" aria-pressed="false" title="${esc(hint)}" ${available ? '' : 'disabled'}>Озвучить</button> <span data-orch-speech-status role="status" aria-live="polite">${available ? '' : esc(hint)}</span></div>`;
+  }
+  function orchLoadPersonaAudio() {
+    if (window.PersonaAudio?.create) return Promise.resolve(window.PersonaAudio);
+    if (ORCH_SPEECH.module) return ORCH_SPEECH.module;
+    ORCH_SPEECH.module = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      let done = false;
+      const finish = error => {
+        if (done) return; done = true; clearTimeout(timer);
+        script.onload = script.onerror = null;
+        if (error || !window.PersonaAudio?.create) { ORCH_SPEECH.module = null; script.remove(); reject(Error('speech_module_unavailable')); }
+        else resolve(window.PersonaAudio);
+      };
+      const timer = setTimeout(() => finish(true), 10000);
+      script.src = '/ui/assets/persona-audio.js?v=20260908-agent-world-persona-chat1';
+      script.async = true; script.onload = () => finish(false); script.onerror = () => finish(true);
+      document.head.appendChild(script);
+    });
+    return ORCH_SPEECH.module;
+  }
+  function orchSpeechState(view) {
+    const button = ORCH_SPEECH.button, status = ORCH_SPEECH.status;
+    if (button && button.isConnected) {
+      button.disabled = false;
+      button.textContent = ['preparing', 'speaking'].includes(view.state) ? 'Остановить' : 'Озвучить';
+      button.setAttribute('aria-pressed', ['preparing', 'speaking'].includes(view.state) ? 'true' : 'false');
+    }
+    if (status && status.isConnected) {
+      const mode = view.mode === 'server' ? 'Подключённый голос' : 'Локальный голос устройства';
+      status.textContent = view.state === 'preparing' ? 'Проверка сообщения и голоса…'
+        : view.state === 'speaking' ? `${mode}${view.voice ? ': ' + view.voice : ''}. ${view.animation === 'speaking_loop' ? 'Анимация речи, без синхронизации фонем.' : 'Статичный аватар.'}`
+        : view.state === 'finished' ? 'Озвучивание завершено.' : view.state === 'stopped' ? 'Озвучивание остановлено.'
+        : view.state === 'text_fallback' ? 'Звук недоступен или доступ не подтверждён. Ответ доступен текстом.' : '';
+    }
+    if (!['preparing', 'speaking'].includes(view.state)) ORCH_SPEECH.message = '';
+  }
+  function wireOrchSpeech(container, messages, cid) {
+    qsa('[data-orch-speech]', container).forEach(button => button.addEventListener('click', async () => {
+      if (ORCH.currentId !== cid || !ORCH.open) return;
+      const id = button.dataset.orchSpeech, row = messages.find(item => item.message_id === id);
+      const persona = row && orchSpeechPersona(row);
+      if (!persona || !row.content) return;
+      if (ORCH_SPEECH.message === id) { agentSpeakStop(); return; }
+      agentSpeakStop();
+      const generation = ORCH_SPEECH.generation;
+      ORCH_SPEECH.message = id; ORCH_SPEECH.button = button;
+      ORCH_SPEECH.status = button.parentElement?.querySelector('[data-orch-speech-status]');
+      orchSpeechState({state: 'preparing'});
+      try {
+        const module = await orchLoadPersonaAudio();
+        if (generation !== ORCH_SPEECH.generation || ORCH.currentId !== cid || !ORCH.open || !button.isConnected) return;
+        if (!ORCH_SPEECH.controller) ORCH_SPEECH.controller = module.create({host: window,
+          playFace: agentFacePlay, pauseFace: agentFacePause, reducedMotion: agentFaceReduceMotion, onState: orchSpeechState,
+          requestSpeech: request => {
+            if (!request.message_ref) return {fallback: 'browser', text: request.text, reason: 'legacy_local_device_preset'};
+            if (!API.http.aiControlCenterPersonaSpeak || API.config.offline) return Promise.reject({status: 403});
+            return API.http.aiControlCenterPersonaSpeak(request.persona_id, {payload: request.message_ref,
+              expected_revision: request.expected_revision, idempotency_key: window.crypto.randomUUID()});
+          }});
+        const face = button.closest('.orch-msg')?.querySelector('.orch-msg-face');
+        await ORCH_SPEECH.controller.play({persona, text: row.content, face, userInitiated: true,
+          ...(orchPersonaId(row) ? {message_ref: {conversation_id: cid, message_id: id}} : {})});
+      } catch (_) {
+        if (generation === ORCH_SPEECH.generation) orchSpeechState({state: 'text_fallback'});
+      }
+    }));
+  }
+  window.addEventListener('pagehide', agentSpeakStop);
+  window.addEventListener('hashchange', agentSpeakStop);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) agentSpeakStop(); });
+  function orchAgentWorldCard(row) {
+    const id = orchAgentWorldTaskId(row);
+    if (!id) return '';
+    const savedTransport = (row.actions || []).some(action => action?.verification_scope === 'transport_only'
+      || action?.verification?.scope === 'transport_only' || action?.task_class === 'assistant_response');
+    const savedNote = savedTransport ? '<small>Сохранённая проверка относится только к получению текста. Содержание автоматически не оценено; профессиональный рейтинг не изменяется.</small>' : '';
+    if (!row._awLatest) return savedNote;
+    const task = row._awTask;
+    if (!task) return `<div class="orch-aw-task">Текущее состояние задачи недоступно. Проверка не считается завершённой.${savedNote}</div>`;
+    const actions = Array.isArray(task.actions) ? task.actions : [];
+    const review = task.human_review || {};
+    const transportOnly = savedTransport || task.verification_scope === 'transport_only' || [task.task_class, task.rubric_key].includes('assistant_response');
+    const verification = { passed: 'пройдена', failed: 'не пройдена', pending: 'ожидается' }[task.verification_status] || 'не получена';
+    const verificationText = transportOnly ? `Техническая проверка получения ответа: ${verification}. Содержание автоматически не оценено; требуется отдельное решение человека. В профессиональный рейтинг не входит.` : `Автоматическая проверка: ${verification}. Приёмка владельцем — отдельное решение.`;
+    return `<section class="orch-aw-task" data-aw-chat-task="${esc(id)}" data-aw-state="${esc(task.display_status)}"><strong>${esc(task.display_title || 'Задача Agent World')}</strong><p>${esc(task.display_status_label || task.status_label || 'Состояние не получено')}</p><p>${esc(task.result_label || '')}</p><small>${esc(verificationText)}</small>${actions.includes('review_result') && review.status === 'pending' ? `<div class="orch-aw-actions"><button type="button" class="btn sm" data-aw-chat-review="accept" data-aw-task-id="${esc(id)}">Проверено: принять</button><button type="button" class="btn sm" data-aw-chat-review="reject" data-aw-task-id="${esc(id)}">Проверено: отклонить</button></div>` : ''}<a class="btn sm" href="/ui/ai-command-center.html#tab=work&task=${encodeURIComponent(id)}">Задача, история и действия</a></section>`;
+  }
+  function wireOrchAgentWorld(container, messages, cid) {
+    qsa('[data-aw-chat-review]', container).forEach(button => button.addEventListener('click', async () => {
+      const task = messages.find(row => row._awTask?.id === button.dataset.awTaskId)?._awTask;
+      if (!task || ORCH.currentId !== cid) return;
+      const decision = button.dataset.awChatReview;
+      const confirmed = await confirmDialog('Решение сохранится только для этого результата. Оно не разрешает дальнейшие действия и не оценивает профессиональное качество модели.', { title: decision === 'accept' ? 'Принять проверенный результат?' : 'Отклонить проверенный результат?', confirmLabel: 'Сохранить решение' });
+      if (!confirmed || ORCH.currentId !== cid) return;
+      button.disabled = true;
+      try {
+        await API.http.aiControlCenterDomainAction('tasks', task.id, 'review_result', { expected_revision: task.revision, idempotency_key: window.crypto.randomUUID(), payload: { decision, comment: '', source_sha256: task.human_review.source_sha256 } });
+        window.dispatchEvent(new CustomEvent('agent-world-updated'));
+        await orchLoadMessages(cid);
+      } catch (error) { reportError(error); }
+      finally { button.disabled = false; }
+    }));
+  }
   function orchAgentWorldReportUrl(row) {
     if (row?.source !== 'agent_world_local' || row?.role !== 'assistant') return '';
     for (const action of Array.isArray(row.actions) ? row.actions : []) {
@@ -9954,6 +10238,7 @@
   }
   function orchActionsHtml(row, isUser) {
     if (isUser || !Array.isArray(row.actions) || !row.actions.length) return '';
+    if (orchAgentWorldTaskId(row)) return orchAgentWorldCard(row);
     // Progress rows stay informative while unfinished; terminal «Выполнено»
     // lives in the footer marks instead of repeating above every bubble.
     const items = row.actions.filter(action => action && typeof action === 'object').slice(0, 8).map(action => {
@@ -9985,14 +10270,25 @@
   }
   function orchFooterHtml(row, isUser) {
     if (isUser || !row.message_id) return orchRatingHtml(row, isUser);
+    if (orchIsAgentWorldMessage(row)) {
+      const taskId = orchAgentWorldTaskId(row), review = row._awTask?.human_review?.status;
+      const reviewLabel = {accepted: 'Результат принят', rejected: 'Результат отклонён', pending: 'Ожидается проверка результата'}[review]
+        || 'Статус проверки — в карточке задачи';
+      const oldRating = Number(row.rating || 0), oldComment = String(row.feedback_comment || '');
+      const oldFulfillment = ORCH_FULFILL_LABELS[row.fulfillment] || '';
+      return `<details class="orch-msg-footer"><summary class="orch-msg-tools-summary"><span class="orch-msg-tools-label">··· Детали ответа</span><time>${esc(orchFmtTime(row.timestamp_utc))}</time></summary>
+        <div class="orch-msg-footer-panel"><p>${esc(reviewLabel)}. Решение принимается только через проверку конкретного результата Agent World.</p>
+        ${oldRating || oldComment || oldFulfillment ? `<details><summary>Исторические отметки SF Chat — не приёмка задачи</summary>${oldRating ? `<p>Прежняя оценка сообщения: ${esc(oldRating)} из 3, не оценка профессионального качества.</p>` : ''}${oldComment ? `<p>${esc(oldComment)}</p>` : ''}${oldFulfillment ? `<p>Прежняя отметка: ${esc(oldFulfillment)}.</p>` : ''}</details>` : ''}
+        <a class="btn sm" href="/ui/ai-command-center.html#tab=work${taskId ? '&task=' + encodeURIComponent(taskId) : ''}">Задача, результат и история</a></div></details>`;
+    }
     const kind = orchInferKind(row);
     const fulfillment = orchFulfillmentOf(row);
     const kindLabel = ORCH_KIND_LABELS[kind] || kind;
     const fulfillLabel = ORCH_FULFILL_LABELS[fulfillment] || fulfillment;
     const isInformational = kind === 'informational';
-    const showMarks = !isInformational && (kind !== 'chat' || fulfillment === 'done' || fulfillment === 'failed');
+    const showMarks = !orchAgentWorldTaskId(row) && !isInformational && (kind !== 'chat' || fulfillment === 'done' || fulfillment === 'failed');
     const agentRef = row.agent_id || row.agent_name || row.domain_agent || 'vitek';
-    const agentLabel = String(row.agent_name || agentRef || 'Витёк');
+    const agentLabel = String(row.agent_name || (orchPersonaId(row) ? row._persona?.title || 'AI-помощник' : agentRef) || 'Витёк');
     const title = String(row.agent_title || '').trim();
     const model = String(row.model || '').trim();
     const provider = String(row.provider || '').trim();
@@ -10044,6 +10340,7 @@
   // Shown only while the verdict is genuinely open: a task or a report that
   // nobody has marked done or failed yet. Plain chat never asks for one.
   function orchAwaitHtml(row) {
+    if (orchIsAgentWorldMessage(row)) return '';
     if (!row || row.role === 'user' || !row.message_id) return '';
     const kind = orchInferKind(row);
     if (kind === 'chat' || kind === 'informational') return '';
@@ -10076,7 +10373,7 @@
       ? (row.actor_is_owner ? String(row.actor_name || 'Вы') : String(row.actor_name || row.user_name || row.user_id || 'Пользователь'))
       : '';
     const agentRef = row.agent_id || row.agent_name || row.domain_agent || 'vitek';
-    const agentLabel = String(row.agent_name || agentRef || 'Витёк');
+    const agentLabel = String(row.agent_name || (orchPersonaId(row) ? row._persona?.title || 'AI-помощник' : agentRef) || 'Витёк');
     const meta = isUser
       ? [esc(actor), orchFmtTime(row.timestamp_utc)].filter(Boolean).join(' · ')
       : '';
@@ -10085,7 +10382,10 @@
       ? (meta ? `<div class="orch-msg-meta">${meta}</div>` : '')
       : orchFooterHtml(row, isUser);
     const media = orchAttachmentsHtml(row);
-    const face = isUser ? '' : agentAvatarHtml(agentRef, {
+    const personaId = orchPersonaId(row), persona = row._persona;
+    const faceRef = personaId ? persona?.avatar_key : agentRef;
+    const face = isUser ? '' : personaId && !AGENT_AVATAR_IDS[faceRef]
+      ? `<span class="orch-human-face" title="${esc(agentLabel)} · AI-помощник">${esc(agentLabel.slice(0, 1))}</span>` : agentAvatarHtml(faceRef, {
       label: agentLabel, cls: 'orch-msg-face', messageId: row.message_id || '',
     });
     // The answer wears its own header (who answered, on which model) and, while
@@ -10094,7 +10394,9 @@
     const model = String(row.model || '').trim();
     const provider = String(row.provider || '').trim();
     const head = isUser ? '' : `<div class="orch-msg-card-head"><span class="orch-msg-author">${esc(agentLabel)}</span>${model ? `<span class="orch-msg-model">модель: ${esc(model)}${provider ? ` (${esc(provider)})` : ''}</span>` : ''}${orchAwaitHtml(row)}</div>`;
-    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}">${face}<div class="orch-msg-stack">${head}<div class="orch-msg-body">${esc(row.content || '')}</div>${media}${actions}${footer}</div></div>`;
+    const technical = orchAgentWorldTaskId(row) && (String(row.content || '').length > 500 || /^\s*[\[{]/.test(row.content || ''));
+    const body = technical ? `<details class="orch-msg-body orch-aw-details"><summary>Полное сообщение и данные результата</summary><pre>${esc(row.content || '')}</pre></details>` : `<div class="orch-msg-body">${esc(row.content || '')}</div>`;
+    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}"${personaId ? ` data-persona-id="${esc(personaId)}"` : ''}>${face}<div class="orch-msg-stack">${head}${body}${media}${actions}${footer}${orchSpeechHtml(row)}</div></div>`;
   }
   function orchStopFeedbackVoice() {
     const voice = ORCH.feedbackVoice;
@@ -10302,6 +10604,30 @@
       ORCH.loadingOlder = false;
     }
   }
+  function orchFailure(error, uncertain) {
+    // Provider payloads can contain private data. Only known machine codes go
+    // into expandable details; never place arbitrary error text in the chat.
+    const known = {
+      execution_v2_approved_scope_changed: 'Параметры поручения не совпали с подтверждёнными. Выполнение остановлено защитой; откройте задачу и проверьте выбранную персону и подключение.',
+      persona_model_required: 'Для этой персоны нужно выбрать доступное подключение в AI Центре.',
+      persona_model_ambiguous: 'У персоны несколько подключений. Уточните выбор подключения в AI Центре.',
+      persona_selection_inactive: 'Выбранная персона не активна. Проверьте её состояние в AI Центре.',
+      persona_selection_unavailable: 'Выбранная персона недоступна в текущем рабочем пространстве.',
+    };
+    const code = typeof error === 'string' ? error : String(error?.code || error?.message || '');
+    const status = Number(error?.status);
+    return {
+      text: uncertain ? 'Не удалось подтвердить получение ответа. Обновите историю перед повторной отправкой: сервер мог уже сохранить результат.'
+        : Object.prototype.hasOwnProperty.call(known, code) ? known[code]
+        : status === 401 || status === 403 ? 'Доступ к ответу не подтверждён. Проверьте вход и доступ к рабочему пространству.'
+        : 'Ответ не получен. Обновите историю и проверьте состояние задачи перед новой попыткой.',
+      code: Object.prototype.hasOwnProperty.call(known, code) ? code : uncertain ? 'delivery_unconfirmed' : 'response_not_received',
+      status: Number.isInteger(status) && status >= 400 && status <= 599 ? status : null,
+    };
+  }
+  function orchErrorHtml(failure) {
+    return `<span class="orch-err" role="status">${esc(failure.text)}</span><details class="orch-error-details"><summary>Технические подробности</summary><p><code>${esc(failure.code)}</code>${failure.status ? ` · HTTP ${esc(failure.status)}` : ''}</p><p>Повторная отправка автоматически не выполнялась. История задач и ошибок сохраняется.</p></details>`;
+  }
   async function orchLoadMessages(cid, silent) {
     const box = qs('#orch-msgs'); if (!box) return;
     if (!cid) return false;
@@ -10344,27 +10670,34 @@
       if (!silent) { renderError(box, e, () => orchLoadMessages(cid)); return false; }
       return false;
     }
+    if (!human) {
+      messages = await orchAgentWorldViews(messages, cid);
+      messages = await orchPersonaViews(messages, cid);
+    }
     if (ORCH.currentId !== cid) return;
     const signature = JSON.stringify(messages.map(row => [
       row.message_id, row.timestamp_utc, row.content, row.rating,
       row.feedback_comment, row.feedback_timestamp_utc, row.model, row.provider,
       row.agent_name, row.actions, row.fulfillment, row.message_kind, row.participation_chain,
-      row.sender_profile_id, row.attachments,
+      row.sender_profile_id, row.attachments, row._awTask, row._awLatest, row._persona,
     ]));
     if (silent && signature === ORCH.messagesSignature) return;
     if (silent && (ORCH.feedbackVoice || qsa('.orch-feedback-text', box).some(ta => ta.dataset.dirty === '1'))) return;
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
     orchStopFeedbackVoice();
+    agentSpeakStop();
     box.innerHTML = messages.length ? orchMessagesHtml(messages) : (human
       ? '<div class="empty-state">Личная переписка начнётся с первого сообщения.</div>'
       : '<div class="empty-state">Начните диалог: например «Разработай простую стратегию максимально быстро».</div>');
     if (ORCH.transientError && ORCH.transientError.cid === cid) {
-      box.insertAdjacentHTML('beforeend', `<div class="orch-msg assistant"><span class="orch-err">${esc(ORCH.transientError.text)}</span></div>`);
+      box.insertAdjacentHTML('beforeend', `<div class="orch-msg assistant">${orchErrorHtml(ORCH.transientError)}</div>`);
     }
     ORCH.messagesSignature = signature;
     if (!human) {
       wireOrchFeedback(box);
       wireAgentFaces(box);
+      wireOrchAgentWorld(box, messages, cid);
+      wireOrchSpeech(box, messages, cid);
     }
     if (!silent || atBottom) box.scrollTop = box.scrollHeight;
     if (human && ORCH.open && ORCH.currentId === cid) {
@@ -10381,7 +10714,15 @@
     if (!text && !(human && ORCH.pendingAttachments.length)) return;
     if (isGuest()) { orchRenderAuthRequired(qs('#orch-panel')); return; }
     if (!window.API || API.config.offline) { toast('Чат недоступен в офлайн-превью'); return; }
+    let personaOptions = {};
+    if (!human) {
+      try { personaOptions = orchPersonaTransport(ORCH.personas, ORCH.personaId); }
+      catch (error) { toast(error.message); return; }
+    }
+    const pendingPersona = !human ? ORCH.personas.find(person => person.id === personaOptions.persona_id)
+      || (!ORCH.personaId ? ORCH.personas.find(person => person.main_assistant === true && person.status === 'active') : null) : null;
     ORCH.sending = true;
+    orchRenderPersonaPicker();
     ORCH.transientError = null;
     if (sendBtn) sendBtn.disabled = true;
     ta.value = ''; ta.style.height = 'auto';
@@ -10425,7 +10766,7 @@
         <div class="orch-think-live-label">${icon('spark')}<span>Передаю запрос…</span></div>
         <div class="orch-think-live-text"><span id="orch-live-think-body"></span></div>
       </div>
-      <div class="orch-msg assistant orch-live-answer" id="orch-live-body">${agentAvatarHtml('vitek', { speaking: true, label: 'Виктор', cls: 'orch-msg-face' })}<div class="orch-msg-stack"><span class="orch-dots"><i></i><i></i><i></i></span></div></div>
+      <div class="orch-msg assistant orch-live-answer" id="orch-live-body">${pendingPersona ? orchPendingPersonaFace(pendingPersona) : agentAvatarHtml('vitek', { speaking: true, label: 'Виктор', cls: 'orch-msg-face' })}<div class="orch-msg-stack"><span class="orch-dots"><i></i><i></i><i></i></span></div></div>
     </div>`);
     box.appendChild(live);
     wireAgentFaces(live);
@@ -10437,7 +10778,9 @@
     const liveStack = () => qs('.orch-msg-stack', liveBody) || liveBody;
     const setLiveFace = (ref, label) => {
       if (!liveBody) return;
-      const next = agentAvatarHtml(ref || 'vitek', {
+      const stableId = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(String(ref || ''));
+      const next = stableId ? orchPendingPersonaFace(ORCH.personas.find(person => person.id === ref), label)
+        : agentAvatarHtml(ref || 'vitek', {
         speaking: true, label: label || 'Виктор', cls: 'orch-msg-face',
       });
       const current = qs('.orch-msg-face', liveBody);
@@ -10470,25 +10813,24 @@
         },
         onError: (err) => {
           removeThink();
-          setLiveBody(`<span class="orch-err">Не удалось получить ответ: ${esc(err)}</span>`);
+          setLiveBody(orchErrorHtml(orchFailure(err, false)));
           keepBottom();
         },
-      });
+      }, personaOptions);
       if (!streamResult || streamResult.ok !== true) {
-        const message = String((streamResult && streamResult.error) || 'Не удалось получить ответ.');
-        ORCH.transientError = { cid, text: `Не удалось получить ответ: ${message}` };
+        ORCH.transientError = { cid, ...orchFailure(streamResult?.error, false) };
         removeThink();
-        setLiveBody(`<span class="orch-err">${esc(ORCH.transientError.text)}</span>`);
+        setLiveBody(orchErrorHtml(ORCH.transientError));
       }
     } catch (e) {
       // A failed streaming POST may already have been committed by the server.
       // Never repeat the same mutating message through a second transport.
-      const message = String((e && e.message) || e || 'Соединение прервалось');
-      ORCH.transientError = { cid, text: `Не удалось подтвердить получение ответа: ${message}. Обновите историю перед повторной отправкой.` };
+      ORCH.transientError = { cid, ...orchFailure(e, true) };
       removeThink();
-      setLiveBody(`<span class="orch-err">${esc(ORCH.transientError.text)}</span>`);
+      setLiveBody(orchErrorHtml(ORCH.transientError));
     } finally {
       ORCH.sending = false;
+      orchRenderPersonaPicker();
       if (sendBtn) sendBtn.disabled = false;
       // Reload from storage so the final reply and auditable action states
       // replace the transient public progress block.
@@ -10504,6 +10846,6 @@
     return true;
   }
 
-  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, confirmDialog, promptDialog, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV, openOrchestrator, openSFChat, closeOrchestrator, isGuest, requireSignIn, agentAvatarId, agentAvatarUrl, agentAvatarHtml, wireAgentFaces, agentFacePlay, agentFacePause, openCabinet, openAdminPanel, showEnvironmentSwitcher, get CURRENT_AUTH() { return CURRENT_AUTH; } };
+  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, confirmDialog, promptDialog, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV, openOrchestrator, openSFChat, closeOrchestrator, isGuest, requireSignIn, agentAvatarId, agentAvatarUrl, agentAvatarHtml, wireAgentFaces, agentFacePlay, agentFacePause, agentSpeakStop, openCabinet, openAdminPanel, showEnvironmentSwitcher, get CURRENT_AUTH() { return CURRENT_AUTH; } };
   document.addEventListener('DOMContentLoaded', buildShell);
 })();

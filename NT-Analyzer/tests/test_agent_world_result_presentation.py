@@ -12,10 +12,17 @@ from tests.test_agent_world_ui import AURORA, ARTIFACT, ROOT, SCRIPT, evaluate
 
 def chat_render(row):
     source = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
-    helpers = "function orchAgentWorldReportUrl(" + source.split("function orchAgentWorldReportUrl(", 1)[1].split("function orchChainHtml(", 1)[0]
+    # The slice has to cover everything the rendered functions call. Integration
+    # added orchAgentWorldTaskId/Views/Card just above orchAgentWorldReportUrl,
+    # and the message renderer calls them, so the window starts there now.
+    helpers = "function orchAgentWorldTaskId(" + source.split("function orchAgentWorldTaskId(", 1)[1].split("function orchChainHtml(", 1)[0]
     message = "function orchMessageHtml(" + source.split("function orchMessageHtml(", 1)[1].split("function orchStopFeedbackVoice(", 1)[0]
     script = ("const esc=require(" + json.dumps(str(SCRIPT)) + ").esc;"
         "const ORCH_ACTION_LABELS={}, ORCH_ACTION_STATES={completed:['','done']},ORCH={};"
+        # The shared helper slice now registers speech lifecycle cleanup. This
+        # render-only port may register handlers, but must never play any audio.
+        "const window={addEventListener(){}},document={addEventListener(){}},AGENT_AVATAR_IDS={};"
+        "const agentSpeakStop=()=>{throw Error('render-only test must not execute speech')};"
         "const orchFmtTime=()=>'',orchFooterHtml=()=>'',agentAvatarHtml=()=>'',orchAwaitHtml=()=>'';"
         + helpers + message + "const row=" + json.dumps(row) + ";"
         "const before=JSON.stringify(row); const html=orchMessageHtml(row);"

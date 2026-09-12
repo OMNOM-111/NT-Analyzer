@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.ai_control_center import application_chat, domain_gateway
+from app.ai_control_center.model_service import ModelService
 from app.ai_control_center.states import ContractError, EntityKind
 from tests.test_agent_world_domain_service import env, create, act, get, context
 from tests.test_agent_world_models import setup as model_setup, connected
@@ -113,8 +114,11 @@ def test_ambiguous_source_links_are_not_hidden():
 
 def test_legacy_projection_merges_only_explicit_role_and_keeps_rating_separate(env, monkeypatch):
     person = assigned(env, name="Not Tolik")
+    # Overview also reads aggregate Tasks now. Use its actual scoped iterator
+    # over this disposable repository; only model-list/evaluation DTOs are fake.
+    reader = ModelService(env.repo, admit=lambda *_: env.admit())
     fake_models = SimpleNamespace(repository=env.repo, tasks=lambda **_: {"items": []},
-                                  models=lambda **_: {"items": []})
+                                  models=lambda **_: {"items": []}, _all=reader._all)
     monkeypatch.setattr(domain_gateway, "models", lambda _: fake_models)
     monkeypatch.setattr(domain_gateway, "domains", lambda *_: env.service)
     monkeypatch.setattr(domain_gateway, "system", lambda _: {"flags": {}})
@@ -135,8 +139,9 @@ def test_inactive_binding_keeps_history_without_hiding_current_rating(env, monke
     bindings = [{"id": "old", "model": "old-model", "status": old_status, "persona_id": person["id"]},
                 {"id": "current", "model": "current-model", "status": "active", "persona_id": person["id"]}]
     stats = {"rubric_key": "json_arithmetic", "score_pct": 100, "sample_size": 3, "label": "OBSERVED"}
+    reader = ModelService(env.repo, admit=lambda *_: env.admit())
     service = SimpleNamespace(repository=env.repo, tasks=lambda **_: {"items": []},
-        models=lambda **_: {"items": bindings}, evaluations=lambda **_: stats)
+        models=lambda **_: {"items": bindings}, evaluations=lambda **_: stats, _all=reader._all)
     monkeypatch.setattr(domain_gateway, "models", lambda _: service)
     monkeypatch.setattr(domain_gateway, "domains", lambda *_: env.service)
     monkeypatch.setattr(domain_gateway, "system", lambda _: {"flags": {}})

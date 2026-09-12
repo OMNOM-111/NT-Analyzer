@@ -5471,3 +5471,10 @@ html[data-orch-skin] .orch-fab:focus-visible {
 .preview-autofill .btn { border-color: rgba(255,183,3,.55); color: #ffd166; background: rgba(255,183,3,.12); }
 .preview-autofill .btn:hover:not(:disabled) { background: rgba(255,183,3,.22); }
 .auth-hero .preview-autofill { max-width: 520px; margin: 18px auto 0; justify-content: center; }
+.orch-aw-task { border: 1px solid var(--line-2); border-radius: 10px; padding: 12px; margin: 9px 0; min-width: 0; overflow-wrap: anywhere; }
+.orch-aw-task p { margin: 5px 0; }
+.orch-aw-task small { display: block; color: var(--tx-3); line-height: 1.6; }
+.orch-aw-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.orch-aw-task .btn { max-width: 100%; white-space: normal; }
+.orch-aw-details summary { cursor: pointer; }
+.orch-aw-details pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 340px; overflow: auto; font: inherit; }

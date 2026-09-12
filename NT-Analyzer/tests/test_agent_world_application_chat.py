@@ -162,7 +162,10 @@ def test_pending_application_never_projects_plan_as_completed_application(model_
     assert detail["status"] == "waiting" and not detail["artifacts"]
     assert detail["outcomes"][0]["title"] == "Проверка ответа модели"
     assert detail["outcomes"][0]["id"] == detail["outcome_id"]
-    assert detail["outcomes"][0].get("source_kind") is None
+    # Provenance identifies the model's plan response, never completed work
+    # by NinjaTrader/Desktop. Pending application still has no such receipt.
+    assert detail["outcomes"][0]["source_kind"] == "real_model_response"
+    assert detail["outcomes"][0]["source_kind"] not in {"ninjatrader_report", "desktop_chart"}
     assert not model_chat.envelope(authorized, detail, request_id="pending-view")["verification"]["passed"]
 
 

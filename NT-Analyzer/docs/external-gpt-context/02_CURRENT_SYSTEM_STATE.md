@@ -6,16 +6,126 @@
 - Local source verified SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (clean beta.96 runtime; real handoff/manual delivery and original report/PNG verified, exact-code CI PASS)
 - Local verification UTC: 2026-09-05T19:05:43Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
-- Current program delta: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. Full-program/owner acceptance remains open.
+- Protected Local program snapshot: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. New unified-source evidence is separate below; full-program/owner acceptance remains open.
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`; not released to Canary/Production
 - Active Local 8765: clean `2b6d0112bef88c5bfb73970de64ec5518443e56b`, build `dev-0.10.0-beta.96-2b6d0112bef8`, original owner data, Preview=false
-- Agent World branch: `codex/agent-world-owner-preview`, stacked draft PR #282 above open #281/#280; clean 2b6d0112 active and browser-verified, not a release
+- Active Agent World branch: `codex/agent-world-unified-acceptance`, draft PR #285; protected Local still uses `codex/agent-world-owner-preview` code 2b6d0112 from the separate #282/#281/#280 stack. The review/mechanisms work has been integrated in the task branch, not deployed. Source ownership and preserved independent review: [AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md).
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
+
+## Active integration — 2026-09-09
+
+Latest preserved/pushed executable source is
+**`e45b64b0121014c5d796553ae8b512d98a5782ae`** on draft PR #285, with
+329 focused, root static/context and 593-file pre-release bundle PASS. Clean
+immutable full: **5416 PASS / 119 SKIP / 0 FAIL / 0 ERROR**, 5834.82 s;
+legacy **13/13 PASS**. Fresh disposable PostgreSQL separately passed
+**69 Agent World**, **41 legacy PG**, **7 Persona identity**, and actual
+authenticated API → existing worker → SQL → replay → restart/RLS. These are
+not inherited 376 results. Full-run skips remain **68 AW PG + 7 Persona PG +
+41 legacy PG + 3 platform**; fresh DB receipts supplement, not relabel, them.
+Exact source/cluster/runtime hashes: [e45 verification](../changelog/2026-09-09-agent-world-e45-verification.md).
+PR rollup was empty when inspected, not CI PASS.
+
+8804 runs an immutable e45 copy with retained synthetic data and its checked
+41-file cold backup. Browser reopened and activated **Ариадна QA**, preserving
+aliases/main/style/Марина face, then created a separate synthetic connection
+through the wizard and completed its local-executor diagnostic: **0 external
+calls**, no real key, no DeepSeek/BYOK or model-quality acceptance. The next
+selected-Persona Chat request failed `execution_v2_approved_scope_changed`;
+completed Work and stale “1 в работе” header also disagreed. Error history stays.
+
+Subsequent Persona/V2 approved-identity reconstruction and read-only live-refresh
+corrections are **IN DEVELOPMENT**. The e45 full/PG PASS does not certify this
+later delta. Positive exact-code browser repeat, remaining integrated routes,
+audible speech, new-code gates and owner acceptance remain open. Next: short
+tests and a separate checkpoint, cold backup, only isolated 8804 restart on
+immutable new source, then continue the full route; do not rerun completed e45
+checks as though they were missing. Protected Local8765/owner keys remain
+unchanged. Real registration, separate ordinary-user key, a specific permanent
+real Social publication and visual design acceptance are distinct owner actions.
+The program stays **IN DEVELOPMENT**, not a deployment or accepted release.
+
+The following checkpoints are earlier preserved evidence:
+
+`376b400dc3c8ab3a008f1e45800d401dd02c4b6f` had root static/context and a
+588-file artifact PASS; immutable full **5262 PASS / 1 FAIL / 112 SKIP**,
+legacy 13/13 PASS. Its stale cancel-command unit fixture was corrected later,
+not relabelled PASS on 376. Its 69 AW + 41 legacy PG and API/worker/restart/RLS
+results remain in the [376 receipt](../changelog/2026-09-08-agent-world-postgres-376-acceptance.md).
+The subsequent [Persona checkpoint](../changelog/2026-09-08-agent-world-persona-chat-checkpoint.md)
+is e45 above, with its own separately completed seven Persona PG cases.
+
+Shared checkpoint `a03ec82b686a9f6f05c056fe5a500ecbdb3babac` is pushed (65 files,
+584-file artifact gate PASS), not owner acceptance. Its detached full regression
+is separate from subsequent fixes. Disposable tests confirmed a bounded
+authenticated Connector-to-job binding gap; exact dispatch/scope/path validation
+and source-bound synthetic corrections are described in the
+[boundary record](../changelog/2026-09-08-agent-world-trusted-report-boundary.md).
+Neither the protected owner data nor its historical real report was changed.
+
+Exact-a03 detached full regression finished at 5124 PASS / 12 FAIL / 112 SKIP,
+legacy runner 13/13 PASS; 68 Agent World PG, 41 legacy PG and 3 platform skips
+are not PostgreSQL evidence. Later Chat-review and Router-Persona changes are
+recorded separately: ledger review cannot be replaced by message stars/timers,
+and the speaking Persona is not the selected executor identity. Their focused
+receipts do not replace the next integrated full/browser pass. See the single
+program matrix and scoped changelogs below.
+
+Core checkpoint `13573bf76bae2dbad4f9efc4f6893d0bcb4d5406` is preserved on
+draft PR #285. The subsequent shared API/worker/Chat/UI delta connects bounded
+Coordinator reviews, Persona, Process Intelligence and explicit Preview data.
+Router choices and queued test-executor origin are now pinned. System and
+task counts report the actual mechanism/result state, not old implementation
+assumptions. Status remains **IN DEVELOPMENT** pending exact-code integrated
+browser/full/runtime gates. See the
+[shared checkpoint](../changelog/2026-09-08-agent-world-shared-integration-checkpoint.md)
+and the single [program matrix](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
+Fresh PostgreSQL evidence is separately 69 Agent World PASS, 41 legacy PASS,
+and API/worker/restart/RLS acceptance bound to its recorded application hash;
+it is not final full-regression evidence. `localhost:8804` is isolated QA with
+fresh synthetic data, not a replacement for protected Local 8765. Details and
+remaining checks: [takeover record](../changelog/2026-09-08-agent-world-integration-takeover.md).
+
+Agent World source is now `codex/agent-world-unified-acceptance`, from combined
+`f0bafe8ea46653827bc836afcb2197964390cf08` plus preserved late Claude documents.
+See the [intake manifest](../changelog/2026-09-08-agent-world-integration-takeover.md).
+Mechanisms/review are already integrated. The non-trading root/worker/Chat
+route has focused evidence; ordinary SERVICE delivery and Router hardening
+have separate scoped repeats. Latest full
+4537/110 result is historical code `92436698`, not the new source. Part E's
+PostgreSQL runtime evidence and fixture-claim withdrawal are retained separately.
+Local 8765 still serves `2b6d0112`, without an activation. The inherited metadata
+and snapshot describe earlier Local/deployment evidence, not today's integration
+HEAD. No new release/Production verification, provider call or budget is authorized.
+
+## Historical mechanisms WIP checkpoint — 2026-09-06
+
+Saved WIP source: `f9b9444524aa497781fe3de7254d1bfb0e3b062c` (37 files;
+clean worktree after commit). Short static/secret/context/diff and 556-file
+bundle gates PASS; exact-checkpoint full pytest NOT RUN. All further backend
+work is a separate commit; frozen UI remains exactly as in this checkpoint.
+
+Separate branch `codex/agent-world-mechanisms` preserves additive PostgreSQL
+repository/RLS migration 0023, Router V2, Execution/Deviation, finite delegation,
+schedule, automation authority and unfinished status/UI work from `45ab4361`.
+Canonical status: **IN DEVELOPMENT**, with integration gaps; not active on
+protected Local 8765 (`2b6d0112`, beta.96). No new flags or migrations applied.
+New disposable AW PostgreSQL evidence: 69 PASS/0 skipped; existing PG suites:
+41 PASS/0 skipped separately. Without DSNs, the new suite has 68 skips, not PASS.
+Latest UI subset has 3 FAIL/88 PASS; exact-checkpoint full regression not run.
+Do not inherit prior Local/CI PASS. Details, known defects, ownership and resume
+operation: [mechanisms WIP record](../changelog/2026-09-06-agent-world-mechanisms-wip.md).
+
+Independent PR #283 remains separate; no UI/presentation consolidation until
+review reconciliation, and no edits to its branch/tests. Preserve existing
+WIP UI only; continue non-overlapping backend in later commits. No merge/deploy
+or paid external calls. Owner visual acceptance, registration, separate key and
+exact permanent Social publication remain pending.
 
 ## Completed SF Chat dialog correction — historical 95912cbf verification
 
@@ -107,11 +217,15 @@ on ef4006eb; actual historical bars are not labelled LIVE.
   implemented but still `IN DEVELOPMENT`, not a finished owner acceptance.
   [Canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
   [ADR-0012](../adr/0012-agent-world-integrated-local.md) identify exact scope.
-- All ten flags default OFF. Exact Development workspace opt-in through
+- Protected 2b6d0112 Local snapshot: all ten flags default OFF. Its exact
+  Development workspace opt-in through
   `STRATFORGE_AGENT_WORLD_LOCAL_WORKSPACES` enables eight reviewed paths:
   read/UI/tasks/evaluation/memory/consensus/Court/social. Router shadow and
   Execution V2 remain OFF. Controlled Preview has its separate four fixture
   flags and rejects real model/domain side effects; browser input enables none.
+  This describes the protected Local snapshot, not the later isolated e45
+  workspace's explicit Router/V2/delegation/scheduler test opt-ins. No protective
+  flags on owner Local are changed by those isolated tests.
 - The old owner process served dirty beta.93 / `7062f749` because its scheduled
   task still targeted the old checkout. After explicit owner approval, isolated
   copy checks, coherent/cold backups and exact process retirement, Local 8765
@@ -136,8 +250,9 @@ on ef4006eb; actual historical bars are not labelled LIVE.
   Separate actual isolated
   PostgreSQL 17.10 regression passed `41 passed, 0 skipped` against existing
   migrations 1–22, TLS and non-superuser/NOBYPASSRLS roles. This does not provide
-  a new Agent World PostgreSQL adapter: domain storage is Development SQLite
-  only and fails closed outside Development. See the
+  an Agent World PostgreSQL adapter for that historical code: its domain store
+  was Development SQLite only. Current e45 adapter/migration 0023 and fresh
+  69/41/7 plus runtime/RLS evidence are separately recorded above. See the
   [integrated verification ledger](../changelog/2026-09-05-agent-world-integrated-local.md).
 
 - Operational evidence: Release Center closeout, server symlinks and read-only
@@ -149,13 +264,13 @@ on ef4006eb; actual historical bars are not labelled LIVE.
 
 | Subsystem | Status | Current fact | Remaining limit |
 | --- | --- | --- | --- |
-| Agent World | `IN DEVELOPMENT` | Three tabs plus drawers, clean 2b6d0112 active; real NT/PNG, typed Anna fact handoff, separate application observations and manual routine/calendar SF Chat delivery verified; earlier Consensus/Court and private Memory/project evidence retained | Multi-user Memory, permanent Social publication, ordinary own-key and owner acceptance pending. General recursive delegation, Agent World PG adapter, Router/Execution V2 and autonomous routine scheduler not implemented |
+| Agent World | `IN DEVELOPMENT` | Protected Local stays on 2b6d0112; unified PR #285 saved e45 full 5416/119 skips, fresh PG 69/41/7 and actual runtime/RLS PASS. New Persona/V2 and live-refresh corrections are separate WIP after actual browser failures | New-code gates and integrated browser route remain, not completed e45 tests. Ordinary-user key, real external results, specific permanent Social publication and owner visual acceptance remain separate. See the canonical matrix |
 | Auth / owner identity | `BETA` in Unified Local | `0.10.0-beta.96` has one three-step registration contract for Telegram, Google and e-mail, a stable StratForge handle shared by profile/SF Social/SF Chat, final clickwrap consent and the existing shared environment-routed provider architecture. Owner Preview uses the same state transitions with sandbox-only synthetic credentials | Not present in the deployed beta.87 artifact; live real-provider acceptance and immutable Canary/Production promotion remain separate gates |
 | Device confirmation / trusted access | `BETA` in Unified Local | Every new unknown human browser/app access starts as a two-minute pending session. The first freshly authenticated device can choose permanent trust or current-session-only without a redundant second OTP; later unknown clients still use confirmed Telegram or verified e-mail. Machine → Client → Session grouping remains proof-based | Integrated and browser-verified in Local beta.96, but not present in deployed beta.87; real-provider acceptance and release promotion remain separate gates |
 | Legacy UI / Telegram Mini App | `DEPRECATED` | Merged main serves Aurora only; legacy UI, Mini App, remote-access and tunnel routes fail with HTTP 410. Classic assets are available only in a separate localhost read-only Legacy Viewer. Telegram `/start` uses a normal URL button | beta.87 is live in Canary and Production; historical snapshots remain until owner review |
 | User entry and trial access | `BETA` in Unified Local | Anonymous product access is removed. Every verified account receives the same full product with a default five-hour active-use starting grant; idle time is not charged. Profile/security remain available after exhaustion | Not present in deployed beta.87; product access does not grant third-party market-data redistribution rights |
 | Admin / Release Center | `BETA` | A versioned release/change record is visible with title, summary, PRs, SHA, build/artifact, stage, checks, duration and environment identity. Production approval/promotion fails closed without title, summary, source SHA and verification PASS | beta.87 acceptance is recorded; any application change starts a new artifact cycle |
-| Test isolation | `AVAILABLE` | Active 2b6d0112 full 4235/44 skipped, 267 integrated focused, 542-file staged/runtime bundles and exact-code CI 33984524477 3/3 PASS; 26 actual HTTP Memory synthetic-session tests | 41 PostgreSQL and three shell/POSIX skips are not fresh PASS; historical isolated PG run remains separate. Fixtures do not certify live provider/browser acceptance |
+| Test isolation | `AVAILABLE` | Protected 2b6d0112 retains its recorded 4235/44 and exact-code CI. Separate clean e45 immutable full 5416/119 skips and disposable PG 69/41/7 plus authenticated runtime/restart/RLS are hash-bound to e45 | 119 generic skips stay explicit; the new DB runs supplement them. Three shell/POSIX cases remain unavailable on this Windows run. Neither old CI nor e45 PASS certifies subsequent WIP or real provider/browser acceptance |
 | Market data / TopstepX | `BETA` | TopstepX remains the primary independent read-only history/realtime chart source; the accepted gateway/SignalR/cache/failover/rendering baseline was not changed by PR #254/#255 or the beta.86 release-record work | cross-user owner-feed redistribution remains `EXTERNAL BLOCKED` without written authority |
 | Charts / fan-out | `BETA` | Browser clients consume same-origin StratForge market-data WebSockets; provider credentials are not delivered to browsers and consumers do not create their own TopstepX loginKey/SignalR sessions | broader design acceptance is separate from this Connector closeout |
 | NinjaTrader / Connector | `BETA` | Production Connector on VMNINJA is `0.4.2-dev.20`; SERVER BACKTEST, cancel state machine, device catalog, account snapshot and Connector LIVE/GRACE/OFFLINE presentation are accepted | public installer distribution remains `EXTERNAL BLOCKED` on authorized Authenticode material |

@@ -43,7 +43,10 @@ def _chart_spec(message):
     return application_spec("chart", {"instrument": instrument[1] + " " + instrument[2], "timeframe": timeframe[1] + "m"})
 
 
-def _select_model(service, context, kind):
+def _select_model(service, context, kind, *, persona_id=None):
+    if persona_id is not None:
+        from .persona_identity import select_model
+        return select_model(service, context=context, persona_id=persona_id, kind=kind)
     from .application_roles import for_kind
     role = for_kind(kind)
     personas = [row for row in service._all(context, EntityKind.PERSONA)
@@ -64,7 +67,8 @@ def _select_model(service, context, kind):
     return candidates[0]["id"]
 
 
-def try_chat(message, *, scope, conversation_id, request_id, source):
+def try_chat(message, *, scope, conversation_id, request_id, source, persona_id=None,
+             persona_revision=None, user_message=None):
     if source != "app" or not live_gateway.configured(str((scope or {}).get("workspace_id") or "")):
         return None
     kind = _intent(message)
@@ -72,25 +76,42 @@ def try_chat(message, *, scope, conversation_id, request_id, source):
         return None
     authorized = domain_gateway.access(scope)
     service = domain_gateway.models(authorized)
-    model_id = _select_model(service, authorized["context"], kind)
+    model_id = _select_model(service, authorized["context"], kind, persona_id=persona_id)
     if model_id is None:
         # No fabricated LLM participation. The existing explicit Local command
         # path remains available with its honest NinjaTrader/Desktop attribution.
         return None
+    persona_ref = None
+    if persona_id is not None:
+        persona = service._get(authorized["context"], EntityKind.PERSONA, persona_id)
+        if (type(persona_revision) is not int or persona.header.revision != persona_revision
+                or persona.header.owner_user_uuid != authorized["context"].user_uuid
+                or persona.status != "active"):
+            raise ContractError("persona_revision_conflict")
+        persona_ref = persona.ref()
     live_gateway.access(authorized["chat_scope"])
     spec = application_spec("backtest", live_gateway.parse_backtest(message)) if kind == "backtest" else _chart_spec(message)
     if kind == "backtest":
         LiveBacktestService()._registered(spec)  # existing catalog, read-only
 
     def execute(message_id):
+        if persona_id is not None:
+            # Selection is not a lasting permission. Recheck the owned Persona
+            # and exact active binding immediately before the normal task path.
+            authorized["admit"]()
+            if _select_model(service, authorized["context"], kind, persona_id=persona_id) != model_id:
+                raise ContractError("persona_model_binding_changed")
+            if service._get(authorized["context"], EntityKind.PERSONA, persona_id).ref() != persona_ref:
+                raise ContractError("persona_revision_conflict")
         detail = service.plan_application(context=authorized["context"], model_id=model_id, spec=spec, kind=kind,
-            idempotency_key=request_id, conversation_id=conversation_id, message_id=message_id)
+            idempotency_key=request_id, conversation_id=conversation_id, message_id=message_id,
+            **({"_persona": persona_ref} if persona_ref is not None else {}))
         envelope = model_chat.envelope(authorized, detail, request_id=request_id, pending=True)
         envelope["text"] = ("Модель персоны подготовит точную спецификацию поручения. После независимой проверки "
             "её выполнит существующий NinjaTrader/Рабочий стол. Результат и evidence вернутся в этот диалог.")
         return envelope
 
-    return chief_agent.run_agent_world_live_request(message=message, request_id=request_id, conversation_id=conversation_id,
+    return chief_agent.run_agent_world_live_request(message=user_message or message, request_id=request_id, conversation_id=conversation_id,
         scope=authorized["chat_scope"], execute=execute, domain_request=True, include_message_identity=True)
 
 
@@ -109,6 +130,8 @@ def _failure(service, authorized, task, checkpoint, code):
 def _publish_final(authorized, service, detail):
     # The monitor only queues the exact persisted terminal result. A separate
     # direct append here would race the claimed delivery worker across processes.
+    from . import execution_v2
+    execution_v2.observe(authorized, service, detail["id"])
     history = domain_gateway.access(authorized["chat_scope"], read_only=True)
     return domain_gateway.enqueue_model_delivery(history, domain_gateway.history_models(history), detail["id"])
 
@@ -209,9 +232,18 @@ def finish_dispatch(authorized, service, result):
         return {"dispatched": False}
     context = authorized["context"]
     authorized["admit"]()
+    from . import execution_v2
+    execution_guard = execution_v2.before_application(authorized, service, task_dto["id"])
     live = live_gateway.access(authorized["chat_scope"])
     if live["context"] != context:
         raise ContractError("application_scope_mismatch")
+    if callable(execution_guard):
+        original_admit = live["admit"]
+        def admit():
+            original_admit()
+            execution_guard()
+        # Existing source adapters call this again immediately before enqueue.
+        live = {**live, "admit": admit}
     failure = None
     with _LOCK:
         task = service._get(context, EntityKind.TASK, task_dto["id"])

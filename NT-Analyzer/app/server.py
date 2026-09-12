@@ -543,7 +543,50 @@ _PROVIDER_FAULT_STATES = frozenset({
 })
 
 
-def _settle_connector_backtest(body: Mapping[str, Any]) -> None:
+def _validate_connector_backtest_binding(command: Mapping[str, Any]) -> None:
+    """Bind an authenticated stored command to the server's exact job dispatch.
+
+    Idempotency names are not authority. Called under protocol validation before
+    a result/sequence is committed, so a refused report can be safely corrected.
+    """
+    key = str(command.get("idempotency_key") or "")
+    payload = command.get("payload") if isinstance(command.get("payload"), Mapping) else {}
+    action = payload.get("command")
+    tagged = key.startswith(("backtest:", "cancel-backtest:"))
+    if not tagged and action not in {connector_backtest.COMMAND, connector_backtest.CANCEL_COMMAND}:
+        return
+    try:
+        cancel = key.startswith("cancel-backtest:")
+        expected_action = connector_backtest.CANCEL_COMMAND if cancel else connector_backtest.COMMAND
+        if (not tagged or command.get("capability") != connector_backtest.CAPABILITY
+                or action != expected_action):
+            raise ValueError("command")
+        job_id = key.split(":", 1)[1]
+        located = connector_backtest.locate(jobqueue.jobs_dir(), job_id)
+        if located is None:
+            raise ValueError("job")
+        _, directory = located
+        job = connector_backtest.read_job_document(directory)
+        origin = job.get("origin") if isinstance(job.get("origin"), Mapping) else {}
+        dispatch = connector_backtest.dispatch_record(directory, cancel=cancel)
+        expected_payload = connector_backtest.cancel_payload(job_id) if cancel else connector_backtest.command_payload(job)
+        if (job.get("job_id") != job_id or payload != expected_payload
+                or not origin.get("user_id") or not origin.get("workspace_id")
+                or str(origin["user_id"]) != str(command.get("issued_by_user_id") or "")
+                or dispatch.get("transport") != "production_connector"
+                or any(not command.get(field) or dispatch.get(field) != command[field]
+                       for field in ("command_id", "connection_id", "idempotency_key"))
+                or str(dispatch.get("workspace_id") or origin["workspace_id"]) != command.get("workspace_id")
+                or str(dispatch.get("origin_workspace_id") or origin["workspace_id"]) != origin["workspace_id"]):
+            raise ValueError("binding")
+    except (ValueError, TypeError, KeyError, OSError, connector_backtest.BacktestDispatchError):
+        raise connector_protocol.ConnectorProtocolError(
+            "Ответ Connector не связан с исходной задачей. Результат не применён.",
+            409, "backtest_dispatch_mismatch",
+        ) from None
+
+
+def _settle_connector_backtest(body: Mapping[str, Any], *, command: Mapping[str, Any]) -> None:
     """Apply one device-reported status to the canonical job.
 
     The Connector's command lifecycle stops here. The browser only ever sees
@@ -552,9 +595,10 @@ def _settle_connector_backtest(body: Mapping[str, Any]) -> None:
     that as progress would show a run in flight for a Connector that has since
     gone silent.
 
-    Never raises: a Connector that reported correctly must not be answered with
-    an error because this server could not file the report.
+    Validation errors raise before any filesystem action. Filing failures after
+    valid protocol receipt remain retryable and do not replace prior reports.
     """
+    _validate_connector_backtest_binding(command)
     try:
         idempotency_key = str(body.get("idempotency_key") or "")
         if idempotency_key.startswith("cancel-backtest:"):
@@ -687,7 +731,7 @@ def _cancel_backtest_on_connector(
         if not connection_id:
             return
         active = context.get("active_workspace")             if isinstance(context.get("active_workspace"), dict) else {}
-        connector_protocol.queue_command(
+        queued = connector_protocol.queue_command(
             context.get("user_id"),
             workspace_id=str(status.get("source_workspace_id")
                              or active.get("workspace_id") or ""),
@@ -697,6 +741,18 @@ def _cancel_backtest_on_connector(
             payload=connector_backtest.cancel_payload(job_id),
             expires_in_sec=connector_protocol.MAX_COMMAND_TTL_SEC,
         )
+        located = connector_backtest.locate(jobqueue.jobs_dir(), job_id)
+        if located:
+            job_doc = connector_backtest.read_job_document(located[1])
+            command = queued.get("command") or {}
+            connector_backtest.record_dispatch(
+                located[1], command_id=str(command.get("command_id") or ""),
+                connection_id=connection_id, idempotency_key=f"cancel-backtest:{job_id}",
+                queued_at_utc=str(command.get("issued_at_utc") or ""),
+                workspace_id=str(command.get("workspace_id") or ""),
+                origin_workspace_id=str((job_doc.get("origin") or {}).get("workspace_id") or ""),
+                cancel=True,
+            )
     except Exception:
         observability.event(
             "connector_backtest", "cancel_not_delivered", severity="warning",
@@ -757,6 +813,8 @@ def _dispatch_backtest_to_connector(
         connection_id=connection_id,
         idempotency_key=idempotency_key,
         queued_at_utc=str((command or {}).get("created_at_utc") or ""),
+        workspace_id=str((command or {}).get("workspace_id") or ""),
+        origin_workspace_id=str((job_doc.get("origin") or {}).get("workspace_id") or ""),
     )
     # The job stays pending. "Accepted" means the device has the work, not
     # that it has begun it, and a Connector that goes silent after accepting
@@ -3009,8 +3067,14 @@ class Handler(BaseHTTPRequestHandler):
             # account row is bootstrapped.  Permission lookup then returns a
             # fail-closed empty record even though the request is already
             # authenticated as owner.  Owner parity is authoritative here.
+            # Owner parity, with one deliberate exception: ai_automation is what
+            # background agent work checks before it may write, and it is granted
+            # by an explicit override rather than by being the owner. A blanket
+            # grant here would hand the local owner the one permission the rest
+            # of the stack withholds.
             context["capabilities"] = {
-                capability_id: True for capability_id in permissions.CAPABILITY_IDS
+                capability_id: capability_id != "ai_automation"
+                for capability_id in permissions.CAPABILITY_IDS
             }
             context["admin_capabilities"] = {
                 capability_id: True for capability_id in permissions.ADMIN_CAPABILITY_IDS
@@ -3610,13 +3674,18 @@ class Handler(BaseHTTPRequestHandler):
                     limit=body.get("limit") or 10,
                 )
             else:
+                validated_command = {}
+                def validate_result_command(command):
+                    _validate_connector_backtest_binding(command)
+                    validated_command.update(command)
                 out = connector_protocol.submit_result(
                     self._connector_bearer_token(), body,
+                    validate_command=validate_result_command,
                 )
                 # A backtest that ran on the device comes home as an ordinary
                 # report. The Connector's command lifecycle stops here: the
                 # browser only ever sees pending/running/done/failed.
-                _settle_connector_backtest(body)
+                _settle_connector_backtest(body, command=validated_command)
             self._json(HTTPStatus.OK, out)
         except connector_protocol.ConnectorProtocolError as exc:
             # A refused connector left no trace before this, so a device that
@@ -9131,6 +9200,10 @@ class Handler(BaseHTTPRequestHandler):
             request_id = "air_" + hashlib.sha256(
                 f"{time.time_ns()}:{threading.get_ident()}:{os.urandom(16).hex()}".encode()
             ).hexdigest()[:32]
+        selection = {}
+        if "persona_id" in body:
+            from .ai_control_center.persona_identity import _identity
+            selection["persona_id"] = _identity(body["persona_id"])
         # Self-heal a crashed worker before accepting more durable work.
         local_worker.start_background_worker(interval_sec=0.2)
         return local_worker.enqueue_ai_message(
@@ -9141,6 +9214,7 @@ class Handler(BaseHTTPRequestHandler):
             scope=scope,
             mirror_to_telegram=mirror_to_telegram,
             timeout_sec=600,
+            **selection,
         )
 
     @staticmethod

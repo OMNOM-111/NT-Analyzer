@@ -201,10 +201,16 @@ class DomainService:
     def _create_input(self, domain, payload):
         if domain == "personas":
             from .application_roles import role_key
-            data = _fields(payload, ("name",), ("description", "style", "application_role"))
+            from .presentation import avatar_key
+            from .persona_voice import VOICE_FIELDS, normalize_fields
+            from .persona_identity import IDENTITY_FIELDS, normalize_fields as normalize_identity
+            data = _fields(payload, ("name",), ("description", "style", "application_role", "avatar_key", *VOICE_FIELDS, *IDENTITY_FIELDS))
             return {"name": _text(data["name"], limit=160), "description": _text(data.get("description", ""), empty=True),
                     "style": _text(data.get("style", ""), limit=1000, empty=True),
-                    "application_role": role_key(data.get("application_role", ""))}
+                    "application_role": role_key(data.get("application_role", "")),
+                    "avatar_key": avatar_key(data.get("avatar_key", "")),
+                    **normalize_identity(data),
+                    **{key: value for key, value in normalize_fields(data).items() if key in data}}
         if domain == "memory":
             data = _fields(payload, ("title", "content", "purpose", "retention_days"),
                            ("source_ids", "memory_class", "task_id", "verified_outcome_id"))
@@ -333,6 +339,14 @@ class DomainService:
             return self._review(context, admit, record, clean, operation, key, digest)
         references = ()
         if action == "update" and domain in {"personas", "projects", "memory"}:
+            if domain == "personas":
+                # Older clients submit only fields they know. A rename must
+                # not silently reset the face, voice, style or explicit role.
+                from .persona_voice import VOICE_FIELDS
+                from .persona_identity import IDENTITY_FIELDS
+                previous = self._json(context, record.profile)
+                clean = {**{key: previous[key] for key in ("description", "style", "application_role", "avatar_key", *VOICE_FIELDS, *IDENTITY_FIELDS)
+                            if key in previous and key not in clean}, **clean}
             data = self._create_input(domain, clean)
             if domain == "personas" and "application_role" not in clean:
                 # Older clients can rename a Persona without unassigning its role.
@@ -464,7 +478,12 @@ class DomainService:
         if isinstance(record, c.Persona):
             data = self._json(context, record.profile)
             title, summary = record.display_name, data.get("description", "")
+            data.setdefault("aliases", [])
+            data.setdefault("main_assistant", False)
             data["profile"] = {key: data.get(key, "") for key in ("description", "style")}
+            from .persona_voice import presentation
+            data["presentation"] = presentation(data)
+            data["voice_label"] = data["presentation"]["voice_label"]
             actions = ["update"] if status in {"draft", "active", "suspended"} else []
             actions += {"draft": ["activate", "archive"], "active": ["suspend", "archive"],
                         "suspended": ["activate", "archive"]}.get(status, [])

@@ -23,8 +23,10 @@ from .events import EventData, EventEnvelope, MutationIdentity
 from .model_contracts import Evaluation
 from .model_evaluation import (APPLICATION_RUBRIC, APPLICATION_SOURCES, RUBRICS, VERSION,
     application_reputation, digest, evaluate, is_application_observation, json_bytes, prepare, prompts, reputation)
+from . import presentation
+from .connection_protocol import CHAT_PROTOCOL, describe as describe_protocol, validate as validate_protocol
 from .repositories import PageRequest
-from .states import ContractError, EntityKind, INITIAL_STATES
+from .states import ContractError, EDITABLE_STATES, EntityKind, INITIAL_STATES
 
 
 _NS = UUID("34a15c32-6b28-514e-b14d-bda987c95882")
@@ -74,9 +76,24 @@ def _wire(ref):
     return {"artifact_id": str(ref.artifact_id), "sha256": ref.sha256}
 
 
+def receipt_provenance(receipt):
+    """Classify a saved executor receipt, never a prompt or today's flag state.
+
+    Earlier receipts retained the local executor identity but hardcoded
+    ``synthetic=False``. Project those honestly without rewriting their bytes.
+    The marker can only remove real-model credit, not authorize an execution.
+    """
+    from .test_executor import EXECUTOR
+    synthetic = (receipt.get("executor") == EXECUTOR
+                 or receipt.get("actual_model") == EXECUTOR
+                 or receipt.get("synthetic") is True)
+    return {"source_kind": "synthetic_model_response" if synthetic else "real_model_response",
+            "synthetic": synthetic}
+
+
 class ModelService:
     def __init__(self, repository, *, admit, enqueue=None, executor=None, secrets=None,
-                 allowed_origins=(), chat_scope=None):
+                 allowed_origins=(), chat_scope=None, mechanism_admit=None, mechanism_authorized=None):
         self.repository = repository
         self.admit = admit
         self.enqueue = enqueue
@@ -86,6 +103,8 @@ class ModelService:
         # Optional trusted composition dependency, never an HTTP/task field.
         # Only explicit result handoffs require chat existence before a call.
         self.chat_scope = dict(chat_scope) if isinstance(chat_scope, dict) else None
+        self.mechanism_admit = mechanism_admit
+        self.mechanism_authorized = mechanism_authorized
 
     def _access(self, context, operation="read", estimate=0.0):
         if not isinstance(context, c.RequestContext):
@@ -201,7 +220,7 @@ class ModelService:
         key = _key(idempotency_key)
         if not isinstance(payload, dict):
             raise ContractError("model_connection_invalid")
-        allowed = {"label", "provider", "model", "base_url", "api_key", "persona_id", "connection_kind"}
+        allowed = {"label", "provider", "model", "base_url", "api_key", "persona_id", "connection_kind", "protocol"}
         if set(payload) - allowed:
             raise ContractError("model_connection_field_invalid")
         label, model = payload.get("label"), payload.get("model")
@@ -214,6 +233,7 @@ class ModelService:
         kind = payload.get("connection_kind", "model")
         if kind not in {"model", "external_agent"}:
             raise ContractError("model_connection_kind_invalid")
+        protocol = validate_protocol({"protocol": payload.get("protocol", CHAT_PROTOCOL)})
         endpoint = self._endpoint(provider, payload.get("base_url"))
         api_key = payload.get("api_key")
         if (type(api_key) is not str or not 8 <= len(api_key) <= 4096
@@ -224,13 +244,13 @@ class ModelService:
         model_id, account_id = _id(context, "model:" + key), _id(context, "provider:" + key)
         profile = {"schema_version": 1, "source": "private_model_connection", "label": label,
             "provider": provider, "model": model, "base_url": endpoint, "connection_kind": kind,
-            "provider_account_id": str(account_id), "persona_id": str(persona.header.entity_id),
+            "provider_account_id": str(account_id), "persona_id": str(persona.header.entity_id), "protocol": protocol,
             "credential_source": "user_supplied", "connected": False}
         with _LOCK:
             existing = self.repository.get(context=context, kind=EntityKind.MODEL, entity_id=model_id)
             if existing is not None:
                 old = self._json(context, existing.profile)
-                if any(old.get(k) != v for k, v in profile.items() if k != "connected"):
+                if any(old.get(k, CHAT_PROTOCOL if k == "protocol" else None) != v for k, v in profile.items() if k != "connected"):
                     raise ContractError("model_connection_idempotency_conflict")
                 if existing.status == "draft":
                     account = self._get(context, EntityKind.PROVIDER_ACCOUNT, account_id)
@@ -262,21 +282,76 @@ class ModelService:
             self._walk(context, record, "active")
         return self.model_detail(context=context, model_id=model_id)
 
+    def _last_connection_test(self, context, model, profile):
+        """Project historical origin from the receipt, not today's test switch."""
+        last_test = profile.get("last_test")
+        if isinstance(last_test, dict) and last_test.get("task_id"):
+            tested = self._get(context, EntityKind.TASK, last_test["task_id"])
+            checkpoint = self._json(context, tested.checkpoint)
+            if (checkpoint.get("model_id") != str(model.header.entity_id)
+                    or checkpoint.get("spec", {}).get("rubric_key") != "connection_exact"):
+                raise ContractError("model_receipt_mismatch")
+            receipt = self._json(context, checkpoint["receipt"]) if checkpoint.get("receipt") else {}
+            last_test = {**last_test, **receipt_provenance(receipt),
+                         "executor": receipt.get("executor"), "external_call": receipt.get("external_call")}
+        return last_test
+
+    def _check_execution_origin(self, context, model, profile, checkpoint):
+        validate_protocol(profile)
+        selection = checkpoint.get("persona_selection")
+        if selection is not None:
+            persona = self._get(context, EntityKind.PERSONA, profile["persona_id"])
+            if (persona.status != "active" or c.primitive(persona.ref()) != selection
+                    or checkpoint.get("persona_id", profile["persona_id"]) != profile["persona_id"]):
+                raise ContractError("persona_selection_changed")
+        from . import test_executor
+        enabled = test_executor.enabled(context.scope.workspace_id)
+        if checkpoint.get("test_executor_request") is True and not enabled:
+            raise ContractError("model_test_executor_disabled")
+        last_test = self._last_connection_test(context, model, profile)
+        if (not enabled and last_test and last_test.get("synthetic") is True
+                and checkpoint.get("spec", {}).get("rubric_key") != "connection_exact"):
+            # A local calculation never verifies the configured provider/key.
+            # An explicitly requested new connection check may still use the
+            # usual provider admission; ordinary work cannot imply that consent.
+            raise ContractError("model_real_connection_verification_required")
+
     def model_detail(self, *, context, model_id):
         self._access(context)
         model = self._get(context, EntityKind.MODEL, model_id)
         profile = self._json(context, model.profile)
         account = self._get(context, EntityKind.PROVIDER_ACCOUNT, profile["provider_account_id"])
-        active = model.status == account.status == "active"
+        protocol = describe_protocol(profile)
+        active = model.status == account.status == "active" and protocol["protocol_supported"]
+        last_test = self._last_connection_test(context, model, profile)
+        test_only = bool(last_test and last_test.get("synthetic") is True)
+        connected = bool(profile.get("connected")) and active and not test_only
+        verified_test = bool(active and test_only and last_test.get("passed") is True)
+        from . import test_executor
+        can_execute_test_only = verified_test and test_executor.enabled(context.scope.workspace_id)
         return {"id": str(model.header.entity_id), "title": profile["label"], "label": profile["label"],
             "status": model.status, "model": model.model_key, "provider": model.provider_key,
             "persona_id": profile["persona_id"], "provider_account_id": str(account.header.entity_id),
-            "connection_kind": profile["connection_kind"], "connected": bool(profile.get("connected")) and active,
+            "persona_name": self._persona_name(context, profile["persona_id"]),
+            "connection_kind": profile["connection_kind"], "connected": connected, **protocol,
+            "test_executor_verified": verified_test,
+            "can_execute_test_only": can_execute_test_only,
+            "execution_available": connected or can_execute_test_only,
+            "connection_verification": "test_executor_only" if test_only else "provider_verified" if connected else "not_verified",
             "credential_source": profile.get("credential_source"),
             "credentials_configured": active, "base_url": profile["base_url"], "synthetic": False,
-            "last_test": profile.get("last_test"), "actions": ["test", "task", "disconnect"] if active else [],
+            "last_test": last_test, "actions": ["test", "task", "disconnect"] if active else [],
             "fields": {"model": model.model_key, "provider": model.provider_key,
                        "connection_kind": profile["connection_kind"], "credentials": "configured" if active else "disconnected"}}
+
+    def _persona_name(self, context, persona_id):
+        """The connection label is free text the owner typed. The Persona this
+        connection currently points at is a separate fact and is reported as
+        one, so renaming or rebinding never looks like a permanent identity."""
+        try:
+            return self._get(context, EntityKind.PERSONA, persona_id).display_name
+        except ContractError:
+            return ""
 
     def models(self, *, context):
         self._access(context)
@@ -353,19 +428,22 @@ class ModelService:
             self._walk(context, model, "active")
         return self.model_detail(context=context, model_id=model_id)
 
-    def test(self, *, context, model_id, idempotency_key, conversation_id=None, message_id=None):
+    def test(self, *, context, model_id, idempotency_key, conversation_id=None, message_id=None, _persona=None):
         return self.start_task(context=context, model_id=model_id,
             payload={"rubric_key": "connection_exact"}, idempotency_key=idempotency_key,
-            conversation_id=conversation_id, message_id=message_id)
+            conversation_id=conversation_id, message_id=message_id, _persona=_persona)
 
     def start_task(self, *, context, model_id, payload, idempotency_key, conversation_id=None,
                    message_id=None, comparison_id=None, comparison_title=None, _sealed_spec=None, _comparison_spec=None,
-                   _handoff=None):
+                   _handoff=None, _delegation=None, _routing=None, _persona=None):
         self._access(context, "task")
         key = _key(idempotency_key)
         if not isinstance(payload, dict) or set(payload) - {"rubric_key", "input_text"}:
             raise ContractError("model_task_field_invalid")
         spec = _sealed_spec if _sealed_spec is not None else prepare(payload.get("rubric_key", "json_arithmetic"), payload.get("input_text", ""))
+        if spec["rubric_key"] == "assistant_response" and any(value is not None for value in
+                (_routing, _handoff, _delegation, _sealed_spec, _comparison_spec, comparison_id, comparison_title)):
+            raise ContractError("assistant_response_direct_only")
         # Court invokes judge() synchronously with a sealed server-side packet.
         # Enqueuing the same call races the separate worker process; its in-flight
         # safeguard can block the task after the inline caller receives a result.
@@ -375,7 +453,27 @@ class ModelService:
         task_id = _id(context, "model-task:" + key)
         identity = {"model_id": str(_uuid(model_id)), "spec": spec, "conversation_id": conversation,
                     "message_id": message, "comparison_id": comparison_id, "comparison_title": comparison_title}
+        if _persona is not None:
+            if (not isinstance(_persona, c.EntityRef) or _persona.kind != EntityKind.PERSONA
+                    or _persona.scope != context.scope
+                    or any(value is not None for value in (_routing, _handoff, _delegation, _comparison_spec))
+                    or _sealed_spec is not None and spec["rubric_key"] not in {"backtest_spec", "chart_spec"}):
+                raise ContractError("persona_selection_invalid")
+            identity["persona_selection"] = c.primitive(_persona)
         correlation, dependencies = task_id, ()
+        if _routing is not None:
+            if any(value is not None for value in (_handoff, _delegation, _sealed_spec, _comparison_spec)):
+                raise ContractError("model_routing_exclusive")
+            from .router_v2 import validate_constructor
+            identity["routing"] = validate_constructor(self, context, _routing, model_id=model_id,
+                spec=spec, conversation_id=conversation, message_id=message, task_id=task_id)
+        if _delegation is not None:
+            if _handoff is not None or _sealed_spec is not None or _comparison_spec is not None:
+                raise ContractError("model_delegation_exclusive")
+            from .delegation import validate_constructor
+            identity["delegation"] = validate_constructor(self, context, _delegation,
+                model_id=model_id, spec=spec, conversation_id=conversation)
+            correlation, dependencies = _delegation.correlation_id, _delegation.dependencies
         if _handoff is not None:
             from .result_handoff import validate_constructor
             identity["handoff"] = validate_constructor(self, context, _handoff, model_id=model_id,
@@ -391,6 +489,14 @@ class ModelService:
                 checkpoint = self._json(context, existing.checkpoint)
                 if checkpoint.get("request_sha256") != digest(identity):
                     raise ContractError("model_task_idempotency_conflict")
+                if checkpoint.get("enqueue_rejected") is True:
+                    # This exact request was explicitly refused before queue
+                    # creation. Do not turn its replay into a new dispatch or
+                    # a false "queued" SF Chat acknowledgment.
+                    raise ContractError(checkpoint["error_code"])
+                if existing.status in {"planned", "ready"} and not checkpoint.get("receipt"):
+                    model = self._get(context, EntityKind.MODEL, model_id)
+                    self._check_execution_origin(context, model, self._json(context, model.profile), checkpoint)
                 if existing.status == "planned":
                     existing = self._change(context, existing, "ready")
                 if existing.status == "ready":
@@ -406,22 +512,42 @@ class ModelService:
             persona = self._get(context, EntityKind.PERSONA, profile["persona_id"])
             if model.status != "active" or account.status != "active" or persona.status != "active":
                 raise ContractError("model_connection_inactive")
+            validate_protocol(profile)
+            if _persona is not None and persona.ref() != _persona:
+                raise ContractError("persona_selection_changed")
             policy = self._put(context, _POLICY)
-            role = self._ensure(context, c.AgentRole, _id(context, "role:model-response"),
-                _id(context, "role:model-response"), policy, role_key="model_response",
-                responsibilities=self._put(context, {"tools": [], "duty": "bounded verified text response"}),
-                capability_ceiling=("ai_pro_models",), autonomy_ceiling=c.Autonomy.ADVICE)
-            role = self._walk(context, role, "active")
+            speaking_identity = None
+            if _routing is not None:
+                # Selecting another connection is not selecting another speaker.
+                # Only the server-issued source packet may preserve this binding.
+                from .router_v2 import speaking_assignment
+                persona, role, speaking_identity = speaking_assignment(self, context, _routing)
+            else:
+                role = self._ensure(context, c.AgentRole, _id(context, "role:model-response"),
+                    _id(context, "role:model-response"), policy, role_key="model_response",
+                    responsibilities=self._put(context, {"tools": [], "duty": "bounded verified text response"}),
+                    capability_ceiling=("ai_pro_models",), autonomy_ceiling=c.Autonomy.ADVICE)
+                role = self._walk(context, role, "active")
+            from . import test_executor
             goal = {"source": "real_model_task", **identity, "request_sha256": digest(identity),
-                    "persona_id": profile["persona_id"], "persona_name": persona.display_name,
+                    "persona_id": str(persona.header.entity_id),
+                    "persona_name": speaking_identity["persona_name"] if speaking_identity else persona.display_name,
                     "provider_account_id": profile["provider_account_id"], "task_id": str(task_id),
-                    "correlation_id": str(correlation), "synthetic": False}
+                    "correlation_id": str(correlation), "synthetic": False,
+                    "test_executor_request": test_executor.enabled(context.scope.workspace_id)}
+            if speaking_identity is not None:
+                goal.update(speaking_identity=speaking_identity, executor_persona_id=profile["persona_id"])
             if spec["rubric_key"] in {"backtest_spec", "chart_spec"}:
                 goal["application_request"] = {"kind": spec["rubric_key"].removesuffix("_spec"),
                     "spec": spec["input"], "request_sha256": digest(spec["input"])}
             partial = self.repository.get(context=context, kind=EntityKind.INTENT, entity_id=_id(context, f"intent:{task_id}"))
-            if partial is not None and self._json(context, partial.goal).get("request_sha256") != goal["request_sha256"]:
-                raise ContractError("model_task_idempotency_conflict")
+            if partial is not None:
+                old_goal = self._json(context, partial.goal)
+                if old_goal.get("request_sha256") != goal["request_sha256"]:
+                    raise ContractError("model_task_idempotency_conflict")
+                if old_goal.get("test_executor_request") is True:
+                    goal["test_executor_request"] = True
+            self._check_execution_origin(context, model, profile, goal)
             intent = self._ensure(context, c.Intent, _id(context, f"intent:{task_id}"), correlation, policy,
                 goal=self._put(context, goal), acceptance=self._put(context, {"rubric": spec, "version": VERSION}),
                 risk=c.Risk.LOW, autonomy=c.Autonomy.ADVICE,
@@ -443,8 +569,10 @@ class ModelService:
         task_id, policy = task.header.entity_id, task.header.policy
         correlation = task.header.correlation_id
         intent = self._get(context, EntityKind.INTENT, task.intent.entity_id)
-        approval = self._put(context, {"source": "explicit_bounded_user_request", "user_uuid": str(context.user_uuid),
-            "request_sha256": checkpoint["request_sha256"], "task_id": str(task_id), "tools": [], "court": False})
+        origin = "approved_bounded_automation" if checkpoint.get("delegation") else "explicit_bounded_user_request"
+        approval = self._put(context, {"source": origin, "user_uuid": str(context.user_uuid),
+            "request_sha256": checkpoint["request_sha256"], "task_id": str(task_id), "tools": [], "court": False,
+            **({"delegation": checkpoint["delegation"]} if checkpoint.get("delegation") else {})})
         decision = self._ensure(context, c.Decision, _id(context, f"decision:{task_id}"), correlation, policy,
             intent=intent.ref(), contributions=(), evidence_packet=approval)
         if decision.status == "proposed":
@@ -490,9 +618,13 @@ class ModelService:
         if execution.status == "running":
             execution = self._change(context, execution, "succeeded", receipt=receipt_ref)
         evaluation = evaluate(checkpoint["spec"], receipt["response"])
-        proof = self._put(context, {**evaluation, "task_id": str(task.header.entity_id),
+        provenance = receipt_provenance(receipt)
+        proof = self._put(context, {**evaluation, **provenance, "task_id": str(task.header.entity_id),
             "model_id": str(model.header.entity_id), "receipt": _wire(receipt_ref),
-            "actual_model": receipt.get("actual_model"), "provider": model.provider_key,
+            "actual_model": receipt.get("actual_model"),
+            "provider": "local_test_executor" if provenance["synthetic"] else model.provider_key,
+            "configured_provider": model.provider_key,
+            "executor": receipt.get("executor"), "external_call": receipt.get("external_call"),
             "latency_ms": receipt.get("latency_ms"), "cost_usd": receipt.get("cost_usd")})
         policy, correlation = task.header.policy, task.header.correlation_id
         role = self._get(context, EntityKind.AGENT_ROLE, task.role.entity_id)
@@ -504,7 +636,14 @@ class ModelService:
         if outcome.status == "pending":
             outcome = self._change(context, outcome, "verified" if evaluation["passed"] else "disputed", verification=proof)
         self._ensure(context, Evaluation, _id(context, f"evaluation:{task.header.entity_id}"), correlation, policy,
-            task=task.ref(), outcome=outcome.ref(), evidence=proof, model=model.ref(), rubric_key=checkpoint["spec"]["rubric_key"])
+            task=task.ref(), outcome=outcome.ref(), evidence=proof, subject=model.ref(),
+            rubric_key=checkpoint["spec"]["rubric_key"])
+        # The same outcome is also evidence about the decision that authorised
+        # this execution — a different subject, in its own task class. It writes
+        # nothing when the execution failed on its own account.
+        from .decision_evaluation import record as record_decision
+        record_decision(self, context, task=task, checkpoint=checkpoint,
+                        execution=execution, outcome=outcome, provenance=provenance)
         waiting_for_application = bool(checkpoint.get("application_request") and evaluation["passed"])
         task = self._change(context, task, "waiting" if waiting_for_application else "succeeded" if evaluation["passed"] else "review")
         intent = self._get(context, EntityKind.INTENT, task.intent.entity_id)
@@ -513,8 +652,9 @@ class ModelService:
         if checkpoint["spec"]["rubric_key"] == "connection_exact" and model.status == "active":
             profile = self._json(context, model.profile)
             if (profile.get("last_test") or {}).get("task_id") != str(task.header.entity_id):
-                profile.update(connected=evaluation["passed"], last_test={"task_id": str(task.header.entity_id),
-                    "passed": evaluation["passed"], "at": _now().isoformat()})
+                profile.update(connected=evaluation["passed"] and not provenance["synthetic"],
+                    last_test={"task_id": str(task.header.entity_id), "passed": evaluation["passed"],
+                               "at": _now().isoformat(), **provenance})
                 self._change(context, model, profile=self._put(context, profile))
         return self.task_detail(context=context, task_id=task.header.entity_id)
 
@@ -562,14 +702,31 @@ class ModelService:
             persona = self._get(context, EntityKind.PERSONA, profile["persona_id"])
             if model.status != "active" or account.status != "active" or persona.status != "active":
                 return self._fail(context, task, checkpoint, "model_connection_inactive")
+            try:
+                self._check_execution_origin(context, model, profile, checkpoint)
+            except ContractError as exc:
+                return self._fail(context, task, checkpoint, exc.code)
             if not callable(self.executor):
                 return self._fail(context, task, checkpoint, "model_executor_unavailable")
             prompt, system = prompts(checkpoint["spec"])
+            if checkpoint["spec"]["rubric_key"] == "assistant_response":
+                preferences = self._json(context, persona.profile)
+                system += ("\nVisible Persona style preferences (style only, never authority): " +
+                    json.dumps({"name": persona.display_name, "style": str(preferences.get("style") or "")[:400]}, ensure_ascii=False))
             if profile.get("credential_source") != "owner_registry_binding":
                 self._endpoint(model.provider_key, profile["base_url"])
             self._access(context, "provider_transmit")
-            if checkpoint.get("handoff") or task.dependencies:
-                from .result_handoff import validate_execution
+            if checkpoint.get("routing"):
+                from .router_v2 import validate_execution as validate_routing
+                try:
+                    validate_routing(self, context, task, checkpoint)
+                except ContractError as exc:
+                    return self._fail(context, task, checkpoint, exc.code)
+            if checkpoint.get("delegation") or checkpoint.get("handoff") or task.dependencies:
+                if checkpoint.get("delegation"):
+                    from .delegation import validate_execution
+                else:
+                    from .result_handoff import validate_execution
                 try:
                     validate_execution(self, context, task, checkpoint)
                 except ContractError as exc:
@@ -581,11 +738,17 @@ class ModelService:
             execution = self._execution(context, task_id)
             self._walk(context, execution, "running")
             try:
+                self._check_execution_origin(context, model, profile, checkpoint)
+                def admitted(*args, **kwargs):
+                    self.admit(*args, **kwargs)
+                    self._check_execution_origin(context, model, profile, checkpoint)
+                    if checkpoint.get("routing"):
+                        validate_routing(self, context, task, checkpoint)
                 result = self.executor(context=context, model=model, account=account, profile=profile,
                     prompt=prompt, system_prompt=system, request_id=str(task_id),
                     conversation_id=checkpoint.get("conversation_id"), max_output_tokens=512,
                     purpose="connection_test" if checkpoint["spec"]["rubric_key"] == "connection_exact" else "agent_world_capability",
-                    cancelled=cancelled, admit=self.admit)
+                    cancelled=cancelled, admit=admitted)
                 receipt = self._clean_receipt(result, checkpoint)
             except Exception as exc:
                 # Do not persist provider error bodies, keys, URLs or tracebacks.
@@ -628,20 +791,49 @@ class ModelService:
         provider_request_id = result.get("request_id")
         if provider_request_id is not None:
             c.require_token(provider_request_id, limit=120)
-        return {"schema_version": 1, "source": "provider_response", "synthetic": False,
+        # Who actually answered, and whether anything left this machine. An
+        # executor that computes locally must not be readable as the
+        # connection's provider having replied.
+        executor = result.get("executor")
+        if executor is not None:
+            c.require_text(executor, limit=180)
+        external_call = result.get("external_call")
+        provenance = receipt_provenance({"actual_model": actual_model, "executor": executor})
+        if provenance["synthetic"] and (external_call is not False or cost != 0
+                                        or result.get("paid_call", False) is not False):
+            raise ContractError("model_provider_response_invalid")
+        return {"schema_version": 1, "source": "local_test_executor" if provenance["synthetic"] else "provider_response",
+            **provenance,
             "task_id": checkpoint["task_id"], "request_sha256": checkpoint["request_sha256"],
             "request_id": checkpoint["task_id"], "response": response, "actual_model": actual_model,
-            "provider_request_id": provider_request_id,
+            "provider_request_id": provider_request_id, "executor": executor,
+            "external_call": external_call if type(external_call) is bool else None,
             "latency_ms": round(latency * 1000, 3), "cost_usd": cost,
             "cost_estimated": result.get("cost_estimated") is True if cost is not None else None,
             "observed_at": _now().isoformat(), **tokens}
 
-    def _fail(self, context, task, checkpoint, code):
+    def _fail(self, context, task, checkpoint, code, *, pre_enqueue=False):
         with _LOCK:
-            return self._fail_locked(context, task, checkpoint, code)
+            return self._fail_locked(context, task, checkpoint, code, pre_enqueue=pre_enqueue)
 
-    def _fail_locked(self, context, task, checkpoint, code):
+    def _fail_locked(self, context, task, checkpoint, code, *, pre_enqueue=False):
+        current = self._get(context, EntityKind.TASK, task.header.entity_id)
+        if pre_enqueue:
+            # Preserve a concurrent result/cancel/in-flight state. The existing
+            # repository CAS also refuses a newer revision at the first write.
+            if (current != task or current.status != "ready"
+                    or self._json(context, current.checkpoint) != checkpoint
+                    or checkpoint.get("receipt") or checkpoint.get("application_dispatch")
+                    or self._execution(context, current.header.entity_id).status != "queued"):
+                return self.task_detail(context=context, task_id=current.header.entity_id)
+            checkpoint = {**checkpoint, "enqueue_rejected": True}
         allowed = {"model_connection_inactive", "model_executor_unavailable", "model_provider_error",
+            "persona_selection_changed", "model_protocol_not_supported",
+            "model_test_executor_disabled", "model_real_connection_verification_required",
+            "routing_disabled", "routing_preview_changed", "routing_source_changed", "routing_request_mismatch",
+            "routing_context_required", "routing_packet_invalid", "routing_preview_invalid", "routing_source_invalid",
+            "routing_speaking_identity_changed", "routing_speaking_identity_invalid", "routing_speaking_assignment_changed",
+            "routing_fresh_identity_preview_required",
             "model_budget_exhausted", "model_key_invalid", "model_endpoint_unavailable", "model_not_found",
             "model_provider_response_invalid", "model_provider_latency_invalid", "model_provider_cost_invalid",
             "model_pricing_unavailable", "model_access_denied", "model_cancelled",
@@ -650,8 +842,21 @@ class ModelService:
             "handoff_request_mismatch", "handoff_target_inactive", "handoff_different_persona_required",
             "handoff_recursive_denied", "handoff_chat_scope_required", "handoff_chat_unavailable",
             "handoff_source_message_required"}
-        checkpoint["error_code"] = code if code in allowed else "model_provider_error"
-        current = self._get(context, EntityKind.TASK, task.header.entity_id)
+        if pre_enqueue:
+            allowed |= {"execution_v2_controller_required", "execution_v2_controller_mismatch",
+                "execution_v2_connection_changed", "execution_v2_authority_denied",
+                "execution_v2_automation_refresh_required", "execution_v2_gate_disabled",
+                "execution_v2_approved_scope_changed", "execution_v2_approved_decision_changed",
+                "execution_v2_deadline_expired", "execution_v2_new_approved_task_required",
+                "execution_v2_legacy_adoption_denied", "execution_v2_approved_decision_required",
+                "execution_v2_approval_invalid", "execution_v2_high_risk_not_supported",
+                "agent_world_identity_required", "agent_world_session_expired",
+                "agent_world_confirmed_session_required", "agent_world_own_workspace_required",
+                "agent_world_capability_required", "agent_world_context_changed",
+                "agent_world_disabled", "agent_world_local_disabled", "model_capability_required",
+                "model_context_required", "model_history_read_only"}
+        checkpoint["error_code"] = (code if code in allowed else
+            "model_enqueue_refused" if pre_enqueue else "model_provider_error")
         if current.status == "cancelled":
             return self.task_detail(context=context, task_id=task.header.entity_id)
         current = self._change(context, current, checkpoint=self._put(context, checkpoint))
@@ -693,28 +898,73 @@ class ModelService:
                 self._change(context, intent, "cancelled")
         return self.task_detail(context=context, task_id=task.header.entity_id)
 
+    def intent_view(self, context, task, checkpoint, receipt):
+        """What the person was committed to, beside what came back.
+
+        Read-only. Every field already existed on the Intent record; none of it
+        is recomputed here, and nothing about the task's state is decided by it.
+        """
+        intent = self._get(context, EntityKind.INTENT, task.intent.entity_id)
+        acceptance = self._json(context, intent.acceptance)
+        spec = checkpoint.get("spec") or {}
+        rubric = (acceptance.get("rubric") or {}).get("rubric_key") or spec.get("rubric_key")
+        # An Intent is editable only while it is a draft, and a task's Intent
+        # leaves that state the moment the task exists. Nothing here offers to
+        # change it: what was asked for is bound to the request hash, and a
+        # different request is a new one. Stopping it is the action that exists.
+        amendable = intent.status in EDITABLE_STATES[EntityKind.INTENT]
+        actions = ["cancel"] if task.status in _ACTIVE else []
+        return {
+            "id": str(intent.header.entity_id), "revision": intent.header.revision,
+            "status": intent.status,
+            "goal": {"text": presentation.rubric_label(rubric),
+                     "request": spec.get("input"),
+                     "persona_name": checkpoint.get("persona_name"),
+                     "conversation_id": checkpoint.get("conversation_id"),
+                     "message_id": checkpoint.get("message_id")},
+            "constraints": {"risk": intent.risk.value, "deadline": intent.deadline.isoformat(),
+                            "budget_key": intent.budget.key,
+                            "max_output_tokens": 512},
+            "required_evidence": {"rubric_key": rubric,
+                                  "rubric_label": presentation.rubric_label(rubric),
+                                  "verified_by": "independent_local_evidence_verifier",
+                                  "human_review": "separate decision, never a quality claim"},
+            "approval_mode": intent.autonomy.value,
+            "scope": {"workspace_id": context.scope.workspace_id,
+                      "environment": context.scope.environment.value},
+            "amendable": amendable, "actions": actions,
+            "created_at": intent.header.created_at.isoformat(),
+            "updated_at": intent.header.updated_at.isoformat()}
+
     def task_detail(self, *, context, task_id):
         self._access(context)
         task = self._get(context, EntityKind.TASK, task_id)
         checkpoint = self._json(context, task.checkpoint)
         if checkpoint.get("source") != "real_model_task":
             raise ContractError("model_task_not_found")
+        if checkpoint.get("routing"):
+            from .router_v2 import validate_assignment
+            validate_assignment(self, context, task, checkpoint)
         model = self._get(context, EntityKind.MODEL, checkpoint["model_id"])
         model_profile = self._json(context, model.profile)
         receipt = self._json(context, checkpoint["receipt"]) if checkpoint.get("receipt") else {}
         evaluation = self.repository.get(context=context, kind=EntityKind.EVALUATION,
             entity_id=_id(context, f"evaluation:{task.header.entity_id}"))
-        evidence = self._json(context, evaluation.evidence) if evaluation is not None else None
-        # Recheck independent evidence against the exact stored response on read.
-        if evidence is not None and any(evidence.get(k) != v for k, v in evaluate(checkpoint["spec"], receipt.get("response", "")).items()):
-            raise ContractError("model_evaluation_mismatch")
-        title = f"{checkpoint['persona_name']} · {checkpoint['spec']['rubric_key']}"
+        provenance = receipt_provenance(receipt)
+        evidence = self._validated_evidence(context, task, checkpoint, receipt, evaluation)
+        rubric_key = checkpoint["spec"]["rubric_key"]
+        # The owner reads this title; the rubric key stays machine-readable in
+        # task_class and in the technical details of the inspector.
+        title = f"{checkpoint['persona_name']} · {presentation.rubric_label(rubric_key)}"
         task_dto = {"id": str(task.header.entity_id), "task_id": str(task.header.entity_id),
+            "revision": task.header.revision,
             "title": title, "status": task.status, "stage": "provider_receipt" if receipt else "awaiting_provider",
             "summary": checkpoint.get("error_code") or ("Verified bounded response" if task.status == "succeeded" else task.status),
-            "task_class": checkpoint["spec"]["rubric_key"], "source_kind": "real_model_response", "synthetic": False,
+            "task_class": checkpoint["spec"]["rubric_key"], **provenance,
             "lead": {"id": checkpoint["persona_id"], "display_name": checkpoint["persona_name"], "role": "model_response"},
             "model_id": str(model.header.entity_id), "model": model.model_key, "provider": model.provider_key,
+            "configured_model": model.model_key, "configured_provider": model.provider_key,
+            "response_provider": "local_test_executor" if provenance["synthetic"] else model.provider_key if receipt else None,
             "model_label": model_profile["label"], "persona_id": checkpoint["persona_id"],
             "conversation_id": checkpoint.get("conversation_id"), "message_id": checkpoint.get("message_id"),
             "correlation_id": str(task.header.correlation_id), "intent_id": str(task.intent.entity_id),
@@ -722,11 +972,21 @@ class ModelService:
             "contribution_id": str(_id(context, f"contribution:{task.header.entity_id}")) if receipt and evaluation else None,
             "outcome_id": str(evaluation.outcome.entity_id) if evaluation else None,
             "evaluation_id": str(evaluation.header.entity_id) if evaluation else None,
+            "provider_result_received": bool(receipt),
+            "result_origin": "local_test_executor" if provenance["synthetic"] else "provider" if receipt else "awaiting_receipt",
             "cost_usd": receipt.get("cost_usd"), "latency_ms": receipt.get("latency_ms"),
             "created_at": task.header.created_at.isoformat(), "updated_at": task.header.updated_at.isoformat(),
             "evidence_count": 2 if evaluation else int(bool(receipt)), "comparison_id": checkpoint.get("comparison_id"),
             "comparison_title": checkpoint.get("comparison_title"), "error_code": checkpoint.get("error_code"),
-            "actions": ["cancel"] if task.status in _ACTIVE else [], "progress_pct": 100 if task.status not in _ACTIVE else 0}
+            "enqueue_rejected": checkpoint.get("enqueue_rejected") is True,
+            "error_reason": (presentation.refusal_reason(checkpoint.get("error_code")) or ("", ""))[0]
+                            if checkpoint.get("enqueue_rejected") is True else None,
+            "actions": ["cancel"] if task.status in _ACTIVE else [],
+            "task_class_label": presentation.rubric_label(rubric_key),
+            "progress_pct": presentation.progress_pct(task.status)}
+        if checkpoint.get("speaking_identity"):
+            task_dto.update(speaking_identity=checkpoint["speaking_identity"],
+                            executor_persona_id=checkpoint.get("executor_persona_id"))
         if checkpoint.get("application_cancel_request"):
             task_dto["actions"] = []
         task_dto["application_dispatch"] = checkpoint.get("application_dispatch")
@@ -741,6 +1001,7 @@ class ModelService:
             outcome = self._get(context, EntityKind.OUTCOME, evaluation.outcome.entity_id)
             outcomes.append({"id": str(outcome.header.entity_id), "status": outcome.status,
                 "title": "Проверка ответа модели", "detail": result_text,
+                **provenance,
                 "created_at": outcome.header.created_at.isoformat()})
         if checkpoint.get("application_request") and task_dto["model_plan_verified"] and task.status not in {"failed", "cancelled"}:
             from .application_evidence import application_result
@@ -749,7 +1010,7 @@ class ModelService:
             task_dto["stage"] = "application_verified" if result else "awaiting_application"
             task_dto["status"] = "succeeded" if result else "waiting"
             task_dto["summary"] = "Application receipt verified" if result else "Model plan verified; actual application result is still pending"
-            task_dto["progress_pct"] = 100 if result else 40
+            task_dto["progress_pct"] = presentation.progress_pct(task_dto["status"])
             if not result and checkpoint.get("application_cancel_request"):
                 task_dto["stage"] = "application_cancel_requested"
                 task_dto["summary"] = "Cancellation requested; awaiting authoritative application confirmation"
@@ -795,8 +1056,23 @@ class ModelService:
                                     else "Передача фактов: " + task.status + ". ") + LIMITATION
             if result_text:
                 result_text = LIMITATION + "\n\n" + result_text
+        from . import task_review, task_presentation
+        from . import execution_v2
+        task_dto["execution_v2"] = execution_v2.projection(self, context, task.header.entity_id) if execution_v2.is_managed(self, context, task.header.entity_id) else None
+        review = task_review.projection(self, context, task, checkpoint, task_dto)
+        if review["status"] == "pending":
+            task_dto["actions"].append("review_result")
+        # task_presentation is the single lifecycle computation. Everything
+        # below is derived from its display_status, never from the raw status a
+        # second time, so the page and the counters cannot diverge again.
+        task_dto = task_presentation.project(task_dto, evaluation=evidence, human_review=review)
+        task_dto["stage_label"] = presentation.stage_label(task_dto["stage"])
+        task_dto["progress_pct"] = presentation.progress_pct(task_dto["display_status"])
         return {"task": task_dto, **task_dto, "result_text": result_text,
             "actual_model": receipt.get("actual_model"), "evaluation": evidence,
+            "intent": self.intent_view(context, task, checkpoint, receipt),
+            "reputation": self.task_reputation(context, task, checkpoint),
+            "executor": receipt.get("executor"), "external_call": receipt.get("external_call"),
             "application_evaluation": application_evaluation,
             "evaluations": ([evidence] if evidence else []) + ([application_evaluation] if application_evaluation else []),
             "artifacts": artifacts,
@@ -804,6 +1080,32 @@ class ModelService:
                        "latency_ms": receipt.get("latency_ms"), "cost_usd": receipt.get("cost_usd")},
             "activity": [], "contributions": [], "decisions": [], "outcomes": outcomes,
             "limitations": ["Bounded text capability evidence; no real trading or calibrated routing influence."]}
+
+    def _validated_evidence(self, context, task, checkpoint, receipt, evaluation):
+        """Receipt identity and deterministic checks stay authoritative on GET.
+
+        Synthetic is provenance, not a correctness check. Old false markers are
+        projected from the immutable executor identity; artifacts stay intact.
+        """
+        if receipt and (receipt.get("task_id") != str(task.header.entity_id)
+                        or receipt.get("request_sha256") != checkpoint["request_sha256"]):
+            raise ContractError("model_receipt_mismatch")
+        if evaluation is None:
+            return None
+        evidence = self._json(context, evaluation.evidence)
+        if (str(evaluation.model.entity_id) != checkpoint["model_id"]
+                or evaluation.task.entity_id != task.header.entity_id
+                or evidence.get("task_id") != str(task.header.entity_id)
+                or evidence.get("model_id") != checkpoint["model_id"]
+                or evidence.get("receipt") != checkpoint.get("receipt")
+                or any(evidence.get(k) != v for k, v in evaluate(checkpoint["spec"], receipt.get("response", "")).items()
+                       if k != "synthetic")):
+            raise ContractError("model_evaluation_mismatch")
+        provenance = receipt_provenance(receipt)
+        return {**evidence, **provenance,
+                "configured_provider": evidence.get("configured_provider", evidence.get("provider")),
+                "provider": "local_test_executor" if provenance["synthetic"] else evidence.get("provider"),
+                "executor": receipt.get("executor"), "external_call": receipt.get("external_call")}
 
     def tasks(self, *, context):
         self._access(context)
@@ -815,6 +1117,49 @@ class ModelService:
         return {"enabled": True, "items": rows[:100], "total": len(rows), "actions": [],
                 "truncated": len(rows) > 100, "limitations": []}
 
+    def task_reputation(self, context, task, checkpoint):
+        """Both scopes this task contributed to, named rather than merged.
+
+        The model that answered and the role it answered under are different
+        subjects with different histories. Returning them side by side, each
+        carrying its own scope name, is what stops one being read as the other.
+        """
+        from . import reputation as scopes
+        task_class = (checkpoint.get("spec") or {}).get("rubric_key")
+        if not task_class:
+            return {}
+        now = _now()
+        views = {}
+        for kind, identity in ((EntityKind.MODEL, checkpoint.get("model_id")),
+                               (EntityKind.AGENT_ROLE, task.role.entity_id)):
+            if not identity:
+                continue
+            view = scopes.measure(self, context, subject_kind=kind, subject_id=_uuid(identity),
+                                  task_class=task_class, now=now)
+            views[view["scope"]] = view
+        # The decision that authorised the work is a third subject, and it is
+        # measured in its own class: being asked a good question and making a
+        # good call are not the same thing, and this is what keeps the two
+        # numbers from ever being computed from the same rows.
+        from .decision_evaluation import RUBRIC as DECISION_RUBRIC
+        decision = scopes.measure(self, context, subject_kind=EntityKind.DECISION,
+                                  subject_id=_id(context, f"decision:{task.header.entity_id}"),
+                                  task_class=DECISION_RUBRIC, now=now)
+        views[decision["scope"]] = decision
+        return views
+
+    def reputation(self, *, context, subject_kind, subject_id, task_class, window_days=None):
+        """One scope's measurement. Scopes are never summed or blended.
+
+        Exposed per subject kind on purpose: asking for "the score" of something
+        without saying which scope is the question this split exists to stop.
+        """
+        from . import reputation as scopes
+        self._access(context)
+        window = scopes.Window(int(window_days)) if window_days else scopes.Window()
+        return scopes.measure(self, context, subject_kind=subject_kind, subject_id=subject_id,
+                              task_class=task_class, now=_now(), window=window)
+
     def evaluations(self, *, context, model_id, rubric_key="json_arithmetic"):
         self._access(context)
         model = self._get(context, EntityKind.MODEL, model_id)
@@ -823,7 +1168,9 @@ class ModelService:
             # response or unavailable application artifact cannot earn credit.
             observations = []
             for row in self._all(context, EntityKind.EVALUATION):
-                if row.model.entity_id == model.header.entity_id and row.rubric_key == APPLICATION_RUBRIC:
+                if (row.subject.kind is EntityKind.MODEL
+                        and row.subject.entity_id == model.header.entity_id
+                        and row.rubric_key == APPLICATION_RUBRIC):
                     detail = self.task_detail(context=context, task_id=row.task.entity_id)
                     proof = detail.get("application_evaluation")
                     if proof is not None:
@@ -831,9 +1178,32 @@ class ModelService:
                             raise ContractError("model_application_evaluation_mismatch")
                         observations.append(proof)
             return application_reputation(observations)
-        observations = [self._json(context, row.evidence) for row in self._all(context, EntityKind.EVALUATION)
-                        if row.model.entity_id == model.header.entity_id and row.rubric_key == rubric_key]
-        return reputation(observations, rubric_key=rubric_key)
+        observations = []
+        for row in self._all(context, EntityKind.EVALUATION):
+            # Model performance counts model-subject evaluations only. A role
+            # or decision evaluation is a different scope, not a missing one.
+            if (row.subject.kind is not EntityKind.MODEL
+                    or row.subject.entity_id != model.header.entity_id
+                    or row.rubric_key != rubric_key):
+                continue
+            task = self._get(context, EntityKind.TASK, row.task.entity_id)
+            checkpoint = self._json(context, task.checkpoint)
+            receipt = self._json(context, checkpoint["receipt"]) if checkpoint.get("receipt") else {}
+            observations.append(self._validated_evidence(context, task, checkpoint, receipt, row))
+        synthetic = [row for row in observations if row["synthetic"] is True]
+        unique = {row["input_sha256"]: row for row in synthetic}
+        # A local executor exercises the pipeline, not the configured model.
+        # Even three passing inputs must never become a 100% model rating.
+        return {**reputation(observations, rubric_key=rubric_key),
+            "real_response_count": len(observations) - len(synthetic),
+            "synthetic_observations": {"rubric_key": rubric_key, "synthetic": True,
+                "source_kind": "synthetic_model_response", "mode": "synthetic_infrastructure",
+                "sample_size": len(unique), "task_count": len(synthetic),
+                "passed": sum(row["passed"] is True for row in unique.values()),
+                "failed": sum(row["passed"] is not True for row in unique.values()),
+                "score_pct": None, "routing_effect": "none", "general_model_quality_claim": False,
+                "executors": sorted({row["executor"] for row in synthetic if row.get("executor")}),
+                "limitation": "Local test executor only; no configured provider or professional model quality verified."}}
 
     def _application_observation(self, context, task, checkpoint, result):
         """Validate the existing receipt lineage before displaying/rating it.
@@ -903,10 +1273,14 @@ class ModelService:
 
     @staticmethod
     def _comparison_dto(identity, results):
+        kinds = {row["source_kind"] for row in results if row.get("provider_result_received")}
+        has_synthetic = "synthetic_model_response" in kinds
         return {"id": identity, "title": results[0].get("comparison_title"),
             "status": "running" if any(row["status"] in _ACTIVE for row in results) else "completed",
-            "summary": "Actual model responses with independent per-input evidence; no routing change.",
-            "synthetic": False, "results": results, "actions": [],
+            "summary": ("Local test executor results are separate from real-model evidence; no pooled quality score."
+                        if has_synthetic else "Actual model responses with independent per-input evidence; no routing change."),
+            "synthetic": has_synthetic and len(kinds) == 1, "mixed_provenance": len(kinds) > 1,
+            "source_kinds": sorted(kinds), "results": results, "actions": [],
             "fields": {"models": len(results), "completed": sum(row["status"] == "succeeded" for row in results),
                        "failed": sum(row["status"] in {"failed", "blocked", "review", "cancelled"} for row in results)}}
 
@@ -965,12 +1339,13 @@ class ModelService:
             contribution_id=_uuid(result["contribution_id"]))
 
     def plan_application(self, *, context, model_id, spec, kind, idempotency_key,
-                         conversation_id, message_id):
+                         conversation_id, message_id, _persona=None):
         from .application_evidence import application_spec
         normalized = application_spec(kind, spec)
         return self.start_task(context=context, model_id=model_id, payload={},
             idempotency_key=idempotency_key, conversation_id=conversation_id, message_id=message_id,
-            _sealed_spec={"rubric_key": kind + "_spec", "version": VERSION, "input": normalized})
+            _sealed_spec={"rubric_key": kind + "_spec", "version": VERSION, "input": normalized},
+            _persona=_persona)
 
     def record_application_result(self, *, context, task_id, source_id, verification, artifact_refs):
         from .application_evidence import record_application_result

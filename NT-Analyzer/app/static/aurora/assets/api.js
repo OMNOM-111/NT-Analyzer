@@ -115,7 +115,9 @@
   // Orchestrator avatar TTS: returns either an audio Blob or a JSON fallback
   // signal `{ fallback: "browser" }` when OpenAI Speech is unavailable.
   async function orchestratorSpeak(payload) {
-    const path = '/api/ai-lab/orchestrator/speak';
+    return sendAudio('/api/ai-lab/orchestrator/speak', payload);
+  }
+  async function sendAudio(path, payload) {
     const res = await fetch(path, {
       method: 'POST',
       headers: requestHeaders({
@@ -171,7 +173,13 @@
   // and parse SSE frames manually. `handlers` = { onThinkingStart, onThinkingDelta,
   // onStatus, onThinkingDone, onFinal, onError, onDone }. Resolves when the
   // stream ends. Falls back gracefully if streaming is unsupported.
-  async function streamOrchestrator(message, conversationId, agent, handlers) {
+  function personaChatOptions(options) {
+    if (options == null || options.persona_id == null) return {};
+    const id = options.persona_id;
+    if (typeof id !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) throw new Error('Выберите сохранённую Persona.');
+    return { persona_id: id.toLowerCase() };
+  }
+  async function streamOrchestrator(message, conversationId, agent, handlers, options) {
     const path = '/api/ai-lab/orchestrator/message/stream';
     const h = handlers || {};
     const res = await fetch(path, {
@@ -180,6 +188,7 @@
       body: JSON.stringify({
         message, conversation_id: conversationId || 'default', agent: agent || '',
         request_id: mutationRequestId('orchestrator'),
+        ...personaChatOptions(options),
       }),
     });
     if (!res.ok || !res.body || !res.body.getReader) {
@@ -446,6 +455,7 @@
     aiControlCenterDomain: (domain, q, o) => getJSON('/api/ai-control-center/domains/' + encodeURIComponent(domain) + qs(q), o),
     aiControlCenterDomainItem: (domain, id, o) => getJSON('/api/ai-control-center/domains/' + encodeURIComponent(domain) + '/' + encodeURIComponent(id), o),
     aiControlCenterDomainAction: (domain, id, action, body) => send('/api/ai-control-center/domains/' + encodeURIComponent(domain) + '/' + encodeURIComponent(id) + '/' + encodeURIComponent(action), 'POST', body || {}),
+    aiControlCenterPersonaSpeak: (id, body) => sendAudio('/api/ai-control-center/domains/personas/' + encodeURIComponent(id) + '/speak', body || {}),
     aiControlCenterSection: (section, q, o) => getJSON('/api/ai-control-center/' + encodeURIComponent(section) + qs(q), o),
     aiControlCenterDemoRun: (body) => send('/api/ai-control-center/demo-runs', 'POST', body || {}),
     aiControlCenterTaskChat: (id, body) => send('/api/ai-control-center/tasks/' + encodeURIComponent(id) + '/chat', 'POST', body || {}),
@@ -618,8 +628,8 @@
     aiRunStatus: (o) => getJSON('/api/ai-lab/run/status', o),
     aiChiefStatus: (o) => getJSON('/api/ai-lab/chief-agent', o),
     aiOrchestratorStatus: (o) => getJSON('/api/ai-lab/orchestrator', o),
-    aiOrchestratorMessage: (message, conversationId, agent) => send('/api/ai-lab/orchestrator/message', 'POST', { message, conversation_id: conversationId || 'default', agent: agent || '', request_id: mutationRequestId('orchestrator') }),
-    aiOrchestratorMessageStream: (message, conversationId, agent, handlers) => streamOrchestrator(message, conversationId, agent, handlers),
+    aiOrchestratorMessage: (message, conversationId, agent, options) => send('/api/ai-lab/orchestrator/message', 'POST', { message, conversation_id: conversationId || 'default', agent: agent || '', request_id: mutationRequestId('orchestrator'), ...personaChatOptions(options) }),
+    aiOrchestratorMessageStream: (message, conversationId, agent, handlers, options) => streamOrchestrator(message, conversationId, agent, handlers, options),
     aiOrchestratorJob: (jobId, o) => getJSON('/api/ai-lab/orchestrator/jobs/' + encodeURIComponent(jobId), o),
     aiOrchestratorCancelJob: (jobId) => send('/api/ai-lab/orchestrator/jobs/' + encodeURIComponent(jobId) + '/cancel', 'POST', {}),
     aiOrchestratorSpeak: (payload) => orchestratorSpeak(payload || {}),

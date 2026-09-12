@@ -202,7 +202,12 @@ def test_overview_keeps_application_denominator_separate_and_never_rates_repeat_
 @pytest.mark.parametrize("revocation", ["model_capability", "budget", "session_role"])
 def test_overview_never_advertises_handoff_when_task_detail_denies_model_work(models, revocation):
     source = _application(models)
-    assert source["actions"] == ["handoff"]
+    # A verified application result now also offers the human review the
+    # integration added, so this precondition names what must be offered
+    # rather than pinning the whole list. The security assertion below —
+    # that revocation clears every action — is unchanged.
+    assert "handoff" in source["actions"]
+    assert set(source["actions"]) <= {"handoff", "review_result"}
     if revocation == "model_capability":
         models.account.state["permissions"]["capabilities"]["ai_pro_models"] = False
     elif revocation == "budget":

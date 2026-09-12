@@ -67,7 +67,12 @@ def messages(env):
 def test_handoff_seals_dependency_and_correlations_before_enqueue_in_same_existing_chat(env):
     original = messages(env)
     source_task = env.service._get(env.ctx, EntityKind.TASK, env.source["id"])
-    assert env.source["actions"] == ["handoff"]
+    # A verified application result now also offers the human review the
+    # integration added, so this precondition names what must be offered
+    # rather than pinning the whole list. The security assertion below —
+    # that revocation clears every action — is unchanged.
+    assert "handoff" in env.source["actions"]
+    assert set(env.source["actions"]) <= {"handoff", "review_result"}
     captured = []
     def enqueue(**kwargs):
         child = env.service._get(env.ctx, EntityKind.TASK, kwargs["task_id"])

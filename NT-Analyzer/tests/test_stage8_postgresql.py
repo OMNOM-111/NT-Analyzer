@@ -161,7 +161,7 @@ def _bar(at: datetime, *, timeframe: str = "1m", close: float = 100.5) -> dict:
 
 def test_stage8_migrations_and_relational_isolation_constraints(stage8_store) -> None:
     plan = MigrationRunner(ADMIN_URL).plan()
-    assert plan["applied_versions"] == list(range(1, 23))
+    assert plan["applied_versions"] == list(range(1, 24))
     assert plan["pending"] == []
     expected = {
         "sf_connector_sessions_workspace_installation_fk",
