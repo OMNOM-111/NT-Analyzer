@@ -292,10 +292,54 @@
   function connectionLabel(model) {
     return model.can_execute_test_only === true ? 'SYNTHETIC · только локальный тестовый исполнитель' : model.connected === true ? 'Реальное соединение проверено' : model.test_executor_verified === true ? 'Локальный тест сохранён; реальное соединение не проверено' : 'Реальное соединение не проверено';
   }
+  const EXTERNAL_ERRORS = Object.freeze({
+    external_agent_reverification_required: 'Секрет заменён. Подключение выключено до повторной проверки.',
+    external_agent_revoked_or_changed: 'Подключение было отозвано или изменено, пока задача ждала запуска.',
+    external_agent_reply_uncertain: 'Исполнитель остановился до ответа. Неизвестно, дошёл ли запрос; повторно он не отправляется.',
+    external_agent_timeout: 'Агент не ответил вовремя.',
+    external_agent_credential_cleanup_pending: 'Отзыв выполнен. Удаление старого секрета отложено и будет повторено.',
+    external_agent_unavailable: 'Подключение сейчас недоступно для запуска.',
+    external_agent_verification_required: 'Агент не подтвердил запрошенные возможности.',
+  });
+  const EXTERNAL_STATES = Object.freeze({
+    draft: 'Создано, не проверено', verifying: 'Идёт проверка', active: 'Проверено и доступно',
+    degraded: 'Проверка не прошла', disabled: 'Выключено', revoked: 'Отозвано',
+  });
   function externalAgentCard(item) {
-    const stat = item.statistics || {}, performance = item.performance || {};
-    const capabilityLabel = value => value === 'stratforge.json_arithmetic.v1' ? 'Диагностика: арифметика JSON' : 'Неподдерживаемая возможность · см. детали';
-    return `<section class="aw-detail-section"><h3>${esc(item.display_name || item.name || 'Внешний агент')}</h3><dl class="aw-detail-grid"><div><dt>Тип</dt><dd>External Agent · отдельно от Model</dd></div><div><dt>Протокол</dt><dd>${esc(item.protocol)}</dd></div><div><dt>Модель внутри агента</dt><dd>unknown / externally managed</dd></div><div><dt>Последняя проверка</dt><dd>${esc(date(item.last_verified_at || item.last_verification))}</dd></div><div><dt>Задержка</dt><dd>${number(item.latency_ms ?? item.last_latency_ms) == null ? 'Не измерена' : count(item.latency_ms ?? item.last_latency_ms) + ' мс'}</dd></div><div><dt>Завершено задач</dt><dd>${count(stat.tasks_completed)}</dd></div><div><dt>External-agent performance · выборка</dt><dd>n = ${count(performance.sample_size ?? stat.sample_size)}</dd></div></dl><p class="aw-text">Подтверждённые возможности: ${rows(item.allowed_capabilities).map(capabilityLabel).map(esc).join(', ') || 'Нет'}</p>${item.synthetic === true ? '<p class="aw-note">SYNTHETIC · Development-агент. Не реальная модель и не рабочий benchmark.</p>' : ''}<p class="aw-note">Диагностические проверки не означают профессиональное качество. Результаты внешнего агента не записываются как Model Performance.</p>${item.last_error || item.last_error_code ? '<p class="aw-status aw-warning">Последняя проверка завершилась ошибкой. См. технические детали.</p>' : ''}<details class="aw-technical"><summary>Протокол, возможности и диагностика</summary><pre class="aw-result-text">${esc(publicJSON({ endpoint: item.endpoint, advertised_capabilities: item.advertised_capabilities, requested_capabilities: item.requested_capabilities, allowed_capabilities: item.allowed_capabilities, last_error: item.last_error || item.last_error_code, performance, statistics: stat }))}</pre></details>${rows(item.history).length ? `<h4>История результатов</h4>${rows(item.history).map(row => `<div class="aw-text">${esc(row.title || 'Диагностическая задача')} ${badge(row.status)} ${row.synthetic === true ? 'SYNTHETIC' : ''}${row.task_id ? `<button class="aw-link-button" data-aw-task="${esc(row.task_id)}">Задача и доказательства →</button>` : ''}</div>`).join('')}` : ''}</section>`;
+    const stat = item.statistics || {}, tasks = rows(item.tasks);
+    const capabilityLabel = value => value === 'stratforge.json_arithmetic.v1'
+      ? 'Диагностика: арифметика JSON' : 'Неподдерживаемая возможность · см. детали';
+    const code = item.last_error || item.last_error_code;
+    const current = item.current_task;
+    const taskRow = row => `<div class="aw-text">${badge(row.status)} <span class="aw-hash">${esc(String(row.id).slice(0, 8))}</span>`
+      + `${row.synthetic === true ? ' <span class="aw-status aw-info">SYNTHETIC</span>' : ''}`
+      + `${row.error_code ? ' <span class="aw-status aw-warning">' + esc(row.error_code) + '</span>' : ''}`
+      + `${row.evaluation_id ? ' · оценка записана' : ' · без оценки'}`
+      + `<button class="aw-link-button" data-aw-task="${esc(row.id)}">Задача и доказательства →</button></div>`;
+    return `<section class="aw-detail-section"><h3>${esc(item.display_name || item.name || 'Внешний агент')}</h3>`
+      + `<div class="aw-inline">${badge(item.status)}<span class="aw-status aw-info">ревизия ${count(item.revision)}</span></div>`
+      + `<dl class="aw-detail-grid">`
+      + `<div><dt>Тип</dt><dd>External Agent · отдельно от Model</dd></div>`
+      + `<div><dt>Состояние</dt><dd>${esc(EXTERNAL_STATES[item.status] || item.status || 'не указано')}</dd></div>`
+      + `<div><dt>Протокол</dt><dd>${esc(item.protocol)}</dd></div>`
+      + `<div><dt>Модель внутри агента</dt><dd>unknown / externally managed</dd></div>`
+      + `<div><dt>Последняя проверка</dt><dd>${esc(date(item.last_verified_at || item.last_verification))}</dd></div>`
+      + `<div><dt>Задержка</dt><dd>${number(item.latency_ms ?? item.last_latency_ms) == null ? 'Не измерена' : count(item.latency_ms ?? item.last_latency_ms) + ' мс'}</dd></div>`
+      + `<div><dt>Текущая задача</dt><dd>${current ? esc(String(current.id).slice(0, 8)) + ' · ' + esc(statusMeta(current.status)[0]) : 'Нет'}</dd></div>`
+      + `<div><dt>Завершено задач</dt><dd>${count(stat.tasks_completed)}</dd></div>`
+      + `</dl>`
+      + `<p class="aw-text">Подтверждённые возможности: ${rows(item.allowed_capabilities).map(capabilityLabel).map(esc).join(', ') || 'Нет'}</p>`
+      + (item.synthetic === true ? '<p class="aw-note">SYNTHETIC · Development-агент. Не реальная модель и не рабочий benchmark.</p>' : '')
+      + (code ? `<p class="aw-status aw-warning">${esc(EXTERNAL_ERRORS[code] || 'Последняя операция завершилась ошибкой.')} <span class="aw-hash">${esc(code)}</span></p>` : '')
+      + (item.credential_cleanup === 'pending' ? '<p class="aw-note">Доступ отозван. Удаление старого секрета поставлено в очередь и будет повторено.</p>' : '')
+      + reputationPanel({ external_agent_performance: item.performance })
+      + `<p class="aw-note">Результаты внешнего агента не записываются как Model Performance.</p>`
+      + (tasks.length ? `<h4>История задач</h4>${tasks.map(taskRow).join('')}` : '<p class="aw-note">Задач ещё не было.</p>')
+      + `<details class="aw-technical"><summary>Протокол, возможности и диагностика</summary><pre class="aw-result-text">${esc(publicJSON({
+          endpoint: item.endpoint, advertised_capabilities: item.advertised_capabilities,
+          requested_capabilities: item.requested_capabilities, allowed_capabilities: item.allowed_capabilities,
+          last_error: code, performance: item.performance, statistics: stat }))}</pre></details>`
+      + `</section>`;
   }
   function modelProtocolCard(model) {
     const caps = model?.capabilities;
@@ -569,6 +613,7 @@
   const APPROVAL_LABELS = Object.freeze({ advice: 'только совет, исполнение не разрешено', draft: 'черновик',
     reversible_execution: 'обратимое исполнение', approval_required: 'требуется подтверждение', forbidden: 'запрещено' });
   const SCOPE_LABELS = Object.freeze({
+    external_agent_performance: 'Внешний агент',
     model_performance: 'Модель',
     agent_role_performance: 'Рабочая роль',
     decision_performance: 'Решение',
