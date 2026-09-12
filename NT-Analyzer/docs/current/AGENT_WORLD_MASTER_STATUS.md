@@ -684,6 +684,18 @@ Exact next action for P1-5:
      allowance contract exists. Only the Development agent runs today, and it is
      synthetic by construction - default off, allowlisted workspace, no socket.
 
+Known gap, recorded rather than papered over:
+
+  No disposable PostgreSQL is configured on this machine, so the
+  test_agent_world_postgres* suites skip (77 skipped) and the PostgreSQL branch
+  of `NativeExternalRepository.guard` has never actually run against a server.
+  `test_external_agent_guard_postgres_shape.py` drives that branch against a
+  recording client and pins what would be silently wrong there — the lock is
+  `pg_try_advisory_xact_lock`, not a session-scoped lock that a pooled
+  connection leaks to whoever gets it next, and it is taken inside a
+  workspace-scoped transaction. That is the part provable here. Run the real
+  PostgreSQL harness before this reaches anything but development.
+
 Two things not to undo here:
 
   A failed execution never becomes a bad external agent, and an interrupted
