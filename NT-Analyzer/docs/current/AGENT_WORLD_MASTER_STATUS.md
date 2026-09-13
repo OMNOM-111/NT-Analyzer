@@ -20,17 +20,21 @@ HANDOFF: P1-3 accepted and closed by the owner at f1fe393f.
   ACTIVE OWNER OF SHARED FILES: this integration task; subagents have bounded
   file assignments only. Earlier ownership/handoff sections below are history.
 
-CURRENT IMPLEMENTATION COVERAGE: 95% (published provisional; reconciliation pending)
-CURRENT OWNER ACCEPTANCE READINESS: 70% (published provisional; reconciliation pending)
+CURRENT IMPLEMENTATION COVERAGE: 94% (34.0 / 36 — reconciled 2026-09-13; the published 95% was arithmetic)
+CURRENT OWNER ACCEPTANCE READINESS: 68% (24.5 / 36 — reconciled 2026-09-13; the published 70% was arithmetic
+  plus a Git/CI row claiming a green run this branch never had)
 CURRENT INTEGRATION BRANCH: codex/agent-world-final-acceptance
 CURRENT INTEGRATION INPUTS: 9365695a + 4d8ee514 (both histories, no duplicate picks).
-SAVED INTEGRATION CHECKPOINT: 81e92c1ad363ffb86e18499f78017ed6973b3626; task draft PR #287.
-CURRENT VERIFICATION: CI 34719653016 static PASS; Ubuntu 5781 passed /
-  2 failed / 128 skipped, 1662.25 s; Windows remains running.
-  Follow-up Persona process UI fixture correction: 9 focused PASS in 2.41 s;
-  no runtime-code change. Earlier PG/legacy/bundle evidence stays SHA-specific;
-  final unified regression and browser acceptance are not yet closed.
-  Historical PASS below does not certify this integration.
+OWNER ACCEPTANCE CANDIDATE: the commit that introduces this line (docs-only), code parent dbeb5ec3.
+  Frozen 2026-09-13. No new functionality after it; every gate below is run against
+  this exact SHA and recorded in a later docs-only commit that names it. Draft PR #287.
+CURRENT VERIFICATION: PENDING on the candidate — full pytest, disposable PostgreSQL
+  (Agent World / External Agent / Persona / legacy / workers), legacy runner, static,
+  context, bundle, CI workflow_dispatch and the browser guide. Nothing is carried over.
+  Earlier CI on this branch, none green: 34703741359 (d7b48060) failure, Windows hit the
+  120-minute limit; 34714150028 (a091ce67) 4 failed on both legs; 34719653016 (81e92c1a)
+  Ubuntu 5781/2/128 and Windows CANCELLED (not 'still running'); 34722423422 (5d7c664a)
+  cancelled on both legs. PostgreSQL 129/0/0 exists for d7b48060 and a091ce67 only.
 PREVIOUS INTEGRATION CODE SHA: fb2c472b — P1-3 including the decision producer.
   At fb2c472b: CI run 34658942542 SUCCESS on all three jobs — Static gates;
   Tests (ubuntu-latest) 5515 passed / 0 failed / 116 skipped, 18:54;
@@ -47,15 +51,19 @@ PREVIOUS INTEGRATION CODE SHA: fb2c472b — P1-3 including the decision producer
   both crawled. CI's Windows leg IS the full suite on this box. Its log,
   scratchpad/full_84ddb2e7.txt, ends mid-run with zero failures — that is a kill, not a
   red result.
-CURRENT WIP: saved 81e92c1a under verification; follow-up test-fixture/docs changes, Git authoritative.
-CURRENT LOCAL 8765 SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (not switched, not restarted)
+CURRENT WIP: none. The uncommitted selected_model_id multicast work found by the
+  recovery audit (11 files) was reviewed, completed and saved at dbeb5ec3.
+CURRENT LOCAL 8765 SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b — PID 21060 on 2026-09-13.
+  Restarted by the machine/owner outside any integration session; code unchanged,
+  never switched or restarted from here.
 HISTORICAL ACCEPTANCE INSTANCE: http://127.0.0.1:8809/ui/ai-command-center.html — SHA 84ddb2e7,
   disposable data root, zero external calls. :8808 serves b06c5f55 and holds the evidence of
   the reputation headline defect; :8806 serves 4d9ff737 (P0 acceptance); :8804 serves 92d873e3
   and still holds the historical stuck task. All superseded, none deleted.
 CURRENT VERSION: 0.10.0-beta.96 (pre_release)
 
-FINAL ACCEPTANCE INSTANCE: not started; final unified gates pending.
+FINAL ACCEPTANCE INSTANCE: not started. It is launched only after the automated gates on
+  the candidate are green, with deploy/testing/agent-world-owner-acceptance.py.
 LAST INTEGRATION STATUS UPDATE: 2026-09-12
 PREVIOUS VERIFIED SHARED HANDOFF: 2026-09-11 (P1-1, P1-2, P1-3)
 ```
@@ -285,23 +293,22 @@ A percentage that **falls** after a defect is found is correct and must be
 recorded as such.
 
 ```text
-IMPLEMENTATION COVERAGE: 95%   (34.5 / 36)
-OWNER ACCEPTANCE READINESS: 70%   (25.5 / 36)
+IMPLEMENTATION COVERAGE: 94%   (34.0 / 36)
+OWNER ACCEPTANCE READINESS: 68%   (24.5 / 36)
 
-P0 REMAINING: 0
+P0 REMAINING: 3 at the audit (WIP, green CI, final build); WIP closed at dbeb5ec3.
 
-CHANGE SINCE PREVIOUS CHECKPOINT (87 / 65 at 7f54d6ea):
-Implementation: +6 pp  — two rows move 0.5 to 1.0. Intent: the commitment a task
-                         was created from is now on the task, in the API and on
-                         the page. Reputation: three separate scopes over one
-                         typed subject, with provenance and basis.
-Acceptance:     +3 pp  — Intent (+0.5) once both panels were read from the live
-                         DOM on :8809, and Reputation (+0.5) once the third scope
-                         got a producer. All three scopes now fill from the
-                         application's own completion path, confirmed on :8810
-                         through the API and in the browser: «Решение · Класс
-                         задачи: Исход одобренного решения · Наблюдений 1 · из
-                         них диагностических 1 · Доказательства 1 запись».
+RECONCILIATION 2026-09-13 (same 36-row method, no new formula):
+Implementation: 95 -> 94. Arithmetic only. The printed marks sum to 34.0, not 34.5:
+                Delegation, Voice/TTS, ordinary-user BYOK and UI/UX are PARTIAL at 0.5.
+                The error entered with a reconstructed 87% base in an earlier session
+                and was carried forward; no row regressed.
+Acceptance:     70 -> 69. Arithmetic: E2E marks are 17 Y + 16 P + 3 N = 25.0.
+                69 -> 68. Git/CI was marked Y on run 34516120281 at 437febf4; this branch
+                has had no green run, so the row is P until the candidate's CI is green.
+No row gains on reconciliation. Integration work since P1-5 carries strong automated
+evidence but no final-SHA E2E in a running application yet, so those rows stay P.
+Recount again after the candidate's gates and browser guide.
 ```
 
 > The independent audit of 2026-09-10 reported 84% / 54% on a 34-row basis.
@@ -359,7 +366,7 @@ percentage changes are made while final browser/regression gates are pending.
 | Security / tenant isolation | Y | Y | Y | Y | Y | DONE + VERIFIED | FORCE RLS; foreign workspace reads 0 and inserts fail `42501`; device and session re-checked per request; SSRF guard; no secret in Git | — |
 | Restart / idempotency | Y | Y | Y | Y | Y | DONE + VERIFIED | Stop/restart/re-read against PostgreSQL; duplicate dispatch and replay refused | — |
 | Documentation | Y | Y | Y | Y | Y | DONE + VERIFIED | Per-SHA receipts, file hashes, explicit withdrawn-claims section, skips never counted as passes | — |
-| Git / CI | Y | Y | Y | Y | Y | DONE + VERIFIED | Run 34516120281 at 437febf4 **success on all three jobs**: static gates, Linux **5466/0/116**, Windows self-hosted **5463/0/119**. Immutable per-SHA worktrees, preserved originals, no force pushes | PR base is still not `main`, so nothing triggers automatically — owner decision |
+| Git / CI | Y | Y | Y | Y | P | PARTIAL | Workflow and 120-minute limit in place; static gates pass on every run. No green full CI on codex/agent-world-final-acceptance yet (see CURRENT VERIFICATION) | Green Static + Ubuntu + Windows on the candidate SHA |
 
 ## Active remainder
 
@@ -790,6 +797,21 @@ P3-3  Eight expected sections live behind three tabs as drawers — owner design
 | P1-3 - the decision scope gets a producer | `fb2c472b` | Approved Decision -> Execution -> observed Outcome -> Evaluation, written by the application's own completion path. 13 cases: the model score and the decision score cannot reach each other's rows, a decision fails on scope while the model that answered passed, a role scope reads no decision row, a failed execution writes nothing rather than a zero, and a synthetic-only decision measures as diagnostic. Live on :8810 through the API and the browser |
 
 ## NEXT AGENT START HERE
+
+```text
+CURRENT (2026-09-13) — owner-acceptance candidate frozen; gates pending.
+  Branch: codex/agent-world-final-acceptance. Candidate: the docs commit that froze
+  this status (code parent dbeb5ec3). Do not add functionality on top of it; if a gate
+  fails, fix, create a new candidate and restart every gate.
+  Local 8765: PID 21060, 2b6d0112 — do not switch or restart.
+  Disposable PostgreSQL for the gates: .artifacts/pg-runtime-acceptance-final-candidate
+  (loopback, TLS, generated credentials in an ignored file; teardown with
+  provision-disposable-agent-world-postgres.py --teardown).
+  Order: CI dispatch -> PostgreSQL/legacy/static/bundle while CI runs -> local full
+  pytest after the self-hosted Windows job (same machine) -> acceptance build -> guide.
+  Everything below this block is history.
+```
+
 
 ### Parallel P1-5 handoff (2026-09-10; does not replace integrator's status below)
 
