@@ -366,7 +366,7 @@ percentage changes are made while final browser/regression gates are pending.
 | Security / tenant isolation | Y | Y | Y | Y | Y | DONE + VERIFIED | FORCE RLS; foreign workspace reads 0 and inserts fail `42501`; device and session re-checked per request; SSRF guard; no secret in Git | — |
 | Restart / idempotency | Y | Y | Y | Y | Y | DONE + VERIFIED | Stop/restart/re-read against PostgreSQL; duplicate dispatch and replay refused | — |
 | Documentation | Y | Y | Y | Y | Y | DONE + VERIFIED | Per-SHA receipts, file hashes, explicit withdrawn-claims section, skips never counted as passes | — |
-| Git / CI | Y | Y | Y | Y | P | PARTIAL | Workflow and 120-minute limit in place; static gates pass on every run. No green full CI on codex/agent-world-final-acceptance yet (see CURRENT VERIFICATION) | Green Static + Ubuntu + Windows on the candidate SHA |
+| Git / CI | Y | Y | Y | Y | P | IMPLEMENTED | Workflow and 120-minute limit in place; static gates pass on every run. No green full CI on codex/agent-world-final-acceptance yet (see CURRENT VERIFICATION) | Green Static + Ubuntu + Windows on the candidate SHA |
 
 ## Active remainder
 
