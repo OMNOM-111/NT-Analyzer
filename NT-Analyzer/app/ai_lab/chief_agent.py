@@ -4620,6 +4620,7 @@ def _gateway_envelope(result: Dict[str, Any], *, source: str) -> Dict[str, Any]:
 def handle_message(message: str, *, source: str = "app", mirror_to_telegram: bool = True,
                    conversation_id: str = DEFAULT_CONVERSATION_ID, agent: str = "",
                    persona_id: Optional[str] = None,
+                   selected_model_id: Optional[str] = None,
                    on_thinking: Optional[Callable[[str], None]] = None,
                    scope: Optional[Dict[str, Any]] = None,
                    request_id: str = "") -> Dict[str, Any]:
@@ -4660,6 +4661,7 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
                     conversation_id=conversation_id, agent=agent,
                     on_thinking=on_thinking, scope=scope, request_id=request_id,
                     **({"persona_id": persona_id} if persona_id is not None else {}),
+                    **({"selected_model_id": selected_model_id} if selected_model_id is not None else {}),
                 )
             return _gateway_envelope(result, source=source)
         result = _handle_message_impl(
@@ -4667,6 +4669,7 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
                 conversation_id=conversation_id, agent=agent,
                 on_thinking=on_thinking, scope=scope, request_id=request_id,
                 **({"persona_id": persona_id} if persona_id is not None else {}),
+                **({"selected_model_id": selected_model_id} if selected_model_id is not None else {}),
             )
         return _gateway_envelope(result, source=source)
 
@@ -4994,6 +4997,7 @@ def _vitek_gateway_turn(clean: str, *, source: str, mirror_to_telegram: bool,
 def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegram: bool = True,
                          conversation_id: str = DEFAULT_CONVERSATION_ID, agent: str = "",
                          persona_id: Optional[str] = None,
+                         selected_model_id: Optional[str] = None,
                          on_thinking: Optional[Callable[[str], None]] = None,
                          scope: Optional[Dict[str, Any]] = None,
                          request_id: str = "") -> Dict[str, Any]:
@@ -5037,7 +5041,8 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
     if coordinated_turn is not None:
         return coordinated_turn
     persona_turn = persona_identity.try_chat(clean, scope=scope, conversation_id=conversation_id,
-        request_id=request_key, source=source, persona_id=persona_id)
+        request_id=request_key, source=source, persona_id=persona_id,
+        **({"selected_model_id": selected_model_id} if selected_model_id is not None else {}))
     if persona_turn is not None:
         return persona_turn
     live_turn = live_gateway.try_chat(clean, scope=scope, conversation_id=conversation_id,

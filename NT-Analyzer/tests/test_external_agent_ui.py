@@ -67,6 +67,21 @@ def test_it_is_presented_as_its_own_kind_and_never_as_a_model():
     assert "Проверено и доступно" in html
 
 
+def test_full_connection_drawer_names_connection_not_unknown_model(monkeypatch):
+    from tests.test_agent_world_coordinator_ui import run_ui
+    item = connection(display_name="Owned external <agent>", actions=[])
+    result = run_ui(monkeypatch, """
+      await click({awDomain:'external_agents'},'shell');
+      await click({awDomainItem:'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'});
+      return {html:drawer.innerHTML};
+    """, "domains.external_agents={enabled:true,actions:[],items:[" + json.dumps(item) + "]};")
+    html = result["html"]
+    assert '<h2 class="aw-inspector-title">Owned external &lt;agent&gt;</h2>' in html
+    assert "Запрошенная модель" not in html
+    assert "Модель внутри агента" in html and "unknown / externally managed" in html
+    assert "не записываются как Model Performance" in html
+
+
 def test_a_diagnostic_record_never_wears_the_observed_performance_style():
     """The whole point of the shared panel: one honest renderer, not two."""
     html = render("externalAgentCard", connection(performance=measured("diagnostic", 3),

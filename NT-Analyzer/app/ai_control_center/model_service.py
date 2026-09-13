@@ -430,14 +430,16 @@ class ModelService:
             self._walk(context, model, "active")
         return self.model_detail(context=context, model_id=model_id)
 
-    def test(self, *, context, model_id, idempotency_key, conversation_id=None, message_id=None, _persona=None):
+    def test(self, *, context, model_id, idempotency_key, conversation_id=None, message_id=None, _persona=None,
+             _model_selection=None):
         return self.start_task(context=context, model_id=model_id,
             payload={"rubric_key": "connection_exact"}, idempotency_key=idempotency_key,
-            conversation_id=conversation_id, message_id=message_id, _persona=_persona)
+            conversation_id=conversation_id, message_id=message_id, _persona=_persona,
+            _model_selection=_model_selection)
 
     def start_task(self, *, context, model_id, payload, idempotency_key, conversation_id=None,
                    message_id=None, comparison_id=None, comparison_title=None, _sealed_spec=None, _comparison_spec=None,
-                   _handoff=None, _delegation=None, _routing=None, _persona=None):
+                   _handoff=None, _delegation=None, _routing=None, _persona=None, _model_selection=None):
         self._access(context, "task")
         key = _key(idempotency_key)
         if not isinstance(payload, dict) or set(payload) - {"rubric_key", "input_text"}:
@@ -462,6 +464,17 @@ class ModelService:
                     or _sealed_spec is not None and spec["rubric_key"] not in {"backtest_spec", "chart_spec"}):
                 raise ContractError("persona_selection_invalid")
             identity["persona_selection"] = c.primitive(_persona)
+        if _model_selection is not None:
+            # Why this connection answered. Trusted chat integration only, and
+            # only beside a selected Persona; kept out of the request digest.
+            if (_persona is None or type(_model_selection) is not dict
+                    or set(_model_selection) != {"reason", "selected_model_id"}
+                    or _model_selection["reason"] not in {"user_override", "persona_single_binding"}
+                    or (_model_selection["reason"] == "user_override")
+                        != (_model_selection["selected_model_id"] is not None)
+                    or (_model_selection["selected_model_id"] is not None
+                        and _model_selection["selected_model_id"] != str(_uuid(model_id)))):
+                raise ContractError("persona_model_selection_invalid")
         correlation, dependencies = task_id, ()
         if _routing is not None:
             if any(value is not None for value in (_handoff, _delegation, _sealed_spec, _comparison_spec)):
@@ -539,6 +552,8 @@ class ModelService:
                     "test_executor_request": test_executor.enabled(context.scope.workspace_id)}
             if speaking_identity is not None:
                 goal.update(speaking_identity=speaking_identity, executor_persona_id=profile["persona_id"])
+            if _model_selection is not None:
+                goal["model_selection"] = dict(_model_selection)
             if spec["rubric_key"] in {"backtest_spec", "chart_spec"}:
                 goal["application_request"] = {"kind": spec["rubric_key"].removesuffix("_spec"),
                     "spec": spec["input"], "request_sha256": digest(spec["input"])}
@@ -1073,6 +1088,7 @@ class ModelService:
         task_dto["progress_pct"] = presentation.progress_pct(task_dto["display_status"])
         return {"task": task_dto, **task_dto, "result_text": result_text,
             "actual_model": receipt.get("actual_model"), "evaluation": evidence,
+            "model_selection": checkpoint.get("model_selection"),
             "intent": self.intent_view(context, task, checkpoint, receipt),
             "reputation": self.task_reputation(context, task, checkpoint),
             "executor": receipt.get("executor"), "external_call": receipt.get("external_call"),

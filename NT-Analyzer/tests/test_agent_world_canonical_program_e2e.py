@@ -51,20 +51,40 @@ def completed_program(scenario):
     env.authorized = gateway.access(env.world.scope)
     env.service = gateway.models(env.authorized)
     payload = dict(env.payload)
-    goal = payload.pop("goal")
-    reply = chief_agent.handle_message("Координатор: " + goal + "\n" + json.dumps(payload),
+    goal = payload["goal"]
+    original_message = "Координатор: " + goal
+    reply = chief_agent.handle_message(original_message,
         source="app", mirror_to_telegram=False, conversation_id="canonical-program-chat",
         scope=env.world.scope, request_id="canonical-program-request")
-    assert reply["status"] == "clarification_required" and reply["actions"] == []
-    payload["selection"] = {"id": "1", "plan_sha256": reply["clarification"]["plan_sha256"]}
-    reply = chief_agent.handle_message("Координатор: " + goal + "\n" + json.dumps(payload),
-        source="app", mirror_to_telegram=False, conversation_id="canonical-program-chat",
-        scope=env.world.scope, request_id="canonical-program-confirmed-request")
-    assert reply["ok"] is True and "task_id" in reply, reply
+    assert reply["status"] == "clarification_required"
+    action = next(row for row in reply["actions"] if row["name"] == "coordinator_clarification")
+    assert "plan_sha256" not in reply["reply"]
+    assert not list(env.service._all(env.context, EntityKind.TASK))
+    source = {key: action[key] for key in ("conversation_id", "source_message_id")}
+    # These are the same seed, form preview and labelled-choice calls made by
+    # the SF Chat continuation UI, not an internal Coordinator constructor.
+    seed = _mutate(env, "automation", "new", "chat_seed", source)
+    assert seed["goal"] == goal and seed["original_message"] == original_message
+    payload.update(goal=seed["goal"], chat_source=source)
+    semantic_plan = _mutate(env, "automation", "new", "commission", payload)
+    assert semantic_plan["status"] == "clarification_required"
+    assert not list(env.service._all(env.context, EntityKind.TASK))
+    payload["selection"] = {"id": "1", "plan_sha256": semantic_plan["plan_sha256"]}
+    commissioned = _mutate(env, "automation", "new", "commission", payload)
+    root_task_id = commissioned["root_task_id"]
+    task = env.service.task_detail(context=env.context, task_id=root_task_id)
+    assert task["conversation_id"] == source["conversation_id"]
+    _, _, saved = delegation.controller(env.service, env.context, commissioned["id"], coordinator.SOURCE)
+    assert saved["chat_source"] == source
+    messages = chief_agent.read_jsonl(chief_agent._conversation_file(
+        source["conversation_id"], scope=env.authorized["chat_scope"]))
+    assert any(row.get("message_id") == source["source_message_id"]
+               and row.get("content") == original_message for row in messages)
     env.ledger = {"synthetic": True, "professional_quality_assessed": False,
-                  "conversation_id": reply["conversation_id"], "root_task_id": reply["task_id"],
-                  "coordinator_id": reply["coordinator_id"], "jobs": _drain()}
-    control = coordinator.projection(env.authorized, env.service, reply["coordinator_id"])
+                  "conversation_id": source["conversation_id"], "source_message_id": source["source_message_id"],
+                  "ingress": "plaintext_chat_semantic_clarification", "root_task_id": root_task_id,
+                  "coordinator_id": commissioned["id"], "jobs": _drain()}
+    control = coordinator.projection(env.authorized, env.service, commissioned["id"])
     assert control["stage"] == "awaiting_approval"
     plan = _mutate(env, "automation", control["id"], "preview_commission", {})
     opened = _mutate(env, "automation", control["id"], "approve_commission", {
@@ -72,7 +92,7 @@ def completed_program(scenario):
         "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()})
     env.ledger["jobs"] += _drain()
     graph = coordinator.projection(env.authorized, env.service, control["id"])["graph"]
-    tasks = [reply["task_id"], *[node["task_id"] for node in graph["nodes"]]]
+    tasks = [root_task_id, *[node["task_id"] for node in graph["nodes"]]]
     env.ledger["task_ids"] = tasks
     for identity in tasks:
         detail = gateway.task_detail(env.authorized, identity)["task"]

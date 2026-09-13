@@ -43,10 +43,11 @@ def _chart_spec(message):
     return application_spec("chart", {"instrument": instrument[1] + " " + instrument[2], "timeframe": timeframe[1] + "m"})
 
 
-def _select_model(service, context, kind, *, persona_id=None):
+def _select_model(service, context, kind, *, persona_id=None, selected_model_id=None):
     if persona_id is not None:
         from .persona_identity import select_model
-        return select_model(service, context=context, persona_id=persona_id, kind=kind)
+        return select_model(service, context=context, persona_id=persona_id, kind=kind,
+            selected_model_id=selected_model_id)
     from .application_roles import for_kind
     role = for_kind(kind)
     personas = [row for row in service._all(context, EntityKind.PERSONA)
@@ -68,7 +69,7 @@ def _select_model(service, context, kind, *, persona_id=None):
 
 
 def try_chat(message, *, scope, conversation_id, request_id, source, persona_id=None,
-             persona_revision=None, user_message=None):
+             persona_revision=None, user_message=None, selected_model_id=None):
     if source != "app" or not live_gateway.configured(str((scope or {}).get("workspace_id") or "")):
         return None
     kind = _intent(message)
@@ -76,7 +77,8 @@ def try_chat(message, *, scope, conversation_id, request_id, source, persona_id=
         return None
     authorized = domain_gateway.access(scope)
     service = domain_gateway.models(authorized)
-    model_id = _select_model(service, authorized["context"], kind, persona_id=persona_id)
+    model_id = _select_model(service, authorized["context"], kind, persona_id=persona_id,
+        selected_model_id=selected_model_id)
     if model_id is None:
         # No fabricated LLM participation. The existing explicit Local command
         # path remains available with its honest NinjaTrader/Desktop attribution.
@@ -99,7 +101,8 @@ def try_chat(message, *, scope, conversation_id, request_id, source, persona_id=
             # Selection is not a lasting permission. Recheck the owned Persona
             # and exact active binding immediately before the normal task path.
             authorized["admit"]()
-            if _select_model(service, authorized["context"], kind, persona_id=persona_id) != model_id:
+            if _select_model(service, authorized["context"], kind, persona_id=persona_id,
+                    selected_model_id=selected_model_id) != model_id:
                 raise ContractError("persona_model_binding_changed")
             if service._get(authorized["context"], EntityKind.PERSONA, persona_id).ref() != persona_ref:
                 raise ContractError("persona_revision_conflict")
