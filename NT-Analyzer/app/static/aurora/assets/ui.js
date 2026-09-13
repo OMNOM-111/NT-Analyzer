@@ -9104,6 +9104,28 @@
     if (selected && !people.some(person => person.id === selected)) options.push(`<option value="${esc(selected)}" selected disabled>Выбранная Persona недоступна — выберите другую</option>`);
     return `<label for="orch-persona-select">Помощник <select class="btn sm" id="orch-persona-select" style="max-width:100%;min-width:0">${options.join('')}</select></label> <button class="btn sm" id="orch-persona-refresh" type="button" title="Обновить список Persona">Обновить</button><small style="display:block;overflow-wrap:anywhere">${esc(error || 'Выбирается личность, не модель. Доступны только поддерживаемые задания; имя не даёт новых прав.')}</small>`;
   }
+  async function orchLoadPersonaModels(reason = '') {
+    // Loads only this Persona's connections; the server still decides which
+    // are executable and re-checks the chosen one before any task exists.
+    if (ORCH.sending || !ORCH.personaId) return;
+    const persona = ORCH.personaId, generation = ORCH.personaGeneration;
+    try {
+      const data = await API.http.aiControlCenterDomain('models', {limit: 100}, {retries: 0});
+      if (generation !== ORCH.personaGeneration || persona !== ORCH.personaId) return;
+      ORCH.personaModels = Array.isArray(data?.items) ? data.items : [];
+      if (!ORCH.personaModels.some(model => model.id === ORCH.selectedModelId && model.status === 'active' && model.persona_id === persona && model.execution_available === true)) ORCH.selectedModelId = '';
+      const available = ORCH.personaModels.some(model => model.persona_id === persona && model.status === 'active' && model.execution_available === true);
+      ORCH.personaError = !available ? 'Нет проверенных доступных подключений этой Persona.'
+        : reason === 'ambiguous' ? 'Выберите подключение в списке и отправьте сообщение ещё раз.' : '';
+    } catch (_) {
+      if (generation !== ORCH.personaGeneration || persona !== ORCH.personaId) return;
+      ORCH.personaModels = []; ORCH.selectedModelId = ''; ORCH.personaError = 'Подключения не загружены. Повторите выбор модели.';
+    }
+    orchRenderPersonaPicker();
+  }
+  function orchNeedsModelChoice(error) {
+    return String(error?.code || error?.error || error?.message || error || '').includes('persona_model_ambiguous');
+  }
   function orchRenderPersonaPicker() {
     const wrap = qs('#orch-model-picker');
     if (!wrap) return;
@@ -9129,21 +9151,7 @@
         if (id && !availableModels.some(model => model.id === id)) return;
         ORCH.selectedModelId = id;
       });
-      qs('#orch-load-models', wrap)?.addEventListener('click', async () => {
-        if (ORCH.sending) return;
-        const persona = ORCH.personaId, generation = ORCH.personaGeneration;
-        try {
-          const data = await API.http.aiControlCenterDomain('models', {limit: 100}, {retries: 0});
-          if (generation !== ORCH.personaGeneration || persona !== ORCH.personaId) return;
-          ORCH.personaModels = Array.isArray(data?.items) ? data.items : [];
-          if (!ORCH.personaModels.some(model => model.id === ORCH.selectedModelId && model.status === 'active' && model.persona_id === persona && model.execution_available === true)) ORCH.selectedModelId = '';
-          ORCH.personaError = ORCH.personaModels.some(model => model.persona_id === persona && model.status === 'active' && model.execution_available === true) ? '' : 'Нет проверенных доступных подключений этой Persona.';
-        } catch (_) {
-          if (generation !== ORCH.personaGeneration || persona !== ORCH.personaId) return;
-          ORCH.personaModels = []; ORCH.selectedModelId = ''; ORCH.personaError = 'Подключения не загружены. Повторите выбор модели.';
-        }
-        orchRenderPersonaPicker();
-      });
+      qs('#orch-load-models', wrap)?.addEventListener('click', () => orchLoadPersonaModels());
     }
     const select = qs('#orch-persona-select', wrap), refresh = qs('#orch-persona-refresh', wrap);
     if (select) select.disabled = ORCH.sending;
@@ -10680,7 +10688,7 @@
     const known = {
       execution_v2_approved_scope_changed: 'Параметры поручения не совпали с подтверждёнными. Выполнение остановлено защитой; откройте задачу и проверьте выбранную персону и подключение.',
       persona_model_required: 'Для этой персоны нужно выбрать доступное подключение в AI Центре.',
-      persona_model_ambiguous: 'У персоны несколько подключений. Уточните выбор подключения в AI Центре.',
+      persona_model_ambiguous: 'У персоны несколько доступных подключений. Выберите подключение в списке над полем ввода и отправьте сообщение ещё раз.',
       persona_selection_inactive: 'Выбранная персона не активна. Проверьте её состояние в AI Центре.',
       persona_selection_unavailable: 'Выбранная персона недоступна в текущем рабочем пространстве.',
     };
@@ -10784,7 +10792,7 @@
     if (!text && !(human && ORCH.pendingAttachments.length)) return;
     if (isGuest()) { orchRenderAuthRequired(qs('#orch-panel')); return; }
     if (!window.API || API.config.offline) { toast('Чат недоступен в офлайн-превью'); return; }
-    let personaOptions = {};
+    let personaOptions = {}, chooseModel = false;
     if (!human) {
       try { personaOptions = orchPersonaTransport(ORCH.personas, ORCH.personaId, ORCH.personaModels || [], ORCH.selectedModelId || ''); }
       catch (error) { toast(error.message); return; }
@@ -10883,11 +10891,13 @@
         },
         onError: (err) => {
           removeThink();
+          chooseModel = chooseModel || orchNeedsModelChoice(err);
           setLiveBody(orchErrorHtml(orchFailure(err, false)));
           keepBottom();
         },
       }, personaOptions);
       if (!streamResult || streamResult.ok !== true) {
+        chooseModel = chooseModel || orchNeedsModelChoice(streamResult?.error);
         ORCH.transientError = { cid, ...orchFailure(streamResult?.error, false) };
         removeThink();
         setLiveBody(orchErrorHtml(ORCH.transientError));
@@ -10895,12 +10905,15 @@
     } catch (e) {
       // A failed streaming POST may already have been committed by the server.
       // Never repeat the same mutating message through a second transport.
+      chooseModel = chooseModel || orchNeedsModelChoice(e);
       ORCH.transientError = { cid, ...orchFailure(e, true) };
       removeThink();
       setLiveBody(orchErrorHtml(ORCH.transientError));
     } finally {
       ORCH.sending = false;
       orchRenderPersonaPicker();
+      // Several executable connections and no choice: offer the choice here.
+      if (chooseModel && ORCH.personaId) orchLoadPersonaModels('ambiguous');
       if (sendBtn) sendBtn.disabled = false;
       // Reload from storage so the final reply and auditable action states
       // replace the transient public progress block.

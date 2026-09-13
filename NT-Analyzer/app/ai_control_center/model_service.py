@@ -465,12 +465,15 @@ class ModelService:
                 raise ContractError("persona_selection_invalid")
             identity["persona_selection"] = c.primitive(_persona)
         if _model_selection is not None:
-            # Why this connection answered. Trusted chat integration only, and
-            # only beside a selected Persona; kept out of the request digest.
-            if (_persona is None or type(_model_selection) is not dict
-                    or set(_model_selection) != {"reason", "selected_model_id"}
-                    or _model_selection["reason"] not in {"user_override", "persona_single_binding"}
-                    or (_model_selection["reason"] == "user_override")
+            # How the connection was chosen, from trusted chat/application
+            # integration only. The Router records its own choice below from
+            # its issued packet; a caller can never claim that mode.
+            application = _sealed_spec is not None and spec["rubric_key"] in {"backtest_spec", "chart_spec"}
+            if (_routing is not None or (_persona is None and not application)
+                    or type(_model_selection) is not dict
+                    or set(_model_selection) != {"mode", "selected_model_id"}
+                    or _model_selection["mode"] not in {"explicit_override", "single_available"}
+                    or (_model_selection["mode"] == "explicit_override")
                         != (_model_selection["selected_model_id"] is not None)
                     or (_model_selection["selected_model_id"] is not None
                         and _model_selection["selected_model_id"] != str(_uuid(model_id)))):
@@ -552,8 +555,22 @@ class ModelService:
                     "test_executor_request": test_executor.enabled(context.scope.workspace_id)}
             if speaking_identity is not None:
                 goal.update(speaking_identity=speaking_identity, executor_persona_id=profile["persona_id"])
-            if _model_selection is not None:
-                goal["model_selection"] = dict(_model_selection)
+            if _routing is not None:
+                selection_source = {"mode": "router_approved", "selected_model_id": str(model.header.entity_id),
+                    "reason": "router_preview_applied", "routing": identity["routing"]}
+            elif _model_selection is not None:
+                selection_source = {**_model_selection, "reason": (
+                    "person_selected_connection" if _model_selection["mode"] == "explicit_override"
+                    else "persona_single_binding" if _persona is not None else "application_role_single_binding")}
+            else:
+                selection_source = None
+            if selection_source is not None:
+                # Built from the stored records, not from the caller, so the
+                # connection, its revision and its provider cannot be restated.
+                goal["model_selection"] = {**selection_source, "model_id": str(model.header.entity_id),
+                    "model_revision": model.header.revision, "model_key": model.model_key,
+                    "provider_key": model.provider_key, "provider_account_id": profile["provider_account_id"],
+                    "connection_kind": profile.get("connection_kind")}
             if spec["rubric_key"] in {"backtest_spec", "chart_spec"}:
                 goal["application_request"] = {"kind": spec["rubric_key"].removesuffix("_spec"),
                     "spec": spec["input"], "request_sha256": digest(spec["input"])}
@@ -1364,13 +1381,13 @@ class ModelService:
             contribution_id=_uuid(result["contribution_id"]))
 
     def plan_application(self, *, context, model_id, spec, kind, idempotency_key,
-                         conversation_id, message_id, _persona=None):
+                         conversation_id, message_id, _persona=None, _model_selection=None):
         from .application_evidence import application_spec
         normalized = application_spec(kind, spec)
         return self.start_task(context=context, model_id=model_id, payload={},
             idempotency_key=idempotency_key, conversation_id=conversation_id, message_id=message_id,
             _sealed_spec={"rubric_key": kind + "_spec", "version": VERSION, "input": normalized},
-            _persona=_persona)
+            _persona=_persona, _model_selection=_model_selection)
 
     def record_application_result(self, *, context, task_id, source_id, verification, artifact_refs):
         from .application_evidence import record_application_result

@@ -108,6 +108,8 @@ def try_chat(message, *, scope, conversation_id, request_id, source, persona_id=
                 raise ContractError("persona_revision_conflict")
         detail = service.plan_application(context=authorized["context"], model_id=model_id, spec=spec, kind=kind,
             idempotency_key=request_id, conversation_id=conversation_id, message_id=message_id,
+            _model_selection=({"mode": "explicit_override", "selected_model_id": model_id}
+                if selected_model_id is not None else {"mode": "single_available", "selected_model_id": None}),
             **({"_persona": persona_ref} if persona_ref is not None else {}))
         envelope = model_chat.envelope(authorized, detail, request_id=request_id, pending=True)
         envelope["text"] = ("Модель персоны подготовит точную спецификацию поручения. После независимой проверки "

@@ -16,7 +16,7 @@ def run(kind, mode=""):
     assert result.stdout == "PASS"
 
 
-@pytest.mark.parametrize("mode", ["selected", "main", "missing", "suspended", "invalid", "human", "failure", "rejected"])
+@pytest.mark.parametrize("mode", ["selected", "main", "missing", "suspended", "invalid", "human", "failure", "rejected", "ambiguous"])
 def test_actual_send_uses_uuid_metadata_preserves_text_and_never_falls_back(mode):
     run("send", mode)
 

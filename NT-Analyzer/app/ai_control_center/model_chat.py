@@ -267,8 +267,8 @@ def try_persona(*, message, authorized, service, persona_id, persona_revision,
         raise ContractError("model_connection_input_not_allowed")
     payload = {} if rubric == "connection_exact" else {"rubric_key": rubric,
         "input_text": (diagnostic[2] or "") if diagnostic else message}
-    selection = ({"reason": "user_override", "selected_model_id": model_id} if selected_model_id is not None
-                 else {"reason": "persona_single_binding", "selected_model_id": None})
+    selection = ({"mode": "explicit_override", "selected_model_id": model_id} if selected_model_id is not None
+                 else {"mode": "single_available", "selected_model_id": None})
     detail = start(authorized, service, model_id, payload, request_id,
         test=rubric == "connection_exact", conversation_id=conversation_id,
         user_message=user_message, persona=persona.ref(), model_selection=selection)

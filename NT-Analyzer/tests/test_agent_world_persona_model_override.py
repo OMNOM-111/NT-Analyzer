@@ -2,10 +2,10 @@
 
 The override narrows; it never widens. It can only name an executable connection
 the same user already bound to that Persona, it lasts for one message, it leaves
-the Persona's identity, history and role untouched, and the task records that a
-person chose it. Without an override the Persona's single binding answers; two
-bindings are refused as ambiguous rather than silently routed, because the
-Router chooses only through its own explicit preview and apply.
+the Persona's identity, history and role untouched, and the task records how the
+connection was chosen. Without an override the Persona's single binding answers;
+two bindings are refused rather than silently routed, because the Router chooses
+only through its own explicit preview and apply.
 
 Disposable SQLite, the named local test executor, no provider call.
 """
@@ -62,6 +62,12 @@ def _model_jobs(fixture):
             if not (job.get("payload") or {}).get("phase")]
 
 
+def _fresh(fixture):
+    """A new service over the same stored records: what a restart reads."""
+    return ModelService(SQLiteAgentWorldRepository(fixture.root / "persona-chat.sqlite"),
+                        secrets=fixture.secrets, admit=lambda *args: None)
+
+
 def test_a_chosen_connection_answers_and_the_task_walks_to_completed(persona_chat, monkeypatch):
     fixture = persona_chat
     _enable_persona_v2(fixture, monkeypatch)
@@ -74,7 +80,11 @@ def test_a_chosen_connection_answers_and_the_task_walks_to_completed(persona_cha
     task_id = accepted["task_id"]
     pending = fixture.service.task_detail(context=fixture.context, task_id=task_id)
     assert pending["model_id"] == second["id"], "the override did not choose the connection that runs"
-    assert pending["model_selection"] == {"reason": "user_override", "selected_model_id": second["id"]}
+    selection = pending["model_selection"]
+    assert selection["mode"] == "explicit_override" and selection["selected_model_id"] == second["id"]
+    assert selection["reason"] == "person_selected_connection"
+    assert selection["model_id"] == second["id"] and selection["model_key"] and selection["provider_key"]
+    assert isinstance(selection["model_revision"], int) and selection["provider_account_id"]
 
     _drain(fixture)
     result = fixture.service.task_detail(context=fixture.context, task_id=task_id)
@@ -88,7 +98,10 @@ def test_a_chosen_connection_answers_and_the_task_walks_to_completed(persona_cha
     assert done["chat_delivery"]["problems"] == [], done
     completed = fixture.service.task_detail(context=fixture.context, task_id=task_id)
     assert completed["display_status"] == "completed"
-    assert completed["model_selection"]["reason"] == "user_override"
+    assert completed["model_selection"] == selection
+
+    # Survives a restart: a new service over the same records reads the same.
+    assert _fresh(fixture).task_detail(context=fixture.context, task_id=task_id)["model_selection"] == selection
 
     # Choosing a connection changed nothing about who answered.
     persona_after = fixture.service._get(fixture.context, EntityKind.PERSONA, fixture.persona.header.entity_id)
@@ -106,7 +119,10 @@ def test_without_an_override_the_single_binding_answers_and_says_so(persona_chat
     task_id = _ask(fixture, key="default-request")["task_id"]
     detail = fixture.service.task_detail(context=fixture.context, task_id=task_id)
     assert detail["model_id"] == fixture.model["id"]
-    assert detail["model_selection"] == {"reason": "persona_single_binding", "selected_model_id": None}
+    selection = detail["model_selection"]
+    assert selection["mode"] == "single_available" and selection["selected_model_id"] is None
+    assert selection["reason"] == "persona_single_binding" and selection["model_id"] == fixture.model["id"]
+    assert _fresh(fixture).task_detail(context=fixture.context, task_id=task_id)["model_selection"] == selection
 
 
 def test_removing_the_override_with_two_bindings_asks_instead_of_silently_routing(persona_chat):
@@ -177,15 +193,18 @@ def test_selection_provenance_cannot_be_forged_through_the_constructor(persona_c
     fixture = persona_chat
     _verified(fixture, fixture.model["id"], "forge-verify")
     persona = fixture.persona.ref()
-    for bad in ({"reason": "user_override", "selected_model_id": None},
-                {"reason": "persona_single_binding", "selected_model_id": fixture.model["id"]},
-                {"reason": "router", "selected_model_id": None},
-                {"reason": "user_override", "selected_model_id": str(uuid4())}):
+    for bad in ({"mode": "explicit_override", "selected_model_id": None},
+                {"mode": "single_available", "selected_model_id": fixture.model["id"]},
+                {"mode": "router_approved", "selected_model_id": fixture.model["id"]},
+                {"mode": "explicit_override", "selected_model_id": str(uuid4())},
+                {"mode": "single_available", "selected_model_id": None, "reason": "claimed"}):
         with pytest.raises(ContractError, match="persona_model_selection_invalid"):
             fixture.service.start_task(context=fixture.context, model_id=fixture.model["id"],
                 payload={"rubric_key": "assistant_response", "input_text": MESSAGE},
                 idempotency_key="forge-" + uuid4().hex[:8], _persona=persona, _model_selection=bad)
+    # Outside a selected Persona or an application plan there is no chat
+    # choice to record, so provenance cannot be attached at all.
     with pytest.raises(ContractError, match="persona_model_selection_invalid"):
         fixture.service.start_task(context=fixture.context, model_id=fixture.model["id"],
             payload={"rubric_key": "assistant_response", "input_text": MESSAGE}, idempotency_key="forge-no-persona",
-            _model_selection={"reason": "persona_single_binding", "selected_model_id": None})
+            _model_selection={"mode": "single_available", "selected_model_id": None})

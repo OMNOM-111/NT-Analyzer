@@ -726,6 +726,19 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     if (task.source_kind !== 'external_agent_task_v1') return '';
     return `<section class="aw-detail-section"><h3>Внешний агент · происхождение результата</h3><p>Модель: unknown / externally managed. Результат не входит в Model Performance.</p>${task.external_call === false ? `<p class="aw-note">Внешний сервис не вызывался.${task.cost_usd == null ? ' Денежная стоимость в сохранённой квитанции не записана; неизвестное значение не заменяется нулём.' : ''}</p>` : ''}</section>`;
   }
+  const SELECTION_MODES = Object.freeze({ explicit_override: 'Выбрано человеком',
+    router_approved: 'Выбрано Router после явного подтверждения', single_available: 'Единственное доступное подключение' });
+  function modelSelectionPanel(selection) {
+    // The server's stored record of how this connection was chosen. Nothing
+    // here is inferred: an absent record is simply not shown.
+    if (!selection || typeof selection !== 'object') return '';
+    return `<section class="aw-detail-section"><h3>Выбор подключения</h3><dl class="aw-detail-grid">`
+      + `<div><dt>Способ выбора</dt><dd>${esc(SELECTION_MODES[selection.mode] || selection.mode || 'не указан')}</dd></div>`
+      + `<div><dt>Подключение</dt><dd><span class="aw-hash">${esc(String(selection.model_id || '').slice(0, 8))}</span> · ${esc(selection.model_key || '')}</dd></div>`
+      + `<div><dt>Провайдер</dt><dd>${esc(selection.provider_key || 'не указан')}</dd></div>`
+      + `<div><dt>Ревизия подключения</dt><dd>${esc(String(selection.model_revision ?? ''))}</dd></div>`
+      + `</dl><p class="aw-field-hint">Причина: ${esc(selection.reason || 'не указана')}. Фактическая модель ответа указана в происхождении результата.</p></section>`;
+  }
   function intentPanel(intent) {
     // Everything here is the server's own Intent record. The panel neither
     // recomputes a state nor decides whether the work may proceed.
@@ -747,7 +760,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       + `<p class="aw-field-hint">Поручение не редактируется после создания задачи: его значением связаны запрос, ответ и проверка. Пока работа не началась, поручение можно остановить — «Отменить задачу». Нужны другие условия — отправьте новый запрос; прежнее поручение и его история сохраняются.</p>`
       + `</section>`;
   }
-  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, rows, items, taskMatches, taskState, taskTitle, taskClass, taskBadge, evaluationMeta, phaseOf, phaseLabel, rubricLabel, stageName, machineKey, availabilityMeta, occupancyMeta, readinessGrid, technicalSplit, technicalDetails, AVATAR_KEYS, applicationRows, applicationTable, safeArtifactUrl, sourceMeta, overviewOutcomes, realChatCommands, canRunDemo, flagRows, captureChart, knownDomain, allowedDomainActions, domainFormFields, domainPayload, actionLabel, domainError, publicJSON, externalAgentCard, handoffCard, followupCard, modelConnectionGuide, modelProtocolCard, personaVoiceFields, personaReadText, personaCanSpeak, personaSpeechEnvelope, personaAudioStatus, personaPresentationCard, processCandidatePayload, processCandidateCard, processIntelligencePanel, reputationPanel, intentPanel, validCoordinatorPreview, coordinatorApproval, connectionLabel }; return; }
+  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, rows, items, taskMatches, taskState, taskTitle, taskClass, taskBadge, evaluationMeta, phaseOf, phaseLabel, rubricLabel, stageName, machineKey, availabilityMeta, occupancyMeta, readinessGrid, technicalSplit, technicalDetails, AVATAR_KEYS, applicationRows, applicationTable, safeArtifactUrl, sourceMeta, overviewOutcomes, realChatCommands, canRunDemo, flagRows, captureChart, knownDomain, allowedDomainActions, domainFormFields, domainPayload, actionLabel, domainError, publicJSON, externalAgentCard, handoffCard, followupCard, modelConnectionGuide, modelProtocolCard, personaVoiceFields, personaReadText, personaCanSpeak, personaSpeechEnvelope, personaAudioStatus, personaPresentationCard, processCandidatePayload, processCandidateCard, processIntelligencePanel, reputationPanel, intentPanel, modelSelectionPanel, validCoordinatorPreview, coordinatorApproval, connectionLabel }; return; }
 
   root.UI.ready(async function () {
     const UI = root.UI, API = root.API.http;
@@ -1559,6 +1572,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (detailTab === 'summary') body += intentPanel(detail.intent) + externalTaskProvenance(task);
       if (detailTab === 'evaluations') body += reputationPanel(detail.reputation);
       if (detailTab === 'summary') body += transportVerificationNote(task);
+      if (detailTab === 'summary' && detail.model_selection) body += modelSelectionPanel(detail.model_selection);
       if (detailTab === 'summary' && task.source_kind === 'real_model_response') body += `<section class="aw-detail-section"><h3>Исполнитель и происхождение результата</h3><dl class="aw-detail-grid"><div><dt>Запрошенная модель</dt><dd>${esc(task.model || 'Не предоставлена')}</dd></div><div><dt>Model ID от провайдера</dt><dd>${esc(detail.actual_model || 'Не предоставлен')}</dd></div><div><dt>Провайдер</dt><dd>${detail.external_call === false ? esc((task.provider || 'провайдер') + ' — не вызывался') : esc(task.provider || 'Не предоставлен')}</dd></div>${detail.executor ? `<div><dt>Ответ получен от</dt><dd>${esc(detail.executor)}</dd></div>` : ''}</dl>${detail.external_call === false ? '<p class="aw-note">Ответ вычислен локально: внешнее обращение не выполнялось, поэтому этот результат ничего не говорит о доступности провайдера.</p>' : ''}<details class="aw-technical"><summary>Связанные записи</summary>${['intent_id', 'execution_id', 'contribution_id', 'outcome_id', 'evaluation_id', 'conversation_id', 'message_id'].filter(key => task[key]).map(key => `<div class="aw-hash">${esc(key.toUpperCase())} ${esc(task[key])}</div>`).join('')}</details></section>`;
       if (detailTab === 'summary' && task.source_kind === 'bounded_delegation_result' && detail.graph) {
         const review = detail.graph.human_review || {};

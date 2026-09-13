@@ -49,16 +49,22 @@ const env = {ORCH: state, esc, qs: selector => elements.get(selector) || null, i
       calls.push(['stream', args.slice(0, 3), args[4]]);
       if (apiFailure) throw Error('transport interrupted');
       if(input.mode==='rejected'){const error='execution_v2_approved_scope_changed';args[3].onError(error);return {ok:false,error};}
+      if(input.mode==='ambiguous'){const error='persona_model_ambiguous';args[3].onError(error);return {ok:false,error};}
       args[3].onFinal({ok: true, conversation_id: 'chat-one', agent_id: ID, agent_name: 'Марина', reply: 'Сохранённый ответ'});
       return {ok: true};
     },
     sfChatMessage: async (...args) => calls.push(['human', args]),
-    aiControlCenterDomain: async (...args) => { calls.push(['catalog', args]); return {items: [person]}; },
+    aiControlCenterDomain: async (...args) => { calls.push(['catalog', args]);
+      // Two executable connections bound to the same Persona: the case the server refuses to guess.
+      if (input.mode === 'ambiguous' && args[0] === 'models') return {items: [
+        {id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', persona_id: ID, status: 'active', execution_available: true, label: 'Первое'},
+        {id: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', persona_id: ID, status: 'active', execution_available: true, label: 'Второе'}]};
+      return {items: [person]}; },
   }},
 };
 env.window = {API: env.API};
 vm.createContext(env);
-const names = ['orchPersonaOptions', 'orchRenderPersonaPicker', 'orchLoadPersonas', 'orchPersonaTransport', 'orchPendingPersonaFace', 'orchFailure', 'orchErrorHtml', 'orchSend', 'orchRenderAuthRequired'];
+const names = ['orchPersonaOptions', 'orchLoadPersonaModels', 'orchNeedsModelChoice', 'orchRenderPersonaPicker', 'orchLoadPersonas', 'orchPersonaTransport', 'orchPendingPersonaFace', 'orchFailure', 'orchErrorHtml', 'orchSend', 'orchRenderAuthRequired'];
 names.forEach(name => vm.runInContext(extract(name), env));
 const plain = value => JSON.parse(JSON.stringify(value));
 (async () => {
@@ -71,6 +77,8 @@ const plain = value => JSON.parse(JSON.stringify(value));
     if (input.mode === 'failure') apiFailure = true;
     const original = textBox.value;
     await env.orchSend();
+    // The connection list loads after the send settles; let it finish.
+    for (let tick = 0; tick < 5; tick += 1) await new Promise(resolve => setImmediate(resolve));
     const sent = calls.filter(call => call[0] === 'stream');
     if (['missing','suspended','invalid'].includes(input.mode)) {
       assert.equal(sent.length, 0); assert.equal(textBox.value, original); assert.equal(toasts.length, 1);
@@ -82,6 +90,15 @@ const plain = value => JSON.parse(JSON.stringify(value));
       assert.equal(state.sending, false);
       assert.ok(calls.some(call => call[0] === 'conversations'));
       if (input.mode === 'failure') assert.match(state.transientError.text, /Обновите историю/);
+      else if(input.mode==='ambiguous'){
+        // Refused, not guessed: the chat offers the explicit choice instead of a dead end.
+        assert.match(state.transientError.text,/Выберите подключение в списке/);
+        assert.ok(calls.some(call=>call[0]==='catalog'&&call[1][0]==='models'));
+        assert.equal(state.personaModels.length,2); assert.equal(state.selectedModelId,'');
+        assert.match(state.personaError,/Выберите подключение/);
+        assert.match(elements.get('#orch-model-picker').innerHTML,/Первое/);
+        assert.equal(calls.filter(call=>call[0]==='stream').length,1);
+      }
       else if(input.mode==='rejected'){assert.match(state.transientError.text,/остановлено защитой/);assert.ok(!calls.some(call=>call[0]==='history'));assert.match(elements.get('.orch-msg-stack').innerHTML,/<details/);}
       else { assert.match(elements.get('.orch-msg-face').outerHTML, /data-face="marina"/); assert.doesNotMatch(elements.get('.orch-msg-face').outerHTML, /vitek/); }
     }
