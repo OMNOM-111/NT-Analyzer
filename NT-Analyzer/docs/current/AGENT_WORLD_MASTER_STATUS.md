@@ -25,16 +25,14 @@ CURRENT OWNER ACCEPTANCE READINESS: 68% (24.5 / 36 — reconciled 2026-09-13; th
   plus a Git/CI row claiming a green run this branch never had)
 CURRENT INTEGRATION BRANCH: codex/agent-world-final-acceptance
 CURRENT INTEGRATION INPUTS: 9365695a + 4d8ee514 (both histories, no duplicate picks).
-OWNER ACCEPTANCE CANDIDATE: the commit that introduces this line (docs-only), code parent dbeb5ec3.
-  Frozen 2026-09-13. No new functionality after it; every gate below is run against
-  this exact SHA and recorded in a later docs-only commit that names it. Draft PR #287.
-CURRENT VERIFICATION: PENDING on the candidate — full pytest, disposable PostgreSQL
-  (Agent World / External Agent / Persona / legacy / workers), legacy runner, static,
+OWNER ACCEPTANCE CANDIDATE: the commit that introduces this line (docs-only). Code parent is the
+  multi-model/provenance commit directly beneath it. Supersedes b6c3465f, whose gates are history:
+  PostgreSQL 129/0/0 + runtime PASS, legacy 13/13, static/context/compileall/JS/diff PASS,
+  bundle 610 PASS, CI 34783994191 Static + Ubuntu 5794/0/128 PASS, Windows cancelled once new
+  code was required. None of those certify this candidate; every gate is rerun against it.
+CURRENT VERIFICATION: PENDING on candidate 2 — full pytest, disposable PostgreSQL
+  (fresh cluster .artifacts/pg-runtime-acceptance-final-candidate-2), legacy runner, static,
   context, bundle, CI workflow_dispatch and the browser guide. Nothing is carried over.
-  Earlier CI on this branch, none green: 34703741359 (d7b48060) failure, Windows hit the
-  120-minute limit; 34714150028 (a091ce67) 4 failed on both legs; 34719653016 (81e92c1a)
-  Ubuntu 5781/2/128 and Windows CANCELLED (not 'still running'); 34722423422 (5d7c664a)
-  cancelled on both legs. PostgreSQL 129/0/0 exists for d7b48060 and a091ce67 only.
 PREVIOUS INTEGRATION CODE SHA: fb2c472b — P1-3 including the decision producer.
   At fb2c472b: CI run 34658942542 SUCCESS on all three jobs — Static gates;
   Tests (ubuntu-latest) 5515 passed / 0 failed / 116 skipped, 18:54;
@@ -369,6 +367,44 @@ percentage changes are made while final browser/regression gates are pending.
 | Git / CI | Y | Y | Y | Y | P | IMPLEMENTED | Workflow and 120-minute limit in place; static gates pass on every run. No green full CI on codex/agent-world-final-acceptance yet (see CURRENT VERIFICATION) | Green Static + Ubuntu + Windows on the candidate SHA |
 
 ## Active remainder
+
+### Owner-acceptance candidate 2 — multi-model Persona and selection provenance
+
+```text
+ID: P1-MM  Multi-model Persona without an explicit choice
+Status: P1 PARTIAL — not DONE.
+What is true now:
+  - With several executable connections and no override, SF Chat refuses
+    (persona_model_ambiguous), dispatches nothing, and loads that Persona's
+    executable connections into the chat picker with "choose and send again".
+    The person's choice is an explicit override, re-checked server-side.
+  - No silent Router fallback exists, and none was added.
+Why Router preview -> apply is not wired here (contract, not effort):
+  - A Router preview reroutes an EXISTING source task; there is no task yet
+    when a chat message is ambiguous.
+  - Free-text Persona chat is assistant_response, which start_task refuses to
+    route (assistant_response_direct_only). Routable classes are only
+    json_arithmetic, extract_facts, backtest_spec and chart_spec.
+  - Router candidates must be provider-verified with same-class passed
+    observations; named test-executor observations never qualify, so in the
+    synthetic acceptance build the Router would always block.
+  Wiring it would reverse the assistant_response contract and add a
+  pre-dispatch source-task stage: new architecture, deliberately not done.
+Evidence required to close: an owner decision on routing assistant_response,
+  then SF Chat -> Router preview shown -> explicit apply -> execution, walked
+  with provider-verified connections.
+Owner action required: YES (product decision + real connections).
+
+ID: P1-SP  Selection provenance
+Status: DONE on candidate 2 (automated; browser row pending in the guide walk).
+  Every Persona chat, backtest and chart task and every Router apply stores
+  model_selection: mode (explicit_override / single_available / router_approved),
+  reason, connection id and revision, model key, provider and account — read from
+  stored records, never restated by a caller. router_approved is written only
+  from the server-issued routing packet. Survives restart (fresh service over
+  the same records). Shown in the task inspector as «Выбор подключения».
+```
+
 
 ### P0 — BLOCKS OWNER ACCEPTANCE
 
@@ -800,11 +836,11 @@ P3-3  Eight expected sections live behind three tabs as drawers — owner design
 
 ```text
 CURRENT (2026-09-13) — owner-acceptance candidate frozen; gates pending.
-  Branch: codex/agent-world-final-acceptance. Candidate: the docs commit that froze
-  this status (code parent dbeb5ec3). Do not add functionality on top of it; if a gate
+  Branch: codex/agent-world-final-acceptance. Candidate 2: the docs commit that froze
+  this status (code parent: the multi-model/provenance commit). b6c3465f is superseded. Do not add functionality on top of it; if a gate
   fails, fix, create a new candidate and restart every gate.
   Local 8765: PID 21060, 2b6d0112 — do not switch or restart.
-  Disposable PostgreSQL for the gates: .artifacts/pg-runtime-acceptance-final-candidate
+  Disposable PostgreSQL for the gates: .artifacts/pg-runtime-acceptance-final-candidate-2
   (loopback, TLS, generated credentials in an ignored file; teardown with
   provision-disposable-agent-world-postgres.py --teardown).
   Order: CI dispatch -> PostgreSQL/legacy/static/bundle while CI runs -> local full
