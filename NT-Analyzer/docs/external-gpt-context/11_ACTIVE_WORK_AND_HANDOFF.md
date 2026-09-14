@@ -15,15 +15,13 @@
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 
-- Current scoped work: AW-FINAL-1 only; base `d3b179dc` over `09c4e859`, task branch
-  `codex/agent-world-final-acceptance`, PR #287. Historical acceptance is separated from
-  current execution authority, including immutable SF Chat completion delivery.
-  The 8816 browser independently reproduces the old paused-aggregate defect.
-  Focused regressions and exact-SHA CI/PostgreSQL/static/context/bundle/browser gates
-  are pending; no new final PASS or percentage increase. See [correction receipt](../changelog/2026-09-14-agent-world-historical-acceptance.md).
-  Failed checkpoint `e1d5d24d` is preserved: focused 46/1, CI `34833248985` Ubuntu
-  5801/1/128 skipped, PostgreSQL 129/0/0. Finish the transport-capability follow-up,
-  then rerun exact-SHA gates; do not reuse the failed checkpoint's PASS subsets as final acceptance.
+- Current state: AW-FINAL-1 CLOSED on code `2debb2d6`, task branch
+  `codex/agent-world-final-acceptance`, PR #287; later branch commits are documentation only.
+  Verified on the exact SHA: CI `34863855186` (Static PASS, Ubuntu 5802/0/128, Windows attempt 3 5799 passed / 0 failed / 131 skipped, 1:54:34 (attempts 1-2 cancelled at the 120-minute job limit under shared-host load with 0 failures; not counted)),
+  PostgreSQL 129/0/0 + runtime, browser guide 15/15 and AW-FINAL-1 lifecycle 20/20 on isolated :8818.
+  Failed checkpoint `e1d5d24d` stays history and is not reused. Next work is owner-dependent only
+  (BYOK key, audible voice, provider diversity, remote-agent budget, SF Social publication, visual P3).
+  See [correction receipt](../changelog/2026-09-14-agent-world-historical-acceptance.md).
   Local 8765 and old candidate data remain untouched. No merge/deploy/new features.
 
 - Historical saved source: `81e92c1ad363ffb86e18499f78017ed6973b3626`, task branch

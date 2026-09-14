@@ -20,18 +20,30 @@ HANDOFF: P1-3 accepted and closed by the owner at f1fe393f.
   ACTIVE OWNER OF SHARED FILES: this integration task; subagents have bounded
   file assignments only. Earlier ownership/handoff sections below are history.
 
-CURRENT IMPLEMENTATION COVERAGE: 94% (34.0 / 36 — recounted 2026-09-14 after the final walk; unchanged)
-CURRENT OWNER ACCEPTANCE READINESS: 79% (28.5 / 36 — recounted 2026-09-14: +4.0 from rows the final
-  browser walk on the exact candidate resolved; base 68% / 24.5)
+CURRENT IMPLEMENTATION COVERAGE: 94% (34.0 / 36 — recounted 2026-09-14 after AW-FINAL-1 verification; unchanged,
+  no implementation credit for fixing an existing defect)
+CURRENT OWNER ACCEPTANCE READINESS: 80% (29.0 / 36 — recounted 2026-09-14: Delegation E2E P->Y after AW-FINAL-1
+  closed on the exact SHA in the running application; base 79% / 28.5)
 CURRENT INTEGRATION BRANCH: codex/agent-world-final-acceptance
 CURRENT INTEGRATION INPUTS: 9365695a + 4d8ee514 (both histories, no duplicate picks).
-CURRENT CANDIDATE STATE: AW-FINAL-1 correction IN DEVELOPMENT; exact-SHA gates and browser repeat pending.
-  Scope is historical aggregate acceptance versus current execution authority only; no new features.
-  Historical review hashes and SF Chat result evidence exclude later authority from validity comparison,
-  but retain the original immutable full receipt. Transport capabilities refresh separately; scope identity,
-  session and all evidence remain exact-match guarded. Future execution still requires current authority.
-  Regression covers entitlement withdrawal, claimed-worker resume refusal and unchanged child Task IDs.
-  No percentage increase is assigned for fixing an existing row. See the AW-FINAL-1 changelog receipt.
+CURRENT OWNER ACCEPTANCE CANDIDATE: 2debb2d62ab1af9cba4da2e8d9bbaee9832316d2 (candidate 3: AW-FINAL-1 correction over
+  candidate 2 09c4e859; later commits on the branch are documentation only).
+CURRENT CANDIDATE STATE: AW-FINAL-1 CLOSED on 2debb2d6 — independent takeover verification 2026-09-14.
+  Historical acceptance validity and current execution authority are separate: after ai_automation withdrawal the
+  accepted graph stays completed/accepted with the same review hash, Evaluation and SF Chat completion, while new
+  Coordinator commission, approval of a pending commission, graph reconcile, new schedule and the next scheduled
+  occurrence are refused. Tamper/stale guards unchanged: 16 forged SF Chat envelopes refused on real data.
+CURRENT VERIFICATION: 2debb2d6 — every gate below is on this exact code SHA; nothing inherited from 09c4e859.
+  CI 34863855186 (workflow_dispatch): Static PASS; Ubuntu 5802 passed / 0 failed / 128 skipped, 25:41;
+  Windows attempt 1 cancelled by the 120-minute job limit at 42% with 0 failures while this same machine ran the
+  PostgreSQL gate and the browser walk (neither PASS nor failure); Windows attempt 3 5799 passed / 0 failed / 131 skipped, 1:54:34 (attempts 1-2 cancelled at the 120-minute job limit under shared-host load with 0 failures; not counted).
+  Disposable TLS PostgreSQL (.artifacts/pg-runtime-acceptance-2debb2d6): agent-world 70 + legacy 41 +
+  external/Persona 18 = 129 passed / 0 failed / 0 skipped; runtime PASS (NOSUPERUSER/NOBYPASSRLS, 10 FORCE RLS
+  tables, foreign insert 42501, foreign/empty/other-environment scopes read 0, restart/replay, no SQLite fallback).
+  Browser guide 15/15 PASS on http://127.0.0.1:8818 (runtime 2debb2d6, dirty=false): evidence index
+  .artifacts/owner-acceptance-final-2debb2d6-evidence/GUIDE_WALK.md, guide-index.json, FINDINGS.md.
+  AW-FINAL-1 lifecycle: 20/20 checks; application-function probe 15/15 at withdraw time and again after the full walk.
+  Docs-tree gates on this branch: repository static scan CSP/SECRETS/MARKDOWN PASS; Context Pack PASS; compileall PASS; git diff --check PASS; pre-release bundle 612 files, 4/4 gates PASS.
 PREVIOUS OWNER ACCEPTANCE CANDIDATE: 09c4e859c1bc950c703feaddf3094300978bb0e4 (candidate 2, docs-only freeze over the
   multi-model/provenance commit). b6c3465f is superseded; its gates are history.
 PREVIOUS VERIFICATION: candidate 2 09c4e859 — gates below are on this exact SHA, not the new correction.
@@ -61,16 +73,8 @@ PREVIOUS INTEGRATION CODE SHA: fb2c472b — P1-3 including the decision producer
   both crawled. CI's Windows leg IS the full suite on this box. Its log,
   scratchpad/full_84ddb2e7.txt, ends mid-run with zero failures — that is a kill, not a
   red result.
-CURRENT WIP: AW-FINAL-1 follow-up to failed checkpoint e1d5d24d; saving a new candidate for full gates.
-  e1d5d24d focused: 46 passed / 1 failed (historical SF Chat transport-scope comparison).
-  CI 34833248985: Static PASS, Ubuntu 5801/1/128 skipped, Windows cancelled. Not final PASS.
-  Its disposable TLS PostgreSQL independently passed 129/0/0; must be rerun on the follow-up SHA.
-  Follow-up withdrawal-v3: 2 passed / 0 failed / 0 skipped, 294.97 seconds; historical receipt,
-  fresh transport capabilities, strict identity/evidence guards and denied commission/resume checked.
-  New commission reuses the existing automation subject policy. Bundle 612 PASS; static/context/diff PASS.
-  Next: save exact follow-up -> full CI + PG + isolated browser lifecycle. Not final closeout yet.
-  Historical selected_model_id multicast work found by the
-  recovery audit (11 files) was reviewed, completed and saved at dbeb5ec3.
+CURRENT WIP: none. Tree clean. Failed checkpoint e1d5d24d is history (focused 46/1; CI 34833248985 Ubuntu
+  5801/1/128, Windows cancelled); it is not reused as evidence for 2debb2d6.
 CURRENT LOCAL 8765 SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b — PID 21060, unchanged before and after
   the final walk; never switched or restarted from here.
 HISTORICAL ACCEPTANCE INSTANCE: http://127.0.0.1:8809/ui/ai-command-center.html — SHA 84ddb2e7,
@@ -79,7 +83,13 @@ HISTORICAL ACCEPTANCE INSTANCE: http://127.0.0.1:8809/ui/ai-command-center.html 
   and still holds the historical stuck task. All superseded, none deleted.
 CURRENT VERSION: 0.10.0-beta.96 (pre_release)
 
-PREVIOUS ACCEPTANCE INSTANCE (preserved): http://127.0.0.1:8816/ui/ai-command-center.html
+CURRENT ACCEPTANCE INSTANCE: http://127.0.0.1:8818/ui/ai-command-center.html — SHA 2debb2d6, runtime dirty=false,
+  launcher build_dirty=0, data root .artifacts/owner-acceptance-aw-final-1-final (disposable, loopback network guard,
+  zero external calls). Launched with deploy/testing/agent-world-owner-acceptance.py --port 8818; rollback = stop it.
+  ai_automation for the disposable QA test owner 991881401 only, owner permission route: grant 17:10:23Z, withdraw
+  17:36:05Z (AW-FINAL-1 lifecycle), grant 17:50:34Z, withdraw 18:32:00Z (guide rows 10-15); ends withdrawn.
+
+PREVIOUS ACCEPTANCE INSTANCE (stopped 2026-09-14 before CI attempt 3, data preserved): http://127.0.0.1:8816/ui/ai-command-center.html
   SHA 09c4e859c1bc950c703feaddf3094300978bb0e4, runtime dirty=false, launcher build_dirty=0, data root
   .artifacts/owner-acceptance-final-09c4e859 (disposable, loopback network guard, zero external calls).
   Launched with deploy/testing/agent-world-owner-acceptance.py --port 8816; rollback = stop that process.
@@ -352,6 +362,20 @@ Unchanged on purpose: Delegation (AW-FINAL-1), Task Graph (second operation not 
 Percentages are floor(score / 36), the rounding this file has always used.
 ```
 
+```text
+IMPLEMENTATION COVERAGE: 94%   (34.0 / 36)
+OWNER ACCEPTANCE READINESS: 80%   (29.0 / 36)
+
+RECOUNT 2026-09-14 after AW-FINAL-1 verification on 2debb2d6 (same 36-row method):
+Implementation: 34.0 -> 34.0. Fixing an existing defect earns no implementation credit; Delegation stays 0.5.
+Acceptance:     28.5 -> 29.0 (+0.5): Delegation E2E P->Y — in the running application the accepted graph stays
+                completed/accepted after ai_automation withdrawal while new work is refused (AW-FINAL-1 closed).
+                Git/CI keeps Y: CI 34863855186 is green on the exact SHA 2debb2d6.
+Unchanged on purpose: Task Graph (second operation not walked), Model Registry, Router, Consensus, Court (synthetic),
+                Deviation, Strategy Projects, Calendar, SF Social (real publication is the owner's), ordinary-user
+                BYOK (real key), Voice/TTS (audible check), UI/UX (visual taste). No row lowered except as stated.
+```
+
 > The independent audit of 2026-09-10 reported 84% / 54% on a 34-row basis.
 > This file uses the canonical 36-row basis, which re-bins the *same* evidence
 > to 85% / 56%. That difference is arithmetic, not progress. The next session
@@ -365,6 +389,9 @@ Percentages are floor(score / 36), the rounding this file has always used.
 Marks: `Y` yes · `P` partial · `N` no.
 
 ## Matrix
+
+The 15 guide rows were repeated on http://127.0.0.1:8818 at 2debb2d6 (15/15 PASS, per-row screenshots,
+`.artifacts/owner-acceptance-final-2debb2d6-evidence`). Rows citing 8816 at 09c4e859 keep that as their first walk.
 
 Evidence naming older SHAs/ports below is historical, not final-build acceptance.
 The current integration section above and final receipts take precedence. No
@@ -380,7 +407,7 @@ percentage changes are made while final browser/regression gates are pending.
 | Intent | Y | Y | Y | Y | Y | DONE + VERIFIED | «Поручение» read from the live DOM on :8809: goal, approval mode «только совет, исполнение не разрешено», risk, deadline, workspace, required evidence and verifier, with the request behind a disclosure. Six rendering cases over the shipped page code | Cancel was not caught in the browser: the local executor finishes a task within seconds of creation, so the control had already gone by the time the page opened. It is the task's pre-existing action, offered by the panel (`actions: ["cancel"]` observed on the unstarted task) and covered by the task suites. Amendment is refused by design, not missing: `EDITABLE_STATES[INTENT] == {"draft"}` and a started task has already left it, so an editable Intent would mean widening the immutability rule that binds request, receipt and evidence. The panel says so and points to «Отменить задачу» or a new request |
 | Coordinator | Y | Y | Y | Y | Y | DONE + VERIFIED | Guide rows 3-4 on the final walk on http://127.0.0.1:8816 at 09c4e859: SF Chat «Координатор» -> clarification from the source message -> labelled choice -> plan shown, no child runs before separate plan approval -> graph; screenshots 04-*, 05-*, 06-* | Bounded planner by design, not arbitrary analysis |
 | Task Graph | Y | Y | Y | Y | P | IMPLEMENTED | Real parent → subtasks → contributions → aggregate, depth ≤3, typed deps. Two operation classes: `verify_fact_transfer` restates and is graded on exactness, `numeric_breakdown` gives each child its own slice and a different answer | Live browser route for the second operation |
-| Delegation | Y | Y | Y | Y | P | PARTIAL | Grant-bound, depth-bounded, cycle- and restart-safe. On the final walk on http://127.0.0.1:8816 at 09c4e859 the graph ran, every node and the aggregate were accepted by the owner (recorded 01:33:58Z) | Roots only on Coordinator task or verified application result. AW-FINAL-1: after ai_automation is withdrawn the accepted graph reads «Приостановлено: нужно решение» with no actions (read-time re-check; recorded decision kept) — P2, not fixed in this candidate |
+| Delegation | Y | Y | Y | Y | Y | PARTIAL | Grant-bound, depth-bounded, cycle- and restart-safe. AW-FINAL-1 closed on http://127.0.0.1:8818 at 2debb2d6: graph 5749de2f accepted (17:18:29Z), ai_automation withdrawn (17:36:05Z), the same graph still reads «Проверка завершена» with review `accepted`, source hash `78d7a9be…` and Evaluation `492f070c` unchanged; new commission (API and page), approval of a pending commission and reconcile refused `automation_entitlement_required`; no new records (part2/aw-*, aw-pair.png) | Roots only on Coordinator task or verified application result (bounded scope) |
 | Persona | Y | Y | Y | Y | Y | DONE + VERIFIED | Identity survives restart and model change; the selected-Persona chat path walked live on 8806 to a completed, accepted result with the identity intact | Audible voice check — P2-5 |
 | Voice / TTS / lip-sync | Y | Y | Y | Y | N | PARTIAL | 8 TTS profiles, 6 reused `speaking.webm`, browser speech default, owner TTS opt-in | Audible acceptance still required; phoneme/viseme lip-sync is NOT IMPLEMENTED, an explicit functional gap — P2 |
 | Model Registry | Y | Y | Y | Y | P | IMPLEMENTED | Persona / account / model separate; own-key wizard; capabilities, cost, latency | Only ever exercised with the named local test executor |
@@ -402,12 +429,12 @@ percentage changes are made while final browser/regression gates are pending.
 | SF Social | Y | Y | Y | Y | P | IMPLEMENTED | Prepare → explicit publish; verified sources only; corrupted receipts never attested; private memory never publishable | One real publication is an owner decision |
 | Owner Preview | Y | Y | Y | Y | Y | DONE + VERIFIED | Guide row 14 on the final walk on http://127.0.0.1:8816 at 09c4e859: Preview panel -> New User -> Telegram (QR), Google, e-mail/OTP; manual consent; Device Confirmation permanent/session; new client asked again; Reset; Exit restored the acceptance owner (preview/14-*) | Real registration with real providers — OWNER ACTION REQUIRED |
 | Ordinary-user model onboarding | Y | P | Y | P | N | PARTIAL | Wizard driven in a browser with a placeholder key against the local executor | Real key, real endpoint, real BYOK E2E — P1-4 |
-| External-agent onboarding | Y | Y | Y | Y | Y | IMPLEMENTED · FINAL RECHECK PENDING | Accepted native P1-5 history is integrated at 334f086f, not an isolated branch. Historical :8812 create/verify/task/typed Evaluation/statistics/revoke/deny browser evidence is retained. New real ordinary-user PostgreSQL and process race tests supplement it | Final unified browser/CI repeat pending; real remote agent remains fail-closed until owner allowance decision |
-| UI / UX | Y | Y | Y | Y | P | PARTIAL | All 15 guide rows captured in a real Chromium window (1600x1000) on the final walk on http://127.0.0.1:8816 at 09c4e859; drawers and inspector captured only after records loaded | Full mockup composition and visual taste remain unaccepted — OWNER ACTION REQUIRED (P3) |
+| External-agent onboarding | Y | Y | Y | Y | Y | IMPLEMENTED | Guide row 11 on http://127.0.0.1:8818 at 2debb2d6: Development agent created, verified ACTIVE, task result, own `external_agent_performance` scope, revoked, next dispatch refused 409 `external_agent_revoked` (12-*); PostgreSQL 18 external/Persona cases on the same SHA | Real remote agent remains fail-closed until the owner allowance decision |
+| UI / UX | Y | Y | Y | Y | P | PARTIAL | All 15 guide rows captured in a real Chromium window (1600x1000) on http://127.0.0.1:8818 at 2debb2d6 after records loaded; walker-timing recaptures recorded with the original files kept | Full mockup composition and visual taste remain unaccepted — OWNER ACTION REQUIRED (P3) |
 | Security / tenant isolation | Y | Y | Y | Y | Y | DONE + VERIFIED | FORCE RLS; foreign workspace reads 0 and inserts fail `42501`; device and session re-checked per request; SSRF guard; no secret in Git | — |
 | Restart / idempotency | Y | Y | Y | Y | Y | DONE + VERIFIED | Stop/restart/re-read against PostgreSQL; duplicate dispatch and replay refused | — |
 | Documentation | Y | Y | Y | Y | Y | DONE + VERIFIED | Per-SHA receipts, file hashes, explicit withdrawn-claims section, skips never counted as passes | — |
-| Git / CI | Y | Y | Y | Y | Y | DONE + VERIFIED | CI 34788775463 on 09c4e859: Static PASS; Ubuntu PASS; Windows 5797 passed / 0 failed / 131 skipped, 1:19:52; 120-minute limit kept | — |
+| Git / CI | Y | Y | Y | Y | Y | DONE + VERIFIED | CI 34863855186 on 2debb2d6: Static PASS; Ubuntu 5802 passed / 0 failed / 128 skipped; Windows attempt 3 5799 passed / 0 failed / 131 skipped, 1:54:34 (attempts 1-2 cancelled at the 120-minute job limit under shared-host load with 0 failures; not counted); 120-minute limit kept | — |
 
 ## Active remainder
 
@@ -439,18 +466,22 @@ Evidence required to close: an owner decision on routing assistant_response,
 Owner action required: YES (product decision + real connections).
 
 ID: AW-FINAL-1  Accepted delegation graph after ai_automation is withdrawn
-Status: IN DEVELOPMENT · P2 · candidate 2 defect independently reproduced in browser 2026-09-14.
-What happens: graph 2c187b5f was accepted by the owner at 01:33:58Z. After the acceptance
-  withdrew ai_automation (02:06:54Z) the read projection re-checks the automation grant, the
-  snapshot hash changes and task_review.py:226 reports stale; the page shows «Приостановлено:
-  нужно решение» with no actions. No execution, no data loss; recorded decision and results kept.
-Evidence: .artifacts/owner-acceptance-final-09c4e859-evidence/FINDINGS.md,
-  part2/06-delegation-graph-completed-loaded.png.
-Owner decision received: completed/accepted history survives later authority withdrawal; future work denied.
-Correction: compare immutable historical evidence separately from live execution authority; keep current
-  authority outside the durable SF Chat completion. All structural/result/source drift checks remain.
-Pending: focused regression, new clean code SHA, full CI, exact-SHA PostgreSQL/static/context/bundle and
-  affected browser lifecycle. This row is not CLOSED and percentages are unchanged until that evidence.
+Status: CLOSED on 2debb2d6 (independent verification 2026-09-14). Was P2, found on candidate 2.
+Cause (09c4e859): the aggregate review snapshot hashed current execution authority together with
+  historical evidence, so withdrawal made an accepted graph stale («Приостановлено: нужно решение»).
+Correction (e1d5d24d + 2debb2d6): historical evidence is compared without the authority snapshot while
+  the complete immutable receipt is still authenticated; current authority is a separate projection field
+  and is not written into the SF Chat completion; SF Chat history ignores only refreshed transport
+  capabilities; new Coordinator commission requires current automation entitlement.
+Evidence on http://127.0.0.1:8818 (.artifacts/owner-acceptance-final-2debb2d6-evidence/part2):
+  historical: graph completed, aggregate + 4 required reviews accepted, hash/Evaluation/completion event
+  and SF Chat result message unchanged after withdrawal (aw-03, aw-04, aw-probe-verify.json);
+  current authority: new commission 403 in API and page, pending-commission approval 403, historical
+  graph reconcile 403, new schedule 403, a still-pending scheduled occurrence never ran, no new records;
+  tamper: 16 forged envelopes (workspace, user, uuid, session, task, outcome, event, status, text,
+  human_accepted, proof hash, review hash/status/evaluation, contributions, participation) refused.
+  Pair: part2/aw-pair.png. Regressions in CI: tests/test_agent_world_accepted_history_withdrawal.py and
+  test_current_truth_distinguishes_execution_authority_from_accepted_evidence (connection/cancel drift stays stale).
 
 ID: P1-SP  Selection provenance
 Status: DONE on candidate 2 — automated and browser: the inspector's «Выбор подключения»
@@ -869,6 +900,8 @@ P2-5  Audible verification of Persona voice on a real device.
 P3-1  Header counters lag the Work table.
 P3-2  Stage column wraps letter-by-letter at 1136 px.
 P3-3  Eight expected sections live behind three tabs as drawers — owner design call.
+P3-4  A delegation grant card kept «Активен · действует сейчас: да» after its graph was cancelled, until the
+      grant expired (observed on 8818, 11-schedule-occurrence.png). Presentation only: a cancelled graph does not run.
 ```
 
 ## COMPLETED SINCE LAST OWNER REVIEW
@@ -890,26 +923,29 @@ P3-3  Eight expected sections live behind three tabs as drawers — owner design
 | P1-3 - a diagnostic is not an observed score | `84ddb2e7` | Found on the running build, not in a test: 4 synthetic runs headlined as a green «100%». `basis` now names diagnostic / mixed / field and the headline follows it |
 | P1-3 - the decision scope gets a producer | `fb2c472b` | Approved Decision -> Execution -> observed Outcome -> Evaluation, written by the application's own completion path. 13 cases: the model score and the decision score cannot reach each other's rows, a decision fails on scope while the model that answered passed, a role scope reads no decision row, a failed execution writes nothing rather than a zero, and a synthetic-only decision measures as diagnostic. Live on :8810 through the API and the browser |
 | Owner acceptance · candidate 2 | `09c4e859` | CI 34788775463 green on all three jobs (Windows 5797/0/131); PostgreSQL 129/0/0 + runtime; legacy/static/bundle PASS; browser guide 15/15 on :8816 with ai_automation grant, scheduled run, revoke-stops-next-run and withdraw-refuses-new-schedule; AW-FINAL-1 recorded (P2, open) |
+| AW-FINAL-1 · accepted history survives withdrawal, new work refused | `2debb2d6` | CI 34863855186 (Static PASS, Ubuntu 5802/0/128, Windows attempt 3 5799 passed / 0 failed / 131 skipped, 1:54:34 (attempts 1-2 cancelled at the 120-minute job limit under shared-host load with 0 failures; not counted)); PostgreSQL 129/0/0 + runtime; browser guide 15/15 and AW-FINAL-1 20/20 on :8818; probe 15/15 twice; 16 forged envelopes refused |
 
 ## NEXT AGENT START HERE
 
 ```text
-CURRENT (2026-09-14) — OWNER ACCEPTANCE READY for independent audit.
-  Candidate 2: 09c4e859c1bc950c703feaddf3094300978bb0e4 on codex/agent-world-final-acceptance. Nothing merged to main;
-  no Canary or Production deploy. No new functionality on top of it: an audit finding means fix,
-  new candidate, all gates again.
-  Final build: http://127.0.0.1:8816/ui/ai-command-center.html (left running; rollback = stop the launcher process).
-  Evidence: .artifacts/owner-acceptance-final-09c4e859-evidence/GUIDE_WALK.md, guide-index.json, FINDINGS.md.
-  Open product finding: AW-FINAL-1 (P2) — accepted graph reads as needing a decision after
-  ai_automation is withdrawn; not fixed in this candidate.
-  OWNER ACTION REQUIRED (not blocking this candidate): real BYOK key; audible voice/TTS; real
-  registration with real providers; real multi-provider Court/Router credentials; paid remote
-  external agent budget; permanent SF Social publication; visual taste/redesign; P1-MM decision on
-  routing assistant_response.
-  Disposable PostgreSQL used for the gates is still running: .artifacts/pg-runtime-acceptance-final-candidate-2
-  (loopback, TLS, generated credentials in an ignored file; teardown with
-  provision-disposable-agent-world-postgres.py --teardown once the audit no longer needs it).
-  Receipt: docs/changelog/2026-09-14-agent-world-owner-acceptance-candidate-2.md.
+CURRENT (2026-09-14) — OWNER ACCEPTANCE READY on candidate 3 (owner-dependent items listed below stay open).
+  Candidate 3: 2debb2d62ab1af9cba4da2e8d9bbaee9832316d2 on codex/agent-world-final-acceptance (AW-FINAL-1 closed).
+  Nothing merged to main; no Canary or Production deploy. No new functionality on top of it: an audit
+  finding means fix, new candidate, all gates again.
+  Final build: http://127.0.0.1:8818/ui/ai-command-center.html (left running; rollback = stop the launcher process).
+  Evidence: .artifacts/owner-acceptance-final-2debb2d6-evidence/GUIDE_WALK.md, guide-index.json, FINDINGS.md, part2/aw-pair.png.
+  Candidate 2 build :8816, the e1d5d24d build :8817 and two old preview servers were stopped before CI attempt 3
+  (owner-authorized cleanup); their data roots and evidence are preserved as history.
+  OWNER ACTION REQUIRED (not blocking this candidate): real BYOK key; audible voice/TTS; real registration with
+  real providers; real multi-provider Court/Router credentials; paid remote external agent budget; permanent
+  SF Social publication; visual taste/redesign; P1-MM decision on routing assistant_response; one permitted
+  NinjaTrader result (P2-2).
+  Disposable PostgreSQL clusters (2debb2d6, aw-final-1-tls, final-candidate-2) were stopped with pg_ctl stop before
+  CI attempt 3; data and receipts stay under .artifacts/pg-runtime-acceptance-*; teardown with
+  provision-disposable-agent-world-postgres.py --teardown --workdir <cluster dir> when no longer needed.
+  CI note: the Windows job needs about 1:55 on this shared self-hosted host (limit 120 min); run it with no
+  other acceptance builds, walks or PG gates on the machine.
+  Receipt: docs/changelog/2026-09-14-agent-world-historical-acceptance.md.
   Local 8765: PID 21060, 2b6d0112 — do not switch or restart.
   Everything below this block is history.
 ```

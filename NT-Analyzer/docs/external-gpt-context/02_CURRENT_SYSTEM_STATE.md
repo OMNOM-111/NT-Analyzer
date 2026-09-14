@@ -17,15 +17,13 @@
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
-- Current Agent World correction: AW-FINAL-1, IN DEVELOPMENT on the final-acceptance branch.
-  Accepted historical graph/review/hash must survive later automation withdrawal; future
-  execution remains denied. Base `d3b179dc` over candidate `09c4e859` has independently
-  confirmed CI `34788775463` (Ubuntu 5800/128 skipped; Windows 5797/131 skipped) and
-  PostgreSQL 129/0 skips. Those passes do not certify the correction. New exact-SHA gates
-  and browser lifecycle are pending. Implementation 94%, historical readiness 79%, unchanged.
-  Checkpoint `e1d5d24d` failed one new SF Chat envelope regression: CI `34833248985`
-  Ubuntu 5801 passed / 1 failed / 128 skipped; its separate PostgreSQL 129 PASS is not closeout.
-  Follow-up refreshes transport capabilities without changing immutable result evidence or tenant/session guards.
+- Current Agent World candidate: `2debb2d62ab1af9cba4da2e8d9bbaee9832316d2` on the final-acceptance
+  branch; AW-FINAL-1 CLOSED by independent verification (2026-09-14). After `ai_automation`
+  withdrawal the accepted graph stays completed/accepted (same review hash, Evaluation and SF Chat
+  completion) while new commission, approval, reconcile, schedule and the next occurrence are refused.
+  Exact-SHA gates: CI `34863855186` Static PASS, Ubuntu 5802/0/128 skipped, Windows attempt 3 5799 passed / 0 failed / 131 skipped, 1:54:34 (attempts 1-2 cancelled at the 120-minute job limit under shared-host load with 0 failures; not counted);
+  PostgreSQL 129/0/0 + runtime PASS; browser guide 15/15 on isolated :8818 (dirty=false).
+  Implementation 94% (unchanged), readiness 80% (Delegation E2E P->Y). Owner-dependent items stay open.
   [Correction receipt](../changelog/2026-09-14-agent-world-historical-acceptance.md).
   Protected Local and release environments are unchanged; no new features are in scope.
 
