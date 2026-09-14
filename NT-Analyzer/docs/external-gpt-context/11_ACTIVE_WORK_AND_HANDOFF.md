@@ -15,7 +15,15 @@
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 
-- Current saved source: `81e92c1ad363ffb86e18499f78017ed6973b3626`, task branch
+- Current scoped work: AW-FINAL-1 only; base `d3b179dc` over `09c4e859`, task branch
+  `codex/agent-world-final-acceptance`, PR #287. Historical acceptance is separated from
+  current execution authority, including immutable SF Chat completion delivery.
+  The 8816 browser independently reproduces the old paused-aggregate defect.
+  Focused regressions and exact-SHA CI/PostgreSQL/static/context/bundle/browser gates
+  are pending; no new final PASS or percentage increase. See [correction receipt](../changelog/2026-09-14-agent-world-historical-acceptance.md).
+  Local 8765 and old candidate data remain untouched. No merge/deploy/new features.
+
+- Historical saved source: `81e92c1ad363ffb86e18499f78017ed6973b3626`, task branch
   `codex/agent-world-final-acceptance`, draft PR #287. CI **34719653016**:
   static PASS, Ubuntu **5781 passed / 2 failed / 128 skipped**, 1662.25 s;
   Windows still running. Follow-up Persona process UI fixture multicast

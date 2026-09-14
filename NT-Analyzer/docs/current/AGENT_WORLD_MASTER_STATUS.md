@@ -25,9 +25,15 @@ CURRENT OWNER ACCEPTANCE READINESS: 79% (28.5 / 36 — recounted 2026-09-14: +4.
   browser walk on the exact candidate resolved; base 68% / 24.5)
 CURRENT INTEGRATION BRANCH: codex/agent-world-final-acceptance
 CURRENT INTEGRATION INPUTS: 9365695a + 4d8ee514 (both histories, no duplicate picks).
-OWNER ACCEPTANCE CANDIDATE: 09c4e859c1bc950c703feaddf3094300978bb0e4 (candidate 2, docs-only freeze over the
+CURRENT CANDIDATE STATE: AW-FINAL-1 correction IN DEVELOPMENT; exact-SHA gates and browser repeat pending.
+  Scope is historical aggregate acceptance versus current execution authority only; no new features.
+  Historical review hashes and SF Chat completion envelopes exclude later authority from validity comparison,
+  but retain the original immutable full receipt. Pending review and future execution still require authority.
+  Regression covers entitlement withdrawal, claimed-worker resume refusal and unchanged child Task IDs.
+  No percentage increase is assigned for fixing an existing row. See the AW-FINAL-1 changelog receipt.
+PREVIOUS OWNER ACCEPTANCE CANDIDATE: 09c4e859c1bc950c703feaddf3094300978bb0e4 (candidate 2, docs-only freeze over the
   multi-model/provenance commit). b6c3465f is superseded; its gates are history.
-CURRENT VERIFICATION: candidate 2 09c4e859 — gates below are on this exact SHA.
+PREVIOUS VERIFICATION: candidate 2 09c4e859 — gates below are on this exact SHA, not the new correction.
   CI 34788775463 (workflow_dispatch): Static PASS; Tests ubuntu-latest PASS;
   Tests windows-self-hosted 5797 passed / 0 failed / 131 skipped, 1:19:52. This is the full-suite gate.
   Local full pytest: intentionally stopped — superseded by full green CI on exact candidate SHA
@@ -54,7 +60,8 @@ PREVIOUS INTEGRATION CODE SHA: fb2c472b — P1-3 including the decision producer
   both crawled. CI's Windows leg IS the full suite on this box. Its log,
   scratchpad/full_84ddb2e7.txt, ends mid-run with zero failures — that is a kill, not a
   red result.
-CURRENT WIP: none. The uncommitted selected_model_id multicast work found by the
+CURRENT WIP: scoped AW-FINAL-1 product/tests/documentation correction; focused run in progress.
+  Historical selected_model_id multicast work found by the
   recovery audit (11 files) was reviewed, completed and saved at dbeb5ec3.
 CURRENT LOCAL 8765 SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b — PID 21060, unchanged before and after
   the final walk; never switched or restarted from here.
@@ -64,7 +71,7 @@ HISTORICAL ACCEPTANCE INSTANCE: http://127.0.0.1:8809/ui/ai-command-center.html 
   and still holds the historical stuck task. All superseded, none deleted.
 CURRENT VERSION: 0.10.0-beta.96 (pre_release)
 
-FINAL ACCEPTANCE INSTANCE: http://127.0.0.1:8816/ui/ai-command-center.html
+PREVIOUS ACCEPTANCE INSTANCE (preserved): http://127.0.0.1:8816/ui/ai-command-center.html
   SHA 09c4e859c1bc950c703feaddf3094300978bb0e4, runtime dirty=false, launcher build_dirty=0, data root
   .artifacts/owner-acceptance-final-09c4e859 (disposable, loopback network guard, zero external calls).
   Launched with deploy/testing/agent-world-owner-acceptance.py --port 8816; rollback = stop that process.
@@ -424,14 +431,18 @@ Evidence required to close: an owner decision on routing assistant_response,
 Owner action required: YES (product decision + real connections).
 
 ID: AW-FINAL-1  Accepted delegation graph after ai_automation is withdrawn
-Status: OPEN · P2 · found on the final walk, not fixed in candidate 2 (would need a new candidate).
+Status: IN DEVELOPMENT · P2 · candidate 2 defect independently reproduced in browser 2026-09-14.
 What happens: graph 2c187b5f was accepted by the owner at 01:33:58Z. After the acceptance
   withdrew ai_automation (02:06:54Z) the read projection re-checks the automation grant, the
   snapshot hash changes and task_review.py:226 reports stale; the page shows «Приостановлено:
   нужно решение» with no actions. No execution, no data loss; recorded decision and results kept.
 Evidence: .artifacts/owner-acceptance-final-09c4e859-evidence/FINDINGS.md,
   part2/06-delegation-graph-completed-loaded.png.
-Decision needed: how an accepted graph reads once automation is withdrawn (owner / audit).
+Owner decision received: completed/accepted history survives later authority withdrawal; future work denied.
+Correction: compare immutable historical evidence separately from live execution authority; keep current
+  authority outside the durable SF Chat completion. All structural/result/source drift checks remain.
+Pending: focused regression, new clean code SHA, full CI, exact-SHA PostgreSQL/static/context/bundle and
+  affected browser lifecycle. This row is not CLOSED and percentages are unchanged until that evidence.
 
 ID: P1-SP  Selection provenance
 Status: DONE on candidate 2 — automated and browser: the inspector's «Выбор подключения»

@@ -17,7 +17,16 @@
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
-- Current saved Agent World candidate: `81e92c1ad363ffb86e18499f78017ed6973b3626`,
+- Current Agent World correction: AW-FINAL-1, IN DEVELOPMENT on the final-acceptance branch.
+  Accepted historical graph/review/hash must survive later automation withdrawal; future
+  execution remains denied. Base `d3b179dc` over candidate `09c4e859` has independently
+  confirmed CI `34788775463` (Ubuntu 5800/128 skipped; Windows 5797/131 skipped) and
+  PostgreSQL 129/0 skips. Those passes do not certify the correction. New exact-SHA gates
+  and browser lifecycle are pending. Implementation 94%, historical readiness 79%, unchanged.
+  [Correction receipt](../changelog/2026-09-14-agent-world-historical-acceptance.md).
+  Protected Local and release environments are unchanged; no new features are in scope.
+
+- Historical saved Agent World candidate: `81e92c1ad363ffb86e18499f78017ed6973b3626`,
   CI **34719653016** static PASS, Ubuntu **5781 passed / 2 failed / 128 skipped**
   in 1662.25 s; Windows remains running. A follow-up fixes only Persona process
   UI fixture multicast event/leave callbacks (**9 focused PASS, 2.41 s**), not

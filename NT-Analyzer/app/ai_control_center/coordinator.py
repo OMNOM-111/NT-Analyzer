@@ -395,7 +395,11 @@ def completion(authorized, service, controller_id):
     if not delegation._same_contributions(result.get("contributions"), actual) or len(actual) != len(plan["nodes"]):
         raise ContractError("coordinator_result_changed")
     outcome = service._get(context, EntityKind.OUTCOME, view["outcome_id"])
-    review = view["human_review"]
+    # A durable completion describes the result and its review, not permission
+    # to execute future work. Keep live authority in the graph projection only;
+    # otherwise revocation would mutate an already delivered historical receipt.
+    review = {key: value for key, value in view["human_review"].items()
+              if key != "current_execution_authority"}
     event_record = _completion_event_record(service, context, control, plan, outcome, review)
     event = str(uuid5(event_record.header.entity_id, f"revision:{event_record.header.revision}"))
     provenance = result["provenance"]

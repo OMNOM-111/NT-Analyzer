@@ -187,7 +187,6 @@ def _aggregate_snapshot(authorized, service, task):
     except ContractError as error:
         errors.append(error.code)
     snapshot["authority"] = _aggregate_authority(authorized, service, control, plan)
-    if snapshot["authority"].get("blocked_reason"): errors.append(snapshot["authority"]["blocked_reason"])
     if not all(item["status"] == "accepted" and not item.get("blocked_reason") for item in required):
         errors.append("delegation_required_reviews_pending" if all(item["status"] in {"accepted", "pending"} for item in required)
                       else "delegation_required_reviews_not_accepted")
@@ -200,9 +199,11 @@ def aggregate_projection(authorized, service, task):
     context = authorized["context"]
     source = _aggregate_snapshot(authorized, service, task)
     current_hash = digest(source)
-    base = {"status": "blocked" if source["errors"] else "pending", "source_sha256": current_hash,
+    current_authority = source["authority"]
+    blocked_reason = (source["errors"][0] if source["errors"] else current_authority.get("blocked_reason"))
+    base = {"status": "blocked" if blocked_reason else "pending", "source_sha256": current_hash,
         "task_revision": task.header.revision, "required_reviews": source["required_reviews"],
-        "blocked_reason": source["errors"][0] if source["errors"] else None, "quality_claim": False}
+        "blocked_reason": blocked_reason, "current_execution_authority": current_authority, "quality_claim": False}
     # Cancellation/current-truth drift must not erase a prior immutable review.
     candidates = [row for row in service._all(context, EntityKind.EVALUATION)
         if row.rubric_key == RUBRIC and row.task.entity_id == task.header.entity_id]
@@ -223,7 +224,15 @@ def aggregate_projection(authorized, service, task):
             or c.primitive(found.outcome) != saved.get("outcome") or digest(saved) != proof.get("source_sha256")):
         raise ContractError("task_review_evidence_mismatch")
     decision = "accepted" if proof["decision"] == "accept" else "rejected"
-    return {**base, "status": decision if proof["source_sha256"] == current_hash else "stale",
+    # The immutable receipt still authenticates the complete original snapshot,
+    # including its authority at review time. Later authority withdrawal is a
+    # prospective execution restriction, not a change to accepted evidence.
+    # All structural/result/review drift remains fail-closed as before.
+    same_evidence = digest({key: value for key, value in saved.items() if key != "authority"}) == digest(
+        {key: value for key, value in source.items() if key != "authority"})
+    return {**base, "status": decision if same_evidence else "stale",
+        "source_sha256": proof["source_sha256"] if same_evidence else current_hash,
+        "blocked_reason": None if same_evidence else blocked_reason,
         "recorded_status": decision, "recorded_source_sha256": proof["source_sha256"],
         "evaluation_id": str(found.header.entity_id), "reviewer_user_uuid": proof["reviewer_user_uuid"],
         "reviewed_at": found.header.created_at.isoformat(), "comment": proof["comment"], "origin": "explicit_human_review"}
