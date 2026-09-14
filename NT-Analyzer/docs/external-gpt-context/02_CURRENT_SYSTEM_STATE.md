@@ -23,6 +23,9 @@
   confirmed CI `34788775463` (Ubuntu 5800/128 skipped; Windows 5797/131 skipped) and
   PostgreSQL 129/0 skips. Those passes do not certify the correction. New exact-SHA gates
   and browser lifecycle are pending. Implementation 94%, historical readiness 79%, unchanged.
+  Checkpoint `e1d5d24d` failed one new SF Chat envelope regression: CI `34833248985`
+  Ubuntu 5801 passed / 1 failed / 128 skipped; its separate PostgreSQL 129 PASS is not closeout.
+  Follow-up refreshes transport capabilities without changing immutable result evidence or tenant/session guards.
   [Correction receipt](../changelog/2026-09-14-agent-world-historical-acceptance.md).
   Protected Local and release environments are unchanged; no new features are in scope.
 

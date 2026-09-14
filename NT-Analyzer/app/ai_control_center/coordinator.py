@@ -69,9 +69,13 @@ def _sync_control_intent(service, context, control):
 def commission(authorized, service, payload, key, *, conversation_id=None, user_message=None,
                _intent_selection=None, _supersedes=None, _chat_source=None):
     """One explicit new goal -> pinned finite plan -> normal SF Chat model root."""
+    from . import automation_authority
     context = delegation.gate(authorized, "AI_DELEGATION_V2")
     if context.actor.kind != c.ActorKind.HUMAN:
         raise ContractError("coordinator_human_required")
+    # Historical graphs stay readable after withdrawal; a new commission is
+    # execution, not history. Use the existing live entitlement/scope policy.
+    automation_authority._bound_subject(authorized)
     allowed = {"goal", "input_text", "coordinator_model_id", "target_model_ids", "parent_indices",
                "max_depth", "operation"}
     if type(payload) is not dict or set(payload) - allowed:
@@ -126,6 +130,7 @@ def commission(authorized, service, payload, key, *, conversation_id=None, user_
         + "; 3. Общий результат, ожидающий вашей приёмки. " + LIMITATION)
     # Chief ingress itself rejects body changes on an existing request. The
     # immutable controller additionally pins targets even after a partial crash.
+    automation_authority._bound_subject(authorized)
     model_chat.start(authorized, service, model["id"],
         {"rubric_key": "json_arithmetic", "input_text": json.dumps(spec["input"])}, root_key,
         conversation_id=cid, user_message=text)
@@ -494,7 +499,17 @@ def validate_history_envelope(authorized, envelope):
     from . import domain_gateway
     service = domain_gateway.history_models(authorized)
     saved = completion(authorized, service, envelope.get("task_id"))
-    if saved is None or saved["envelope"] != envelope:
+    # Capabilities are refreshed transport authority, not historical evidence.
+    # Never trust the saved capability snapshot, but keep every identity/session
+    # field and the complete result payload in the exact-match guard. The caller
+    # writes through authorized['chat_scope'], and we return fresh authority too.
+    def historical_evidence(value):
+        scope = value.get("scope")
+        if not isinstance(scope, dict):
+            raise ContractError("coordinator_delivery_evidence_changed")
+        return {**value, "scope": {key: item for key, item in scope.items() if key != "capabilities"}}
+
+    if saved is None or historical_evidence(saved["envelope"]) != historical_evidence(envelope):
         raise ContractError("coordinator_delivery_evidence_changed")
     result_handoff._source_message(authorized, {"conversation_id": envelope["conversation_id"],
         "source_message_id": saved["message_id"]})

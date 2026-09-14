@@ -17,8 +17,10 @@ recorded acceptance/hash. Current authority is separately available in the graph
 it is not serialized into the immutable SF Chat completion envelope. Actual result, source,
 lineage, cancellation or review drift remains stale. No records are rewritten or deleted.
 
-Pending review, new commission, queued/claimed execution and resume retain their existing
-authority checks. No flags are enabled, grants extended, credentials copied or new features added.
+Pending review, queued/claimed delegation execution and resume retain their existing
+authority checks. New commission now uses the existing automation subject/entitlement check
+before creating work and again immediately before its root dispatch. No flags are enabled,
+grants extended, credentials copied or new features added.
 Local 8765, candidate-2 data, main, Canary and Production are untouched. Version stays beta.96.
 Rollback is the previous source `d3b179dc`; no database migration is involved.
 
@@ -36,10 +38,26 @@ Rollback is the previous source `d3b179dc`; no database migration is involved.
 
 ## New-code evidence and continuation
 
-Focused tests: `.artifacts/aw-final-1-focused.xml` / `.log` (running; not yet PASS).
-Includes accepted completed graph after capability withdrawal, unchanged immutable evaluation
-and SF Chat envelope, denied next commission, denied claimed-worker resume, and no new Task IDs.
-Grant/flag withdrawal is tested separately from actual source disconnect/cancellation.
+First correction `e1d5d24d74622e00d8ac26e9f49a1354e14b3008` is a failed gate, not a final candidate:
+focused `.artifacts/aw-final-1-focused.xml` = 46 passed / 1 failed; CI `34833248985`
+= Static PASS, Ubuntu 5801 passed / 1 failed / 128 skipped, Windows cancelled.
+The failing new test exposed dynamic transport capabilities in SF Chat's exact envelope
+comparison. PostgreSQL on that SHA separately passed 70 + 41 + 18 = 129, no skips,
+under `.artifacts/pg-runtime-acceptance-aw-final-1-tls/`; this does not override the failure.
+
+The follow-up excludes only transport `scope.capabilities` from historical envelope matching.
+Every other identity/session field and the entire result/evidence remain exact-match guarded;
+delivery uses freshly authorized scope, never the envelope's obsolete capability snapshot.
+The second local run (`withdrawal-v2`) reached the final refusal assertion, finding that a
+new Coordinator commission still started its normal-model root without automation entitlement
+(1 passed / 1 failed). The follow-up binds new commission to the existing automation policy;
+ordinary non-Coordinator model tasks are unchanged. Neither failed run is hidden or counted as PASS.
+Focused withdrawal tests: `.artifacts/aw-final-1-withdrawal-v3.xml` / `.log`:
+**2 passed, 0 failed, 0 skipped**, 294.97 seconds. Bundle: 612 files, all four gates PASS;
+Python syntax, repository static CSP/secrets/Markdown, Context Pack and diff checks PASS.
+Coverage includes immutable Evaluation/result after withdrawal, current capabilities denied,
+foreign workspace/user/session and result forgery refused, denied next commission, denied
+claimed-worker resume, and no new Task IDs. Grant/flag loss remains distinct from source drift.
 
 Next: finalize focused result; static/context/bundle; exact commit; full workflow_dispatch CI;
 fresh disposable PostgreSQL gate; isolated new-SHA browser lifecycle. Do not inherit old PASS.

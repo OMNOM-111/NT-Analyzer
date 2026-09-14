@@ -27,8 +27,9 @@ CURRENT INTEGRATION BRANCH: codex/agent-world-final-acceptance
 CURRENT INTEGRATION INPUTS: 9365695a + 4d8ee514 (both histories, no duplicate picks).
 CURRENT CANDIDATE STATE: AW-FINAL-1 correction IN DEVELOPMENT; exact-SHA gates and browser repeat pending.
   Scope is historical aggregate acceptance versus current execution authority only; no new features.
-  Historical review hashes and SF Chat completion envelopes exclude later authority from validity comparison,
-  but retain the original immutable full receipt. Pending review and future execution still require authority.
+  Historical review hashes and SF Chat result evidence exclude later authority from validity comparison,
+  but retain the original immutable full receipt. Transport capabilities refresh separately; scope identity,
+  session and all evidence remain exact-match guarded. Future execution still requires current authority.
   Regression covers entitlement withdrawal, claimed-worker resume refusal and unchanged child Task IDs.
   No percentage increase is assigned for fixing an existing row. See the AW-FINAL-1 changelog receipt.
 PREVIOUS OWNER ACCEPTANCE CANDIDATE: 09c4e859c1bc950c703feaddf3094300978bb0e4 (candidate 2, docs-only freeze over the
@@ -60,7 +61,14 @@ PREVIOUS INTEGRATION CODE SHA: fb2c472b — P1-3 including the decision producer
   both crawled. CI's Windows leg IS the full suite on this box. Its log,
   scratchpad/full_84ddb2e7.txt, ends mid-run with zero failures — that is a kill, not a
   red result.
-CURRENT WIP: scoped AW-FINAL-1 product/tests/documentation correction; focused run in progress.
+CURRENT WIP: AW-FINAL-1 follow-up to failed checkpoint e1d5d24d; saving a new candidate for full gates.
+  e1d5d24d focused: 46 passed / 1 failed (historical SF Chat transport-scope comparison).
+  CI 34833248985: Static PASS, Ubuntu 5801/1/128 skipped, Windows cancelled. Not final PASS.
+  Its disposable TLS PostgreSQL independently passed 129/0/0; must be rerun on the follow-up SHA.
+  Follow-up withdrawal-v3: 2 passed / 0 failed / 0 skipped, 294.97 seconds; historical receipt,
+  fresh transport capabilities, strict identity/evidence guards and denied commission/resume checked.
+  New commission reuses the existing automation subject policy. Bundle 612 PASS; static/context/diff PASS.
+  Next: save exact follow-up -> full CI + PG + isolated browser lifecycle. Not final closeout yet.
   Historical selected_model_id multicast work found by the
   recovery audit (11 files) was reviewed, completed and saved at dbeb5ec3.
 CURRENT LOCAL 8765 SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b — PID 21060, unchanged before and after

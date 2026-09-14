@@ -3,6 +3,7 @@
 Real disposable graph/worker records; deterministic diagnostic executor only.
 """
 import pytest
+from copy import deepcopy
 
 from app import durable, local_worker
 from app.ai_control_center import coordinator, delegation, domain_gateway
@@ -32,10 +33,28 @@ def test_accepted_completed_graph_survives_later_automation_withdrawal(scenario)
     assert after["human_review"]["evaluation_id"] == review_id
     assert all(row["status"] == "accepted" for row in after["human_review"]["required_reviews"])
     assert service._get(history["context"], EntityKind.EVALUATION, review_id) == record
-    assert coordinator.validate_history_envelope(history, before["envelope"]) == before
+    delivered = coordinator.validate_history_envelope(history, before["envelope"])
+    assert before["envelope"]["scope"]["capabilities"]["ai_automation"] is True
+    assert delivered["envelope"]["scope"]["capabilities"]["ai_automation"] is False
+    # Only refreshed transport authority may differ, not a byte of result proof.
+    expected = deepcopy(before)
+    expected["envelope"]["scope"]["capabilities"] = history["chat_scope"]["capabilities"]
+    assert delivered == expected
+    # Ignoring obsolete capabilities must not ignore tenant, session or evidence.
+    for field, value in (("workspace_id", "foreign-workspace"), ("user_id", -1),
+                         ("user_uuid", "00000000-0000-4000-8000-000000000001"),
+                         ("auth_session_id", "foreign-session")):
+        forged = deepcopy(before["envelope"])
+        forged["scope"][field] = value
+        with pytest.raises(ContractError, match="coordinator_delivery_evidence_changed"):
+            coordinator.validate_history_envelope(history, forged)
+    forged = deepcopy(before["envelope"])
+    forged["verification"]["human_accepted"] = False
+    with pytest.raises(ContractError, match="coordinator_delivery_evidence_changed"):
+        coordinator.validate_history_envelope(history, forged)
     # The same browser authority cannot start more work after withdrawal.
     tasks = {row.header.entity_id for row in service._all(history["context"], EntityKind.TASK)}
-    with pytest.raises(ContractError):
+    with pytest.raises(ContractError, match="automation_entitlement_required"):
         request(env, "commission", key="after-automation-withdrawal")
     assert {row.header.entity_id for row in service._all(history["context"], EntityKind.TASK)} == tasks
 

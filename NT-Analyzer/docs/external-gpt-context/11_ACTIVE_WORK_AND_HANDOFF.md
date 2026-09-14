@@ -21,6 +21,9 @@
   The 8816 browser independently reproduces the old paused-aggregate defect.
   Focused regressions and exact-SHA CI/PostgreSQL/static/context/bundle/browser gates
   are pending; no new final PASS or percentage increase. See [correction receipt](../changelog/2026-09-14-agent-world-historical-acceptance.md).
+  Failed checkpoint `e1d5d24d` is preserved: focused 46/1, CI `34833248985` Ubuntu
+  5801/1/128 skipped, PostgreSQL 129/0/0. Finish the transport-capability follow-up,
+  then rerun exact-SHA gates; do not reuse the failed checkpoint's PASS subsets as final acceptance.
   Local 8765 and old candidate data remain untouched. No merge/deploy/new features.
 
 - Historical saved source: `81e92c1ad363ffb86e18499f78017ed6973b3626`, task branch
