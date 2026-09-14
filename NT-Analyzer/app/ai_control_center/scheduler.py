@@ -92,6 +92,9 @@ def _source(authorized, service, plan):
 
 
 def _seal(service, context, control, plan, index, *, now=None):
+    from . import test_executor
+    if bool(plan.get("synthetic")) != test_executor.enabled(context.scope.workspace_id):
+        raise ContractError("schedule_executor_mode_changed")
     if type(index) is not int or not 0 <= index < len(plan["due_at"]):
         raise ContractError("schedule_occurrence_invalid")
     now = now or datetime.now(timezone.utc)
@@ -107,7 +110,7 @@ def _seal(service, context, control, plan, index, *, now=None):
         "plan_sha256": digest(plan), "due_at": plan["due_at"][index], "timezone": plan["schedule"]["timezone"],
         "source": plan["source"], "definition": plan["definition"], "model_id": plan["model_id"],
         "grant_ref": plan["grant_ref"], "spec": plan["spec"], "conversation_id": plan["conversation_id"],
-        "source_message_id": plan["source_message_id"], "synthetic": False}
+        "source_message_id": plan["source_message_id"], "synthetic": bool(plan.get("synthetic"))}
     reference = _control_ref(context, control.header.entity_id)
     return d.SealedDelegation(reference, (reference,), control.header.correlation_id, json_bytes(packet))
 
@@ -156,6 +159,12 @@ def propose(authorized, service, domain_service, *, domain, identity, expected_r
         raise ContractError("schedule_bounded_operation_required")
     spec = prepare(payload["rubric_key"], payload["input_text"])
     source, _, _ = _accepted(authorized, domain_service, domain, identity, expected_revision)
+    from . import test_executor
+    from .process_intelligence import ProcessIntelligence
+    synthetic = test_executor.enabled(context.scope.workspace_id)
+    marker = ProcessIntelligence(domain_service, service)._marker(context, source)
+    if marker and marker.get("synthetic") is True and not synthetic:
+        raise ContractError("schedule_synthetic_source_disabled")
     model = service._get(context, EntityKind.MODEL, model_id)
     profile = service._json(context, model.profile)
     for kind, selected in ((EntityKind.PERSONA, profile["persona_id"]), (EntityKind.PROVIDER_ACCOUNT, profile["provider_account_id"])):
@@ -166,7 +175,7 @@ def propose(authorized, service, domain_service, *, domain, identity, expected_r
         "model_id": str(model.header.entity_id), "persona_id": profile["persona_id"], "provider_account_id": profile["provider_account_id"],
         "connection_sha256": d.connection_digest(service, context, model.header.entity_id),
         "schedule": schedule, "due_at": due, "spec": spec,
-        "conversation_id": conversation_id, "source_message_id": message_id, "synthetic": False}
+        "conversation_id": conversation_id, "source_message_id": message_id, "synthetic": synthetic}
     result_handoff._source_message(authorized, plan)
     return {"controller_id": str(control_id), "plan": plan}
 
@@ -328,7 +337,7 @@ def execute(authorized, service, job, cancelled, heartbeat):
     current = service._get(context, EntityKind.TASK, control.header.entity_id)
     if current.status == "running": service._change(context, current, "waiting")
     return {"ok": True, "status": "child_queued", "controller_id": str(control.header.entity_id), "occurrence_index": index,
-        "due_at": plan["due_at"][index], "queued_at": job["queued_at_utc"], "task_id": detail["id"], "synthetic": False}
+        "due_at": plan["due_at"][index], "queued_at": job["queued_at_utc"], "task_id": detail["id"], "synthetic": bool(plan.get("synthetic"))}
 
 
 def projection(authorized, service, identity):
@@ -342,13 +351,14 @@ def projection(authorized, service, identity):
         model_job = worker_router.get("wj_aw_model_" + _child_id(context, identity, index).hex, workspace_id=context.scope.workspace_id)
         missed = checkpoint.get("missed", {}).get(str(index))
         occurrences.append({"index": index, "due_at": due, "task_id": str(task.header.entity_id) if task else None,
+            "synthetic": bool(plan.get("synthetic")),
             "status": task.status if task else "missed" if missed else job["status"] if job else "scheduled",
             "recorded_at": missed.get("recorded_at") if missed else None,
             "coordination_job_status": job.get("status") if job else None, "model_job_status": model_job.get("status") if model_job else None})
     return {"id": str(control.header.entity_id), "source": SOURCE, "status": control.status, "schedule": plan["schedule"],
         "occurrences": occurrences, "source_record": plan["source"], "plan_sha256": digest(plan),
         "model_id": plan["model_id"], "conversation_id": plan["conversation_id"], "grant_ref": plan["grant_ref"],
-        "explicit_automation": True, "manual_source_unchanged": True, "human_accepted": False, "synthetic": False}
+        "explicit_automation": True, "manual_source_unchanged": True, "human_accepted": False, "synthetic": bool(plan.get("synthetic"))}
 
 
 def cancel(authorized, service, identity):

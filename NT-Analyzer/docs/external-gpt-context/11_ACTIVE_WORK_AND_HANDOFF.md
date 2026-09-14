@@ -8,13 +8,99 @@
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
 - Protected Local program snapshot: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. New unified-source evidence is separate below; full-program/owner acceptance remains open.
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
-- Protected Local branch snapshot: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; active unified source is PR #285 below
+- Protected Local branch snapshot: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; the active final branch is identified below, while #285 is an accepted integration input
 - Version: `0.10.0-beta.96`, `pre_release`; clean `2b6d0112` active on Local 8765, no Canary/Production promotion
 - Integration state: scoped model/domain/Chat/NT/Desktop, real fact handoff, manual discussion, separate application observations, Consensus and Court verified; owner-dependent and full-program work remain
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
-- Latest saved/pushed executable source:
+
+- Current state: AW-FINAL-1 CLOSED on code `2debb2d6`, task branch
+  `codex/agent-world-final-acceptance`, PR #287; later branch commits are documentation only.
+  Verified on the exact SHA: CI `34863855186` (Static PASS, Ubuntu 5802/0/128, Windows attempt 3 5799 passed / 0 failed / 131 skipped, 1:54:34 (attempts 1-2 cancelled at the 120-minute job limit under shared-host load with 0 failures; not counted)),
+  PostgreSQL 129/0/0 + runtime, browser guide 15/15 and AW-FINAL-1 lifecycle 20/20 on isolated :8818.
+  Failed checkpoint `e1d5d24d` stays history and is not reused. Next work is owner-dependent only
+  (BYOK key, audible voice, provider diversity, remote-agent budget, SF Social publication, visual P3).
+  See [correction receipt](../changelog/2026-09-14-agent-world-historical-acceptance.md).
+  Local 8765 and old candidate data remain untouched. No merge/deploy/new features.
+
+- Historical saved source: `81e92c1ad363ffb86e18499f78017ed6973b3626`, task branch
+  `codex/agent-world-final-acceptance`, draft PR #287. CI **34719653016**:
+  static PASS, Ubuntu **5781 passed / 2 failed / 128 skipped**, 1662.25 s;
+  Windows still running. Follow-up Persona process UI fixture multicast
+  event/leave callback correction has **9 focused PASS in 2.41 s**, with no
+  runtime-code change. Preserve the failed CI receipt; final gates remain open.
+  Exact-81e92c1a synthetic Preview browser verification covered Telegram/Google/
+  Email OTP/QR, initially unchecked consent, permanent/session and new-browser
+  OTP; Exit restored QA8815 test owner only. Do not infer real provider/owner
+  registration or protected Local-data acceptance. **95% / 70% stay provisional**.
+
+- Earlier saved source: `a091ce6794da75064a9012dfe97d50bfc140e978`, task branch
+  `codex/agent-world-final-acceptance`, draft PR #287. Exact-code disposable
+  PostgreSQL **129 PASS / 0 skips** (88 Agent World/External/Persona, 29 legacy,
+  12 workers); legacy runner **13/13**; static/context/diff and **610-file bundle
+  PASS**. CI **34714150028 Linux: 5776 passed / 4 failed / 128 skipped**,
+  1480.45 s; Windows remains running. Three stale fixture corrections have
+  17 scoped + 1 aggregate PASS, not full-regression acceptance. Do not start a competing heavy full
+  regression while its Windows job uses this PC. Next: complete final browser
+  routes and CI, then reconcile the unchanged 36-row programme matrix.
+  Published **95% / 70% stay provisional**; Master explicitly records the
+  existing E2E arithmetic discrepancy, not a new scoring method or increase.
+  Use [OWNER_ACCEPTANCE_GUIDE.md](../current/OWNER_ACCEPTANCE_GUIDE.md), not its
+  deprecated historical Agent World guide. Exact receipt:
+  [final integration record](../changelog/2026-09-12-agent-world-final-integration.md).
+  No owner-key use, Local switch, merge, release or deployment is authorized.
+  QA8815 browser observations (synthetic Court, Only-me Social, Memory revoke)
+  remain pre-final: backend a091ce67 plus pending static changes. Preserve
+  device-guard denial for impersonation; a separate test email/device flow
+  awaits explicit owner permission. Final clean browser repeat is still needed.
+
+- Current single-integrator task: `codex/agent-world-final-acceptance`, integration
+  commit `334f086f`, inputs `9365695a` and `4d8ee514`. Shared-file handoff is complete;
+  the old P1-5 ownership blocker no longer applies. Native P1-5 source CI is
+  34678502093 at `c16b511d`; final unified checks are still pending. Work now covers
+  public semantic clarification, immutable Intent replacement, synthetic process/
+  scheduler provenance, real ordinary-user PostgreSQL tests and isolated browser
+  acceptance. See [master status](../current/AGENT_WORLD_MASTER_STATUS.md).
+  No owner credential, Local switch, main merge or deploy is authorized.
+  Previous unified checkpoint is `51924538`, draft PR #287. Its follow-up closes
+  explicit Memory context-scope enforcement and honest synthetic Social
+  publication, including known-artifact and fresh-authority negative checks.
+  d7b48060 PostgreSQL: 129 passed, no skips. CI 34703741359 Linux failed one
+  older security scenario that omitted the new semantic confirmation; 5745
+  passed / 128 skipped. That scenario now explicitly confirms the plan without
+  weakening session-expiry assertions. Temporary QA8815 is not final acceptance.
+  Chat-first, accepted schedule-source binding, Court JSON candidate metadata
+  and in-app QA dialog/layout corrections require a new unified-SHA full run.
+  Windows CI ended at the unchanged 120-minute limit, not a PASS. Current fixes
+  add native external-task shared reads, manual-review counters and saved-receipt
+  SF Chat delivery; schedule approval rejects a changed preview hash. Correlated
+  synthetic programme rerun is 9 PASS in 319.50 seconds. The former next step was
+  to restart temporary QA8815 after committing and repeat browser/unified gates;
+  protected 8765 and final acceptance 8814 remain untouched/unstarted.
+  QA8815 was restarted on clean 51924538 with preserved data and cold backup.
+  PostgreSQL 118 PASS plus initial external 10/1 are retained separately from the
+  corrected external fixture 11 PASS. Follow-up fixes shared external status/history
+  presentation without changing old evidence. The exact-SHA PG rerun is now
+  complete at a091ce67 above; CI and final isolated acceptance remain pending.
+  Earlier failed/corrected receipts remain separate; no release or owner-key use.
+
+- Historical integrator answer read at `61ff7a38` (2026-09-11): reviewed checkpoint `97095b00`,
+  shared ownership unchanged; await typed Evaluation/native kind integration SHA.
+  Subsequent isolated protocol/role-ownership hardening: 70 focused tests passed.
+  Next bound-cancel checkpoint: 75 passed; terminal-state preservation checked.
+  Subsequent cleanup: repeat revoke retries local secret deletion safely; dispatch
+  rechecks after claim/secret access. Native atomic ordering remains unwired.
+  Native cleanup after revoke and API/worker composition still require integration.
+
+- Historical parallel P1-5 checkpoint only (not current next steps): branch `codex/agent-world-external-agent-onboarding`, base
+  `9ae183f65149c9cc7253490810667fc75cbf9cf6`. Separate A2A 0.3 bounded connection,
+  not Persona/Model/MCP. Shared integration files remain with the integrator.
+  Next: agree native kind/codec and external Evaluation subject, then wire existing
+  storage/queue/API. No complete app E2E claim. See
+  [master parallel handoff](../current/AGENT_WORLD_MASTER_STATUS.md) and
+  [P1-5 change record](../changelog/2026-09-10-external-agent-onboarding.md).
+- Historical saved/pushed executable source (superseded by the integration above):
   **`e45b64b0121014c5d796553ae8b512d98a5782ae`**, task branch
   `codex/agent-world-unified-acceptance`, draft PR #285. Clean immutable full
   **5416 PASS / 119 SKIP / 0 FAIL / 0 ERROR**, 5834.82 s; legacy **13/13 PASS**.

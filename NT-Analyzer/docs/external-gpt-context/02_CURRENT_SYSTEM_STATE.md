@@ -10,16 +10,84 @@
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`; not released to Canary/Production
 - Active Local 8765: clean `2b6d0112bef88c5bfb73970de64ec5518443e56b`, build `dev-0.10.0-beta.96-2b6d0112bef8`, original owner data, Preview=false
-- Active Agent World branch: `codex/agent-world-unified-acceptance`, draft PR #285; protected Local still uses `codex/agent-world-owner-preview` code 2b6d0112 from the separate #282/#281/#280 stack. The review/mechanisms work has been integrated in the task branch, not deployed. Source ownership and preserved independent review: [AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md).
+- Active Agent World branch: `codex/agent-world-final-acceptance`, integrating shared #285 and native P1-5 histories; protected Local still uses `codex/agent-world-owner-preview` code 2b6d0112 from the separate #282/#281/#280 stack. Nothing is deployed. Current ownership is in [master status](../current/AGENT_WORLD_MASTER_STATUS.md); preserved independent review is in [AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md).
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
-## Active integration — 2026-09-09
+- Current Agent World candidate: `2debb2d62ab1af9cba4da2e8d9bbaee9832316d2` on the final-acceptance
+  branch; AW-FINAL-1 CLOSED by independent verification (2026-09-14). After `ai_automation`
+  withdrawal the accepted graph stays completed/accepted (same review hash, Evaluation and SF Chat
+  completion) while new commission, approval, reconcile, schedule and the next occurrence are refused.
+  Exact-SHA gates: CI `34863855186` Static PASS, Ubuntu 5802/0/128 skipped, Windows attempt 3 5799 passed / 0 failed / 131 skipped, 1:54:34 (attempts 1-2 cancelled at the 120-minute job limit under shared-host load with 0 failures; not counted);
+  PostgreSQL 129/0/0 + runtime PASS; browser guide 15/15 on isolated :8818 (dirty=false).
+  Implementation 94% (unchanged), readiness 80% (Delegation E2E P->Y). Owner-dependent items stay open.
+  [Correction receipt](../changelog/2026-09-14-agent-world-historical-acceptance.md).
+  Protected Local and release environments are unchanged; no new features are in scope.
 
-Latest preserved/pushed executable source is
+- Historical saved Agent World candidate: `81e92c1ad363ffb86e18499f78017ed6973b3626`,
+  CI **34719653016** static PASS, Ubuntu **5781 passed / 2 failed / 128 skipped**
+  in 1662.25 s; Windows remains running. A follow-up fixes only Persona process
+  UI fixture multicast event/leave callbacks (**9 focused PASS, 2.41 s**), not
+  runtime code. Exact-candidate Preview browser routes covered synthetic
+  Telegram/Google/Email OTP/QR, unchecked consent, permanent/session and new-
+  browser device OTP; Exit returned to QA8815 test owner, not protected Local.
+  This is synthetic QA evidence, not real owner/external-provider certification.
+  Full final verification remains open; **95% / 70% stay provisional**.
+
+- Earlier saved Agent World candidate: `a091ce6794da75064a9012dfe97d50bfc140e978`,
+  `codex/agent-world-final-acceptance`, draft PR #287. Exact disposable PostgreSQL:
+  **129 PASS / 0 skips** (88 Agent World/External/Persona + 29 legacy + 12 workers),
+  legacy runner **13/13**, static/context/diff and **610-file bundle PASS**.
+  CI **34714150028 Linux: 5776 passed / 4 failed / 128 skipped** in 1480.45 s;
+  Windows remains running. Follow-up fixes to three stale fixtures have 17
+  scoped + 1 aggregate PASS, not a full CI PASS. Final regression/browser acceptance remains
+  open. Historical 51924538 fixture failure is retained, not overwritten.
+  Published **95% / 70% are provisional**, pending 36-row reconciliation under
+  unchanged weights; Master records the existing 25 vs 25.5 numerator discrepancy.
+  Current route: [OWNER_ACCEPTANCE_GUIDE.md](../current/OWNER_ACCEPTANCE_GUIDE.md).
+  [Exact candidate record](../changelog/2026-09-12-agent-world-final-integration.md)
+  is Development evidence only; Local 8765 and deployed environments are unchanged.
+  Pre-final QA8815 observed synthetic Court, Only-me Social publication and
+  Memory revoke. Its a091ce67 backend plus changed static files is not immutable
+  final browser evidence. Test email/device setup awaits owner approval;
+  impersonation does not bypass the automation device guard.
+
+- Current Agent World integration: `codex/agent-world-final-acceptance` combines
+  `9365695a` and `4d8ee514` at `334f086f`, preserving both histories. P1-5 native
+  API/worker/typed Evaluation was verified on its source branch at `c16b511d`
+  (CI 34678502093). Final unified regression/CI/browser acceptance is in progress,
+  not inherited from those historical passes. PostgreSQL ordinary-user native
+  acceptance now has real isolated-server tests, separate from prior shape tests.
+  The [master status](../current/AGENT_WORLD_MASTER_STATUS.md) is the sole
+  operational source. Local 8765, version and deployed environments are unchanged.
+  Previous unified checkpoint: `51924538`, draft PR #287. Follow-up work adds six
+  context-bound Memory scopes and named Development-only diagnostic publication;
+  these do not relax real provider diversity, remote budgets or private access.
+  At d7b48060: real PostgreSQL 129 passed / 0 skipped; CI 34703741359 Linux
+  5745 passed / 1 failed / 128 skipped (old security fixture omitted semantic
+  confirmation). Final regression is not PASS. Follow-up fixes preserve explicit
+  chat continuation, accepted schedule-source binding and in-app QA confirmation.
+  Windows CI reached the unchanged 120-minute timeout; no full PASS is claimed.
+  Browser-discovered follow-up joins external tasks to shared task/review/chat
+  presentation and pins schedule approval to its shown plan hash. Final exact-SHA
+  regression and browser acceptance remain pending; no second evaluator is added.
+  At 51924538, 118 non-external PG cases passed. External 10/1 exposed an isolated
+  spawned-chat fixture path gap; the corrected fixture passed all 11. Receipts are
+  distinct; the exact a091ce67 PG rerun above now supersedes that requirement. QA8815 preserves its
+  data with a cold backup; 8765 is untouched.
+
+- Parallel P1-5 (2026-09-10 historical checkpoint): **IN DEVELOPMENT**, isolated external-agent protocol
+  and service ports; not mounted or deployed. Native Evaluation/registry integration
+  requires integrator handoff. No global readiness change. See the parallel section
+  of [master status](../current/AGENT_WORLD_MASTER_STATUS.md) and
+  [checkpoint evidence](../changelog/2026-09-10-external-agent-onboarding.md).
+
+## Historical integration evidence — 2026-09-09
+
+The preserved executable source of that historical checkpoint was
 **`e45b64b0121014c5d796553ae8b512d98a5782ae`** on draft PR #285, with
 329 focused, root static/context and 593-file pre-release bundle PASS. Clean
 immutable full: **5416 PASS / 119 SKIP / 0 FAIL / 0 ERROR**, 5834.82 s;

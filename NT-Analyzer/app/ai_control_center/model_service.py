@@ -330,6 +330,8 @@ class ModelService:
         from . import test_executor
         can_execute_test_only = verified_test and test_executor.enabled(context.scope.workspace_id)
         return {"id": str(model.header.entity_id), "title": profile["label"], "label": profile["label"],
+            "revision": model.header.revision, "created_at": model.header.created_at.isoformat(),
+            "updated_at": model.header.updated_at.isoformat(),
             "status": model.status, "model": model.model_key, "provider": model.provider_key,
             "persona_id": profile["persona_id"], "provider_account_id": str(account.header.entity_id),
             "persona_name": self._persona_name(context, profile["persona_id"]),
@@ -428,14 +430,16 @@ class ModelService:
             self._walk(context, model, "active")
         return self.model_detail(context=context, model_id=model_id)
 
-    def test(self, *, context, model_id, idempotency_key, conversation_id=None, message_id=None, _persona=None):
+    def test(self, *, context, model_id, idempotency_key, conversation_id=None, message_id=None, _persona=None,
+             _model_selection=None):
         return self.start_task(context=context, model_id=model_id,
             payload={"rubric_key": "connection_exact"}, idempotency_key=idempotency_key,
-            conversation_id=conversation_id, message_id=message_id, _persona=_persona)
+            conversation_id=conversation_id, message_id=message_id, _persona=_persona,
+            _model_selection=_model_selection)
 
     def start_task(self, *, context, model_id, payload, idempotency_key, conversation_id=None,
                    message_id=None, comparison_id=None, comparison_title=None, _sealed_spec=None, _comparison_spec=None,
-                   _handoff=None, _delegation=None, _routing=None, _persona=None):
+                   _handoff=None, _delegation=None, _routing=None, _persona=None, _model_selection=None):
         self._access(context, "task")
         key = _key(idempotency_key)
         if not isinstance(payload, dict) or set(payload) - {"rubric_key", "input_text"}:
@@ -460,6 +464,20 @@ class ModelService:
                     or _sealed_spec is not None and spec["rubric_key"] not in {"backtest_spec", "chart_spec"}):
                 raise ContractError("persona_selection_invalid")
             identity["persona_selection"] = c.primitive(_persona)
+        if _model_selection is not None:
+            # How the connection was chosen, from trusted chat/application
+            # integration only. The Router records its own choice below from
+            # its issued packet; a caller can never claim that mode.
+            application = _sealed_spec is not None and spec["rubric_key"] in {"backtest_spec", "chart_spec"}
+            if (_routing is not None or (_persona is None and not application)
+                    or type(_model_selection) is not dict
+                    or set(_model_selection) != {"mode", "selected_model_id"}
+                    or _model_selection["mode"] not in {"explicit_override", "single_available"}
+                    or (_model_selection["mode"] == "explicit_override")
+                        != (_model_selection["selected_model_id"] is not None)
+                    or (_model_selection["selected_model_id"] is not None
+                        and _model_selection["selected_model_id"] != str(_uuid(model_id)))):
+                raise ContractError("persona_model_selection_invalid")
         correlation, dependencies = task_id, ()
         if _routing is not None:
             if any(value is not None for value in (_handoff, _delegation, _sealed_spec, _comparison_spec)):
@@ -537,6 +555,22 @@ class ModelService:
                     "test_executor_request": test_executor.enabled(context.scope.workspace_id)}
             if speaking_identity is not None:
                 goal.update(speaking_identity=speaking_identity, executor_persona_id=profile["persona_id"])
+            if _routing is not None:
+                selection_source = {"mode": "router_approved", "selected_model_id": str(model.header.entity_id),
+                    "reason": "router_preview_applied", "routing": identity["routing"]}
+            elif _model_selection is not None:
+                selection_source = {**_model_selection, "reason": (
+                    "person_selected_connection" if _model_selection["mode"] == "explicit_override"
+                    else "persona_single_binding" if _persona is not None else "application_role_single_binding")}
+            else:
+                selection_source = None
+            if selection_source is not None:
+                # Built from the stored records, not from the caller, so the
+                # connection, its revision and its provider cannot be restated.
+                goal["model_selection"] = {**selection_source, "model_id": str(model.header.entity_id),
+                    "model_revision": model.header.revision, "model_key": model.model_key,
+                    "provider_key": model.provider_key, "provider_account_id": profile["provider_account_id"],
+                    "connection_kind": profile.get("connection_kind")}
             if spec["rubric_key"] in {"backtest_spec", "chart_spec"}:
                 goal["application_request"] = {"kind": spec["rubric_key"].removesuffix("_spec"),
                     "spec": spec["input"], "request_sha256": digest(spec["input"])}
@@ -808,6 +842,7 @@ class ModelService:
             "request_id": checkpoint["task_id"], "response": response, "actual_model": actual_model,
             "provider_request_id": provider_request_id, "executor": executor,
             "external_call": external_call if type(external_call) is bool else None,
+            **({"paid_call": False} if provenance["synthetic"] else {}),
             "latency_ms": round(latency * 1000, 3), "cost_usd": cost,
             "cost_estimated": result.get("cost_estimated") is True if cost is not None else None,
             "observed_at": _now().isoformat(), **tokens}
@@ -1070,6 +1105,7 @@ class ModelService:
         task_dto["progress_pct"] = presentation.progress_pct(task_dto["display_status"])
         return {"task": task_dto, **task_dto, "result_text": result_text,
             "actual_model": receipt.get("actual_model"), "evaluation": evidence,
+            "model_selection": checkpoint.get("model_selection"),
             "intent": self.intent_view(context, task, checkpoint, receipt),
             "reputation": self.task_reputation(context, task, checkpoint),
             "executor": receipt.get("executor"), "external_call": receipt.get("external_call"),
@@ -1332,20 +1368,26 @@ class ModelService:
         vote = json.loads(result["result_text"])
         model = self._get(request.context, EntityKind.MODEL, request.model_id)
         profile = self._json(request.context, model.profile)
+        from .test_executor import EXECUTOR, enabled as development_executor_enabled
+        diagnostic = result.get("synthetic") is True
+        if diagnostic and (not development_executor_enabled(request.context.scope.workspace_id)
+                           or result.get("actual_model") != EXECUTOR):
+            raise ContractError("model_judge_synthetic_provenance_invalid")
         return JudgeResult(verdict=vote["verdict"], confidence=vote["confidence"], rationale=vote["rationale"],
             provider_key=model.provider_key, model_key=model.model_key,
             model_version=result.get("actual_model") or "provider_version_unreported",
-            failure_domain=model.provider_key + ":" + str(urlsplit(profile["base_url"]).hostname),
+            failure_domain=("local_test_executor:" + EXECUTOR if diagnostic else
+                            model.provider_key + ":" + str(urlsplit(profile["base_url"]).hostname)),
             contribution_id=_uuid(result["contribution_id"]))
 
     def plan_application(self, *, context, model_id, spec, kind, idempotency_key,
-                         conversation_id, message_id, _persona=None):
+                         conversation_id, message_id, _persona=None, _model_selection=None):
         from .application_evidence import application_spec
         normalized = application_spec(kind, spec)
         return self.start_task(context=context, model_id=model_id, payload={},
             idempotency_key=idempotency_key, conversation_id=conversation_id, message_id=message_id,
             _sealed_spec={"rubric_key": kind + "_spec", "version": VERSION, "input": normalized},
-            _persona=_persona)
+            _persona=_persona, _model_selection=_model_selection)
 
     def record_application_result(self, *, context, task_id, source_id, verification, artifact_refs):
         from .application_evidence import record_application_result

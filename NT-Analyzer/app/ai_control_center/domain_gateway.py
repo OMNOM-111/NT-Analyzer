@@ -23,6 +23,7 @@ from . import presentation
 from .states import ContractError, EntityKind
 
 DOMAINS = frozenset({"personas", "memory", "projects", "routines", "calendar", "decisions", "court",
+                     "external_agents",
                      "models", "model_tasks", "experiments", "system", "tasks", "publications", "automation", "router"})
 
 
@@ -271,6 +272,35 @@ def history_models(authorized):
         admit=lambda context, operation, estimate: _model_admit(authorized, context, operation, estimate))
 
 
+def external_agents(authorized, repo=None):
+    from .external_agent_native import ExternalAgentService
+    from .. import worker_router
+    def _enqueue(job_id, payload, **kw):
+        # Same idiom as delegation._queue: a repeated enqueue of the identical
+        # job is the queue already holding it, not a failure. Only a different
+        # payload under the same id is a real conflict.
+        try:
+            return worker_router.enqueue("agent_world_external", payload, job_id=job_id,
+                workspace_id=authorized["context"].scope.workspace_id,
+                user_id=authorized["chat_scope"]["user_id"], **kw)
+        except sqlite3.IntegrityError:
+            old = worker_router.get(job_id, workspace_id=authorized["context"].scope.workspace_id) or {}
+            if old.get("kind") != "agent_world_external" or old.get("payload") != payload:
+                raise ContractError("external_agent_job_conflict") from None
+            return old
+    def queue(task_id):
+        authorized["admit"]()
+        return _enqueue("wj_aw_external_" + UUID(str(task_id)).hex,
+            {"scope": authorized["chat_scope"], "task_id": str(task_id)}, max_attempts=5, timeout_sec=120)
+    def cleanup(**kw):
+        context, identity = kw["context"], kw["connection_id"]
+        if context != authorized["context"]: raise ContractError("external_agent_scope_invalid")
+        return _enqueue("wj_aw_external_cleanup_" + UUID(str(identity)).hex,
+            {"scope": authorized["chat_scope"], "connection_id": str(identity), "phase": "external_cleanup"},
+            max_attempts=5, timeout_sec=60)
+    return ExternalAgentService(authorized, models(authorized, repo), enqueue=queue, enqueue_cleanup=cleanup)
+
+
 def _model_source(job):
     payload = job.get("payload") or {}
     scope = payload.get("scope") or {}
@@ -513,8 +543,21 @@ def domains(authorized, repo=None):
     from .domain_service import DomainService
     repo = repo or repository(authorized)
     model_service = models(authorized, repo)
-    return DomainService(repo, judge_runner=model_service.judge,
+    def memory_authority(context):
+        if context != authorized["context"]:
+            raise ContractError("memory_context_mismatch")
+        current = access(authorized["chat_scope"], read_only=True)
+        domain_admission(current, "memory")
+        user = account_auth.find_active_user(current["source_scope"]["user_id"]) or {}
+        return {"session_id": current["chat_scope"].get("auth_session_id"),
+                "governance_allowed": user.get("is_owner") is True or user.get("role") in {"owner", "admin"}}
+    return DomainService(repo, judge_runner=model_service.judge, memory_authority=memory_authority,
                          enqueue=lambda **kw: _followup(authorized, **kw))
+
+
+def scoped_memory_artifact(authorized, found):
+    from .memory_policy import artifact_allowed
+    return artifact_allowed(domains(authorized), authorized["context"], found)
 
 
 def social(authorized, repo=None):
@@ -727,6 +770,8 @@ def task_detail(authorized, identity, service=None):
     # admission still rejects every execution/mutation operation on this service.
     service = service or models(authorized)
     record = service._get(authorized["context"], EntityKind.TASK, identity)
+    if record.checkpoint and service._json(authorized["context"], record.checkpoint).get("source") == "external_agent_task_v1":
+        return external_agents(authorized).task_detail(identity)
     return _aggregate_detail(authorized, service, record) or service.task_detail(context=authorized["context"], task_id=identity)
 
 
@@ -746,6 +791,9 @@ def list_domain(authorized, domain, *, identity=None, limit=50, cursor=None):
         raise ContractError("unknown_domain")
     context = authorized["context"]
     admit = domain_admission(authorized, domain)
+    if domain == "external_agents":
+        service = external_agents(authorized)
+        return service.detail(identity) if identity else service.list()
     if domain == "system":
         return system(authorized)
     model_service = models(authorized)
@@ -806,6 +854,12 @@ def list_domain(authorized, domain, *, identity=None, limit=50, cursor=None):
     if domain == "personas":
         from . import persona_voice
         result["presentation_catalog"] = persona_voice.catalog()
+    if domain == "memory":
+        projects = service.list(context=context, admit=admit, domain="projects", limit=100)
+        result["strategy_project_candidates"] = [{"id": row["id"], "title": row["title"]}
+            for row in projects["items"] if row["status"] in {"draft", "active"}]
+        result["task_candidates"] = [{"id": row["id"], "title": row.get("goal") or row.get("title") or "Задача"}
+            for row in model_service.tasks(context=context)["items"]]
     if domain in {"routines", "calendar"}:
         result["items"] = [_followup_projection(authorized, service, domain, row) for row in result["items"]]
         from .process_intelligence import ProcessIntelligence
@@ -892,6 +946,9 @@ def enrich_overview(authorized, base=None):
     people = domains(authorized, model_service.repository).list(context=context, admit=authorized["admit"], domain="personas")["items"]
     tasks, folded = _application_workflows(list(base.get("tasks") or []), model_rows)
     tasks += [row["task"] for row in _aggregate_tasks(authorized, model_service)]
+    from .flags import Flag, current_snapshot, resolve
+    if resolve(Flag.AI_EXTERNAL_AGENT_V1, scope=context.scope, snapshot=current_snapshot(authorized)).enabled:
+        tasks += external_agents(authorized).tasks()
     from . import task_presentation
     tasks = [projected_task(row) for row in tasks]
     tasks.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
@@ -974,6 +1031,12 @@ def enrich_overview(authorized, base=None):
             continue
         phase = presentation.task_phase(row.get("display_status"))
         reason, action = presentation.attention_reason(phase)
+        if row.get("human_review", {}).get("status") == "pending" and row.get("verification_status") == "passed":
+            reason = "Результат получен, автоматическая проверка пройдена. Ожидается ваша отдельная проверка."
+            action = "Откройте сохранённый результат и примите или отклоните его. Профессиональное качество автоматически не оценивается."
+        elif row.get("source_kind") == "external_agent_task_v1" and row.get("display_status") == "awaiting_review":
+            reason = "Результат внешнего агента ожидает проверки."
+            action = "Откройте результат и сохранённые доказательства проверки."
         if row.get("enqueue_rejected"):
             # Nothing here is waiting on a decision: the server already refused
             # it. Saying "confirm the next step" would invent one.
@@ -1037,6 +1100,8 @@ def mutate(authorized, domain, identity, action, body):
         raise ContractError("invalid_idempotency_key")
     context, service = authorized["context"], models(authorized)
     admit = domain_admission(authorized, domain, action)
+    if domain == "external_agents":
+        return external_agents(authorized).mutate(identity, action, payload, body.get("expected_revision"), key)
     if domain in {"automation", "router"}:
         return _mechanism_gateway().mutate(authorized, service, domain, identity, action, payload,
             expected_revision=body.get("expected_revision"), idempotency_key=key)
@@ -1068,6 +1133,9 @@ def mutate(authorized, domain, identity, action, body):
             history = refresh_authority(authorized, read_only=True)
             if service._json(context, service._get(context, EntityKind.TASK, identity).checkpoint).get("source") == "real_model_task":
                 enqueue_model_delivery(history, history_models(history), identity)
+            elif service._json(context, service._get(context, EntityKind.TASK, identity).checkpoint).get("source") == "external_agent_task_v1":
+                from . import external_agent_chat
+                external_agent_chat.deliver(history, external_agents(history), identity)
             delivery_result = coordinator_delivery.related(history, identity)
             problems.extend(delivery_result["blocked"])
         except ContractError as exc:
@@ -1144,6 +1212,18 @@ def execute_worker(job, cancelled, heartbeat):
     if (str(scope.get("workspace_id") or "") != str(job.get("workspace_id") or "")
             or str(scope.get("user_id") or "") != str(job.get("user_id") or "")):
         raise ContractError("model_worker_scope_required")
+    if job.get("kind") == "agent_world_external":
+        authorized = worker_authority(job)
+        authorized["admit"]()
+        service = external_agents(authorized)
+        if payload.get("phase") == "external_cleanup":
+            identity = payload.get("connection_id")
+            with service.repository.guard(authorized["context"], identity):
+                row = service.connection(identity)
+                service.onboarding(row.endpoint).cleanup_revoked(context=authorized["context"], connection_id=identity)
+            return {"ok": True, "status": "cleaned"}
+        if payload.get("phase"): raise ContractError("external_agent_worker_phase_invalid")
+        return service.execute(payload.get("task_id"), cancelled, heartbeat)
     delivery = job.get("kind") == "agent_world_model" and payload.get("phase") == "delivery"
     followup_delivery = job.get("kind") == "agent_world_followup" and payload.get("phase") == "chat_delivery"
     coordinator_phase = job.get("kind") == "agent_world_followup" and payload.get("phase") in {"coordinator_delivery", "coordinator_continue"}

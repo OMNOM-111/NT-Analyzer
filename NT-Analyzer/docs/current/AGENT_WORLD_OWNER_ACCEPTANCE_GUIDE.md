@@ -1,4 +1,10 @@
-# Agent World — маршрут проверки владельцем
+# Agent World — исторический маршрут проверки владельцем
+
+> **DEPRECATED: исторический снимок e45 / 8804, не текущая инструкция.**
+> Актуальный маршрут: [OWNER_ACCEPTANCE_GUIDE.md](OWNER_ACCEPTANCE_GUIDE.md).
+> Единственный оперативный статус: [AGENT_WORLD_MASTER_STATUS.md](AGENT_WORLD_MASTER_STATUS.md).
+> Адреса, SHA, незакрытые отметки и наблюдения ниже сохранены как история;
+> они не описывают текущую контрольную сборку и не заменяют новый проход.
 
 Это инструкция для проверки, **не второй implementation status и не акт приёмки**.
 Канонический объём и ограничения: [AGENT_WORLD_IMPLEMENTATION_STATUS.md](AGENT_WORLD_IMPLEMENTATION_STATUS.md).

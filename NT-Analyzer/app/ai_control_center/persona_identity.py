@@ -157,7 +157,7 @@ def resolve_chat(service, *, context, message, persona_id=None):
     return Selection(str(chosen.header.entity_id), chosen.header.revision, chosen.display_name, body.strip(), reason)
 
 
-def select_model(service, *, context, persona_id, kind=None):
+def select_model(service, *, context, persona_id, kind=None, selected_model_id=None):
     persona = _owned(service, context, persona_id)
     if kind is not None:
         from .application_roles import for_kind
@@ -166,6 +166,14 @@ def select_model(service, *, context, persona_id, kind=None):
             raise ContractError("persona_application_role_mismatch")
     candidates = [item for item in service.models(context=context)["items"]
                   if item["status"] == "active" and item.get("persona_id") == str(persona.header.entity_id)]
+    if selected_model_id is not None:
+        selected_model_id = _identity(selected_model_id)
+        # The page offers only executable connections; the server has to hold
+        # the same line, or a crafted request names one that cannot run.
+        candidates = [item for item in candidates
+                      if item["id"] == selected_model_id and item.get("execution_available") is True]
+        if not candidates:
+            raise ContractError("persona_model_selection_unavailable")
     if len(candidates) != 1:
         raise ContractError("persona_model_ambiguous" if candidates else "persona_model_required")
     # Admission/model constructors recheck again before enqueue. No credential
@@ -174,8 +182,10 @@ def select_model(service, *, context, persona_id, kind=None):
     return candidates[0]["id"]
 
 
-def try_chat(message, *, scope, conversation_id, request_id, source, persona_id=None):
+def try_chat(message, *, scope, conversation_id, request_id, source, persona_id=None, selected_model_id=None):
     from . import application_chat, domain_gateway, live_gateway, model_chat
+    if selected_model_id is not None and persona_id is None:
+        raise ContractError("persona_model_selection_unavailable")
     if source != "app" or not live_gateway.configured(str((scope or {}).get("workspace_id") or "")):
         if persona_id is not None:
             raise ContractError("persona_chat_unavailable")
@@ -188,12 +198,14 @@ def try_chat(message, *, scope, conversation_id, request_id, source, persona_id=
     authorized["admit"]()
     reply = application_chat.try_chat(selected.message, scope=authorized["chat_scope"],
         conversation_id=conversation_id, request_id=request_id, source=source,
-        persona_id=selected.persona_id, persona_revision=selected.revision, user_message=message)
+        persona_id=selected.persona_id, persona_revision=selected.revision, user_message=message,
+        **({"selected_model_id": selected_model_id} if selected_model_id is not None else {}))
     if reply is not None:
         return reply
     reply = model_chat.try_persona(message=selected.message, authorized=authorized, service=service,
         persona_id=selected.persona_id, persona_revision=selected.revision,
-        conversation_id=conversation_id, request_id=request_id, user_message=message)
+        conversation_id=conversation_id, request_id=request_id, user_message=message,
+        **({"selected_model_id": selected_model_id} if selected_model_id is not None else {}))
     if reply is None:
         raise ContractError("persona_task_not_supported")
     return reply

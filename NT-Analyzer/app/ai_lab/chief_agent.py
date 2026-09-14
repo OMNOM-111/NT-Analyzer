@@ -2016,12 +2016,15 @@ def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery
     source_kind = envelope.get("source_kind")
     if _delivery_job is not None and not history_delivery:
         raise ChiefAgentError("Доставка требует сохранённый результат и активное задание очереди.")
-    if history_delivery or source_kind in {"synthetic_model_response", "bounded_delegation_result"}:
-        if source_kind not in {"real_model_response", "synthetic_model_response", "bounded_delegation_result"}:
+    if history_delivery or source_kind in {"synthetic_model_response", "bounded_delegation_result", "external_agent_task_v1"}:
+        if source_kind not in {"real_model_response", "synthetic_model_response", "bounded_delegation_result", "external_agent_task_v1"}:
             raise ChiefAgentError("История требует сохранённый результат модели.")
         authorized = (domain_gateway.history_delivery_authority(_delivery_job) if _delivery_job is not None
             else domain_gateway.access(envelope.get("scope"), read_only=True))
-        if source_kind == "bounded_delegation_result":
+        if source_kind == "external_agent_task_v1":
+            from ..ai_control_center import external_agent_chat
+            saved = external_agent_chat.validate(authorized, envelope)
+        elif source_kind == "bounded_delegation_result":
             saved = coordinator.validate_history_envelope(authorized, envelope)
         elif source_kind == "synthetic_model_response":
             saved = model_chat.validate_synthetic_envelope(authorized, envelope)
@@ -2039,7 +2042,7 @@ def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery
     key = _agent_world_request_key(envelope.get("request_id"))
     verification = envelope.get("verification") or {}
     status = str(envelope.get("status") or ("completed" if verification.get("passed") is True else "blocked"))
-    sealed_kind = source_kind in {"synthetic_model_response", "bounded_delegation_result"}
+    sealed_kind = source_kind in {"synthetic_model_response", "bounded_delegation_result", "external_agent_task_v1"}
     origin_correction = source_kind == "ninjatrader_report" and envelope.get("synthetic") is True
     if origin_correction:
         from ..ai_control_center.live_backtests import validate_rejected_envelope
@@ -2067,6 +2070,7 @@ def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery
                 "assistant", str(envelope.get("text") or ""), source="agent_world_local", request_id=key,
                 agent_id=str(envelope.get("agent_id") or ""), agent_name=str(envelope.get("agent_name") or ""),
                 model=(str(envelope.get("actual_model") or "model pending") if source_kind in {"real_model_response", "synthetic_model_response"} else
+                       "unknown / externally managed" if source_kind == "external_agent_task_v1" else
                        "Проверенная передача фактов · не оценка модели" if source_kind == "bounded_delegation_result" else
                        "Отклонённый отчёт · источник не подтверждён" if origin_correction else
                        "NinjaTrader historical backtest" if envelope["source_kind"] == "ninjatrader_report" else "Desktop chart capture"),
@@ -4616,6 +4620,7 @@ def _gateway_envelope(result: Dict[str, Any], *, source: str) -> Dict[str, Any]:
 def handle_message(message: str, *, source: str = "app", mirror_to_telegram: bool = True,
                    conversation_id: str = DEFAULT_CONVERSATION_ID, agent: str = "",
                    persona_id: Optional[str] = None,
+                   selected_model_id: Optional[str] = None,
                    on_thinking: Optional[Callable[[str], None]] = None,
                    scope: Optional[Dict[str, Any]] = None,
                    request_id: str = "") -> Dict[str, Any]:
@@ -4656,6 +4661,7 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
                     conversation_id=conversation_id, agent=agent,
                     on_thinking=on_thinking, scope=scope, request_id=request_id,
                     **({"persona_id": persona_id} if persona_id is not None else {}),
+                    **({"selected_model_id": selected_model_id} if selected_model_id is not None else {}),
                 )
             return _gateway_envelope(result, source=source)
         result = _handle_message_impl(
@@ -4663,6 +4669,7 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
                 conversation_id=conversation_id, agent=agent,
                 on_thinking=on_thinking, scope=scope, request_id=request_id,
                 **({"persona_id": persona_id} if persona_id is not None else {}),
+                **({"selected_model_id": selected_model_id} if selected_model_id is not None else {}),
             )
         return _gateway_envelope(result, source=source)
 
@@ -4990,6 +4997,7 @@ def _vitek_gateway_turn(clean: str, *, source: str, mirror_to_telegram: bool,
 def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegram: bool = True,
                          conversation_id: str = DEFAULT_CONVERSATION_ID, agent: str = "",
                          persona_id: Optional[str] = None,
+                         selected_model_id: Optional[str] = None,
                          on_thinking: Optional[Callable[[str], None]] = None,
                          scope: Optional[Dict[str, Any]] = None,
                          request_id: str = "") -> Dict[str, Any]:
@@ -5028,14 +5036,15 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
             on_thinking("Анализирую задачу…")
     scope_info = _normalize_conversation_scope(scope)
     from ..ai_control_center import live_gateway, coordinator, persona_identity
-    persona_turn = persona_identity.try_chat(clean, scope=scope, conversation_id=conversation_id,
-        request_id=request_key, source=source, persona_id=persona_id)
-    if persona_turn is not None:
-        return persona_turn
     coordinated_turn = coordinator.try_chat(clean, scope=scope, conversation_id=conversation_id,
                                             request_id=request_key, source=source)
     if coordinated_turn is not None:
         return coordinated_turn
+    persona_turn = persona_identity.try_chat(clean, scope=scope, conversation_id=conversation_id,
+        request_id=request_key, source=source, persona_id=persona_id,
+        **({"selected_model_id": selected_model_id} if selected_model_id is not None else {}))
+    if persona_turn is not None:
+        return persona_turn
     live_turn = live_gateway.try_chat(clean, scope=scope, conversation_id=conversation_id,
                                       request_id=request_key, source=source)
     if live_turn is not None:

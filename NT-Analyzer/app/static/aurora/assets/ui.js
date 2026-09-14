@@ -1556,9 +1556,18 @@
     });
   }
 
+  let impersonationLayoutCleanup = null;
+  function syncImpersonationLayout() {
+    const bar = qs('#impersonation-banner');
+    const bottom = bar ? Math.max(0, Math.ceil(bar.getBoundingClientRect().bottom)) : 0;
+    document.body.style.setProperty('--qa-drawer-top', bottom + 'px');
+  }
   function renderImpersonationBanner(auth) {
+    if (impersonationLayoutCleanup) impersonationLayoutCleanup();
+    impersonationLayoutCleanup = null;
     const old = qs('#impersonation-banner');
     if (old) old.remove();
+    syncImpersonationLayout();
     if (!auth || !auth.impersonating) return;
     const user = auth.user || {};
     const label = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username || user.id || user.user_id || 'пользователь';
@@ -1567,6 +1576,14 @@
       <button type="button" class="btn sm" id="impersonation-return">Вернуться в админку</button>
     </div>`);
     document.body.appendChild(bar);
+    syncImpersonationLayout();
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(syncImpersonationLayout) : null;
+    if (observer) observer.observe(bar);
+    window.addEventListener('resize', syncImpersonationLayout);
+    impersonationLayoutCleanup = () => {
+      if (observer) observer.disconnect();
+      window.removeEventListener('resize', syncImpersonationLayout);
+    };
     const btn = qs('#impersonation-return', bar);
     if (btn) btn.onclick = async () => {
       btn.disabled = true;
@@ -4787,9 +4804,15 @@
         catch (e) { reportError(e); create.disabled = false; }
       };
       qsa('[data-stg-as]', node).forEach(btn => btn.onclick = async () => {
-        if (!confirm('Открыть приложение как этот пользователь?')) return;
+        if (btn.disabled) return;
         btn.disabled = true;
-        try { await API.http.ownerImpersonate(Number(btn.dataset.stgAs)); toast('Открываю'); setTimeout(() => location.reload(), 300); }
+        try {
+          if (!await confirmDialog('Открыть приложение как этот пользователь? Действия будут выполняться в его тестовой сессии.', {
+            title: 'Открыть тестовую сессию', confirmLabel: 'Открыть как пользователь',
+          })) { btn.disabled = false; return; }
+          if (!btn.isConnected) return;
+          await API.http.ownerImpersonate(Number(btn.dataset.stgAs)); toast('Открываю'); setTimeout(() => location.reload(), 300);
+        }
         catch (e) { reportError(e); btn.disabled = false; }
       });
       qsa('[data-stg-google]', node).forEach(btn => btn.onclick = async () => {
@@ -8952,6 +8975,7 @@
     retryAfter: 0, transientError: null, viewerProfileId: '', aiAvailable: null,
     pendingAttachments: [], listQuery: '', listFilter: 'all',
     personas: [], personaId: '', personaError: '', personaGeneration: 0,
+    personaModels: [], selectedModelId: '',
   };
   const ORCH_KEY = lsKey('orch.currentConversationId');
   const ORCH_SKIN_KEY = lsKey('orch.skin');
@@ -9080,27 +9104,61 @@
     if (selected && !people.some(person => person.id === selected)) options.push(`<option value="${esc(selected)}" selected disabled>Выбранная Persona недоступна — выберите другую</option>`);
     return `<label for="orch-persona-select">Помощник <select class="btn sm" id="orch-persona-select" style="max-width:100%;min-width:0">${options.join('')}</select></label> <button class="btn sm" id="orch-persona-refresh" type="button" title="Обновить список Persona">Обновить</button><small style="display:block;overflow-wrap:anywhere">${esc(error || 'Выбирается личность, не модель. Доступны только поддерживаемые задания; имя не даёт новых прав.')}</small>`;
   }
+  async function orchLoadPersonaModels(reason = '') {
+    // Loads only this Persona's connections; the server still decides which
+    // are executable and re-checks the chosen one before any task exists.
+    if (ORCH.sending || !ORCH.personaId) return;
+    const persona = ORCH.personaId, generation = ORCH.personaGeneration;
+    try {
+      const data = await API.http.aiControlCenterDomain('models', {limit: 100}, {retries: 0});
+      if (generation !== ORCH.personaGeneration || persona !== ORCH.personaId) return;
+      ORCH.personaModels = Array.isArray(data?.items) ? data.items : [];
+      if (!ORCH.personaModels.some(model => model.id === ORCH.selectedModelId && model.status === 'active' && model.persona_id === persona && model.execution_available === true)) ORCH.selectedModelId = '';
+      const available = ORCH.personaModels.some(model => model.persona_id === persona && model.status === 'active' && model.execution_available === true);
+      ORCH.personaError = !available ? 'Нет проверенных доступных подключений этой Persona.'
+        : reason === 'ambiguous' ? 'Выберите подключение в списке и отправьте сообщение ещё раз.' : '';
+    } catch (_) {
+      if (generation !== ORCH.personaGeneration || persona !== ORCH.personaId) return;
+      ORCH.personaModels = []; ORCH.selectedModelId = ''; ORCH.personaError = 'Подключения не загружены. Повторите выбор модели.';
+    }
+    orchRenderPersonaPicker();
+  }
+  function orchNeedsModelChoice(error) {
+    return String(error?.code || error?.error || error?.message || error || '').includes('persona_model_ambiguous');
+  }
   function orchRenderPersonaPicker() {
     const wrap = qs('#orch-model-picker');
     if (!wrap) return;
     const hidden = orchIsHumanConversation(ORCH.currentId) || isGuest() || ORCH.aiAvailable === false;
     wrap.hidden = hidden; wrap.setAttribute('aria-hidden', String(hidden));
     if (hidden) return;
-    const html = orchPersonaOptions(ORCH.personas, ORCH.personaId, ORCH.personaError);
+    const availableModels = (ORCH.personaModels || []).filter(model => model.persona_id === ORCH.personaId && model.status === 'active' && model.execution_available === true);
+    const modelPicker = ORCH.personaId ? `<div><button class="btn sm" id="orch-load-models" type="button">Выбрать модель</button>${availableModels.length ? `<label>Подключение <select class="btn sm" id="orch-persona-model" style="max-width:100%"><option value="">Без явного выбора (только одно подключение)</option>${availableModels.map(model => `<option value="${esc(model.id)}"${model.id === ORCH.selectedModelId ? ' selected' : ''}>${esc(model.label || model.title)}${model.can_execute_test_only === true ? ' · SYNTHETIC' : ''}</option>`).join('')}</select></label>` : ''}<small style="display:block">Смена подключения действует на следующее сообщение; Persona, лицо и история сохраняются.</small></div>` : '';
+    const html = orchPersonaOptions(ORCH.personas, ORCH.personaId, ORCH.personaError) + modelPicker;
     if (wrap._personaHtml !== html) {
       wrap._personaHtml = html; wrap.innerHTML = html;
       qs('#orch-persona-select', wrap)?.addEventListener('change', event => {
         if (ORCH.sending) return;
         const id = event.target.value;
         if (id && !ORCH.personas.some(person => person.id === id && person.status === 'active')) return;
-        agentSpeakStop(); ORCH.personaId = id; ORCH.personaError = '';
+        agentSpeakStop(); ORCH.personaId = id; ORCH.personaError = ''; ORCH.selectedModelId = ''; ORCH.personaModels = [];
         orchRenderPersonaPicker();
       });
       qs('#orch-persona-refresh', wrap)?.addEventListener('click', () => orchLoadPersonas());
+      qs('#orch-persona-model', wrap)?.addEventListener('change', event => {
+        if (ORCH.sending) return;
+        const id = event.target.value;
+        if (id && !availableModels.some(model => model.id === id)) return;
+        ORCH.selectedModelId = id;
+      });
+      qs('#orch-load-models', wrap)?.addEventListener('click', () => orchLoadPersonaModels());
     }
     const select = qs('#orch-persona-select', wrap), refresh = qs('#orch-persona-refresh', wrap);
     if (select) select.disabled = ORCH.sending;
     if (refresh) refresh.disabled = ORCH.sending;
+    const modelSelect = qs('#orch-persona-model', wrap), modelLoad = qs('#orch-load-models', wrap);
+    if (modelSelect) modelSelect.disabled = ORCH.sending;
+    if (modelLoad) modelLoad.disabled = ORCH.sending;
   }
   async function orchLoadPersonas() {
     const generation = ++ORCH.personaGeneration, people = [], seen = new Set();
@@ -9125,11 +9183,16 @@
     }
     orchRenderPersonaPicker();
   }
-  function orchPersonaTransport(personas, selected) {
+  function orchPersonaTransport(personas, selected, models = [], selectedModel = '') {
     if (!selected) return {};
     if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(selected)
         || !(Array.isArray(personas) ? personas : []).some(person => person.id === selected && person.status === 'active')) throw new Error('Выбранная Persona недоступна. Обновите список и выберите помощника.');
-    return { persona_id: selected };
+    const result = { persona_id: selected };
+    if (selectedModel) {
+      if (!models.some(model => model.id === selectedModel && model.persona_id === selected && model.status === 'active' && model.execution_available === true)) throw new Error('Выбранное подключение недоступно. Обновите список моделей.');
+      result.selected_model_id = selectedModel;
+    }
+    return result;
   }
   function orchPendingPersonaFace(persona, label) {
     const name = String(label || persona?.title || persona?.name || 'AI-помощник');
@@ -9140,7 +9203,7 @@
     try { return localStorage.getItem(ORCH_KEY) || 'default'; } catch (e) { return 'default'; }
   }
   function orchSaveCurrentId(cid) {
-    if (ORCH.currentId !== String(cid || '')) { agentSpeakStop(); ORCH.personaId = ''; }
+    if (ORCH.currentId !== String(cid || '')) { agentSpeakStop(); ORCH.personaId = ''; ORCH.selectedModelId = ''; ORCH.personaModels = []; }
     ORCH.currentId = String(cid || '');
     try {
       if (ORCH.currentId) localStorage.setItem(ORCH_KEY, ORCH.currentId);
@@ -9276,6 +9339,7 @@
 
     fab.addEventListener('click', () => { ORCH.open ? closeOrchestrator() : openOrchestrator(); });
     qs('#orch-close', panel).addEventListener('click', closeOrchestrator);
+    panel.addEventListener('click', orchFollowAgentWorldLink);
     qs('#orch-list-toggle', panel).addEventListener('click', () => { orchCloseSkinMenu(); panel.classList.toggle('show-convos'); });
     qs('#orch-drawer-scrim', panel).addEventListener('click', () => panel.classList.remove('show-convos'));
     qs('#orch-new', panel).addEventListener('click', () => { orchCloseSkinMenu(); orchNewConversation(); });
@@ -9497,7 +9561,7 @@
   }
   function orchRenderAuthRequired(panel) {
     agentSpeakStop();
-    ++ORCH.personaGeneration; ORCH.personas = []; ORCH.personaId = ''; ORCH.personaError = '';
+    ++ORCH.personaGeneration; ORCH.personas = []; ORCH.personaId = ''; ORCH.personaError = ''; ORCH.selectedModelId = ''; ORCH.personaModels = [];
     const personaPicker = qs('#orch-model-picker'); if (personaPicker) { personaPicker.hidden = true; personaPicker.innerHTML = ''; personaPicker._personaHtml = ''; }
     const root = panel || qs('#orch-panel');
     if (!root) return;
@@ -10047,7 +10111,7 @@
   };
   function orchAgentWorldTaskId(row) {
     if (row?.source !== 'agent_world_local' || row.role !== 'assistant') return '';
-    const id = (row.actions || []).find(action => ['real_model_response', 'synthetic_model_response'].includes(action?.source_kind))?.task_id;
+    const id = (row.actions || []).find(action => ['real_model_response', 'synthetic_model_response', 'external_agent_task_v1'].includes(action?.source_kind))?.task_id;
     return /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(String(id || '')) ? id : '';
   }
   async function orchAgentWorldViews(messages, cid) {
@@ -10060,7 +10124,7 @@
         try {
           const response = await API.http.aiControlCenterTask(id), task = response.task || response;
           if (task.id === id && task.conversation_id === cid
-              && ['real_model_response', 'synthetic_model_response'].includes(task.source_kind)
+              && ['real_model_response', 'synthetic_model_response', 'external_agent_task_v1'].includes(task.source_kind)
               && (task.source_kind !== 'synthetic_model_response' || task.synthetic === true)) views.set(index, task);
         } catch (_) { /* Unavailable current state must never become a PASS. */ }
       }));
@@ -10236,6 +10300,16 @@
       return `<a class="orch-msg-shot" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.caption || 'Снимок графика')}"><img loading="lazy" src="${esc(a.url)}" alt="${esc(a.caption || 'Снимок графика')}"></a>`;
     }).join('');
   }
+  function orchFollowAgentWorldLink(event) {
+    const link = event.target.closest?.('[data-aw-chat-continuation]');
+    if (!link || event.button > 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const target = new URL(link.href, window.location.href);
+    if (target.origin !== window.location.origin || target.pathname !== window.location.pathname) return;
+    event.preventDefault();
+    closeOrchestrator();
+    if (target.hash === window.location.hash) window.dispatchEvent(new Event('aw-chat-navigate'));
+    else window.location.hash = target.hash;
+  }
   function orchActionsHtml(row, isUser) {
     if (isUser || !Array.isArray(row.actions) || !row.actions.length) return '';
     if (orchAgentWorldTaskId(row)) return orchAgentWorldCard(row);
@@ -10243,6 +10317,10 @@
     // lives in the footer marks instead of repeating above every bubble.
     const items = row.actions.filter(action => action && typeof action === 'object').slice(0, 8).map(action => {
       const name = String(action.name || action.action || 'vitek_task');
+      if (name === 'coordinator_clarification' && action.conversation_id && action.source_message_id) {
+        const route = '/ui/ai-command-center.html#tab=overview&domain=automation&chat_conversation=' + encodeURIComponent(action.conversation_id) + '&chat_message=' + encodeURIComponent(action.source_message_id);
+        return `<a class="btn sm" data-aw-chat-continuation href="${esc(route)}">Уточнить данные и ожидаемый результат</a>`;
+      }
       const status = String(action.status || 'running');
       const state = ORCH_ACTION_STATES[status] || [status || 'Выполняется', 'running'];
       const label = String(action.owner_label || action.summary || ORCH_ACTION_LABELS[name] || 'Работа по поручению');
@@ -10610,7 +10688,7 @@
     const known = {
       execution_v2_approved_scope_changed: 'Параметры поручения не совпали с подтверждёнными. Выполнение остановлено защитой; откройте задачу и проверьте выбранную персону и подключение.',
       persona_model_required: 'Для этой персоны нужно выбрать доступное подключение в AI Центре.',
-      persona_model_ambiguous: 'У персоны несколько подключений. Уточните выбор подключения в AI Центре.',
+      persona_model_ambiguous: 'У персоны несколько доступных подключений. Выберите подключение в списке над полем ввода и отправьте сообщение ещё раз.',
       persona_selection_inactive: 'Выбранная персона не активна. Проверьте её состояние в AI Центре.',
       persona_selection_unavailable: 'Выбранная персона недоступна в текущем рабочем пространстве.',
     };
@@ -10714,9 +10792,9 @@
     if (!text && !(human && ORCH.pendingAttachments.length)) return;
     if (isGuest()) { orchRenderAuthRequired(qs('#orch-panel')); return; }
     if (!window.API || API.config.offline) { toast('Чат недоступен в офлайн-превью'); return; }
-    let personaOptions = {};
+    let personaOptions = {}, chooseModel = false;
     if (!human) {
-      try { personaOptions = orchPersonaTransport(ORCH.personas, ORCH.personaId); }
+      try { personaOptions = orchPersonaTransport(ORCH.personas, ORCH.personaId, ORCH.personaModels || [], ORCH.selectedModelId || ''); }
       catch (error) { toast(error.message); return; }
     }
     const pendingPersona = !human ? ORCH.personas.find(person => person.id === personaOptions.persona_id)
@@ -10813,11 +10891,13 @@
         },
         onError: (err) => {
           removeThink();
+          chooseModel = chooseModel || orchNeedsModelChoice(err);
           setLiveBody(orchErrorHtml(orchFailure(err, false)));
           keepBottom();
         },
       }, personaOptions);
       if (!streamResult || streamResult.ok !== true) {
+        chooseModel = chooseModel || orchNeedsModelChoice(streamResult?.error);
         ORCH.transientError = { cid, ...orchFailure(streamResult?.error, false) };
         removeThink();
         setLiveBody(orchErrorHtml(ORCH.transientError));
@@ -10825,12 +10905,15 @@
     } catch (e) {
       // A failed streaming POST may already have been committed by the server.
       // Never repeat the same mutating message through a second transport.
+      chooseModel = chooseModel || orchNeedsModelChoice(e);
       ORCH.transientError = { cid, ...orchFailure(e, true) };
       removeThink();
       setLiveBody(orchErrorHtml(ORCH.transientError));
     } finally {
       ORCH.sending = false;
       orchRenderPersonaPicker();
+      // Several executable connections and no choice: offer the choice here.
+      if (chooseModel && ORCH.personaId) orchLoadPersonaModels('ambiguous');
       if (sendBtn) sendBtn.disabled = false;
       // Reload from storage so the final reply and auditable action states
       // replace the transient public progress block.

@@ -65,24 +65,42 @@ def test_selected_persona_durable_replay_does_not_change_message_or_identity(tmp
     assert local_worker.get(first["worker_job_id"], workspace_id="other") is None
 
 
-def test_chief_routes_selected_persona_before_coordinator_and_live_legacy(monkeypatch):
+def test_chief_routes_selected_persona_after_nonmatching_coordinator_preflight(monkeypatch):
     identity, calls = str(uuid4()), []
     scope = {"user_id": 7, "workspace_id": "ws_selected"}
     monkeypatch.setattr(persona_identity, "try_chat", lambda message, **kw: calls.append((message, kw)) or {"selected": True})
-    monkeypatch.setattr(coordinator, "try_chat", lambda *a, **kw: pytest.fail("not legacy coordinator"))
+    original_preflight = coordinator.try_chat
+    preflights = []
+    def preflight(*args, **kwargs):
+        result = original_preflight(*args, **kwargs)
+        preflights.append(result)
+        assert not calls and result is None
+        return result
+    monkeypatch.setattr(coordinator, "try_chat", preflight)
     monkeypatch.setattr(live_gateway, "try_chat", lambda *a, **kw: pytest.fail("not legacy application"))
     result = chief_agent._handle_message_impl("  Ассистент, привет  ", scope=scope, persona_id=identity,
                                             conversation_id="PERSONA-ONE", request_id="persona-one")
     assert result == {"selected": True}
+    assert preflights == [None]
     assert calls[0][0] == "Ассистент, привет"
     assert calls[0][1]["persona_id"] == identity and calls[0][1]["scope"] is scope
 
 
 def test_chief_never_falls_back_when_selected_persona_is_unavailable(monkeypatch):
+    original_preflight = coordinator.try_chat
+    preflights = []
+    def preflight(*args, **kwargs):
+        result = original_preflight(*args, **kwargs)
+        preflights.append(result)
+        assert result is None
+        return result
     def deny(*a, **kw):
+        assert preflights == [None]
         raise ContractError("persona_selection_unavailable")
     monkeypatch.setattr(persona_identity, "try_chat", deny)
-    monkeypatch.setattr(coordinator, "try_chat", lambda *a, **kw: pytest.fail("no fallback"))
+    monkeypatch.setattr(coordinator, "try_chat", preflight)
+    monkeypatch.setattr(live_gateway, "try_chat", lambda *a, **kw: pytest.fail("no fallback"))
     with pytest.raises(ContractError, match="persona_selection_unavailable"):
         chief_agent._handle_message_impl("Привет", persona_id=str(uuid4()),
             scope={"user_id": 7, "workspace_id": "ws_selected"})
+    assert preflights == [None]

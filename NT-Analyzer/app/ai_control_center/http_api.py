@@ -79,6 +79,8 @@ def _handle_get(handler, path: str, qs: dict) -> None:
                 handler._json(200, item)
         elif route.startswith("artifacts/") and len(route.split("/")) == 2:
             item = service.repository.get_artifact_by_id(context=context, artifact_id=UUID(route.split("/")[1]))
+            from .memory_policy import artifact_allowed
+            item = artifact_allowed(gateway.domain_service_for(handler).service, context, item)
             if item is None:
                 handler._err(404, "Артефакт не найден.", code="artifact_not_found")
             else:

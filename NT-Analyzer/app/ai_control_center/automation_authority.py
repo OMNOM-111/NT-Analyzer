@@ -136,6 +136,26 @@ def device_binding(scope, *, saved=None):
         return {"mode": trust, "device_id": device_id, "session_id": sid}
 
 
+def _execution_provenance(context, plan, kind, ceiling, *, service=None):
+    """Synthetic scheduling is diagnostic opt-in, never an authority exemption."""
+    if plan.get("synthetic") is False:
+        return
+    from . import test_executor
+    if (plan.get("synthetic") is not True or kind not in {"schedule", "delegation"} or ceiling != 0
+            or context.scope.environment != c.Environment.DEVELOPMENT
+            or not test_executor.enabled(context.scope.workspace_id)):
+        raise ContractError("automation_plan_invalid")
+    if kind == "delegation":
+        from . import result_handoff
+        if service is None or plan.get("root_kind") != result_handoff.DATA_KIND:
+            raise ContractError("automation_plan_invalid")
+        source = result_handoff.verified_model_data(service, context, (plan.get("root_task") or {}).get("entity_id"))
+        pinned = plan.get("root_source") or {}
+        keys = ("source_outcome_id", "source_evaluation_id", "source_proof_sha256", "artifact_hashes", "facts", "facts_sha256")
+        if source.get("synthetic") is not True or any(source.get(key) != pinned.get(key) for key in keys):
+            raise ContractError("automation_plan_invalid")
+
+
 def _load(service, context, reference, *, operational=True):
     from .delegation import snapshot, utc
     ref = snapshot(context, reference)
@@ -162,6 +182,8 @@ def _load(service, context, reference, *, operational=True):
     if (proof.get("kind") not in _OPERATIONS or type(proof.get("max_call_cost_usd")) not in {int, float}
             or not math.isfinite(proof["max_call_cost_usd"]) or not 0 <= proof["max_call_cost_usd"] <= 1):
         raise ContractError("automation_approval_invalid")
+    if operational:
+        _execution_provenance(context, proof["plan"], proof["kind"], proof["max_call_cost_usd"], service=service)
     return decision, proof, ref
 
 
@@ -187,9 +209,9 @@ def approve(authorized, service, *, proposal, kind, expires_at, max_call_cost_us
         raise ContractError("automation_proposal_invalid")
     plan = normalized_plan(proposal["plan"])
     from . import delegation, scheduler
-    if (plan.get("version") != (delegation.VERSION if kind == "delegation" else scheduler.VERSION)
-            or plan.get("synthetic") is not False):
+    if plan.get("version") != (delegation.VERSION if kind == "delegation" else scheduler.VERSION):
         raise ContractError("automation_plan_invalid")
+    _execution_provenance(context, plan, kind, max_call_cost_usd, service=service)
     if digest(plan) != approved_plan_sha256:
         raise ContractError("automation_plan_changed")
     from .model_service import _uuid

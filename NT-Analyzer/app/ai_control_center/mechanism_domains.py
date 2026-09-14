@@ -30,7 +30,7 @@ from .states import ContractError, EntityKind
 # error rather than a silent no-op.
 ACTIONS = {
     "automation": frozenset({"propose", "enable", "cancel", "revoke", "delegate", "reconcile",
-        "preview_delegation", "commission", "preview_commission", "approve_commission"}),
+        "preview_delegation", "commission", "chat_seed", "clarify_commission", "preview_commission", "approve_commission"}),
     "router": frozenset({"preview", "apply"}),
 }
 
@@ -297,8 +297,19 @@ def mutate(authorized, service, domain, identity, action, payload, *, expected_r
             return _apply(authorized, service, identity, payload, idempotency_key, expected_revision)
         return _preview(authorized, service, identity, payload)
     from . import automation_authority, coordinator, delegation, scheduler
+    if action == "chat_seed":
+        return coordinator.chat_seed(authorized, payload)
     if action == "commission":
-        return coordinator.commission(authorized, service, payload, idempotency_key)
+        if "chat_source" in payload:
+            return coordinator.chat_commission(authorized, service, payload, idempotency_key)
+        if "selection" not in payload:
+            return coordinator.plan_request(authorized, service, payload)
+        return coordinator.commission_request(authorized, service, payload, idempotency_key)
+    if action == "clarify_commission":
+        if "selection" not in payload:
+            return coordinator.plan_request(authorized, service, payload)
+        return coordinator.clarify_request(authorized, service, identity, payload,
+            idempotency_key, expected_revision=expected_revision)
     if action == "preview_commission":
         return coordinator.preview(authorized, service, identity)
     if action == "approve_commission":
@@ -352,13 +363,16 @@ def mutate(authorized, service, domain, identity, action, payload, *, expected_r
               "payload": spec, "idempotency_key": idempotency_key,
               "conversation_id": conversation_id, "message_id": message_id}
     proposed = scheduler.propose(authorized, service, domain_service, **common)
+    from .automation_authority import normalized_plan
+    from .model_evaluation import digest
+    plan_sha256 = digest(normalized_plan(proposed["plan"]))
     if action == "propose":
         # Read-only by the scheduler's own contract: no controller, no queue
         # entry and no grant exist after this.
-        return {**proposed, "approved": False, "actions": ["enable"]}
+        return {**proposed, "approved": False, "actions": ["enable"], "approved_plan_sha256": plan_sha256}
 
-    from .automation_authority import normalized_plan
-    from .model_evaluation import digest
+    if payload.get("approved_plan_sha256") != plan_sha256:
+        raise ContractError("schedule_approval_plan_changed")
     hours = payload.get("grant_hours", 8)
     if type(hours) not in {int, float} or not 0 < hours <= 24 * 30:
         raise ContractError("mechanism_grant_window_invalid")
@@ -368,7 +382,7 @@ def mutate(authorized, service, domain, identity, action, payload, *, expected_r
         proposal={"controller_id": proposed["controller_id"], "plan": proposed["plan"]},
         kind="schedule", expires_at=(datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat(),
         max_call_cost_usd=ceiling,
-        approved_plan_sha256=digest(normalized_plan(proposed["plan"])),
+        approved_plan_sha256=payload["approved_plan_sha256"],
         idempotency_key=idempotency_key)
     created = scheduler.create(authorized, service, domain_service, grant_ref=grant, **common)
     return {**created, "grant_ref": grant, "approved": True, "actions": ["cancel", "revoke"]}

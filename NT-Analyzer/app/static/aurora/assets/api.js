@@ -174,10 +174,17 @@
   // onStatus, onThinkingDone, onFinal, onError, onDone }. Resolves when the
   // stream ends. Falls back gracefully if streaming is unsupported.
   function personaChatOptions(options) {
+    if (options?.selected_model_id != null && options?.persona_id == null) throw new Error('Сначала выберите Persona.');
     if (options == null || options.persona_id == null) return {};
     const id = options.persona_id;
     if (typeof id !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) throw new Error('Выберите сохранённую Persona.');
-    return { persona_id: id.toLowerCase() };
+    const result = { persona_id: id.toLowerCase() };
+    if (options.selected_model_id != null) {
+      const model = options.selected_model_id;
+      if (typeof model !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(model)) throw new Error('Выберите сохранённое подключение.');
+      result.selected_model_id = model.toLowerCase();
+    }
+    return result;
   }
   async function streamOrchestrator(message, conversationId, agent, handlers, options) {
     const path = '/api/ai-lab/orchestrator/message/stream';

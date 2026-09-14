@@ -101,7 +101,7 @@ class SocialPublicationService:
             hashes.append(ref.sha256)
         return sorted(set(hashes))
 
-    def _model_receipt(self, context, task):
+    def _model_receipt(self, context, task, *, allow_diagnostic=False):
         if task.status != "succeeded" or task.checkpoint is None:
             raise ContractError("social_verified_source_required")
         checkpoint = self._json(context, task.checkpoint)
@@ -113,7 +113,16 @@ class SocialPublicationService:
         model = self._owned(context, EntityKind.MODEL, checkpoint.get("model_id"))
         ref = self._wire_ref(context, checkpoint.get("receipt"))
         receipt = self._json(context, ref)
-        if (receipt.get("source") != "provider_response" or receipt.get("synthetic") is not False
+        from .test_executor import EXECUTOR, enabled as development_executor_enabled
+        diagnostic = receipt.get("synthetic") is True
+        if diagnostic and (not allow_diagnostic or context.scope.environment != c.Environment.DEVELOPMENT
+                or not development_executor_enabled(context.scope.workspace_id)
+                or spec.get("rubric_key") not in {"json_arithmetic", "extract_facts"}
+                or receipt.get("source") != "local_test_executor" or receipt.get("executor") != EXECUTOR
+                or receipt.get("actual_model") != EXECUTOR or receipt.get("external_call") is not False
+                or receipt.get("paid_call") is not False or receipt.get("cost_usd") != 0):
+            raise ContractError("social_receipt_mismatch")
+        if ((not diagnostic and (receipt.get("source") != "provider_response" or receipt.get("synthetic") is not False))
                 or receipt.get("task_id") != str(task.header.entity_id)
                 or receipt.get("request_sha256") != checkpoint["request_sha256"]):
             raise ContractError("social_receipt_mismatch")
@@ -130,7 +139,8 @@ class SocialPublicationService:
         if outcome.status != "verified" or outcome.verification is None:
             raise ContractError("social_verified_source_required")
         task = self._owned(context, EntityKind.TASK, outcome.task.entity_id)
-        checkpoint, model, receipt_ref, receipt, evaluated = self._model_receipt(context, task)
+        checkpoint, model, receipt_ref, receipt, evaluated = self._model_receipt(context, task, allow_diagnostic=True)
+        diagnostic = receipt.get("synthetic") is True
         proof = self._json(context, outcome.verification)
         hashes = self._evidence(context, outcome.evidence + (outcome.verification, receipt_ref))
         if outcome.execution is None:
@@ -140,8 +150,13 @@ class SocialPublicationService:
             raise ContractError("social_verified_source_required")
         common = (proof.get("task_id") == str(task.header.entity_id)
                   and proof.get("model_id") == str(model.header.entity_id)
-                  and proof.get("self_scored") is False and proof.get("synthetic") is False and proof.get("passed") is True)
+                  and proof.get("self_scored") is False and proof.get("synthetic") is diagnostic and proof.get("passed") is True)
         if not common:
+            raise ContractError("social_evaluation_mismatch")
+        if diagnostic and (proof.get("executor") != receipt["executor"]
+                or proof.get("actual_model") != receipt["actual_model"]
+                or proof.get("source_kind") != "synthetic_model_response"
+                or proof.get("external_call") is not False or proof.get("cost_usd") != 0):
             raise ContractError("social_evaluation_mismatch")
         metrics = {}
         if proof.get("source") == "existing_application_receipt":
@@ -198,14 +213,21 @@ class SocialPublicationService:
         else:
             if (checkpoint.get("application_request") or evaluated["rubric_key"] in {"court_vote", "connection_exact"}
                     or proof.get("evaluator") != "independent_local_evidence_verifier"
-                    or any(proof.get(key) != value for key, value in evaluated.items())
+                    or any(proof.get(key) != value for key, value in {**evaluated, "synthetic": diagnostic}.items())
                     or self._wire_ref(context, proof.get("receipt")) != receipt_ref or execution.receipt != receipt_ref):
                 raise ContractError("social_evaluation_mismatch")
             source_kind, title = "real_model_response", "Agent World · verified capability result"
             summary = "Independent bounded capability test; no general model-quality claim."
             metrics = {"Passed checks": len(evaluated["checks"]), "Observed score %": evaluated["observed_score_pct"]}
+            if diagnostic:
+                source_kind, title = "synthetic_model_response", "SYNTHETIC · Agent World mechanism check"
+                summary = "Development diagnostic only; no real model, market result or quality claim."
+                metrics = {"Diagnostic checks": len(evaluated["checks"])}
         return outcome, {"kind": "Agent World Result", "title": title, "summary": summary,
                          "metrics": metrics, "source_kind": source_kind, "evidence_sha256": hashes,
+                         "synthetic": diagnostic,
+                         **({"diagnostic_mode": "named_development_executor", "quality_claim": False,
+                             "external_call": False, "paid_call": False, "cost_usd": 0} if diagnostic else {}),
                          "market_performance_claim": False, "routing_effect": "none"}
 
     def _decision(self, context, identity):
@@ -294,7 +316,7 @@ class SocialPublicationService:
             record, snapshot = (self._outcome(context, source_id) if source_kind == "outcome" else self._decision(context, source_id))
             snapshot.update(snapshot_version=1, source_type="agent_world_" + source_kind,
                             source_id=str(record.header.entity_id), source_revision=record.header.revision,
-                            timestamp_utc=c.primitive(record.header.updated_at), synthetic=False,
+                            timestamp_utc=c.primitive(record.header.updated_at), synthetic=snapshot.get("synthetic") is True,
                             limitations=[_LIMITATION, _NO_PRIVATE])
         else:
             # Arbitrary artifacts and Memory can never be laundered as a result.

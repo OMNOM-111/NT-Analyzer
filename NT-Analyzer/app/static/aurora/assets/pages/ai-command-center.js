@@ -10,7 +10,8 @@
     routines: { title: 'Рутины', description: 'Предложения повторяющейся работы. Принятие предложения не включает фоновое исполнение.', create: 'Предложить рутину' },
     calendar: { title: 'Календарь', description: 'Согласованные события рабочего пространства. Время вводится локально и сохраняется в UTC.', create: 'Добавить событие' },
     publications: { title: 'Публикация в SF Social', description: 'Только проверенный результат или решение: сначала снимок для просмотра, затем отдельное подтверждение публикации. Личная память и сырые ответы не публикуются.', create: 'Подготовить публикацию' },
-    models: { title: 'Модели и подключения', description: 'Ваши подключения и внешние агенты. Persona, учётная запись провайдера и модель — отдельные сущности.', create: 'Подключить модель' },
+    models: { title: 'Модели и подключения', description: 'Подключения LLM API. Persona, учётная запись провайдера и модель — отдельные сущности.', create: 'Подключить модель' },
+    external_agents: { title: 'Внешние агенты', description: 'Самостоятельное A2A-подключение, не модель и не Persona. Возможности подтверждает сервер; MCP-инструмент не является агентом.', create: 'Добавить внешнего агента' },
     model_tasks: { title: 'История моделей', description: 'Фактические ответы и независимые проверки. Неизвестная стоимость не равна нулевой.', create: '' },
     tasks: { title: 'Действия задачи', description: 'Изменение выполняет сервер после повторной проверки прав и состояния.', create: '' },
     experiments: { title: 'Эксперименты', description: 'Одно проверяемое задание для 2–3 моделей. Сравнение строится по фактическим ответам, не по самооценке.', create: 'Сравнить модели' },
@@ -18,9 +19,9 @@
     router: { title: 'Выбор подключения · Router', description: 'Кандидаты и источник выбора для конкретной задачи. Предпросмотр ничего не запускает; повторное задание требует отдельного разрешения.', create: '' },
     system: { title: 'Система', description: 'Доступность, ограничения и состояние текущего рабочего пространства. Чтение не меняет флаги или бюджет.', create: '' },
   });
-  const ACTION_LABELS = Object.freeze({ preview: 'Предпросмотр выбора', apply: 'Разрешить новый запуск', seed_preview: 'Создать учебные записи Preview', create: 'Создать', connect: 'Подключить', bind_existing: 'Связать Local-подключение', update: 'Изменить', activate: 'Активировать', suspend: 'Приостановить', archive: 'В архив', promote: 'Продвинуть', publish_to_workspace: 'Опубликовать в workspace', propose_consensus: 'Собрать решение по вкладам', suggest_routine: 'Предложить по результатам', prepare: 'Подготовить снимок', publish: 'Опубликовать в SF Social', revoke: 'Отозвать разрешение', propose: 'Проверить расписание', enable: 'Включить по расписанию', commission: 'Новое поручение Координатору', preview_commission: 'Проверить план делегирования', approve_commission: 'Разрешить этот план', reconcile: 'Проверить продолжение', version: 'Новая версия', accept: 'Принять', dismiss: 'Отклонить', review: 'Проверить через Court', review_result: 'Проверить полученный результат', withdraw: 'Отозвать решение', test: 'Проверить соединение', task: 'Первое задание', disconnect: 'Отключить', cancel: 'Отменить задачу', retry: 'Новая безопасная попытка', handoff: 'Передать факты агенту', open_chat: 'Открыть ручной разбор в SF Chat' });
+  const ACTION_LABELS = Object.freeze({ verify: 'Проверить агента', disable: 'Выключить подключение', rotate: 'Заменить секрет', preview: 'Предпросмотр выбора', apply: 'Разрешить новый запуск', seed_preview: 'Создать учебные записи Preview', create: 'Создать', connect: 'Подключить', bind_existing: 'Связать Local-подключение', update: 'Изменить', activate: 'Активировать', suspend: 'Приостановить', archive: 'В архив', promote: 'Продвинуть', publish_to_workspace: 'Опубликовать в workspace', propose_consensus: 'Собрать решение по вкладам', suggest_routine: 'Предложить по результатам', prepare: 'Подготовить снимок', publish: 'Опубликовать в SF Social', revoke: 'Отозвать разрешение', propose: 'Проверить расписание', enable: 'Включить по расписанию', commission: 'Новое поручение Координатору', preview_commission: 'Проверить план делегирования', approve_commission: 'Разрешить этот план', reconcile: 'Проверить продолжение', version: 'Новая версия', accept: 'Принять', dismiss: 'Отклонить', review: 'Проверить через Court', review_result: 'Проверить полученный результат', withdraw: 'Отозвать решение', test: 'Проверить соединение', task: 'Первое задание', disconnect: 'Отключить', cancel: 'Отменить задачу', retry: 'Новая безопасная попытка', handoff: 'Передать факты агенту', open_chat: 'Открыть ручной разбор в SF Chat' });
   const STATUS = {
-    running: ['В работе', 'good'], working: ['В работе', 'good'], active: ['Активен', 'good'], healthy: ['Работает', 'good'], succeeded: ['Завершено', 'good'], completed: ['Завершено', 'good'], verified: ['Проверено', 'good'], passed: ['Проверено', 'good'], accepted: ['Принято', 'good'], submitted: ['Вклад записан', 'info'],
+    verifying: ['Проверяется', 'info'], degraded: ['Требует внимания', 'warning'], running: ['В работе', 'good'], working: ['В работе', 'good'], active: ['Активен', 'good'], healthy: ['Работает', 'good'], succeeded: ['Завершено', 'good'], completed: ['Завершено', 'good'], verified: ['Проверено', 'good'], passed: ['Проверено', 'good'], accepted: ['Принято', 'good'], submitted: ['Вклад записан', 'info'],
     planned: ['Запланировано', 'neutral'], ready: ['В очереди', 'neutral'], queued: ['В очереди', 'neutral'], waiting: ['Ожидает', 'neutral'], pending: ['Ожидает', 'neutral'], free: ['Свободен', 'neutral'], available: ['Свободен', 'neutral'], idle: ['Свободен', 'neutral'],
     review: ['Нужна проверка', 'review'], awaiting_owner: ['Решение владельца', 'review'], approval_required: ['Нужно подтверждение', 'review'], court: ['Разбор Court', 'review'],
     blocked: ['Заблокировано', 'warning'], paused: ['На паузе', 'warning'], warning: ['Внимание', 'warning'],
@@ -131,11 +132,17 @@
     return `<dl class="aw-readiness">${cells}${mode}</dl>${item.note ? `<p class="aw-field-hint">${esc(item.note)}</p>` : ''}`;
   }
   const canRunDemo = data => data?.enabled === true && data?.capabilities?.can_run_demo === true;
+  function memoryScopeCard(item) {
+    const names = { user: 'Личная', workspace: 'Рабочее пространство', strategy: 'Проект стратегии', session: 'Текущая сессия', governance: 'Управление', operational: 'Выполнение задачи' };
+    const scope = Object.prototype.hasOwnProperty.call(names, item.memory_scope) ? names[item.memory_scope] : 'Личная · прежняя запись';
+    const purposes = { task_result: 'Результат задачи', error_recovery: 'Восстановление после ошибки', runtime_status: 'Состояние выполнения' };
+    return `<dl class="aw-detail-grid"><div><dt>Область памяти</dt><dd>${esc(scope)}</dd></div><div><dt>Срок хранения</dt><dd>${esc(date(item.retention_until))}</dd></div><div><dt>Видимость</dt><dd>${item.visibility === 'workspace' ? 'Участники пространства' : 'Личная; область сама по себе не открывает доступ'}</dd></div></dl>${item.session_bound ? '<p class="aw-note">Привязана к текущей подтверждённой сессии; другая сессия не получает содержимое.</p>' : ''}${purposes[item.purpose] ? `<p class="aw-note">Назначение: ${esc(purposes[item.purpose])}</p>` : ''}${item.scope_binding && Object.keys(item.scope_binding).length ? `<details class="aw-technical"><summary>Связанный проект или задача</summary><pre>${esc(publicJSON(item.scope_binding))}</pre></details>` : ''}`;
+  }
   const knownDomain = value => Object.prototype.hasOwnProperty.call(DOMAINS, String(value || ''));
-  const actionLabel = value => Object.prototype.hasOwnProperty.call(ACTION_LABELS, value) ? ACTION_LABELS[value] : 'Действие';
+  const actionLabel = value => value === 'clarify_commission' ? 'Уточнить новым поручением' : Object.prototype.hasOwnProperty.call(ACTION_LABELS, value) ? ACTION_LABELS[value] : 'Действие';
   function allowedDomainActions(data, item) {
     if (data?.enabled !== true) return [];
-    return rows(item ? item.actions : data.actions).filter(value => typeof value === 'string' && Object.prototype.hasOwnProperty.call(ACTION_LABELS, value));
+    return rows(item ? item.actions : data.actions).filter(value => typeof value === 'string' && (value === 'clarify_commission' || Object.prototype.hasOwnProperty.call(ACTION_LABELS, value)));
   }
   const field = (key, label, type, extra) => ({ key, label, type: type || 'text', ...(extra || {}) });
   const rubricField = (assistant = false) => field('rubric_key', 'Задание и проверка', 'select', { required: true, options: [['connection_exact', 'Точный ответ · соединение'], ['json_arithmetic', 'Арифметика · JSON'], ['extract_facts', 'Извлечение фактов'], ...(assistant ? [['assistant_response', 'Ответ помощника · ручная проверка']] : [])] });
@@ -154,6 +161,13 @@
   }
   function domainFormFields(domain, action, catalog) {
     if (!knownDomain(domain)) return [];
+    if (domain === 'automation' && action === 'clarify_commission') return domainFormFields(domain, 'commission', catalog);
+    if (domain === 'external_agents') {
+      if (action === 'create') return [field('display_name', 'Название подключения', 'text', { required: true, max: 80 }), field('protocol', 'Протокол', 'select', { required: true, options: [['a2a-0.3-jsonrpc-bounded', 'A2A 0.3 · ограниченный JSON-RPC']] }), field('endpoint', 'HTTPS endpoint внешнего агента', 'url', { required: true, max: 350, hint: 'Публичный HTTPS:443. Внутренние адреса, перенаправления и metadata endpoints запрещены.' }), field('credential', 'Секрет подключения', 'password', { required: true, max: 4096, hint: 'Введите самостоятельно. Секрет не возвращается в карточке и не копируется из owner-подключений.' }), field('capability', 'Запрашиваемая возможность', 'select', { required: true, options: [['stratforge.json_arithmetic.v1', 'Диагностика: арифметика JSON']], hint: 'Не оценка профессионального качества. Сервер пересечёт запрос с проверенными возможностями агента.' })];
+      if (action === 'rotate') return [field('credential', 'Новый секрет подключения', 'password', { required: true, max: 4096, hint: 'Старый секрет не показывается. После замены требуется новая проверка подключения.' })];
+      if (action === 'task') return [field('input_text', 'Входные данные диагностики', 'textarea', { required: true, max: 4000, hint: 'JSON-массив 3–20 целых чисел, например [1,2,3]. Задание проходит штатный Координатор; результат не считается Model Performance.' })];
+      return [];
+    }
     if (['tasks', 'model_tasks'].includes(domain) && action === 'review_result') return [field('decision', 'Ваше решение по этому результату', 'select', { required: true, options: [['', 'Выберите решение'], ['accept', 'Результат проверен и принят'], ['reject', 'Результат проверен и отклонён']] }), field('comment', 'Комментарий к проверке', 'textarea', { max: 2000, hint: 'Решение относится только к этому результату. Оно не выставляет профессиональную оценку модели и не разрешает дальнейшее исполнение.' })];
     if (domain === 'publications') {
       if (action === 'prepare') return [field('source', 'Проверенный источник', 'publication-source', { required: true, hint: 'Сервер предоставил только разрешённые источники. На этом шаге пост не создаётся.' })];
@@ -164,7 +178,7 @@
     if (['tasks', 'model_tasks'].includes(domain) && action === 'handoff') return [field('target_model_id', 'Другой агент / подключённая модель', 'model', { required: true, hint: 'Передаются только проверенные факты и метки источника. Это проверка точности передачи, не анализ стратегии или изображения. Автономное делегирование не включается.' })];
     if (domain === 'models') {
       if (action === 'bind_existing') return [field('registry_id', 'Разрешённое Local-подключение', 'binding', { required: true, hint: 'Список сформирован сервером только для текущего владельца. Исходный ключ и существующий бюджет не меняются.' }), field('persona_id', 'Активная Persona', 'persona', { required: true }), field('label', 'Название связи (необязательно)', 'text', { max: 80 })];
-      if (action === 'connect') return [field('label', 'Название подключения', 'text', { required: true, max: 80 }), field('connection_kind', 'Тип подключения', 'select', { required: true, options: [['model', 'Своя модель'], ['external_agent', 'Внешний агент']] }), field('provider', 'Провайдер', 'provider', { required: true }), field('model', 'Идентификатор модели', 'text', { required: true, max: 120 }), field('base_url', 'Endpoint (для совместимого провайдера)', 'url', { max: 250, hint: 'Только разрешённый сервером HTTPS endpoint. Для стандартного провайдера оставьте пустым.' }), field('api_key', 'Ключ подключения', 'password', { required: true, max: 4096 }), field('persona_id', 'Persona', 'persona', { required: true })];
+      if (action === 'connect') return [field('label', 'Название подключения', 'text', { required: true, max: 80 }), field('connection_kind', 'Тип подключения', 'select', { required: true, options: [['model', 'Своя модель']] }), field('provider', 'Провайдер', 'provider', { required: true }), field('model', 'Идентификатор модели', 'text', { required: true, max: 120 }), field('base_url', 'Endpoint (для совместимого провайдера)', 'url', { max: 250, hint: 'Только разрешённый сервером HTTPS endpoint. Для стандартного провайдера оставьте пустым.' }), field('api_key', 'Ключ подключения', 'password', { required: true, max: 4096 }), field('persona_id', 'Persona', 'persona', { required: true })];
       if (action === 'task') return [rubricField(true), field('input_text', 'Задание / входные данные', 'textarea', { max: 4000, hint: 'Ответ помощника: обычный текст, один ограниченный ответ без tools; содержание проверяете вы, автоматического рейтинга нет. Соединение: пусто. Арифметика: JSON-массив 3–20 целых чисел. Факты: 2–12 строк city=Paris. Секреты не отправляйте.' })];
     }
     if (domain === 'experiments' && action === 'create') return [field('title', 'Название сравнения', 'text', { required: true, max: 80 }), field('model_ids', 'Модели (выберите 2–3)', 'models', { required: true, minItems: 2, maxItems: 3 }), rubricField(), field('input_text', 'Одинаковые входные данные', 'textarea', { max: 4000, hint: 'Соединение: пусто. Арифметика: JSON-массив целых чисел. Факты: строки key=value. Один вход будет отправлен всем выбранным моделям.' })];
@@ -175,7 +189,7 @@
     }
     if (domain === 'automation') {
       if (action === 'commission') return [field('goal', 'Цель поручения', 'text', { required: true, max: 400, hint: 'Этот ограниченный Координатор строит числовую сводку и проверяет передачу фактов, не торговый или универсальный план.' }),
-        field('input_text', 'Исходные числа (JSON-массив)', 'textarea', { required: true, max: 4000, hint: 'Например [17, -4, 12, 9]. Сначала выполняется одна исходная задача в SF Chat; дочерние — только после отдельного разрешения плана.' }),
+        field('input_text', 'Исходные числа', 'textarea', { required: true, max: 4000, hint: 'От 3 до 20 целых чисел через запятую, например 17, -4, 12, 9. Сначала одна задача в SF Chat; дочерние — только после отдельного разрешения.' }),
         field('coordinator_model_id', 'Подключение Координатора', 'model', { required: true }),
         field('target_model_ids', 'Проверяющие подключения (1–3)', 'models', { required: true, minItems: 1, maxItems: 3 }),
         field('topology', 'Связи проверок', 'select', { required: true, options: [['parallel', 'Параллельно: каждый проверяет исходные факты'], ['chain', 'Цепочка: до трёх уровней передачи']] })];
@@ -188,8 +202,8 @@
         field('input_text', 'Входные данные', 'textarea', { max: 4000, hint: 'Те же ограниченные проверки, что и в разовой задаче. Секреты не отправляйте.' }),
         field('local_start', 'Первый запуск', 'datetime-local', { required: true }),
         field('occurrences', 'Сколько раз выполнить', 'number', { required: true, min: 1, max: 10 }),
-        field('interval_minutes', 'Интервал между запусками (минуты, 0 — один раз)', 'number', { required: true, min: 0, max: 525600 }),
-        field('grace_minutes', 'Допустимое опоздание (минуты)', 'number', { required: true, min: 1, max: 1440, hint: 'Пропущенный запуск записывается как пропущенный, а не выполняется позже.' }),
+        field('interval_minutes', 'Интервал между запусками (минуты, 0 — один раз)', 'number', { required: true, min: 0, max: 43200 }),
+        field('grace_minutes', 'Допустимое опоздание (минуты)', 'number', { required: true, min: 1, max: 60, hint: 'Пропущенный запуск записывается как пропущенный, а не выполняется позже.' }),
         field('grant_hours', 'Срок разрешения (часы)', 'number', { required: true, min: 1, max: 720, hint: 'Расписание не может пережить это разрешение. По истечении новые запуски прекращаются.' }),
         field('max_call_cost_usd', 'Потолок стоимости одного вызова (USD)', 'text', { required: true, max: 12, hint: 'Отдельное условие от разрешения. Существующий бюджет рабочего пространства этим не увеличивается.' })];
     }
@@ -204,14 +218,21 @@
     const title = field('title', 'Название', 'text', { required: true, max: 160 });
     const description = field('description', 'Описание', 'textarea', { max: 4000, sendEmpty: true });
     const sources = field('source_ids', 'UUID исходных артефактов', 'ids', { maxItems: 20, hint: 'Необязательно. По одному UUID в строке; принадлежность проверит сервер.' });
-    if (domain === 'memory') return [title, field('content', 'Содержание', 'textarea', { required: true, max: 12000 }), field('purpose', 'Для чего хранится', 'text', { required: true, max: 160 }), field('retention_days', 'Срок хранения (дни)', 'number', { required: true, min: 1, max: 365 }), sources];
+    if (domain === 'memory') return [title,
+      field('memory_scope', 'Область памяти', 'select', { default: 'user', optionalIfMissing: true, options: [['user', 'Личная'], ['workspace', 'Рабочее пространство'], ['strategy', 'Проект стратегии'], ['session', 'Текущая сессия'], ['governance', 'Управление · только владелец/администратор'], ['operational', 'Выполнение задачи']], hint: 'Область не выдаёт права. Общая видимость появляется только после отдельной публикации; сессионную, управленческую и операционную память публиковать нельзя.' }),
+      field('content', 'Содержание', 'textarea', { required: true, max: 12000 }),
+      field('purpose', 'Для чего хранится', 'text', { max: 160, hint: 'Обязательно, кроме области выполнения задачи — там выберите назначение ниже.' }),
+      field('operational_purpose', 'Назначение при выполнении задачи', 'select', { optionalIfMissing: true, options: [['', 'Не применяется'], ['task_result', 'Результат задачи'], ['error_recovery', 'Восстановление после ошибки'], ['runtime_status', 'Состояние выполнения']] }),
+      field('strategy_project_id', 'Проект (для памяти стратегии)', 'record', { source: 'strategy_project_candidates' }),
+      field('task_id', 'Задача (для оперативной памяти)', 'record', { source: 'task_candidates' }),
+      field('retention_days', 'Срок хранения (дни)', 'number', { required: true, min: 1, max: 365, hint: 'Память текущей сессии — не дольше одного дня и только в этой сессии.' }), sources];
     if (domain === 'projects') return [title, description, field('strategy_key', 'Ключ стратегии', 'text', { required: true, max: 120 })];
     if (domain === 'routines') return [title, description, field('interval_minutes', 'Интервал (минуты)', 'number', { required: true, min: 5, max: 525600 }), sources];
     if (domain === 'calendar') return [title, description, field('starts_at', 'Начало (местное время)', 'datetime-local', { required: true }), field('ends_at', 'Окончание (местное время)', 'datetime-local', { required: true }), sources];
     return [];
   }
   function domainPayload(domain, action, values) {
-    if (!knownDomain(domain) || !Object.prototype.hasOwnProperty.call(ACTION_LABELS, action)) throw new Error('Неизвестное действие.');
+    if (!knownDomain(domain) || !(domain === 'automation' && action === 'clarify_commission') && !Object.prototype.hasOwnProperty.call(ACTION_LABELS, action)) throw new Error('Неизвестное действие.');
     const payload = {};
     for (const spec of domainFormFields(domain, action)) {
       const raw = values?.[spec.key];
@@ -234,7 +255,7 @@
       } else if (['models', 'ids', 'evidence', 'records'].includes(spec.type)) {
         value = Array.from(new Set((Array.isArray(value) ? value : value.split(/[\s,]+/)).map(String).filter(Boolean)));
         if (value.some(id => !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) || value.length < (spec.minItems || 0) || value.length > spec.maxItems) throw new Error('Проверьте UUID и количество в поле «' + spec.label + '».');
-      } else if (['persona', 'model', 'source_task'].includes(spec.type) && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new Error('Выберите сохранённую запись.');
+      } else if (['persona', 'model', 'source_task', 'record'].includes(spec.type) && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) throw new Error('Выберите сохранённую запись.');
       else if (spec.type === 'provider' && !/^[a-z][a-z0-9_-]{1,40}$/.test(value)) throw new Error('Выберите поддерживаемого провайдера.');
       else if (spec.type === 'binding' && !/^AGT-[A-Z0-9]{12}$/.test(value)) throw new Error('Выберите разрешённое Local-подключение.');
       else if (spec.type === 'select' && !spec.options.some(([key]) => key === value)) throw new Error('Выберите допустимое значение «' + spec.label + '».');
@@ -251,7 +272,7 @@
       payload[spec.key] = spec.boolean ? value === 'true' : value;
     }
     if (domain === 'calendar' && payload.starts_at && payload.ends_at && payload.ends_at <= payload.starts_at) throw new Error('Окончание должно быть позже начала.');
-    if (domain === 'automation' && action === 'commission') {
+    if (domain === 'automation' && ['commission', 'clarify_commission'].includes(action)) {
       const targets = payload.target_model_ids || [];
       if (targets.includes(payload.coordinator_model_id)) throw new Error('Выберите для проверок другие подключения, не подключение Координатора.');
       const chain = payload.topology === 'chain';
@@ -260,10 +281,28 @@
       payload.max_depth = chain ? targets.length : 1;
       delete payload.topology;
     }
+    if (domain === 'memory' && ['create', 'update'].includes(action)) {
+      const scope = payload.memory_scope || 'user';
+      if (scope === 'session') { payload.memory_class = 'working'; if (payload.retention_days !== 1) throw new Error('Для памяти сессии выберите срок один день.'); }
+      if (scope === 'operational') {
+        payload.memory_class = 'task'; payload.purpose = payload.operational_purpose;
+        if (!payload.task_id || !payload.purpose) throw new Error('Выберите задачу и назначение оперативной памяти.');
+      } else if (payload.task_id) throw new Error('Связь с задачей доступна только для оперативной памяти.');
+      if (!payload.purpose) throw new Error('Укажите, для чего хранится память.');
+      if (scope === 'strategy' && !payload.strategy_project_id) throw new Error('Выберите проект стратегии.');
+      if (scope !== 'strategy' && payload.strategy_project_id) throw new Error('Связь с проектом доступна только для памяти стратегии.');
+      delete payload.operational_purpose;
+    }
+    if (domain === 'external_agents' && action === 'create') { payload.allowed_capabilities = [payload.capability]; delete payload.capability; }
     return payload;
   }
   function validPublicationPreview(prepared, source) {
-    return prepared?.permanent === true && prepared?.requires_explicit_confirmation === true && prepared?.snapshot?.synthetic === false && typeof prepared.snapshot.title === 'string' && typeof prepared.snapshot.summary === 'string' && prepared.snapshot.source_id === source?.source_id && /^[0-9a-f]{64}$/.test(prepared.snapshot_sha256 || '') && Number.isSafeInteger(prepared.source_revision) && prepared.source_revision > 0 && prepared.snapshot.source_revision === prepared.source_revision;
+    const snapshot = prepared?.snapshot;
+    const diagnostic = snapshot?.synthetic === true && snapshot.source_kind === 'synthetic_model_response'
+      && snapshot.diagnostic_mode === 'named_development_executor' && snapshot.quality_claim === false
+      && snapshot.market_performance_claim === false && snapshot.external_call === false
+      && snapshot.paid_call === false && snapshot.cost_usd === 0 && String(snapshot.title || '').startsWith('SYNTHETIC');
+    return prepared?.permanent === true && prepared?.requires_explicit_confirmation === true && (snapshot?.synthetic === false || diagnostic) && typeof snapshot.title === 'string' && typeof snapshot.summary === 'string' && snapshot.source_id === source?.source_id && /^[0-9a-f]{64}$/.test(prepared.snapshot_sha256 || '') && Number.isSafeInteger(prepared.source_revision) && prepared.source_revision > 0 && snapshot.source_revision === prepared.source_revision;
   }
   function validCoordinatorPreview(prepared, source) {
     return prepared?.approved === false && prepared?.dispatches === 0 && prepared?.coordinator_id === (source?.id || source?.entity_id || '')
@@ -284,6 +323,58 @@
   function connectionLabel(model) {
     return model.can_execute_test_only === true ? 'SYNTHETIC · только локальный тестовый исполнитель' : model.connected === true ? 'Реальное соединение проверено' : model.test_executor_verified === true ? 'Локальный тест сохранён; реальное соединение не проверено' : 'Реальное соединение не проверено';
   }
+  const EXTERNAL_ERRORS = Object.freeze({
+    external_agent_reverification_required: 'Секрет заменён. Подключение выключено до повторной проверки.',
+    external_agent_revoked_or_changed: 'Подключение было отозвано или изменено, пока задача ждала запуска.',
+    external_agent_reply_uncertain: 'Исполнитель остановился до ответа. Неизвестно, дошёл ли запрос; повторно он не отправляется.',
+    external_agent_timeout: 'Агент не ответил вовремя.',
+    external_agent_credential_cleanup_pending: 'Отзыв выполнен. Удаление старого секрета отложено и будет повторено.',
+    external_agent_unavailable: 'Подключение сейчас недоступно для запуска.',
+    external_agent_verification_required: 'Агент не подтвердил запрошенные возможности.',
+  });
+  const EXTERNAL_STATES = Object.freeze({
+    draft: 'Создано, не проверено', verifying: 'Идёт проверка', active: 'Проверено и доступно',
+    degraded: 'Проверка не прошла', disabled: 'Выключено', revoked: 'Отозвано',
+  });
+  function externalAgentCard(item) {
+    const stat = item.statistics || {}, tasks = rows(item.tasks);
+    const capabilityLabel = value => value === 'stratforge.json_arithmetic.v1'
+      ? 'Диагностика: арифметика JSON' : 'Неподдерживаемая возможность · см. детали';
+    const code = item.last_error || item.last_error_code;
+    const current = item.current_task;
+    const taskRow = row => `<div class="aw-text">${taskBadge(row)} <span class="aw-hash">${esc(String(row.id).slice(0, 8))}</span>`
+      + `${row.synthetic === true ? ' <span class="aw-status aw-info">SYNTHETIC</span>' : ''}`
+      + `${row.error_code ? ' <span class="aw-status aw-warning">' + esc(row.error_code) + '</span>' : ''}`
+      + `${row.evaluation_id ? ' · оценка записана' : ' · без оценки'}`
+      + `<button class="aw-link-button" data-aw-task="${esc(row.id)}">Задача и доказательства →</button></div>`;
+    return `<section class="aw-detail-section"><h3>${esc(item.display_name || item.name || 'Внешний агент')}</h3>`
+      + `<div class="aw-inline">${badge(item.status)}<span class="aw-status aw-info">ревизия ${count(item.revision)}</span></div>`
+      + `<dl class="aw-detail-grid">`
+      + `<div><dt>Тип</dt><dd>External Agent · отдельно от Model</dd></div>`
+      + `<div><dt>Состояние</dt><dd>${esc(EXTERNAL_STATES[item.status] || item.status || 'не указано')}</dd></div>`
+      + `<div><dt>Протокол</dt><dd>${esc(item.protocol)}</dd></div>`
+      + `<div><dt>Модель внутри агента</dt><dd>unknown / externally managed</dd></div>`
+      + `<div><dt>Последняя проверка</dt><dd>${esc(date(item.last_verified_at || item.last_verification))}</dd></div>`
+      + `<div><dt>Задержка</dt><dd>${number(item.latency_ms ?? item.last_latency_ms) == null ? 'Не измерена' : count(item.latency_ms ?? item.last_latency_ms) + ' мс'}</dd></div>`
+      + `<div><dt>Текущая задача</dt><dd>${current ? esc(String(current.id).slice(0, 8)) + ' · ' + esc(statusMeta(current.status)[0]) : 'Нет'}</dd></div>`
+      + `<div><dt>Получено результатов</dt><dd>${count(stat.results_received ?? stat.tasks_completed)}</dd></div>`
+      + `<div><dt>Ожидает вашей проверки</dt><dd>${count(stat.awaiting_review)}</dd></div>`
+      + `<div><dt>Проверено пользователем</dt><dd>${count(stat.reviews_completed)}</dd></div>`
+      + `</dl>`
+      + `<p class="aw-text">Подтверждённые возможности: ${rows(item.allowed_capabilities).map(capabilityLabel).map(esc).join(', ') || 'Нет'}</p>`
+      + (item.synthetic === true ? '<p class="aw-note">SYNTHETIC · Development-агент. Не реальная модель и не рабочий benchmark.</p>' : '')
+      + (code ? `<p class="aw-status aw-warning">${esc(EXTERNAL_ERRORS[code] || 'Последняя операция завершилась ошибкой.')} <span class="aw-hash">${esc(code)}</span></p>` : '')
+      + (item.credential_cleanup === 'pending' ? '<p class="aw-note">Доступ отозван. Удаление старого секрета поставлено в очередь и будет повторено.</p>' : '')
+      + reputationPanel({ external_agent_performance: item.performance })
+      + `<p class="aw-note">Результаты внешнего агента не записываются как Model Performance.</p>`
+      + (tasks.length ? `<h4>История задач</h4>${tasks.map(taskRow).join('')}` : '<p class="aw-note">Задач ещё не было.</p>')
+      + `<details class="aw-technical"><summary>Протокол, возможности и диагностика</summary><pre class="aw-result-text">${esc(publicJSON({
+          endpoint: item.endpoint, advertised_capabilities: item.advertised_capabilities,
+          requested_capabilities: item.requested_capabilities, allowed_capabilities: item.allowed_capabilities,
+          last_error: code, performance: item.performance, statistics: stat,
+          task_states: tasks.map(row => ({ id: row.id, ledger_status: row.ledger_status || row.status, display_status: row.display_status })) }))}</pre></details>`
+      + `</section>`;
+  }
   function modelProtocolCard(model) {
     const caps = model?.capabilities;
     const known = model?.protocol === 'chat_completions_v1' && caps?.text === true
@@ -294,6 +385,16 @@
   function domainError(error) {
     const code = String(error?.code || error?.data?.error || error?.error || '');
     const messages = {
+      memory_scope_invalid: 'Область памяти не распознана. Обновите форму.',
+      memory_scope_immutable: 'Область существующей памяти нельзя менять. Создайте новую запись, сохранив историю.',
+      memory_authenticated_session_required: 'Для этой памяти нужна подтверждённая пользовательская сессия.',
+      memory_session_mismatch: 'Эта запись принадлежит другой сессии и недоступна здесь.',
+      memory_session_ttl_required: 'Память сессии хранится не дольше одного дня.',
+      memory_governance_denied: 'Управленческая память доступна только уполномоченному владельцу или администратору.',
+      memory_strategy_changed: 'Проект стратегии изменён. Проверьте источник и создайте актуальную запись памяти.',
+      memory_strategy_unavailable: 'Проект стратегии недоступен или архивирован.',
+      memory_scope_not_publishable: 'Эту область памяти нельзя публиковать в рабочее пространство.',
+      memory_operational_context_required: 'Выберите свою задачу и назначение оперативной памяти.',
       budget_exceeded: 'Лимит расходов не разрешает этот запрос. Бюджет не изменён.', budget_denied: 'Лимит расходов не разрешает этот запрос. Бюджет не изменён.',
       invalid_api_key: 'Провайдер отклонил ключ. Проверьте подключение; ключ не сохранён в интерфейсе.', provider_auth_failed: 'Провайдер отклонил авторизацию. Проверьте ключ подключения.',
       endpoint_unavailable: 'Endpoint недоступен. Проверьте адрес и повторите проверку.', endpoint_not_allowed: 'Этот endpoint не разрешён сервером.',
@@ -489,7 +590,7 @@
     return `<section class="aw-detail-section"><h3>Ручной разбор</h3><p class="aw-note">${delivered ? 'Уведомление сохранено в SF Chat.' : 'Запрос на доставку: ' + esc(followup.status || 'в очереди') + '. Обновите запись для проверки результата.'} Это не запуск по расписанию и не выполненное задание модели. Автоматизация выключена.</p>${delivered ? `<button class="btn primary" data-aw-followup-chat="${esc(followup.conversation_id)}">Открыть сохранённый разбор</button>` : ''}<div class="aw-hash">JOB ${esc(followup.job_id)}<br>SOURCE REV ${count(followup.source_revision)} · ${esc(followup.source_sha256)}</div></section>`;
   }
   function modelConnectionGuide() {
-    return '<aside class="aw-note"><strong>Отдельный тестовый ключ</strong><p>Можно выбрать OpenRouter и модель <code>openrouter/free</code>; Endpoint оставить пустым. Создайте отдельный inference API key на <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">странице ключей OpenRouter</a> и самостоятельно вставьте его в поле «Ключ подключения». Owner-ключи не копируются.</p><p><a href="https://openrouter.ai/docs/guides/routing/routers/free-router" target="_blank" rel="noopener noreferrer">Free router</a> выбирает доступную бесплатную модель; состав моделей и лимиты зависят от сервиса. Проверьте его условия. Секрет не отправляйте в чат.</p><p>«Внешний агент» здесь означает совместимый HTTPS chat-completions endpoint. Это не подключение произвольного MCP-сервера или удалённого рабочего стола.</p></aside>';
+return '<aside class="aw-note"><strong>Отдельный тестовый ключ</strong><p>Можно выбрать OpenRouter и модель <code>openrouter/free</code>; Endpoint оставить пустым. Создайте отдельный inference API key на <a href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">странице ключей OpenRouter</a> и самостоятельно вставьте его в поле «Ключ подключения». Owner-ключи не копируются.</p><p><a href="https://openrouter.ai/docs/guides/routing/routers/free-router" target="_blank" rel="noopener noreferrer">Free router</a> выбирает доступную бесплатную модель; состав моделей и лимиты зависят от сервиса. Проверьте его условия. Секрет не отправляйте в чат.</p><p>Здесь подключается только модель через совместимый HTTPS chat-completions endpoint. Для самостоятельного внешнего агента используйте раздел «Внешние агенты».</p></aside>';
   }
   function personaReadText(persona) {
     // Only the displayed description, not task history, model payloads or keys.
@@ -552,10 +653,22 @@
     const body = !ready ? '<p class="aw-note">Полный актуальный набор наблюдений сейчас не подтверждён. Создание предложения недоступно; сохранённые записи не изменены.</p>' : candidates.length ? `<div class="aw-domain-grid">${candidates.map(candidate => processCandidateCard(candidate, domain, true)).join('')}</div>` : '<p class="aw-note">Новых предложений нет: данных пока недостаточно, предложение уже существует или действует пауза от повторов. Это не ошибка и не оценка качества.</p>';
     return heading + body + summary + '</section>';
   }
+  function validSchedulePreview(result, source, payload) {
+    const plan = result?.plan, ref = plan?.source;
+    return result?.approved === false && rows(result.actions).includes('enable')
+      && /^[0-9a-f]{64}$/.test(result.approved_plan_sha256 || '')
+      && ['routines', 'calendar'].includes(source?.domain) && source.status === 'accepted'
+      && ref?.entity_id === source.id && ref?.revision === source.revision && plan.domain === source.domain
+      && plan.model_id === payload.model_id && typeof plan.synthetic === 'boolean'
+      && Array.isArray(plan.due_at) && plan.due_at.length === payload.occurrences
+      && plan.due_at.every(value => typeof value === 'string' && Number.isFinite(Date.parse(value)))
+      && plan.spec?.rubric_key === payload.rubric_key;
+  }
   const RISK_LABELS = Object.freeze({ low: 'низкий', moderate: 'умеренный', high: 'высокий', critical: 'критический' });
   const APPROVAL_LABELS = Object.freeze({ advice: 'только совет, исполнение не разрешено', draft: 'черновик',
     reversible_execution: 'обратимое исполнение', approval_required: 'требуется подтверждение', forbidden: 'запрещено' });
   const SCOPE_LABELS = Object.freeze({
+    external_agent_performance: 'Внешний агент',
     model_performance: 'Модель',
     agent_role_performance: 'Рабочая роль',
     decision_performance: 'Решение',
@@ -603,6 +716,29 @@
       + `Оценка модели не является оценкой рабочей роли, и наоборот; они не складываются.</p>`
       + `<div class="aw-domain-grid">${cards}</div></section>`;
   }
+  function courtPanel(item) {
+    const cases = rows(item.court_cases), votes = rows(item.votes || item.packet?.votes).concat(cases.flatMap(entry => rows(entry.votes)));
+    const executor = 'agent-world-local-test-executor-v1';
+    const diagnostic = vote => vote.model_version === executor && vote.failure_domain === 'local_test_executor:' + executor;
+    return `<section class="aw-detail-section"><h3>Проверка Court</h3>${cases.map(entry => `<div class="aw-context"><span class="aw-context-mark">COURT</span><span>Вердикт: ${esc(entry.verdict || entry.status || 'не определён')} · кворум ${esc(entry.quorum || 'не указан')} · исполнение ${entry.execution_allowed === true ? 'проверяется отдельно сервером' : 'не разрешено'}</span></div><details class="aw-technical"><summary>Пакет доказательств Court</summary><code>${esc(entry.packet_sha256 || 'Не предоставлен')}</code></details>`).join('')}${votes.length ? votes.map(vote => `<article class="aw-domain-card"><div class="aw-inline"><strong>${diagnostic(vote) ? 'Локальный проверяющий · SYNTHETIC' : 'Проверяющий Court'}</strong>${badge(vote.status || vote.verdict)}</div><p class="aw-text">${esc(vote.summary || vote.rationale || vote.reason || '')}</p>${diagnostic(vote) ? '<p class="aw-note">Ответ получен от локального тестового исполнителя. Настроенный внешний провайдер не вызывался. Общий локальный failure domain не подтверждает независимость провайдеров.</p>' : ''}<div class="aw-domain-card-meta"><span>Уверенность: ${esc(vote.confidence ?? 'не измерена')}</span></div><details class="aw-technical"><summary>Настроенное подключение, исполнитель и идентификаторы</summary><dl class="aw-detail-grid"><div><dt>Настроенный провайдер</dt><dd>${esc(vote.provider_key || 'Не предоставлен')}</dd></div><div><dt>Настроенная модель</dt><dd>${esc(vote.model_key || vote.model || 'Не предоставлена')}</dd></div><div><dt>Фактический исполнитель / версия</dt><dd>${esc(vote.model_version || 'Не предоставлен')}</dd></div><div><dt>Failure domain</dt><dd>${esc(vote.failure_domain || 'Не предоставлен')}</dd></div></dl><div class="aw-hash">SESSION ${esc(vote.session_id || 'Не предоставлен')}<br>PACKET ${esc(vote.packet_sha256 || 'Не предоставлен')}</div></details>${vote.task_id ? `<button class="aw-link-button" data-aw-task="${esc(vote.task_id)}">Задание проверяющего →</button>` : ''}</article>`).join('') : '<p class="aw-note">Проверяющие ещё не представили результаты. Отсутствие голосов не является одобрением.</p>'}<p class="aw-note">В панели нет кнопки выдачи голоса от имени модели. Review запускает проверку backend; новые права и торговые действия не выдаются.</p></section>`;
+  }
+  function externalTaskProvenance(task) {
+    if (task.source_kind !== 'external_agent_task_v1') return '';
+    return `<section class="aw-detail-section"><h3>Внешний агент · происхождение результата</h3><p>Модель: unknown / externally managed. Результат не входит в Model Performance.</p>${task.external_call === false ? `<p class="aw-note">Внешний сервис не вызывался.${task.cost_usd == null ? ' Денежная стоимость в сохранённой квитанции не записана; неизвестное значение не заменяется нулём.' : ''}</p>` : ''}</section>`;
+  }
+  const SELECTION_MODES = Object.freeze({ explicit_override: 'Выбрано человеком',
+    router_approved: 'Выбрано Router после явного подтверждения', single_available: 'Единственное доступное подключение' });
+  function modelSelectionPanel(selection) {
+    // The server's stored record of how this connection was chosen. Nothing
+    // here is inferred: an absent record is simply not shown.
+    if (!selection || typeof selection !== 'object') return '';
+    return `<section class="aw-detail-section"><h3>Выбор подключения</h3><dl class="aw-detail-grid">`
+      + `<div><dt>Способ выбора</dt><dd>${esc(SELECTION_MODES[selection.mode] || selection.mode || 'не указан')}</dd></div>`
+      + `<div><dt>Подключение</dt><dd><span class="aw-hash">${esc(String(selection.model_id || '').slice(0, 8))}</span> · ${esc(selection.model_key || '')}</dd></div>`
+      + `<div><dt>Провайдер</dt><dd>${esc(selection.provider_key || 'не указан')}</dd></div>`
+      + `<div><dt>Ревизия подключения</dt><dd>${esc(String(selection.model_revision ?? ''))}</dd></div>`
+      + `</dl><p class="aw-field-hint">Причина: ${esc(selection.reason || 'не указана')}. Фактическая модель ответа указана в происхождении результата.</p></section>`;
+  }
   function intentPanel(intent) {
     // Everything here is the server's own Intent record. The panel neither
     // recomputes a state nor decides whether the work may proceed.
@@ -616,15 +752,15 @@
       + `<div><dt>Режим согласования</dt><dd>${esc(APPROVAL_LABELS[intent.approval_mode] || intent.approval_mode || 'не указан')}</dd></div>`
       + `<div><dt>Уровень риска</dt><dd>${esc(RISK_LABELS[limits.risk] || limits.risk || 'не указан')}</dd></div>`
       + `<div><dt>Срок</dt><dd>${esc(date(limits.deadline))}</dd></div>`
-      + `<div><dt>Рабочее пространство</dt><dd>${esc((intent.scope || {}).workspace_id || '')}</dd></div>`
       + `<div><dt>Требуемое доказательство</dt><dd>${esc(evidence.rubric_label || evidence.rubric_key || 'не указано')}</dd></div>`
       + `</dl>`
-      + `<p class="aw-field-hint">Проверяет: ${esc(evidence.verified_by || 'не указано')}. Приёмка человеком — отдельное решение и не является оценкой качества.</p>`
+      + `<p class="aw-field-hint">${evidence.verified_by === 'independent_local_evidence_verifier' ? 'Независимая проверка сохранённых доказательств.' : 'Проверяющий механизм указан в технических деталях.'} Приёмка человеком — отдельное решение и не является оценкой качества.</p>`
+      + `<details class="aw-technical"><summary>Технические сведения поручения</summary><dl class="aw-detail-grid"><div><dt>Workspace</dt><dd>${esc((intent.scope || {}).workspace_id || 'Не указан')}</dd></div><div><dt>Verifier</dt><dd>${esc(evidence.verified_by || 'Не указан')}</dd></div></dl></details>`
       + (request ? `<details class="aw-technical"><summary>Что именно было запрошено</summary><pre>${esc(request)}</pre></details>` : '')
       + `<p class="aw-field-hint">Поручение не редактируется после создания задачи: его значением связаны запрос, ответ и проверка. Пока работа не началась, поручение можно остановить — «Отменить задачу». Нужны другие условия — отправьте новый запрос; прежнее поручение и его история сохраняются.</p>`
       + `</section>`;
   }
-  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, rows, items, taskMatches, taskState, taskTitle, taskClass, taskBadge, evaluationMeta, phaseOf, phaseLabel, rubricLabel, stageName, machineKey, availabilityMeta, occupancyMeta, readinessGrid, technicalSplit, technicalDetails, AVATAR_KEYS, applicationRows, applicationTable, safeArtifactUrl, sourceMeta, overviewOutcomes, realChatCommands, canRunDemo, flagRows, captureChart, knownDomain, allowedDomainActions, domainFormFields, domainPayload, actionLabel, domainError, publicJSON, handoffCard, followupCard, modelConnectionGuide, modelProtocolCard, personaVoiceFields, personaReadText, personaCanSpeak, personaSpeechEnvelope, personaAudioStatus, personaPresentationCard, processCandidatePayload, processCandidateCard, processIntelligencePanel, reputationPanel, intentPanel, validCoordinatorPreview, coordinatorApproval, connectionLabel }; return; }
+  if (typeof module === 'object' && module.exports) { module.exports = { esc, number, count, pct, date, statusMeta, badge, rows, items, taskMatches, taskState, taskTitle, taskClass, taskBadge, evaluationMeta, phaseOf, phaseLabel, rubricLabel, stageName, machineKey, availabilityMeta, occupancyMeta, readinessGrid, technicalSplit, technicalDetails, AVATAR_KEYS, applicationRows, applicationTable, safeArtifactUrl, sourceMeta, overviewOutcomes, realChatCommands, canRunDemo, flagRows, captureChart, knownDomain, allowedDomainActions, domainFormFields, domainPayload, actionLabel, domainError, publicJSON, externalAgentCard, handoffCard, followupCard, modelConnectionGuide, modelProtocolCard, personaVoiceFields, personaReadText, personaCanSpeak, personaSpeechEnvelope, personaAudioStatus, personaPresentationCard, processCandidatePayload, processCandidateCard, processIntelligencePanel, reputationPanel, intentPanel, modelSelectionPanel, validCoordinatorPreview, coordinatorApproval, connectionLabel }; return; }
 
   root.UI.ready(async function () {
     const UI = root.UI, API = root.API.http;
@@ -998,13 +1134,16 @@
       return limits.length ? `<div class="aw-domain-limits"><strong>Ограничения текущего контура</strong><ul>${limits.map(text => `<li>${esc(text)}</li>`).join('')}</ul></div>` : '';
     }
     function domainActionButtons(item) {
-      return allowedDomainActions(domainState?.data, item).map(action => `<button class="btn sm${['disconnect', 'revoke', 'archive', 'withdraw', 'cancel'].includes(action) ? ' aw-danger-action' : ''}" data-aw-domain-action="${esc(action)}" data-aw-entity="${esc(recordId(item))}">${esc(actionLabel(action))}</button>`).join('');
+      const schedule = ['routines', 'calendar'].includes(domainState?.key) && item.status === 'accepted'
+        ? `<button class="btn sm" data-aw-schedule-source="${esc(recordId(item))}">Проверить расписание</button>` : '';
+      return allowedDomainActions(domainState?.data, item).map(action => `<button class="btn sm${['disconnect', 'revoke', 'archive', 'withdraw', 'cancel'].includes(action) ? ' aw-danger-action' : ''}" data-aw-domain-action="${esc(action)}" data-aw-entity="${esc(recordId(item))}">${esc(actionLabel(action))}</button>`).join('') + schedule;
     }
     function domainItemCard(item) {
+      if (domainState.key === 'external_agents') return `<article class="aw-domain-card"><div class="aw-domain-card-head"><button class="aw-table-title" data-aw-domain-item="${esc(recordId(item))}">${esc(item.display_name || 'Внешний агент')}</button>${badge(item.status)}</div>${externalAgentCard(item)}<div class="aw-actions">${domainActionButtons(item)}</div></article>`;
       const id = recordId(item), metrics = item.observed_eval || item.evaluation;
       const title = esc(item.title || item.label || item.name || item.model || 'Запись');
       const heading = domainState.key === 'system' ? `<strong>${title}</strong>` : `<button class="aw-table-title" data-aw-domain-item="${esc(id)}">${title}</button>`;
-      const component = domainState.key === 'models' ? modelProtocolCard(item) : domainState.key === 'system' && typeof item.implemented === 'boolean' ? `<dl class="aw-detail-grid"><div><dt>Код реализован</dt><dd>${item.implemented ? 'Да' : 'Нет'}</dd></div><div><dt>Флаг</dt><dd>${item.enabled ? 'Включён' : 'Выключен'}</dd></div><div><dt>Фактический режим</dt><dd>${esc(item.mode)}</dd></div><div><dt>Доступность сейчас</dt><dd>${item.available ? 'Подтверждена' : 'Не подтверждена'}</dd></div></dl><p class="aw-note">${esc(item.note || '')}</p>` : '';
+      const component = domainState.key === 'memory' ? memoryScopeCard(item) : domainState.key === 'models' ? modelProtocolCard(item) : domainState.key === 'system' && typeof item.implemented === 'boolean' ? `<dl class="aw-detail-grid"><div><dt>Код реализован</dt><dd>${item.implemented ? 'Да' : 'Нет'}</dd></div><div><dt>Флаг</dt><dd>${item.enabled ? 'Включён' : 'Выключен'}</dd></div><div><dt>Фактический режим</dt><dd>${esc(item.mode)}</dd></div><div><dt>Доступность сейчас</dt><dd>${item.available ? 'Подтверждена' : 'Не подтверждена'}</dd></div></dl><p class="aw-note">${esc(item.note || '')}</p>` : '';
       return `<article class="aw-domain-card"><div class="aw-domain-card-head">${heading}${item.display_status ? taskBadge(item) : badge(item.status)}</div>${item.summary || item.description ? `<p class="aw-text">${esc(item.summary || item.description)}</p>` : ''}<div class="aw-domain-card-meta">${item.model ? `<span>Model: ${esc(item.model)}</span>` : ''}${item.provider ? `<span>${esc(item.provider)}</span>` : ''}${item.synthetic === true ? '<span class="aw-status aw-info">SYNTHETIC</span>' : ''}<time>${esc(date(item.updated_at || item.created_at))}</time></div>${domainState.key === 'models' ? `<p class="aw-field-hint">${esc(connectionLabel(item))}</p>` : ''}${metrics ? `<div class="aw-domain-card-meta"><span>Проверка ответа: ${esc(pct(metrics.score_pct ?? metrics.observed_score_pct))}</span>${number(metrics.sample_size) == null ? '' : `<span>n = ${count(metrics.sample_size)}</span>`}</div><p class="aw-note">Результат указанной проверки, не общий процент профессионального качества.</p>` : ''}${item.result_text ? `<p class="aw-result-excerpt">${esc(String(item.result_text).slice(0, 240))}</p>` : ''}${component}${domainState.key === 'system' && item.fields ? `<details class="aw-technical"><summary>Технические детали</summary><pre class="aw-result-text">${esc(publicJSON(item.fields))}</pre></details>` : ''}<div class="aw-actions">${domainActionButtons(item)}</div></article>`;
     }
     const GRANT_KINDS = { schedule: 'Расписание', delegation: 'Делегирование' };
@@ -1098,8 +1237,8 @@
       const fields = domainFormFields(key, key === 'models' ? 'connect' : 'create').filter(spec => spec.type !== 'password' && !(key === 'personas' && spec.optionalIfMissing));
       const description = fields.filter(spec => recordValue(item, spec.key) !== undefined && recordValue(item, spec.key) !== null && recordValue(item, spec.key) !== '').map(spec => {
         const raw = recordValue(item, spec.key);
-        const value = spec.type === 'datetime-local' ? date(raw) : spec.type === 'select' ? spec.options.find(([id]) => id === raw)?.[1] || 'Не указано' : typeof raw === 'object' ? publicJSON(raw) : String(raw);
-        return `<div><dt>${esc(spec.label)}</dt><dd class="aw-pre-wrap">${esc(value)}</dd></div>`;
+        const value = spec.type === 'persona' ? (item.persona_name || 'Persona недоступна') : spec.type === 'datetime-local' ? date(raw) : spec.type === 'select' ? spec.options.find(([id]) => id === raw)?.[1] || 'Не указано' : typeof raw === 'object' ? publicJSON(raw) : String(raw);
+        return `<div><dt>${esc(spec.label)}</dt><dd class="aw-pre-wrap">${esc(value)}${spec.type === 'persona' ? `<details class="aw-technical"><summary>Идентификатор Persona</summary><code>${esc(raw)}</code></details>` : ''}</dd></div>`;
       }).join('');
       const verification = item.observed_eval || item.evaluation;
       const evaluationBody = verification ? evaluations([verification]) : '';
@@ -1109,14 +1248,14 @@
       const sourceBody = sources.length ? `<section class="aw-detail-section"><h3>Источники</h3>${sources.map(id => `<div class="aw-hash">ARTIFACT ${esc(id)}</div>`).join('')}</section>` : '';
       const versions = rows(item.versions);
       const versionBody = versions.length ? `<section class="aw-detail-section"><h3>История версий</h3>${versions.map(version => `<article class="aw-domain-card"><div class="aw-domain-card-meta"><strong>Версия ${esc(version.version || version.revision || '—')}</strong><time>${esc(date(version.created_at))}</time></div><p class="aw-text">${esc(version.notes || version.summary || '')}</p>${version.parameters ? `<pre class="aw-result-text">${esc(publicJSON(version.parameters))}</pre>` : ''}</article>`).join('')}</section>` : '';
-      const cases = rows(item.court_cases), votes = rows(item.votes || item.packet?.votes).concat(cases.flatMap(entry => rows(entry.votes)));
-      const courtBody = key === 'decisions' ? `<section class="aw-detail-section"><h3>Проверка Court</h3>${cases.map(entry => `<div class="aw-context"><span class="aw-context-mark">COURT</span><span>Вердикт: ${esc(entry.verdict || entry.status || 'не определён')} · кворум ${esc(entry.quorum || 'не указан')} · исполнение ${entry.execution_allowed === true ? 'проверяется отдельно сервером' : 'не разрешено'}<span class="aw-hash">${esc(entry.packet_sha256 || '')}</span></span></div>`).join('')}${votes.length ? votes.map(vote => `<article class="aw-domain-card"><div class="aw-inline"><strong>${esc(vote.model_key || vote.model || vote.model_id || vote.judge || 'Проверяющий')}</strong>${badge(vote.status || vote.verdict)}</div><p class="aw-text">${esc(vote.summary || vote.rationale || vote.reason || '')}</p><div class="aw-domain-card-meta"><span>${esc(vote.provider_key || '')}</span><span>Уверенность: ${esc(vote.confidence ?? 'не измерена')}</span></div><div class="aw-hash">SESSION ${esc(vote.session_id || 'не предоставлен')}<br>PACKET ${esc(vote.packet_sha256 || 'не предоставлен')}</div>${vote.task_id ? taskLink(vote.task_id, 'Задание проверяющего') : ''}</article>`).join('') : smallEmpty('Проверяющие ещё не представили результаты. Отсутствие голосов не является одобрением.')}<p class="aw-note">В панели нет кнопки выдачи голоса от имени модели. Review запускает проверку backend; новые права и торговые действия не выдаются.</p></section>` : '';
+      const courtBody = key === 'decisions' ? courtPanel(item) : '';
       const comparison = rows(item.results || item.comparison || item.tasks);
       const comparisons = key === 'experiments' && comparison.length ? `<section class="aw-detail-section"><h3>Сопоставимые результаты</h3><div class="aw-domain-grid">${comparison.map(result => `<article class="aw-domain-card"><strong>${esc(result.model || result.label || result.model_id || 'Модель')}</strong>${badge(result.status)}<dl class="aw-detail-grid"><div><dt>Результат проверки</dt><dd>${esc(pct(result.score_pct ?? result.evaluation?.score_pct ?? result.evaluation?.observed_score_pct ?? result.observed_eval?.score_pct))}</dd></div><div><dt>Длительность</dt><dd>${number(result.latency_ms) == null ? 'не измерена' : esc(count(result.latency_ms)) + ' мс'}</dd></div><div><dt>Стоимость</dt><dd>${esc(cost(result.cost_usd))}</dd></div></dl>${result.task_id || result.id ? `<button class="aw-link-button" data-aw-model-task="${esc(result.task_id || result.id)}">Ответ и доказательства →</button>` : ''}</article>`).join('')}</div></section>` : '';
       const modelTaskLink = key === 'model_tasks' && (item.id || item.task_id) ? `<button class="btn" data-aw-task-chat="${esc(recordId(item))}">Открыть в SF Chat</button>` : '';
-      const metaFields = `<dl class="aw-detail-grid"><div><dt>Ревизия</dt><dd>${count(item.revision)}</dd></div><div><dt>Обновлено</dt><dd>${esc(date(item.updated_at || item.created_at))}</dd></div>${item.model ? `<div><dt>Запрошенная модель</dt><dd>${esc(item.model)}</dd></div>` : ''}${key === 'models' ? `<div><dt>Ключ</dt><dd>${item.credentials_configured === true ? 'Настроен · не выводится' : 'Не настроен'}</dd></div>` : ''}${key === 'model_tasks' ? `<div><dt>Model ID от провайдера</dt><dd>${esc(item.actual_model || 'Не предоставлен')}</dd></div><div><dt>Измеренная стоимость</dt><dd>${esc(cost(item.cost_usd))}</dd></div><div><dt>Длительность</dt><dd>${number(item.latency_ms) == null ? 'не измерена' : count(item.latency_ms) + ' мс'}</dd></div>` : ''}</dl>`;
-      const personaBody = key === 'personas' ? personaPresentationCard(item, avatar(item, 'lg')) : key === 'models' ? modelProtocolCard(item) : '';
-      openDrawer(meta.title + ' · ' + (item.title || item.label || item.name || 'Запись'), `${domainNav(key)}<div class="aw-actions"><button class="aw-link-button" data-aw-domain="${key}">← Все записи</button>${domainActionButtons(item)}${modelTaskLink}</div><h2 class="aw-inspector-title">${esc(item.title || item.label || item.name || item.model || 'Запись')}</h2><div class="aw-inline">${badge(item.status)}${item.synthetic === true ? '<span class="aw-status aw-info">SYNTHETIC</span>' : ''}</div>${domainLimitations(item)}${item.summary ? `<p class="aw-text">${esc(item.summary)}</p>` : ''}${metaFields}${personaBody}<dl class="aw-detail-grid">${description}</dl>${resultBody}${evaluationBody}${sourceBody}${versionBody}${courtBody}${comparisons}<div class="aw-hash">ID ${esc(recordId(item))}${item.correlation_id ? '<br>CORRELATION ' + esc(item.correlation_id) : ''}</div>`);
+      const metaFields = `<dl class="aw-detail-grid"><div><dt>Ревизия</dt><dd>${count(item.revision)}</dd></div><div><dt>Обновлено</dt><dd>${esc(date(item.updated_at || item.created_at))}</dd></div>${key !== 'external_agents' && item.model ? `<div><dt>Запрошенная модель</dt><dd>${esc(item.model)}</dd></div>` : ''}${key === 'models' ? `<div><dt>Ключ</dt><dd>${item.credentials_configured === true ? 'Настроен · не выводится' : 'Не настроен'}</dd></div>` : ''}${key === 'model_tasks' ? `<div><dt>Model ID от провайдера</dt><dd>${esc(item.actual_model || 'Не предоставлен')}</dd></div><div><dt>Измеренная стоимость</dt><dd>${esc(cost(item.cost_usd))}</dd></div><div><dt>Длительность</dt><dd>${number(item.latency_ms) == null ? 'не измерена' : count(item.latency_ms) + ' мс'}</dd></div>` : ''}</dl>`;
+      const personaBody = key === 'memory' ? memoryScopeCard(item) : key === 'external_agents' ? externalAgentCard(item) : key === 'personas' ? personaPresentationCard(item, avatar(item, 'lg')) : key === 'models' ? modelProtocolCard(item) : '';
+      const displayTitle = key === 'external_agents' ? (item.display_name || item.title || item.label || item.name || 'Внешний агент') : (item.title || item.label || item.name || item.model || 'Запись');
+      openDrawer(meta.title + ' · ' + displayTitle, `${domainNav(key)}<div class="aw-actions"><button class="aw-link-button" data-aw-domain="${key}">← Все записи</button>${domainActionButtons(item)}${modelTaskLink}</div><h2 class="aw-inspector-title">${esc(displayTitle)}</h2><div class="aw-inline">${badge(item.status)}${item.synthetic === true ? '<span class="aw-status aw-info">SYNTHETIC</span>' : ''}</div>${domainLimitations(item)}${item.summary ? `<p class="aw-text">${esc(item.summary)}</p>` : ''}${metaFields}${personaBody}<dl class="aw-detail-grid">${description}</dl>${resultBody}${evaluationBody}${sourceBody}${versionBody}${courtBody}${comparisons}<div class="aw-hash">ID ${esc(recordId(item))}${item.correlation_id ? '<br>CORRELATION ' + esc(item.correlation_id) : ''}</div>`);
     }
     async function openDomainItem(id) {
       if (!domainState || !id || mutationBusy) return;
@@ -1152,15 +1291,20 @@
       openDrawer('Рассмотреть повторяющуюся работу', `${domainNav(domain)}${processCandidateCard(candidate, domain, false)}<form class="aw-form" id="aw-domain-form" autocomplete="off"><p class="aw-note">Сохранится предложение для отдельного принятия или отклонения. Права, бюджет и расписание не изменятся; ожидающие проверки останутся открытыми.</p><p class="aw-form-error" id="aw-form-error" role="alert" hidden></p><div class="aw-actions"><button type="submit" class="btn primary">Сохранить предложение</button><button type="button" class="btn" data-aw-domain="${esc(domain)}">Отмена</button></div></form>`);
     }
     function formField(spec, record, dependencies) {
-      const id = 'aw-field-' + spec.key, prior = (actionForm?.action === 'update' ? recordValue(record, spec.key) : undefined) ?? spec.default;
+      const id = 'aw-field-' + spec.key, prior = (actionForm?.action === 'update' ? (spec.key === 'operational_purpose' && record?.memory_scope === 'operational' ? record.purpose : spec.key === 'purpose' && record?.memory_scope === 'operational' ? '' : recordValue(record, spec.key)) : undefined) ?? spec.default;
       let value = prior == null || spec.type === 'password' ? '' : Array.isArray(prior) ? prior.join('\n') : typeof prior === 'object' ? publicJSON(prior) : String(prior);
       if (spec.type === 'datetime-local' && value) { const parsed = new Date(value); if (Number.isFinite(parsed.getTime())) value = new Date(parsed.getTime() - parsed.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }
-      const required = spec.required ? ' required' : '', attrs = `id="${id}" name="${esc(spec.key)}"${required}${spec.max && spec.type !== 'number' ? ` maxlength="${spec.max}"` : ''}`;
+      const frozenMemoryBinding = actionForm?.domain === 'memory' && actionForm?.action === 'update' && ['memory_scope', 'strategy_project_id', 'task_id'].includes(spec.key);
+      const required = spec.required ? ' required' : '', attrs = `id="${id}" name="${esc(spec.key)}"${required}${frozenMemoryBinding ? ' disabled' : ''}${spec.max && spec.type !== 'number' ? ` maxlength="${spec.max}"` : ''}`;
       let input;
       if (spec.type === 'publication-source') {
         const sources = rows(dependencies.collection?.source_candidates);
         input = `<select ${attrs}><option value="">Выберите проверенный источник</option>${sources.map(source => `<option value="${esc(source.source_kind + ':' + source.source_id)}">${esc(source.title || source.source_id)} · ${esc(source.source_kind)}</option>`).join('')}</select>`;
         if (!sources.length) input += '<p class="aw-field-hint">Проверенных источников ещё нет. Публикация станет доступной после сохранения и проверки результата.</p>';
+      } else if (spec.type === 'record') {
+        const candidates = rows(dependencies.collection?.[spec.source]);
+        input = `<select ${attrs}><option value="">Не выбрано</option>${candidates.map(source => `<option value="${esc(recordId(source))}"${value === recordId(source) ? ' selected' : ''}>${esc(source.title || source.summary || 'Сохранённая запись')}</option>`).join('')}</select>`;
+        if (!candidates.length) input += '<p class="aw-field-hint">Доступных записей пока нет. Создайте проект или выполните задачу в этом пространстве.</p>';
       } else if (spec.type === 'records') {
         const candidates = rows(dependencies.collection?.[spec.source]);
         input = candidates.length ? `<div class="aw-choice-list">${candidates.map(source => `<label><input type="checkbox" name="${esc(spec.key)}" value="${esc(recordId(source))}"><span><strong>${esc(source.title || source.summary || 'Сохранённый результат')}</strong><small>${esc(recordId(source))}</small></span></label>`).join('')}</div>` : '<p class="aw-field-hint">Нет доступных подтверждённых источников. Сначала выполните и проверьте задачи.</p>';
@@ -1190,15 +1334,45 @@
       else input = `<input ${attrs} type="${spec.type}" value="${esc(value)}"${spec.type === 'number' ? ` min="${spec.min}" max="${spec.max}" step="${spec.step || 1}"` : ''}${spec.type === 'password' ? ' autocomplete="new-password" spellcheck="false" autocapitalize="off"' : ' autocomplete="off"'}>`;
       return `<div class="aw-form-field"><label for="${id}">${esc(spec.label)}${spec.required ? ' <span aria-hidden="true">*</span>' : ''}</label>${input}${spec.hint ? `<p class="aw-field-hint">${esc(spec.hint)}</p>` : ''}</div>`;
     }
-    async function openDomainAction(action, id, task) {
+    async function openScheduleSource(id) {
+      const domain = domainState?.key;
+      if (!['routines', 'calendar'].includes(domain) || mutationBusy) return;
+      const request = ++detailGeneration;
+      openDrawer('Проверить расписание', smallEmpty('Проверка принятого источника и разрешений…'));
+      try {
+        const [response, automation, models, tasks] = await Promise.all([
+          API.aiControlCenterDomainItem(domain, id, { signal }),
+          API.aiControlCenterDomain('automation', {}, { signal }),
+          API.aiControlCenterDomain('models', { limit: 100 }, { signal }),
+          API.aiControlCenterDomain('model_tasks', { limit: 100 }, { signal })]);
+        if (disposed || request !== detailGeneration) return;
+        const record = response.item || response;
+        if (record.id !== id || record.status !== 'accepted' || !Number.isSafeInteger(record.revision)
+            || !rows(automation.actions).includes('propose')) throw new Error('Нужно принятое предложение и отдельное разрешение на автоматизацию.');
+        const source = { domain, id, revision: record.revision, status: record.status, title: record.title };
+        actionForm = { domain: 'automation', action: 'propose', id, item: record,
+          key: root.crypto.randomUUID(), revision: record.revision, scheduleSource: source };
+        const specs = domainFormFields('automation', 'propose');
+        openDrawer('Проверить расписание', `<h2>${esc(record.title)}</h2><p class="aw-note">Принятое предложение, ревизия ${count(record.revision)}. Сейчас проверяется план; запуски ещё не разрешены.</p><form class="aw-form" id="aw-domain-form"><div class="aw-form-grid">${specs.map(spec => formField(spec, null, { models, tasks })).join('')}</div><p class="aw-form-error" id="aw-form-error" role="alert" hidden></p><button type="submit" class="btn primary">Проверить расписание</button><button type="button" class="btn" data-aw-domain="${domain}">Отмена</button></form>`);
+      } catch (error) {
+        if (!disposed && request === detailGeneration) openDrawer('Расписание недоступно', readError(error));
+      }
+    }
+    async function openDomainAction(action, id, task, chatSeed) {
+      if (domainState?.key === 'automation' && action === 'propose' && id === 'new') {
+        openDrawer('Выберите принятое предложение', `${domainNav('automation')}<p class="aw-note">Сначала примите рутину или событие, затем нажмите «Проверить расписание» в этой записи. Согласие на предложение и разрешение расписания — отдельные действия.</p><button class="btn" data-aw-domain="routines">Рутины</button><button class="btn" data-aw-domain="calendar">Календарь</button>`);
+        return;
+      }
       const key = task ? 'tasks' : domainState?.key;
-      const record = task || (id === 'new' ? null : domainState?.item && recordId(domainState.item) === id ? domainState.item : [...items(domainState?.data), ...rows(domainState?.data.commissions), ...rows(domainState?.data.delegations), ...rows(domainState?.data.schedules)].find(item => recordId(item) === id));
+      let record = task || (id === 'new' ? null : domainState?.item && recordId(domainState.item) === id ? domainState.item : [...items(domainState?.data), ...rows(domainState?.data.commissions), ...rows(domainState?.data.delegations), ...rows(domainState?.data.schedules)].find(item => recordId(item) === id));
       const allowed = task ? rows(task.allowed_actions || task.actions) : allowedDomainActions(domainState?.data, record);
       if (!key || !allowed.includes(action) || mutationBusy || id !== 'new' && !record) return;
+      if (action === 'clarify_commission' && record?.request_seed) record = { ...record, ...record.request_seed, topology: rows(record.request_seed.parent_indices).some(index => index >= 0) ? 'chain' : 'parallel' };
+      if (action === 'commission' && chatSeed) record = { goal: chatSeed.goal };
       if (key === 'publications' && action === 'publish' || key === 'automation' && action === 'approve_commission') return; // Only a validated preview opens these approvals.
       if (key === 'router' && action === 'apply') return;
       const request = ++detailGeneration;
-      actionForm = { domain: key, action, item: record, id, key: root.crypto.randomUUID(), revision: number(record?.revision) };
+      actionForm = { domain: key, action, item: record, id, key: root.crypto.randomUUID(), revision: number(record?.revision), chatSource: chatSeed?.chat_source };
       const specs = domainFormFields(key, action, domainState?.data.presentation_catalog), dependencies = { models: key === 'models' ? domainState.data : null, evidence: domainState?.data.evidence_candidates, collection: domainState?.data };
       openDrawer(actionLabel(action), smallEmpty('Подготовка формы и проверка доступных записей…'));
       try {
@@ -1206,12 +1380,18 @@
         if (specs.some(spec => ['models', 'model'].includes(spec.type))) dependencies.models = await API.aiControlCenterDomain('models', { limit: 100 }, { signal });
         if (specs.some(spec => spec.type === 'source_task')) dependencies.tasks = await API.aiControlCenterDomain('model_tasks', { limit: 100 }, { signal });
         if (disposed || request !== detailGeneration) return;
-        const external = ['test', 'task', 'review', 'handoff', 'commission'].includes(action) || key === 'experiments';
+        const external = ['verify', 'test', 'task', 'review', 'handoff', 'commission'].includes(action) || key === 'experiments';
         const confirm = external ? 'Разрешаю отправить это задание выбранным подключениям в пределах существующего бюджета.' : action === 'publish_to_workspace' ? 'Разрешаю участникам этого рабочего пространства читать содержание и происхождение опубликованной записи.' : ['archive', 'revoke', 'withdraw', 'disconnect', 'cancel', 'dismiss', 'suspend'].includes(action) ? 'Подтверждаю это изменение выбранной записи.' : '';
         const warning = external ? note('Режим каждого подключения указан при выборе. SYNTHETIC проверяет механику без внешнего вызова и не подтверждает качество модели. Для реального подключения сервер проверяет существующий бюджет; измеренная стоимость может быть неизвестна до ответа. Не отправляйте секреты или личные данные.') : action === 'publish_to_workspace' ? note('Будет создана отдельная общая запись в текущем workspace. Личный источник сохраняется. Не публикуйте секреты или чужие личные данные; отзыв общей записи или её источника прекращает доступ.') : action === 'bind_existing' ? note('Только связь с одним существующим разрешённым Local-подключением. Ключ не копируется; новый бюджет не создаётся. Отключение связи не удаляет исходное подключение владельца.') : key === 'routines' || key === 'calendar' ? note('Это запись предложения / события, не запуск фонового исполнителя. Автоматизация остаётся выключенной.') : '';
         const back = key === 'tasks' ? `<button type="button" class="btn" data-aw-task="${esc(id)}">Назад к задаче</button>` : `<button type="button" class="btn" data-aw-domain="${key}">Отмена</button>`;
         openDrawer(DOMAINS[key].title + ' · ' + actionLabel(action), `<div class="aw-domain-heading"><div><h2>${esc(actionLabel(action))}</h2><p>${esc(record?.title || record?.label || record?.name || DOMAINS[key].description)}</p></div></div>${warning}<form class="aw-form" id="aw-domain-form" autocomplete="off"><div class="aw-form-grid">${specs.map(spec => formField(spec, record, dependencies)).join('')}</div>${!specs.length ? '<p class="aw-text">Действие относится только к выбранной записи. История и права проверяются сервером.</p>' : ''}${confirm ? `<label class="aw-confirm"><input type="checkbox" name="confirmation" required><span>${esc(confirm)}</span></label>` : ''}<p class="aw-form-error" id="aw-form-error" role="alert" hidden></p><div class="aw-actions"><button type="submit" class="btn primary">${esc(actionLabel(action))}</button>${back}</div><p class="aw-field-hint">Ни workspace, ни права, ни бюджет не принимаются из формы. ${record ? 'Изменение привязано к ревизии ' + count(record.revision) + '.' : ''}</p></form>`);
         if (key === 'models' && action === 'connect') qs('#aw-domain-form', currentDrawer)?.insertAdjacentHTML('beforebegin', modelConnectionGuide());
+        if (chatSeed) {
+          const goal = qs('#aw-field-goal', currentDrawer);
+          if (goal) { goal.value = chatSeed.goal; goal.readOnly = true; }
+          qs('#aw-domain-form', currentDrawer)?.insertAdjacentHTML('beforebegin', '<p class="aw-note">Продолжение исходного сообщения SF Chat. Цель сохранена; выберите данные, подключения и ожидаемый результат. Самостоятельного запуска пока нет.</p>');
+        }
+        if (key === 'external_agents' && action === 'create' && domainState?.data.test_connection) qs('#aw-domain-form', currentDrawer)?.insertAdjacentHTML('beforebegin', '<p class="aw-note">SYNTHETIC · только разрешённое Development-пространство.</p><button type="button" class="btn" data-aw-external-test-fill>Заполнить Development-агентом</button>');
       } catch (error) { if (error?.name !== 'AbortError' && request === detailGeneration && !disposed) openDrawer(actionLabel(action), readError(error)); }
     }
     async function openRouterTask(id) {
@@ -1267,7 +1447,24 @@
         values[spec.key] = spec.type === 'models' ? qsa(`input[name="${spec.key}"]:checked`, form).map(input => input.value) : ['evidence', 'records'].includes(spec.type) ? qsa(`input[name="${spec.key}"]:checked`, form).map(input => input.value).concat(String(form.elements.namedItem(spec.key + '_manual')?.value || '').split(/[\s,]+/).filter(Boolean)) : form.elements.namedItem(spec.key)?.value || '';
       }
       let payload;
-      try { payload = state.processCandidate ? processCandidatePayload(state.processCandidate, state.domain) : domainPayload(state.domain, state.action, values); }
+      try {
+        if (state.intentPlan) {
+          const choice = form.elements.namedItem('intent_choice')?.value;
+          if (!rows(state.intentPlan.prepared.choices).some(row => row.id === choice && row.available)) throw new Error('Выберите доступный ожидаемый результат.');
+          payload = { ...state.intentPlan.source, selection: { id: choice, plan_sha256: state.intentPlan.prepared.plan_sha256 } };
+        } else {
+          if (state.domain === 'automation' && ['commission', 'clarify_commission'].includes(state.action)) {
+            const raw = String(values.input_text || '').trim();
+            if (!raw.startsWith('[')) {
+              if (!/^-?\d+(?:\s*[,;\s]\s*-?\d+)*$/.test(raw)) throw new Error('Введите целые числа через запятую.');
+              values.input_text = JSON.stringify(raw.split(/[,;\s]+/).map(Number));
+            }
+          }
+          payload = state.scheduleApproval ? { ...state.scheduleApproval.payload } : state.processCandidate ? processCandidatePayload(state.processCandidate, state.domain) : domainPayload(state.domain, state.action, values);
+          if (state.chatSource) payload.chat_source = state.chatSource;
+        }
+        if (state.scheduleSource) payload.source_domain = state.scheduleSource.domain;
+      }
       catch (error) { errorBox.textContent = error.message; errorBox.hidden = false; return; }
       if (state.domain === 'publications' && state.action === 'publish') {
         const publication = state.publication;
@@ -1298,6 +1495,20 @@
         const result = await API.aiControlCenterDomainAction(state.domain, state.id, state.action, body);
         if (disposed) return;
         if (result?.ok === false) throw { status: 409 };
+        if (state.domain === 'automation' && state.action === 'propose' && state.scheduleSource) {
+          if (!validSchedulePreview(result, state.scheduleSource, payload)) throw new Error('Источник или план расписания изменился. Откройте форму заново.');
+          mutationBusy = false;
+          actionForm = { ...state, action: 'enable', scheduleApproval: { payload: { ...payload, approved_plan_sha256: result.approved_plan_sha256 } }, revision: state.scheduleSource.revision };
+          openDrawer('Разрешить проверенное расписание', `${domainNav('automation')}<h2>${esc(state.scheduleSource.title)}</h2><p class="aw-note">${result.plan.synthetic === true ? 'SYNTHETIC · без внешнего провайдера; не оценка качества модели.' : 'Исполнение выбранным подключением в пределах существующих прав и бюджета.'} Предложение принято ранее; расписание ещё не включено.</p><ol>${rows(result.plan.due_at).map(value => `<li>${esc(date(value))}</li>`).join('')}</ol><p>Вызовов: ${count(result.plan.due_at.length)} · потолок вызова: ${esc(payload.max_call_cost_usd)} USD · разрешение: ${count(payload.grant_hours)} ч.</p><details><summary>Проверяемый план</summary><pre>${esc(publicJSON(result.plan))}</pre></details><form id="aw-domain-form"><label class="aw-confirm"><input type="checkbox" name="confirmation" required>Разрешаю именно эти запуски и выбранное подключение.</label><p id="aw-form-error" role="alert" hidden></p><button class="btn primary" type="submit">Включить по расписанию</button><button type="button" class="btn" data-aw-domain="automation">Отмена</button></form>`);
+          return;
+        }
+        if (state.domain === 'automation' && ['commission', 'clarify_commission'].includes(state.action) && result?.status === 'clarification_required') {
+          mutationBusy = false;
+          actionForm = { ...state, intentPlan: { prepared: result, source: payload } };
+          const choices = rows(result.choices).map(choice => `<label class="aw-confirm"><input type="radio" name="intent_choice" value="${esc(choice.id)}" required${choice.available ? '' : ' disabled'}><span>${esc(choice.label)}${choice.reason ? '<small>Недостаточно данных для разбиения между выбранными специалистами. Измените исходные данные или состав команды.</small>' : ''}</span></label>`).join('');
+          openDrawer('Уточнить ожидаемый результат', `${domainNav('automation')}<h2>${esc(result.goal)}</h2><p class="aw-text">${esc(result.question)}</p><p class="aw-note">Задания ещё не запущены. Вы выбираете ожидаемый результат; роли и внутренние операции определит Координатор. Исполнение дочерних заданий потребует отдельного разрешения.</p><form class="aw-form" id="aw-domain-form">${choices}<p class="aw-form-error" id="aw-form-error" role="alert" hidden></p><div class="aw-actions"><button type="submit" class="btn primary">Подтвердить поручение</button><button type="button" class="btn" data-aw-domain="automation">Отмена</button></div></form>`);
+          return;
+        }
         if (state.domain === 'router' && state.action === 'preview') {
           mutationBusy = false;
           openRouterPreview(result.item || result, state.item);
@@ -1322,12 +1533,13 @@
           return;
         }
         actionForm = null;
-        const keyInput = form.elements.namedItem('api_key'); if (keyInput) keyInput.value = '';
+        for (const secretName of ['api_key', 'credential']) { const keyInput = form.elements.namedItem(secretName); if (keyInput) keyInput.value = ''; }
         mutationBusy = false;
         await refresh();
         const resultItem = result.item || result.task || result;
         announce(resultItem.status === 'failed' || resultItem.status === 'external_blocked' ? 'Сервер записал неуспешный результат. Откройте историю и ограничения.' : 'Ответ сервера сохранён. Проверьте состояние и результат записи; принятие запроса не означает завершение задачи.');
-        if (state.domain === 'router' && state.action === 'apply' && resultItem.started_task_id) await openTask(resultItem.started_task_id);
+        if (state.domain === 'external_agents' && state.action === 'task' && resultItem.started_task_id) await openTask(resultItem.started_task_id);
+        else if (state.domain === 'router' && state.action === 'apply' && resultItem.started_task_id) await openTask(resultItem.started_task_id);
         else if (state.domain === 'automation' || state.action === 'seed_preview') await openDomain(state.domain);
         else if (state.action === 'open_chat') { await openDomain(state.domain); await openDomainItem(state.id); }
         else if (state.domain === 'tasks') await openTask(taskId(resultItem) || state.id);
@@ -1357,11 +1569,12 @@
       else if (detailTab === 'decisions') body = detailRows(rows(detail.decisions), 'У этой задачи нет записанных решений. Проверочный сценарий не имитирует разрешение владельца или Court.');
       else body = detailRows(rows(detail.errors), task.status === 'failed' ? 'Подробности ошибки не опубликованы.' : 'Зарегистрированных ошибок нет.');
       if (detailTab === 'summary' && detail.result_text) body += `<details class="aw-technical"><summary>Полный ответ и технические данные</summary><pre>${esc(detail.result_text)}</pre></details>`;
-      if (detailTab === 'summary') body += intentPanel(detail.intent);
+      if (detailTab === 'summary') body += intentPanel(detail.intent) + externalTaskProvenance(task);
       if (detailTab === 'evaluations') body += reputationPanel(detail.reputation);
       if (detailTab === 'summary') body += transportVerificationNote(task);
+      if (detailTab === 'summary' && detail.model_selection) body += modelSelectionPanel(detail.model_selection);
       if (detailTab === 'summary' && task.source_kind === 'real_model_response') body += `<section class="aw-detail-section"><h3>Исполнитель и происхождение результата</h3><dl class="aw-detail-grid"><div><dt>Запрошенная модель</dt><dd>${esc(task.model || 'Не предоставлена')}</dd></div><div><dt>Model ID от провайдера</dt><dd>${esc(detail.actual_model || 'Не предоставлен')}</dd></div><div><dt>Провайдер</dt><dd>${detail.external_call === false ? esc((task.provider || 'провайдер') + ' — не вызывался') : esc(task.provider || 'Не предоставлен')}</dd></div>${detail.executor ? `<div><dt>Ответ получен от</dt><dd>${esc(detail.executor)}</dd></div>` : ''}</dl>${detail.external_call === false ? '<p class="aw-note">Ответ вычислен локально: внешнее обращение не выполнялось, поэтому этот результат ничего не говорит о доступности провайдера.</p>' : ''}<details class="aw-technical"><summary>Связанные записи</summary>${['intent_id', 'execution_id', 'contribution_id', 'outcome_id', 'evaluation_id', 'conversation_id', 'message_id'].filter(key => task[key]).map(key => `<div class="aw-hash">${esc(key.toUpperCase())} ${esc(task[key])}</div>`).join('')}</details></section>`;
-      if (detailTab === 'summary' && detail.graph) {
+      if (detailTab === 'summary' && task.source_kind === 'bounded_delegation_result' && detail.graph) {
         const review = detail.graph.human_review || {};
         const labels = { pending: 'Ожидается отдельная проверка', accepted: 'Принят', rejected: 'Отклонён', not_ready: 'Результат ещё не готов', stale: 'Источник изменился' };
         body += `<section class="aw-detail-section"><h3>Участники и обязательные проверки</h3><p class="aw-note">Проверка передачи фактов не означает приёмку всех вкладов или профессиональную оценку. Каждый исходный результат открывается отдельно.</p><div class="aw-stack">${rows(review.required_reviews).map((entry, index) => `<article class="aw-domain-card"><h4>${index ? 'Проверка ' + index : 'Исходная работа Координатора'}</h4><p>${esc(labels[entry.status] || 'Требует проверки источника')}</p><button class="btn" data-aw-task="${esc(entry.task_id)}">Открыть результат и проверку</button></article>`).join('')}</div><details class="aw-technical"><summary>План, роли и происхождение вкладов</summary><pre>${esc(publicJSON(detail.graph))}</pre></details></section>`;
@@ -1369,7 +1582,7 @@
       if (task.model_id && task.conversation_id) body += `<div class="aw-actions"><button class="btn" data-aw-router-task="${esc(taskId(task))}">Выбор подключения · Router</button></div>`;
       body += handoffCard(task);
       const taskActions = rows(task.allowed_actions || task.actions).filter(action => ['cancel', 'retry', 'handoff', 'review_result'].includes(action)).map(action => `<button class="btn${action === 'cancel' ? ' aw-danger-action' : ''}" data-aw-task-action="${action}">${esc(actionLabel(action))}</button>`).join('');
-      const controls = `<div class="aw-actions"><button class="btn" data-aw-task-chat="${esc(taskId(task))}">Открыть в SF Chat</button>${source.reportUrl ? `<a class="btn" href="${esc(source.reportUrl)}">Открыть исходный отчёт</a>` : ''}${svg ? `<button class="btn primary" data-aw-chart-chat="${esc(taskId(task))}">Снимок графика → SF Chat</button>` : ''}${taskActions}</div>`;
+      const controls = `<div class="aw-actions">${task.conversation_id ? `<button class="btn" data-aw-task-chat="${esc(taskId(task))}">Открыть в SF Chat</button>` : '<span class="aw-note">У исторической задачи нет связанного диалога.</span>'}${source.reportUrl ? `<a class="btn" href="${esc(source.reportUrl)}">Открыть исходный отчёт</a>` : ''}${svg ? `<button class="btn primary" data-aw-chart-chat="${esc(taskId(task))}">Снимок графика → SF Chat</button>` : ''}${taskActions}</div>`;
       const tabs = `<nav class="aw-tabs" role="tablist" aria-label="Разделы задачи">${Object.entries(labels).map(([key, label]) => `<button role="tab" aria-selected="${detailTab === key}" tabindex="${detailTab === key ? 0 : -1}" data-aw-detail-tab="${key}">${label}</button>`).join('')}</nav>`;
       openDrawer('Задача · ' + taskTitle(task), `${controls}${tabs}<div role="tabpanel">${body}</div><details class="aw-technical"><summary>Идентификаторы и состояние журнала</summary><div class="aw-hash">TASK ${esc(taskId(task))}${task.correlation_id ? `<br>CORRELATION ${esc(task.correlation_id)}` : ''}<br>LEDGER ${esc(task.ledger_status || task.status)}</div></details>`);
     }
@@ -1445,6 +1658,13 @@
       if (target.tagName === 'A' || target.dataset.awTaskChat || target.dataset.awFollowupChat || target.dataset.awChartChat || target.hasAttribute('data-aw-real-chat')) stopPersonaAudio();
       // A control may carry both: open the tab already narrowed to that filter.
       if (target.dataset.awTab) { if (target.dataset.awFilter) filter = target.dataset.awFilter; selectTab(target.dataset.awTab, true); }
+      else if (target.hasAttribute('data-aw-external-test-fill')) {
+        const test = domainState?.key === 'external_agents' && domainState?.data.test_connection;
+        const form = qs('#aw-domain-form', currentDrawer);
+        if (test && form && actionForm?.action === 'create') {
+          for (const [key, value] of Object.entries({ display_name: 'Development · внешний агент', protocol: 'a2a-0.3-jsonrpc-bounded', endpoint: test.endpoint, credential: test.credential, capability: 'stratforge.json_arithmetic.v1' })) { const input = form.elements.namedItem(key); if (input) input.value = value || ''; }
+        }
+      }
       else if (target.dataset.awDomain) openDomain(target.dataset.awDomain);
       else if (target.dataset.awDomainItem) openDomainItem(target.dataset.awDomainItem);
       else if (target.dataset.awRouterTask) openRouterTask(target.dataset.awRouterTask);
@@ -1453,6 +1673,7 @@
       else if (target.dataset.awPersonaSpeak) playPersonaDescription(target.dataset.awPersonaSpeak);
       else if (target.hasAttribute('data-aw-persona-stop')) stopPersonaAudio();
       else if (target.dataset.awProcessPropose) openProcessSuggestion(target.dataset.awProcessPropose);
+      else if (target.dataset.awScheduleSource) openScheduleSource(target.dataset.awScheduleSource);
       else if (target.dataset.awCapability) changeAutomationCapability(target.dataset.awCapability, target.dataset.awCapabilityUser);
       else if (target.hasAttribute('data-aw-domain-refresh')) openDomain(domainState?.key);
       else if (target.hasAttribute('data-aw-domain-more')) openDomain(domainState?.key, true);
@@ -1513,12 +1734,39 @@
     const locationParams = new URLSearchParams(root.location.hash.replace(/^#/, ''));
     tab = TABS.includes(locationParams.get('tab')) ? locationParams.get('tab') : 'overview';
     await refresh();
+    let chatRouteGeneration = 0, activeChatRoute = null;
+    async function applyChatRoute(params) {
+      const conversation = params.get('chat_conversation'), message = params.get('chat_message');
+      if (disposed || mutationBusy || !overview?.enabled || params.get('domain') !== 'automation' || !conversation || !message) return false;
+      const key = JSON.stringify([conversation, message]);
+      if (activeChatRoute === key) return true;
+      activeChatRoute = key;
+      const revision = ++chatRouteGeneration;
+      UI.closeOrchestrator?.();
+      const expectedDetail = detailGeneration + 1;
+      try {
+        await openDomain('automation');
+        if (disposed || revision !== chatRouteGeneration || detailGeneration !== expectedDetail) return true;
+        const seed = await API.aiControlCenterDomainAction('automation', 'new', 'chat_seed', { payload: { conversation_id: conversation, source_message_id: message }, idempotency_key: root.crypto.randomUUID() });
+        if (!disposed && revision === chatRouteGeneration && detailGeneration === expectedDetail) await openDomainAction('commission', 'new', null, seed);
+      } catch (error) { if (!disposed && revision === chatRouteGeneration && detailGeneration === expectedDetail) openDrawer('Поручение из SF Chat', readError(error)); }
+      finally { if (revision === chatRouteGeneration) activeChatRoute = null; }
+      return true;
+    }
+    function followChatRoute() {
+      void applyChatRoute(new URLSearchParams(root.location.hash.replace(/^#/, '')));
+    }
+    root.addEventListener?.('hashchange', followChatRoute);
+    root.addEventListener?.('aw-chat-navigate', followChatRoute);
+    UI.onLeave(() => { ++chatRouteGeneration; root.removeEventListener?.('hashchange', followChatRoute); root.removeEventListener?.('aw-chat-navigate', followChatRoute); });
     const linkedTask = locationParams.get('task') || new URLSearchParams(root.location.search).get('task');
     if (linkedTask && overview?.enabled) await openTask(linkedTask);
     else if (knownDomain(locationParams.get('domain')) && overview?.enabled) {
+      if (!await applyChatRoute(locationParams)) {
       await openDomain(locationParams.get('domain'));
       const entity = locationParams.get('entity');
       if (/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(entity || '')) await openDomainItem(entity);
+      }
     }
     // Reuse Aurora's existing single-flight, onLeave-cleaned polling lifecycle.
     // Reading never enqueues, accepts, retries or changes a permission/flag.

@@ -87,7 +87,8 @@ def envelope(authorized, detail, *, request_id, pending=False):
                 "synthetic": provenance["synthetic"], "purpose": task.get("task_class")}]}
 
 
-def start(authorized, service, model_id, payload, key, *, test=False, conversation_id=None, user_message=None, persona=None):
+def start(authorized, service, model_id, payload, key, *, test=False, conversation_id=None, user_message=None, persona=None,
+          model_selection=None):
     if test and payload:
         raise ContractError("model_connection_input_not_allowed")
     model = service.model_detail(context=authorized["context"], model_id=model_id)
@@ -101,6 +102,8 @@ def start(authorized, service, model_id, payload, key, *, test=False, conversati
                   "conversation_id": cid, "message_id": message_id}
         if persona is not None:
             kwargs["_persona"] = persona
+        if model_selection is not None:
+            kwargs["_model_selection"] = model_selection
         detail = service.test(**kwargs) if test else service.start_task(**kwargs, payload=payload)
         created.update(detail)
         return envelope(authorized, detail, request_id=key, pending=True)
@@ -243,7 +246,7 @@ def deliver(authorized, service, *, task_id, event_id, checkpoint_sha256, events
 
 
 def try_persona(*, message, authorized, service, persona_id, persona_revision,
-                conversation_id, request_id, user_message):
+                conversation_id, request_id, user_message, selected_model_id=None):
     """One selected, owned Persona -> one bound connection -> existing worker.
 
     A received free-text answer is never evidence of correctness or permission
@@ -256,16 +259,19 @@ def try_persona(*, message, authorized, service, persona_id, persona_revision,
     persona = persona_identity._owned(service, context, persona_id)
     if type(persona_revision) is not int or persona.header.revision != persona_revision:
         raise ContractError("persona_selection_changed")
-    model_id = persona_identity.select_model(service, context=context, persona_id=persona_id)
+    model_id = persona_identity.select_model(service, context=context, persona_id=persona_id,
+        selected_model_id=selected_model_id)
     diagnostic = re.fullmatch(r"(connection_exact|json_arithmetic|extract_facts)(?:\s*\n([\s\S]*))?", message, re.I)
     rubric = diagnostic[1].lower() if diagnostic else "assistant_response"
     if rubric == "connection_exact" and diagnostic[2]:
         raise ContractError("model_connection_input_not_allowed")
     payload = {} if rubric == "connection_exact" else {"rubric_key": rubric,
         "input_text": (diagnostic[2] or "") if diagnostic else message}
+    selection = ({"mode": "explicit_override", "selected_model_id": model_id} if selected_model_id is not None
+                 else {"mode": "single_available", "selected_model_id": None})
     detail = start(authorized, service, model_id, payload, request_id,
         test=rubric == "connection_exact", conversation_id=conversation_id,
-        user_message=user_message, persona=persona.ref())
+        user_message=user_message, persona=persona.ref(), model_selection=selection)
     return {"ok": True, "conversation_id": conversation_id,
             "reply": "Задание помощнику принято. Ответ появится в этой теме.",
             "task_id": detail["id"], "persona_id": persona_id,

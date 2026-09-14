@@ -47,8 +47,20 @@ def scenario(world, tmp_path, monkeypatch):
 
 def request(env, action, identity="new", payload=None, key="coordinator-owner-new-goal"):
     # Same gateway that handles the application's real HTTP domain route.
+    payload = dict(env.payload if payload is None else payload)
+    if action == "commission":
+        # This compatibility fixture makes the human's meaning explicit.
+        # Production callers never send these internal operation identifiers.
+        operation = payload.pop("operation", "verify_fact_transfer")
+        if operation not in delegation.OPERATIONS:
+            return coordinator.commission(env.authorized, env.service, {**payload, "operation": operation}, key)
+        preview = coordinator.plan_request(env.authorized, env.service, payload)
+        choice = preview["choices"][0 if operation == "verify_fact_transfer" else 1]
+        if not choice["available"]:
+            raise ContractError(choice["reason"])
+        payload["selection"] = {"id": choice["id"], "plan_sha256": preview["plan_sha256"]}
     return domain_gateway.mutate(env.authorized, "automation", identity, action,
-        {"payload": env.payload if payload is None else payload, "idempotency_key": key})
+        {"payload": payload, "idempotency_key": key})
 
 
 def tick(env):
@@ -311,6 +323,8 @@ def test_evaluation_and_receipt_links_rechecked_not_a_green_dto(scenario, monkey
 def test_normal_chat_starts_new_goal_with_exact_source_message(scenario):
     env = scenario
     payload = {key: value for key, value in env.payload.items() if key != "goal"}
+    preview = coordinator.plan_request(env.authorized, env.service, env.payload)
+    payload["selection"] = {"id": "1", "plan_sha256": preview["plan_sha256"]}
     message = "Координатор: " + env.payload["goal"] + "\n" + json.dumps(payload)
     reply = coordinator.try_chat(message, scope=env.authorized["chat_scope"], conversation_id="coordinator-new-goal-chat",
         request_id="coordinator-explicit-chat-goal", source="app")
@@ -411,7 +425,7 @@ def test_revoked_grant_blocks_aggregate_acceptance_without_erasing_individual_re
 
 
 @pytest.mark.parametrize("change", ["revoked", "flag_off", "connection", "cancelled"])
-def test_current_truth_change_marks_review_stale_and_preserves_immutable_decision(scenario, change):
+def test_current_truth_distinguishes_execution_authority_from_accepted_evidence(scenario, change):
     env = scenario
     _, _, _, started = approved(env)
     graph = accept_individuals(env, finish(env, started["graph"]["id"]))
@@ -426,12 +440,18 @@ def test_current_truth_change_marks_review_stale_and_preserves_immutable_decisio
     history = domain_gateway.access(env.world.scope, read_only=True)
     historical_service = domain_gateway.history_models(history)
     stale = delegation.projection(history, historical_service, graph["id"])
-    assert stale["human_review"]["status"] == "stale" and not stale["human_accepted"]
-    assert stale["human_review"]["recorded_status"] == "accepted"
+    if change in {"revoked", "flag_off"}:
+        assert stale["human_review"]["status"] == "accepted" and stale["human_accepted"]
+        assert stale["human_review"]["source_sha256"] == accepted["human_review"]["source_sha256"]
+        assert stale["human_review"]["current_execution_authority"]["blocked_reason"]
+    else:
+        assert stale["human_review"]["status"] == "stale" and not stale["human_accepted"]
+        assert stale["human_review"]["recorded_status"] == "accepted"
     assert stale["human_review"]["evaluation_id"] == str(record.header.entity_id)
     assert env.service._get(env.context, EntityKind.EVALUATION, record.header.entity_id) == record
     assert env.service._json(env.context, record.evidence)["source_sha256"] == accepted["human_review"]["source_sha256"]
-    with pytest.raises(ContractError, match="task_review_"): review_result(env, stale)
+    if change in {"connection", "cancelled"}:
+        with pytest.raises(ContractError, match="task_review_"): review_result(env, stale)
 
 
 def test_test_executor_opt_in_is_for_new_work_not_historical_receipts(scenario, monkeypatch):

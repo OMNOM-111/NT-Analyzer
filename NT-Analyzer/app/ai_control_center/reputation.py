@@ -24,6 +24,7 @@ MIN_SAMPLE = 3
 DEFAULT_WINDOW_DAYS = 30
 # Which subject kind each scope measures. One scope never reads another's rows.
 SCOPES = {
+    "external_agent_performance": EntityKind.EXTERNAL_AGENT_CONNECTION,
     "model_performance": EntityKind.MODEL,
     "agent_role_performance": EntityKind.AGENT_ROLE,
     "decision_performance": EntityKind.DECISION,

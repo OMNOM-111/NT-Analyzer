@@ -72,4 +72,5 @@ def test_connect_guide_names_the_actual_secret_field_without_any_secret():
     guide = evaluate("ui.modelConnectionGuide()")
     assert "openrouter.ai/settings/keys" in guide and "openrouter/free" in guide
     assert "Ключ подключения" in guide and "Owner-ключи не копируются" in guide
-    assert "MCP" in guide and "chat-completions" in guide
+    assert "только модель" in guide and "HTTPS chat-completions" in guide
+    assert "Для самостоятельного внешнего агента" in guide and "Внешние агенты" in guide

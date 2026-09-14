@@ -540,6 +540,27 @@ def test_real_model_service_adapter_contract_integrates_court_receipts_without_n
     assert len(calls) == 3
 
 
+def test_court_evidence_picker_serializes_only_verified_stored_json_media_type(env, monkeypatch):
+    model_service, ids, _ = model_service_fixture(env)
+    task = model_service.start_task(context=env.ctx, model_id=ids[0],
+        payload={"rubric_key": "json_arithmetic", "input_text": "[17,-4,12,9]"},
+        idempotency_key="court-evidence-picker-json")
+    result = model_service.execute(context=env.ctx, task_id=task["id"])
+    assert result["status"] == "succeeded"
+    candidates = env.service.evidence_candidates(context=env.ctx, admit=env.admit)["items"]
+    assert candidates and all(row["media_type"] == "application/json" for row in candidates)
+    assert env.service.evidence_candidates(context=context(user=2), admit=env.admit)["items"] == []
+
+    original = env.repo.get_artifact
+    def non_json(*args, **kwargs):
+        found = original(*args, **kwargs)
+        return (found[0], "text/plain") if found else None
+    monkeypatch.setattr(env.repo, "get_artifact", non_json)
+    assert env.service.evidence_candidates(context=env.ctx, admit=env.admit)["items"] == []
+    monkeypatch.setattr(env.repo, "get_artifact", lambda *args, **kwargs: None)
+    assert env.service.evidence_candidates(context=env.ctx, admit=env.admit)["items"] == []
+
+
 def test_consensus_uses_independent_same_input_contributions_then_separate_court(env):
     model_service, ids, calls = model_service_fixture(env)
     contribution_ids = []
@@ -561,6 +582,7 @@ def test_consensus_uses_independent_same_input_contributions_then_separate_court
                                       contribution_ids=[contribution_ids[0]] * 2, risk="low", idempotency_key="bad-consensus-proposal")
     candidates = env.service.evidence_candidates(context=env.ctx, admit=env.admit)["items"]
     assert candidates and all(item["source_kind"] in {"outcome", "contribution"} for item in candidates)
+    assert all(item["media_type"] == "application/json" for item in candidates)
     assert env.service.evidence_candidates(context=context(user=2), admit=env.admit)["items"] == []
     choices = env.service.consensus_candidates(context=env.ctx, admit=env.admit)
     assert {row["id"] for row in choices} == set(contribution_ids)

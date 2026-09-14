@@ -34,7 +34,24 @@ EXECUTOR = "agent-world-local-test-executor-v1"
 # application plan rubrics -- which only ever echo the specification the server
 # built, because the server validates and executes it independently.
 SUPPORTED = frozenset({"connection_exact", "json_arithmetic", "extract_facts",
-                       "backtest_spec", "chart_spec", "assistant_response"})
+                       "backtest_spec", "chart_spec", "assistant_response", "court_vote"})
+COURT_MODELS = {"development-court-approve": "approve", "development-court-reject": "reject",
+                "development-court-abstain": "abstain"}
+COURT_PREFIX = "Independently review this sealed evidence packet against its explicit policy. "
+
+
+def _court_answer(prompt, model_key):
+    """Explicit diagnostic vote fixture, NOT a policy judgement or diverse model."""
+    if model_key not in COURT_MODELS or len(prompt.encode("utf-8")) > 16000:
+        raise ContractError("model_test_executor_court_fixture_required")
+    try:
+        packet = json.loads(prompt.split("Packet: ", 1)[1])
+    except (IndexError, ValueError, TypeError):
+        raise ContractError("model_test_executor_court_packet_invalid") from None
+    if not isinstance(packet, dict) or packet.get("policy_version") != "court-review-v1" or "proposal" not in packet:
+        raise ContractError("model_test_executor_court_packet_invalid")
+    return json.dumps({"verdict": COURT_MODELS[model_key], "confidence": 0,
+        "rationale": "SYNTHETIC Development Court fixture; predetermined vote, no model-quality or provider-diversity claim."})
 
 
 def workspaces() -> frozenset[str]:
@@ -94,7 +111,8 @@ def execute(*, context, model, account, profile, prompt, system_prompt, request_
     admit(context, "provider_transmit", 0.0)
     if callable(cancelled) and cancelled():
         raise ContractError("model_cancelled")
-    answer = _answer(str(prompt or ""))
+    prompt = str(prompt or "")
+    answer = (_court_answer(prompt, model.model_key) if prompt.startswith(COURT_PREFIX) else _answer(prompt))
     if len(answer) > int(max_output_tokens or 512) * 8:
         raise ContractError("model_provider_response_invalid")
     admit(context, "provider_transmit", 0.0)
@@ -106,4 +124,4 @@ def execute(*, context, model, account, profile, prompt, system_prompt, request_
             # No call was made, so this is a measured zero, not an estimate.
             "cost_known": True, "cost_usd": 0.0,
             "input_tokens": len(str(prompt or "")) // 4, "output_tokens": len(answer) // 4,
-            "external_call": False, "paid_call": False, "purpose": str(purpose or "")}
+            "external_call": False, "paid_call": False, "synthetic": True, "purpose": str(purpose or "")}

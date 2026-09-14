@@ -24,7 +24,8 @@ VERSION = "process-intelligence-v1"
 _EVENTS = frozenset({"stratforge.ai.outcome.verified", "stratforge.ai.outcome.changed"})
 _DOMAINS = {"routines": EntityKind.ROUTINE, "calendar": EntityKind.CALENDAR_ITEM}
 _KINDS = {"ninjatrader_report": ("backtest", "Разбор результатов бэктеста"),
-          "desktop_chart": ("chart", "Разбор проверенных графиков")}
+          "desktop_chart": ("chart", "Разбор проверенных графиков"),
+          "development_diagnostic": ("development_diagnostic", "SYNTHETIC · проверка повторяемого процесса")}
 _HEX = re.compile(r"[0-9a-f]{64}")
 
 
@@ -82,6 +83,8 @@ class ProcessIntelligence:
         if outcome.status != "verified" or outcome.verification is None:
             raise ContractError("process_source_unverified")
         proof = self.domains._json(context, outcome.verification)
+        if proof.get("synthetic") is True:
+            return self._development_metadata(context, outcome, proof)
         if proof.get("synthetic") is not False:
             raise ContractError("process_source_synthetic")
         if proof.get("rubric_key") != APPLICATION_RUBRIC:
@@ -107,6 +110,29 @@ class ProcessIntelligence:
                 "verification_sha256": outcome.verification.sha256, "source_kind": public["source_kind"],
                 "source_id": proof["source_id"], "at": c.primitive(outcome.header.updated_at),
                 "pending_review": review == "pending"}
+
+    def _development_metadata(self, context, outcome, proof):
+        """Named Development executor only; never a claim about real application work."""
+        from . import test_executor
+        if not test_executor.enabled(context.scope.workspace_id):
+            raise ContractError("process_source_synthetic")
+        detail = self.models.task_detail(context=context, task_id=outcome.task.entity_id)
+        evidence = detail.get("evaluation") or {}
+        if (detail.get("executor") != test_executor.EXECUTOR or detail.get("external_call") is not False
+                or proof.get("executor") != test_executor.EXECUTOR or proof.get("external_call") is not False
+                or proof.get("task_id") != str(outcome.task.entity_id)
+                or evidence.get("synthetic") is not True or evidence.get("passed") is not True
+                or proof.get("rubric_key") not in {"json_arithmetic", "extract_facts"}
+                or evidence.get("rubric_key") != proof.get("rubric_key")
+                or detail.get("status") != "succeeded"
+                or (detail.get("human_review") or {}).get("status") in {"rejected", "blocked"}):
+            raise ContractError("process_source_unverified")
+        return {"outcome_id": str(outcome.header.entity_id), "revision": outcome.header.revision,
+                "task_id": str(outcome.task.entity_id), "verification_id": str(outcome.verification.artifact_id),
+                "verification_sha256": outcome.verification.sha256, "source_kind": "development_diagnostic",
+                "source_id": str(outcome.task.entity_id), "at": c.primitive(outcome.header.updated_at),
+                "synthetic": True, "executor": test_executor.EXECUTOR,
+                "pending_review": (detail.get("human_review") or {}).get("status") == "pending"}
 
     @staticmethod
     def _source(metadata):
@@ -180,6 +206,7 @@ class ProcessIntelligence:
         events, complete = self._all(context, admit)
         base = {"version": VERSION, "automation_enabled": False, "quality_claim": False,
                 "private_messages_read": False, "candidates": [], "suppressed": [], "excluded": {},
+                "real_observation_count": 0, "synthetic_observation_count": 0,
                 "incomplete": not complete, "source_denominator": "verified_application_workflow_occurrences",
                 "minimum_observations": self.policy.minimum_observations,
                 "limitations": ["Предложение не включает автоматизацию и не закрывает проверки результата.",
@@ -225,8 +252,8 @@ class ProcessIntelligence:
             times = [_utc(row["at"]) for row in rows]
             if (len(rows) < self.policy.minimum_observations
                     or len({row["task_id"] for row in rows}) < self.policy.minimum_observations
-                    or len({stamp.date() for stamp in times}) < 2
-                    or (times[-1]-times[0]).total_seconds() < 600):
+                    or source_kind != "development_diagnostic" and (len({stamp.date() for stamp in times}) < 2
+                    or (times[-1]-times[0]).total_seconds() < 600)):
                 suppressed.append({"source_kind": source_kind, "reason": "insufficient_repeated_work",
                                    "sample_size": len(rows)})
                 continue
@@ -270,10 +297,16 @@ class ProcessIntelligence:
                     steps = max(1, int((now-times[-1]).total_seconds()//period.total_seconds())+1)
                     starts = times[-1]+steps*period
                     candidate.update(starts_at=c.primitive(starts), ends_at=c.primitive(starts+timedelta(minutes=30)))
+                if source_kind == "development_diagnostic":
+                    candidate.update(synthetic=True, real_work_observations=0,
+                        cadence_basis="development_diagnostic_batch_not_real_cadence",
+                        description="SYNTHETIC · тест процесса, не реальная периодичность и не качество модели. Требуется отдельное согласие.")
                 candidate["source_sha256"] = _hash(candidate)
                 candidates.append(candidate)
         self._guard(context, admit)
-        return {**base, "candidates": candidates, "suppressed": suppressed, "excluded": dict(excluded)}
+        return {**base, "candidates": candidates, "suppressed": suppressed, "excluded": dict(excluded),
+                "real_observation_count": sum(len(rows) for kind, rows in grouped.items() if kind != "development_diagnostic"),
+                "synthetic_observation_count": len(grouped.get("development_diagnostic", []))}
 
     def validate_suggestion(self, *, context, admit, domain, entity_id, expected_revision):
         self._guard(context, admit)
@@ -334,6 +367,8 @@ class ProcessIntelligence:
             "pattern_id": row["pattern_id"], "sequence": row["sequence"], "candidate_id": row["id"],
             "source_sha256": row["source_sha256"], "observations_sha256": row["observations_sha256"],
             "sources": row["sources"], "automation_enabled": False, "quality_claim": False}
+        if row.get("synthetic") is True:
+            marker.update(synthetic=True, real_work_observations=0)
         reference = self.domains._put(context, admit, marker)
         fields = ("title", "description", "interval_minutes") if domain == "routines" else ("title", "description", "starts_at", "ends_at")
         payload = {key: row[key] for key in fields}

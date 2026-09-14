@@ -9204,6 +9204,12 @@ class Handler(BaseHTTPRequestHandler):
         if "persona_id" in body:
             from .ai_control_center.persona_identity import _identity
             selection["persona_id"] = _identity(body["persona_id"])
+        if "selected_model_id" in body:
+            from .ai_control_center.persona_identity import _identity
+            from .ai_control_center.states import ContractError
+            if "persona_id" not in selection:
+                raise ContractError("persona_model_selection_unavailable")
+            selection["selected_model_id"] = _identity(body["selected_model_id"])
         # Self-heal a crashed worker before accepting more durable work.
         local_worker.start_background_worker(interval_sec=0.2)
         return local_worker.enqueue_ai_message(

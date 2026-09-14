@@ -427,10 +427,15 @@ def _actual_tick(before=None):
 
 def test_ordinary_permanent_grant_delivers_child_and_aggregate_after_browser_session_expiry(ordinary_automation_program):
     env = ordinary_automation_program
-    created = gateway.mutate(env.auth, "automation", "new", "commission", {
-        "payload": {"goal": "Verify exact facts in an ordinary workspace", "input_text": "[17,-4,12,9]",
+    payload = {"goal": "Verify exact facts in an ordinary workspace", "input_text": "[17,-4,12,9]",
                     "coordinator_model_id": env.models[0]["id"], "target_model_ids": [env.models[1]["id"]],
-                    "parent_indices": [-1], "max_depth": 1}, "idempotency_key": "ordinary-new-commission"})
+                    "parent_indices": [-1], "max_depth": 1}
+    clarification = gateway.mutate(env.auth, "automation", "new", "commission", {
+        "payload": payload, "idempotency_key": "ordinary-new-commission"})
+    assert clarification["status"] == "clarification_required"
+    payload["selection"] = {"id": "1", "plan_sha256": clarification["plan_sha256"]}
+    created = gateway.mutate(env.auth, "automation", "new", "commission", {
+        "payload": payload, "idempotency_key": "ordinary-new-commission"})
     for _ in range(5):
         if _actual_tick() is None:
             break
