@@ -15,6 +15,8 @@ import math
 import re
 import secrets
 import sqlite3
+import threading
+import weakref
 from contextlib import contextmanager
 from dataclasses import fields, is_dataclass
 from datetime import datetime, timezone
@@ -147,6 +149,15 @@ def _validate_artifact(content: bytes, media_type: str) -> None:
         raise ContractError("invalid_artifact_content") from exc
 
 
+def _close_readers(readers):
+    for connection, _depth in list(readers.values()):
+        try:
+            connection.close()
+        except sqlite3.Error:
+            pass
+    readers.clear()
+
+
 class SQLiteAgentWorldRepository:
     """Explicit path, one connection per operation, bounded signed pagination.
 
@@ -243,12 +254,52 @@ class SQLiteAgentWorldRepository:
         finally:
             connection.close()
 
+    def _reader(self):
+        """This thread's reusable read-only connection.
+
+        Opening a connection and warming its page cache cost ~18 ms per read,
+        which dominated every overview. Each read still runs in its own
+        transaction, so a later read sees revisions committed meanwhile.
+        """
+        readers = self.__dict__.get("_readers")
+        if readers is None:
+            readers = self.__dict__["_readers"] = {}
+            weakref.finalize(self, _close_readers, readers)
+        thread = threading.get_ident()
+        if thread not in readers:
+            readers[thread] = [self._connect(), 0]
+        return readers[thread]
+
     @contextmanager
     def _transaction(self, *, write=False):
         if self.read_only and write:
             raise ContractError("agent_world_repository_read_only")
         if self._empty_read_only:
             raise ContractError("agent_world_storage_unavailable")
+        if self.read_only:
+            try:
+                slot = self._reader()
+            except sqlite3.Error as exc:
+                raise ContractError("agent_world_storage_unavailable") from exc
+            connection, outer = slot[0], slot[1] == 0
+            try:
+                if outer:
+                    connection.execute("BEGIN")
+                slot[1] += 1
+                try:
+                    yield connection
+                finally:
+                    slot[1] -= 1
+                if outer:
+                    connection.commit()
+            except sqlite3.Error as exc:
+                self.__dict__["_readers"].pop(threading.get_ident(), None)
+                connection.close()
+                raise ContractError("agent_world_storage_unavailable") from exc
+            finally:
+                if outer and slot[1] == 0 and connection.in_transaction:
+                    connection.rollback()
+            return
         connection = None
         try:
             connection = self._connect()

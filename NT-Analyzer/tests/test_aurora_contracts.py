@@ -158,7 +158,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260908-agent-world-persona-selection1"}, versions
+    assert set(versions.values()) == {"20260915-overview-snapshot1"}, versions
 
 
 def test_every_aurora_page_uses_current_theme_cache_version():
@@ -168,7 +168,7 @@ def test_every_aurora_page_uses_current_theme_cache_version():
         marker = 'href="assets/theme.css?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260905-app-dialogs"}, versions
+    assert set(versions.values()) == {"20260915-dark-system1"}, versions
 
 
 def test_development_preview_is_rewired_after_async_build_identity():
@@ -292,7 +292,7 @@ def test_every_aurora_page_uses_current_ui_cache_version():
             continue
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
     assert versions
-    assert set(versions.values()) == {"20260910-agent-world-state1"}, versions
+    assert set(versions.values()) == {"20260915-dark-default1"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():

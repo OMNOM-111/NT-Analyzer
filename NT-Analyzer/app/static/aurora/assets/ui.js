@@ -189,7 +189,8 @@
 
   // ---- app theme (auto / dark / light) ---------------------------------------
   const THEME_KEY = lsKey('app.theme');
-  function loadTheme() { try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) { return 'auto'; } }
+  // Dark is the product default; an explicit "Светлая" or "Как в системе" choice is kept.
+  function loadTheme() { try { return localStorage.getItem(THEME_KEY) || 'dark'; } catch (e) { return 'dark'; } }
   function applyTheme(mode) {
     const m = (mode === 'dark' || mode === 'light') ? mode : 'auto';
     if (document.documentElement) document.documentElement.setAttribute('data-theme', m);

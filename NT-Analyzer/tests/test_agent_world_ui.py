@@ -108,10 +108,13 @@ def test_domain_tools_remain_accessible_on_one_page_and_load_only_on_request():
     parser = Tags()
     parser.feed(PAGE.read_text(encoding="utf-8"))
     launcher = [attrs["data-aw-domain"] for tag, attrs in parser.tags if "data-aw-domain" in attrs]
-    # An external agent is reachable as its own tool, never folded into Модели.
+    # Technical diagnostics stay one click away in the header, outside the
+    # everyday tools. An external agent is its own tool, never folded into Модели.
     # The page launcher and the in-drawer navigation share one grouping and names.
-    assert launcher == ["automation", "routines", "calendar", "decisions", "personas", "models",
-                        "external_agents", "experiments", "memory", "projects", "publications", "system"]
+    assert launcher == ["system", "automation", "routines", "calendar", "decisions", "personas", "models",
+                        "external_agents", "experiments", "memory", "projects", "publications"]
+    assert 'class="btn ghost aw-diagnostics" data-aw-domain="system"' in PAGE.read_text(encoding="utf-8")
+    assert "['', ['system']]" not in script
     assert "const DOMAIN_GROUPS = Object.freeze([" in script
     assert "DOMAIN_GROUPS.map(([label, keys])" in script
     # Flags stay visible to the operator, in the system tool rather than the overview.
@@ -765,6 +768,46 @@ def test_system_is_inline_read_only_and_court_sources_are_server_provided():
     assert "must-not-render-system-secret" not in result["system"]
     assert "Stored JSON evidence" in result["form"]
     assert result["posts"] == 0
+
+
+def test_reopened_tool_shows_its_last_list_at_once_then_the_fresh_one():
+    result = run_domain_ui("""
+      await click({awDomain:'models'},'shell');const first=drawer.innerHTML;
+      const original=http.aiControlCenterDomain;let release;
+      http.aiControlCenterDomain=(domain,params)=>new Promise(resolve=>{release=()=>resolve(original(domain,params));});
+      domains.models.items[0].title='Renamed model';domains.models.items[0].label='Renamed model';
+      await click({awDomain:'models'},'shell');const instant=drawer.innerHTML;
+      // The quiet refresh replaces the open drawer's body in place.
+      const shown=drawer,find=shown.querySelector.bind(shown);
+      const body={scrollTop:0,scrollLeft:0,contains(){return false;},querySelectorAll(){return[];},
+        get innerHTML(){return shown.innerHTML;},set innerHTML(value){shown.innerHTML=value;}};
+      shown.querySelector=selector=>selector==='.drawer-b'?body:find(selector);
+      release();await settle();const fresh=drawer.innerHTML;
+      http.aiControlCenterDomain=async()=>{throw {status:500};};
+      await click({awDomain:'models'},'shell');const kept=drawer.innerHTML;
+      return {first,instant,fresh,kept};
+    """)
+    assert "Own model" in result["first"]
+    # The second open paints the previous list before the server answers.
+    assert "Own model" in result["instant"] and "Загружаем записи раздела" not in result["instant"]
+    assert "Renamed model" in result["fresh"]
+    # A failed quiet refresh keeps what is on screen instead of an error page.
+    assert "Renamed model" in result["kept"] and "Не удалось загрузить" not in result["kept"]
+
+
+def test_a_write_never_reopens_a_tool_with_its_pre_write_list():
+    result = run_domain_ui("""
+      await click({awDomain:'personas'},'shell');
+      await click({awDomainAction:'update',awEntity:ids.persona});
+      await submit(form({name:'Changed persona',description:'Kept purpose',style:'Concise'}));
+      http.aiControlCenterDomain=()=>new Promise(()=>{});
+      await click({awDomain:'personas'},'shell');
+      return {html:drawer.innerHTML,posts:calls.filter(call=>call.method==='post').length};
+    """)
+    assert result["posts"] == 1
+    # Reopened while the server has not answered: only the post-write list may show.
+    assert "Changed persona" in result["html"]
+    assert "Owner persona" not in result["html"]
 
 
 def test_forged_ui_action_not_granted_by_server_does_not_open_mutation_form():

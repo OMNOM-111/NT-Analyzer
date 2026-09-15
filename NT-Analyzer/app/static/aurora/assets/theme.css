@@ -72,12 +72,16 @@
   --topbar-h: 60px;
   --font: "Inter", -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: "JetBrains Mono", "SF Mono", "Cascadia Code", Consolas, monospace;
+
+  /* Native controls (select lists, date pickers, checkboxes, scrollbars) follow the theme. */
+  color-scheme: dark;
 }
 
 /* ---------- Light theme ---------- */
 /* Applied when the user picks "Светлая", or when the theme is "Авто" and the OS
    prefers a light color scheme. Dark stays the default (:root above). */
 [data-theme="light"] {
+  color-scheme: light;
   --bg-0: #e9eef6;
   --bg-1: #f4f7fb;
   --bg-2: #ffffff;
@@ -121,6 +125,7 @@
 }
 @media (prefers-color-scheme: light) {
   [data-theme="auto"] {
+    color-scheme: light;
     --bg-0: #e9eef6;
     --bg-1: #f4f7fb;
     --bg-2: #ffffff;
@@ -3029,7 +3034,7 @@ html.auth-locked .content { padding: 0 !important; min-height: 100vh; }
   .security-machine-clients { padding: 0 10px 10px; }
   .security-history-row { grid-template-columns: 1fr; gap: 4px; }
 }
-.mode-entry-page { min-height: 100vh; margin: 0; background: radial-gradient(900px 560px at 50% 0%, rgba(31,201,255,.13), transparent 70%), var(--bg); }
+.mode-entry-page { min-height: 100vh; margin: 0; color: var(--tx); background: radial-gradient(900px 560px at 50% 0%, rgba(31,201,255,.13), transparent 70%), var(--app-bg); }
 .mode-entry { min-height: 100vh; display: grid; place-items: center; padding: max(24px, env(safe-area-inset-top)) 18px max(24px, env(safe-area-inset-bottom)); }
 .mode-entry-card { width: min(960px, 100%); padding: clamp(24px, 4vw, 46px); border: 1px solid var(--line-2); border-radius: 24px; background: color-mix(in srgb, var(--bg-2) 94%, transparent); box-shadow: var(--sh-2); backdrop-filter: blur(18px); }
 .mode-entry-brand { display: flex; align-items: center; gap: 12px; color: var(--tx); }

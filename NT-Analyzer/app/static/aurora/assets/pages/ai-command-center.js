@@ -25,7 +25,6 @@
     ['Работа', ['automation', 'routines', 'calendar', 'decisions']],
     ['Команда', ['personas', 'models', 'external_agents', 'experiments', 'router']],
     ['Знания', ['memory', 'projects', 'publications']],
-    ['', ['system']],
   ]);
   const ACTION_LABELS = Object.freeze({ verify: 'Проверить агента', disable: 'Выключить подключение', rotate: 'Заменить секрет', preview: 'Предпросмотр выбора', apply: 'Разрешить новый запуск', seed_preview: 'Создать учебные записи Preview', create: 'Создать', connect: 'Подключить', bind_existing: 'Связать Local-подключение', update: 'Изменить', activate: 'Активировать', suspend: 'Приостановить', archive: 'В архив', promote: 'Продвинуть', publish_to_workspace: 'Опубликовать в workspace', propose_consensus: 'Собрать решение по вкладам', suggest_routine: 'Предложить по результатам', prepare: 'Подготовить снимок', publish: 'Опубликовать в SF Social', revoke: 'Отозвать разрешение', propose: 'Проверить расписание', enable: 'Включить по расписанию', commission: 'Новое поручение Координатору', preview_commission: 'Проверить план делегирования', approve_commission: 'Разрешить этот план', reconcile: 'Проверить продолжение', version: 'Новая версия', accept: 'Принять', dismiss: 'Отклонить', review: 'Проверить через Court', review_result: 'Проверить полученный результат', withdraw: 'Отозвать решение', test: 'Проверить соединение', task: 'Первое задание', disconnect: 'Отключить', cancel: 'Отменить задачу', retry: 'Новая безопасная попытка', handoff: 'Передать факты агенту', open_chat: 'Открыть ручной разбор в SF Chat' });
   const STATUS = {
@@ -781,6 +780,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     let overview = null, tab = 'overview', filter = 'all', query = '', workRows = [], nextCursor = null;
     let detail = null, detailTab = 'summary', detailKind = '', profile = null, currentDrawer = null, returnFocus = null;
     let domainState = null, actionForm = null, mutationBusy = false;
+    const domainCache = new Map();
     let generation = 0, overviewGeneration = 0, detailGeneration = 0, debounceTimer = null, disposed = false, demoBusy = false, demoKey = null;
     let refreshing = false, quietDrawer = false, pendingListReads = 0;
     let personaFaceGeneration = 0;
@@ -951,7 +951,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const evaluation = evaluationMeta(agent);
       const score = evaluation.sample > 0
         ? `<div class="aw-agent-score"><small>Результат проверок</small><strong>${esc(evaluation.label)}</strong><div class="aw-agent-meta"><span>Выборка: ${count(evaluation.sample)}</span><span>Уверенность: ${esc(evaluation.confidence)}</span></div></div>`
-        : `<div class="aw-agent-score"><small>Результат проверок</small><strong>Нет наблюдений</strong><small>Рейтинг появится после проверенных задач</small></div>`;
+        : `<div class="aw-agent-score aw-agent-score-empty"><small>Нет наблюдений · рейтинг появится после проверенных задач</small></div>`;
       return `<article class="aw-agent-card"><div class="aw-agent-card-top">${avatar(agent)}<div><div class="aw-agent-name">${esc(name(agent))}</div><div class="aw-agent-role">${esc(role(agent))}</div></div></div>${agentState(agent)}${score}<div class="aw-agent-assignment">${esc(agent.current_task?.title || agent.current_task_title || 'Нет активной задачи')}</div><div class="aw-actions"><button class="aw-link-button" data-aw-agent="${esc(agentId(agent))}">Профиль →</button></div></article>`;
     }
     function renderAgents() {
@@ -966,7 +966,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       qs('#aw-run-demo').hidden = !canRunDemo(overview);
       qs('#aw-run-demo').disabled = demoBusy;
       qs('#aw-run-demo').textContent = demoBusy ? 'Выполняем проверки…' : 'Запустить проверочные задачи';
-      qsa('[data-aw-domain]', qs('#aw-domain-launcher')).forEach(button => { button.disabled = overview?.enabled !== true; });
+      [...qsa('[data-aw-domain]', qs('#aw-domain-launcher')), ...qsa('.aw-diagnostics', shell)].forEach(button => { button.disabled = overview?.enabled !== true; });
       const attention = number(stats.attention) || 0, failed = number(stats.failed) || 0;
       qs('#aw-pulse').innerHTML = overview?.enabled
         ? `<span><strong>${count(stats.agents ?? rows(overview?.agents).length)}</strong> в команде</span><span><strong>${count(stats.active_tasks)}</strong> в работе</span><span class="${attention ? 'aw-pulse-attention' : ''}"><strong>${count(attention)}</strong> ждут вас</span>${failed ? `<span class="aw-pulse-error"><strong>${count(failed)}</strong> с ошибкой</span>` : ''}`
@@ -1099,7 +1099,22 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         ? agentId(profile) : '';
       qs('#aw-refresh').disabled = true;
       try {
-        const result = await API.aiControlCenterOverview({ signal });
+        let result = null;
+        if (!overview && !background && API.aiControlCenterOverviewSnapshot) {
+          // First paint from the server's previous overview for this exact
+          // authorization, then the fresh projection replaces it. When there
+          // is no previous one the server computes it and that is the answer.
+          const first = await API.aiControlCenterOverviewSnapshot({ signal });
+          if (disposed || request !== overviewGeneration) return;
+          if (!first?.snapshot?.cached) result = first;
+          else if (first.enabled && tab !== 'work' && !overview) {
+            overview = first;
+            renderHeader();
+            await loadTab(false);
+            qs('#aw-updated').textContent = 'Показаны данные на ' + date(first.snapshot.computed_at) + ' · обновляем…';
+          }
+        }
+        if (!result) result = await API.aiControlCenterOverview({ signal });
         if (disposed || request !== overviewGeneration) return;
         const identity = value => JSON.stringify([value?.scope?.environment, value?.scope?.workspace_id, value?.scope?.user_uuid, value?.scope?.synthetic]);
         const scopeChanged = overview && identity(result) !== identity(overview);
@@ -1228,7 +1243,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         : item.expired === true ? 'нет — срок истёк' : 'нет';
       const devices = { local_owner: 'Этот компьютер владельца', permanent: 'Доверенное устройство', session: 'Только текущая сессия' };
       const heading = (item.kind === 'delegation' ? 'Разрешение на делегирование' : item.kind === 'schedule' ? 'Разрешение на расписание' : kind);
-      return `<article class="aw-domain-card"><div class="aw-domain-card-head"><button class="aw-table-title" data-aw-domain-item="${esc(id)}">${esc(heading)}</button>${badge(item.operational === true ? 'active' : item.status)}</div>`
+      return `<article class="aw-domain-card"><div class="aw-domain-card-head"><button class="aw-table-title" data-aw-domain-item="${esc(id)}">${esc(heading)}</button>${badge(item.operational === true ? 'active' : item.expired === true ? 'expired' : item.status)}</div>`
         + `<dl class="aw-detail-grid"><div><dt>Действует сейчас</dt><dd>${standing}</dd></div>`
         + `<div><dt>Срок</dt><dd>${esc(date(item.expires_at))}</dd></div>`
         + `<div><dt>Потолок на вызов</dt><dd>${esc(cost(item.max_call_cost_usd))}</dd></div>`
@@ -1282,7 +1297,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       // the owner alone, and refuses it for everyone else regardless of what
       // the page renders.
       if (mutationBusy || !['grant', 'revoke'].includes(mode) || !/^[0-9]{1,20}$/.test(String(userId || ''))) return;
-      mutationBusy = true;
+      mutationBusy = true; domainCache.clear();
       try {
         await API.authUserPermission(userId, 'ai_automation', mode === 'grant' ? true : null);
       } catch (error) {
@@ -1299,7 +1314,13 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const request = ++detailGeneration;
       const prior = append && domainState?.key === key ? domainState.data : null;
       actionForm = null; detailKind = 'domain';
-      openDrawer(DOMAINS[key].title, domainNav(key) + loadingBlock('Загружаем записи раздела…'));
+      // A tool opened before is drawn at once from its last list in this same
+      // workspace; the fresh list then replaces it quietly. Writes clear this.
+      const scopeKey = JSON.stringify([overview?.scope?.environment, overview?.scope?.workspace_id, overview?.scope?.user_uuid]);
+      const shown = prior ? null : domainCache.get(key);
+      const instant = shown?.scope === scopeKey;
+      if (instant) { domainState = { key, data: shown.data }; drawDomain(); }
+      else openDrawer(DOMAINS[key].title, domainNav(key) + loadingBlock('Загружаем записи раздела…'));
       try {
         const data = await API.aiControlCenterDomain(key, { limit: 50, cursor: prior?.next_cursor || '' }, { signal });
         if (key === 'router' && data.enabled === true) {
@@ -1307,11 +1328,15 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
           data.source_tasks = items(tasks).filter(task => task.conversation_id && task.model_id && rows(data.task_classes).includes(task.task_class || task.rubric_key));
         }
         if (disposed || request !== detailGeneration) return;
+        if (!prior) domainCache.set(key, { scope: scopeKey, data });
+        if (instant && (actionForm || mutationBusy)) return;
         domainState = { key, data: prior ? { ...data, items: items(prior).concat(items(data)) } : data };
-        drawDomain();
+        if (instant) { quietDrawer = true; try { drawDomain(); } finally { quietDrawer = false; } }
+        else drawDomain();
         root.history.replaceState(null, '', '#tab=' + encodeURIComponent(tab) + '&domain=' + encodeURIComponent(key));
       } catch (error) {
-        if (error?.name !== 'AbortError' && request === detailGeneration && !disposed) openDrawer(DOMAINS[key].title, domainNav(key) + readError(error));
+        // A failed quiet refresh keeps the list already on screen.
+        if (error?.name !== 'AbortError' && request === detailGeneration && !disposed && !instant) openDrawer(DOMAINS[key].title, domainNav(key) + readError(error));
       }
     }
     function domainRecord(item) {
@@ -1571,7 +1596,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       }
       const body = { payload, idempotency_key: state.key };
       if (Number.isSafeInteger(state.revision) && state.revision >= 0) body.expected_revision = state.revision;
-      mutationBusy = true; errorBox.hidden = true;
+      mutationBusy = true; domainCache.clear(); errorBox.hidden = true;
       qsa('button, input, select, textarea', form).forEach(input => { input.disabled = true; });
       try {
         const result = await API.aiControlCenterDomainAction(state.domain, state.id, state.action, body);
@@ -1713,7 +1738,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     }
     async function runDemo() {
       if (!canRunDemo(overview) || demoBusy) return;
-      demoBusy = true; renderHeader();
+      demoBusy = true; domainCache.clear(); renderHeader();
       if (!demoKey) demoKey = root.crypto.randomUUID();
       announce('Выполняются локальные задачи на тестовых данных. Это не вызов внешних моделей и не торговое действие.');
       try {

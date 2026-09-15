@@ -2,7 +2,7 @@
 from uuid import UUID
 
 from .. import account_auth, permissions, workspaces
-from . import live_gateway as gateway, live_charts, domain_gateway
+from . import live_gateway as gateway, live_charts, domain_gateway, overview_snapshot
 from .live_backtests import LiveBacktestService
 from .states import ContractError
 
@@ -83,10 +83,20 @@ def handle_get(handler, path, qs):
             handler._json(200, domain_gateway.history_projection(authorized, result, domain=parts[1]))
             return
         authorized = domain_gateway.from_handler(handler, read_only=True)
+        build = lambda: domain_gateway.enrich_overview(authorized, _base_overview(authorized))  # noqa: E731
         if route == "overview":
-            handler._json(200, domain_gateway.history_projection(authorized, domain_gateway.enrich_overview(authorized, _base_overview(authorized))))
+            # ?cached=1 asks for the previous overview of this exact
+            # authorization for an immediate first paint; the page then reads
+            # the fresh projection. Without a previous one it is computed.
+            previous = overview_snapshot.last(authorized) if qs.get("cached") == ["1"] else None
+            if previous is not None:
+                value, computed_at = previous
+                handler._json(200, {**domain_gateway.history_projection(authorized, value),
+                                    "snapshot": {"cached": True, "computed_at": computed_at}})
+            else:
+                handler._json(200, domain_gateway.history_projection(authorized, overview_snapshot.fresh(authorized, build)))
         elif route == "tasks":
-            handler._json(200, domain_gateway.history_projection(authorized, {"items": domain_gateway.enrich_overview(authorized, _base_overview(authorized))["tasks"], "next_cursor": None, "read_limit": 200}, domain="tasks"))
+            handler._json(200, domain_gateway.history_projection(authorized, {"items": overview_snapshot.fresh(authorized, build)["tasks"], "next_cursor": None, "read_limit": 200}, domain="tasks"))
         elif route.startswith("tasks/") and len(route.split("/")) == 2:
             detail = _task_detail(authorized, route.split("/")[1])
             if detail is None:
@@ -111,6 +121,8 @@ def handle_post(handler, path):
         route = path.removeprefix(gateway.PREFIX)
         if not isinstance(body, dict):
             raise ContractError("invalid_request")
+        # Any accepted or refused write may change what the overview shows.
+        overview_snapshot.invalidate()
         if route.startswith("domains/"):
             parts = route.split("/")
             if len(parts) != 4:

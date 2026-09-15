@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
 <title>AI Центр — StratForge AI</title>
-<link rel="stylesheet" href="assets/theme.css?v=20260905-app-dialogs">
-<link rel="stylesheet" href="assets/pages/ai-command-center.css?v=20260914-product-ux2">
+<link rel="stylesheet" href="assets/theme.css?v=20260915-dark-system1">
+<link rel="stylesheet" href="assets/pages/ai-command-center.css?v=20260915-product-ux4">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 </head>
 <body data-page="ai" data-title="AI Центр" data-kicker="StratForge AI · Мир агентов">
@@ -17,6 +17,7 @@
       <div class="aw-pulse" id="aw-pulse" aria-live="polite"><span class="aw-status aw-neutral">Загружаем состояние команды…</span></div>
     </div>
     <div class="aw-header-actions">
+      <button class="btn ghost aw-diagnostics" data-aw-domain="system" title="Техническая диагностика: какие механизмы включены и отвечают">Диагностика</button>
       <button class="btn icon ghost" id="aw-refresh" aria-label="Обновить данные" title="Обновить данные">↻</button>
       <button class="btn" id="aw-run-demo" hidden>Запустить проверочные задачи</button>
       <button class="btn primary" id="aw-open-chat" title="Откроется SF Chat: опишите задачу обычным текстом">Поручить задачу</button>
@@ -33,7 +34,6 @@
       <span class="aw-launcher-group" aria-label="Работа"><span class="aw-launcher-label">Работа</span><button data-aw-domain="automation">Автоматизация</button><button data-aw-domain="routines">Рутины</button><button data-aw-domain="calendar">Календарь</button><button data-aw-domain="decisions">Решения</button></span>
       <span class="aw-launcher-group" aria-label="Команда"><span class="aw-launcher-label">Команда</span><button data-aw-domain="personas">Персоны</button><button data-aw-domain="models">Модели</button><button data-aw-domain="external_agents">Внешние агенты</button><button data-aw-domain="experiments">Сравнение</button></span>
       <span class="aw-launcher-group" aria-label="Знания"><span class="aw-launcher-label">Знания</span><button data-aw-domain="memory">Память</button><button data-aw-domain="projects">Проекты</button><button data-aw-domain="publications">Публикации</button></span>
-      <span class="aw-launcher-group"><button data-aw-domain="system">Состояние системы</button></span>
     </nav>
   </div>
   <div id="aw-content" class="aw-content" role="tabpanel" aria-labelledby="aw-tab-overview" aria-busy="true" tabindex="0">
@@ -41,12 +41,12 @@
   </div>
   <footer class="aw-footer"><span>Все действия проверяет сервер: персона не расширяет права, а решения не исполняют сделки.</span><span id="aw-updated"></span></footer>
 </div>
-<script src="assets/api.js?v=20260908-agent-world-persona-selection1"></script>
+<script src="assets/api.js?v=20260915-overview-snapshot1"></script>
 <script src="assets/domain.js?v=20260629-final4"></script>
 <script src="assets/ambient.js?v=20260703-stratforge1"></script>
-<script src="assets/ui.js?v=20260910-agent-world-state1"></script>
+<script src="assets/ui.js?v=20260915-dark-default1"></script>
 <script src="assets/victor.js?v=20260718-contours2"></script>
 <script src="assets/persona-audio.js?v=20260908-agent-world-persona-chat1"></script>
-<script src="assets/pages/ai-command-center.js?v=20260914-product-ux2"></script>
+<script src="assets/pages/ai-command-center.js?v=20260915-product-ux4"></script>
 </body>
 </html>

@@ -457,6 +457,7 @@
     cloudProviderDisconnect: (provider) => send('/api/ai-lab/cloud-agents/provider-disconnect', 'POST', { provider }),
     aiAgents: (o) => getJSON('/api/ai-agents', o),
     aiControlCenterOverview: (o) => getJSON('/api/ai-control-center/overview', o),
+    aiControlCenterOverviewSnapshot: (o) => getJSON('/api/ai-control-center/overview?cached=1', o),
     aiControlCenterTasks: (q, o) => getJSON('/api/ai-control-center/tasks' + qs(q), o),
     aiControlCenterTask: (id, o) => getJSON('/api/ai-control-center/tasks/' + encodeURIComponent(id), o),
     aiControlCenterDomain: (domain, q, o) => getJSON('/api/ai-control-center/domains/' + encodeURIComponent(domain) + qs(q), o),
