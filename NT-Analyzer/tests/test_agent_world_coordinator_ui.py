@@ -352,8 +352,9 @@ def test_system_separates_legacy_worker_from_disabled_execution_and_hides_payloa
     """, setup)
     text = result["html"]
     assert "Legacy worker" in text and "Execution V2" in text
-    assert "Код реализован" in text and "Фактический режим" in text and "Доступность сейчас" in text
-    assert "Не подтверждена" in text and "Выключен" in text and "not_active" in text
+    # Four separate facts per component, in plain words.
+    assert "Реализовано" in text and "Как работает сейчас" in text and "Отвечает" in text
+    assert "<dt>Отвечает</dt><dd>Нет</dd>" in text and "Выключен" in text and "not_active" in text
     assert "Legacy worker does not enable Execution V2" in text
     assert "hidden-system-key" not in text and "technical-raw-payload" in text
     assert text.index("Технические детали") < text.index("technical-raw-payload")

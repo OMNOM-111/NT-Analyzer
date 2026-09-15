@@ -9,6 +9,7 @@ import json
 import types
 from dataclasses import fields, is_dataclass
 from datetime import datetime
+from functools import lru_cache
 from enum import Enum
 from typing import Union, get_args, get_origin, get_type_hints
 from uuid import UUID
@@ -27,6 +28,13 @@ _RECORD_TYPES = {cls.KIND: cls for cls in (
     StrategyProject, Routine, CalendarItem, CourtCase, CourtVote, Evaluation, ExternalAgentConnection,
 )}
 MAX_RECORD_BYTES = 256 * 1024
+
+
+@lru_cache(maxsize=None)
+def _dataclass_shape(annotation):
+    # Contract classes are fixed at import time. Resolving their string
+    # annotations on every nested read dominated list/overview latency.
+    return frozenset(field.name for field in fields(annotation)), get_type_hints(annotation)
 
 
 def _decode(annotation, value):
@@ -59,10 +67,9 @@ def _decode(annotation, value):
             raise ContractError("stored_contract_invalid")
         return annotation(value)
     if isinstance(annotation, type) and is_dataclass(annotation):
-        names = {field.name for field in fields(annotation)}
+        names, hints = _dataclass_shape(annotation)
         if type(value) is not dict or set(value) != names:
             raise ContractError("stored_contract_invalid")
-        hints = get_type_hints(annotation)
         return annotation(**{name: _decode(hints[name], value[name]) for name in names})
     if annotation in (str, int, bool) and type(value) is annotation:
         return value

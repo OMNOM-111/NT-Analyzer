@@ -482,9 +482,9 @@ class DomainService:
                 "capabilities": {"can_create": domain != "court", "can_review": callable(self.judge_runner),
                                  "can_accept_suggestion": callable(self.enqueue),
                                  "automation_enabled": False, "execution_allowed": False},
-                "limitations": ["Own records plus explicitly active shared memory from this workspace only.",
-                                "Routine/calendar acceptance creates an existing-queue manual follow-up; automation remains off.",
-                                "Court judges cannot execute decisions; confidence never weights a vote."]}
+                "limitations": ["Показаны ваши записи и память, которой явно поделились в этом рабочем пространстве.",
+                                "Принятая рутина или событие календаря создают ручное напоминание; автоматический запуск не включается.",
+                                "Судьи Court не исполняют решения, а уверенность не меняет вес голоса."]}
 
     def get(self, *, context, admit, domain, entity_id):
         self._guard(context, admit)
@@ -565,7 +565,7 @@ class DomainService:
         elif isinstance(record, c.Decision):
             data = self._json(context, record.evidence_packet)
             court_eligible = data.get("policy_version") == "court-review-v1" and "proposal" in data and "title" in data
-            title, summary = data.get("title", "Explicit task authorization"), data.get("proposal", "Bounded user-request authorization; not a Court decision.")
+            title, summary = data.get("title", "Разрешение на задачу"), data.get("proposal", "Вы разрешили выполнить конкретный запрос. Это не решение Court.")
             data["decision_type"] = "advisory_proposal" if court_eligible else "explicit_task_authorization"
             data["court_eligible"] = court_eligible
             data["packet_sha256"] = record.evidence_packet.sha256

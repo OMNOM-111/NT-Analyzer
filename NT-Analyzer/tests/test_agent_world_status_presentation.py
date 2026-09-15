@@ -524,7 +524,7 @@ def test_the_attention_filter_the_overview_links_to_is_actually_offered():
     not see or clear.
     """
     source = SCRIPT.read_text(encoding="utf-8")
-    assert "attention: 'Требуют внимания'" in source
+    assert "attention: 'Нужно ваше действие'" in source
     assert 'data-aw-filter="attention"' in source
     assert evaluate("ui.taskMatches({display_status:'awaiting_review'},'attention','')") is True
     assert evaluate("ui.taskMatches({display_status:'completed'},'attention','')") is False

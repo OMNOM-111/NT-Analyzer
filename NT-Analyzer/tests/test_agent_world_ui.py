@@ -105,22 +105,24 @@ def test_page_uses_existing_transport_and_does_not_create_auth_or_chat_store():
 
 def test_domain_tools_remain_accessible_on_one_page_and_load_only_on_request():
     script = SCRIPT.read_text(encoding="utf-8")
-    assert "function foundationCard()" in script
     parser = Tags()
     parser.feed(PAGE.read_text(encoding="utf-8"))
     launcher = [attrs["data-aw-domain"] for tag, attrs in parser.tags if "data-aw-domain" in attrs]
     # An external agent is reachable as its own tool, never folded into Модели.
-    assert launcher == ["decisions", "memory", "experiments", "models", "external_agents",
-                        "projects", "routines", "calendar", "publications", "system"]
-    assert "capability('can_view_system') ? flagRows(overview.flags) : []" in script
+    # The page launcher and the in-drawer navigation share one grouping and names.
+    assert launcher == ["automation", "routines", "calendar", "decisions", "personas", "models",
+                        "external_agents", "experiments", "memory", "projects", "publications", "system"]
+    assert "const DOMAIN_GROUPS = Object.freeze([" in script
+    assert "DOMAIN_GROUPS.map(([label, keys])" in script
+    # Flags stay visible to the operator, in the system tool rather than the overview.
+    assert "const flags = flagRows(data.flags);" in script
     assert "API.aiControlCenterSection(" not in script
     for method in ["Domain", "DomainItem", "DomainAction"]:
         assert f"API.aiControlCenter{method}(" in script
     assert "request !== overviewGeneration" in script
-    assert "IN DEVELOPMENT" in script
-    card = script.split("function foundationCard()", 1)[1].split("function realWorkHint", 1)[0]
-    assert "href=" not in card
-    assert "data-aw-domain=\"personas\"" in card
+    # The environment is stated once, in plain words, next to the page title.
+    assert "context.textContent = synthetic ? 'Тестовые данные' : 'В разработке';" in script
+    assert "IN DEVELOPMENT" not in script
 
 
 def test_overview_places_work_results_team_and_rating_together_without_sample_values():
@@ -129,8 +131,10 @@ def test_overview_places_work_results_team_and_rating_together_without_sample_va
     assert 'aw-column-work' in overview
     assert 'aw-column-results' in overview
     assert 'aw-column-team' in overview
-    assert 'Команда и рейтинг' in overview
-    assert 'Результаты и исходные данные' in overview
+    # One attention queue, the team and the latest results sit together.
+    assert "panel('Нужно ваше действие'" in overview
+    assert "panel('Команда'" in overview
+    assert "panel('Последние результаты'" in overview
     assert 'overviewOutcomes(overview)' in overview
     assert 'stats.active_tasks' in overview
     assert 'stats.completed_tasks' in overview
@@ -259,12 +263,13 @@ def test_compact_overview_boots_without_hidden_tab_nodes_or_extra_api_requests()
     assert "NEW" in result["html"]
     # The mini card leads with the observation count rather than "n = N";
     # the claim it must keep making is that the sample size is visible.
-    assert "1 наблюдений" in result["html"]
+    assert "1 наблюдение" in result["html"]
     assert "<script>unsafe()" not in result["html"]
     assert "&lt;script&gt;unsafe()&lt;/script&gt;" in result["html"]
     assert "/ui/backtesting.html?job=nt-2" in result["html"]
     assert "Recorded NT result" in result["html"]
-    assert "IN DEVELOPMENT" in result["html"]
+    # The environment moved to the header chip; the overview leads with the queue.
+    assert "Нужно ваше действие" in result["html"]
     assert '<img src="' + DESKTOP_ARTIFACT + '"' in result["html"]
 
 

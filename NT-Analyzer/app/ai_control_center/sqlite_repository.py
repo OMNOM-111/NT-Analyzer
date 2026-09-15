@@ -306,6 +306,8 @@ class SQLiteAgentWorldRepository:
         self._identity(kind, entity_id)
         if self._empty_read_only:
             return None
+        # Records are not memoized: a read-only reader must see revisions a
+        # writer commits after it was opened (current WAL visibility).
         with self._transaction() as connection:
             return self._row(connection, context, kind, entity_id)
 
@@ -447,8 +449,19 @@ class SQLiteAgentWorldRepository:
         c.require_same_scope(context.scope, reference.scope)
         if self._empty_read_only:
             return None
+        key = None
+        if self.read_only:
+            # Content-addressed and integrity-checked on first read; bytes are immutable.
+            key = (context.scope.environment, context.scope.workspace_id, str(context.user_uuid),
+                   reference.artifact_id, reference.sha256)
+            cached = self.__dict__.setdefault("_read_only_artifacts", {}).get(key)
+            if cached is not None:
+                return cached
         with self._transaction() as connection:
-            return self._artifact(connection, context, reference)
+            found = self._artifact(connection, context, reference)
+        if key is not None and found is not None:
+            self._read_only_artifacts[key] = found
+        return found
 
     def get_artifact_by_id(self, *, context: c.RequestContext, artifact_id: UUID) -> tuple[c.SnapshotRef, bytes, str] | None:
         """HTTP facade lookup without accepting a client-asserted content hash."""

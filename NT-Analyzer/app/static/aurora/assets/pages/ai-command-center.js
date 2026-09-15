@@ -3,22 +3,30 @@
   'use strict';
   const TABS = ['overview', 'work', 'agents'];
   const DOMAINS = Object.freeze({
-    personas: { title: 'Persona', description: 'Личность и стиль агента не заменяют его роль, модель или права.', create: 'Создать персону' },
-    decisions: { title: 'Решения / Court', description: 'Предложение, доказательства и независимые проверки. Вердикт не выдаёт новых прав и не исполняет сделок.', create: 'Новое решение' },
-    memory: { title: 'Память', description: 'Записи с источником, назначением и сроком хранения. Только подтверждённые записи можно продвигать.', create: 'Добавить запись' },
-    projects: { title: 'Strategy Projects', description: 'Проекты стратегий, история версий и параметры. Исполнение остаётся в существующем бэктестировании.', create: 'Создать проект' },
-    routines: { title: 'Рутины', description: 'Предложения повторяющейся работы. Принятие предложения не включает фоновое исполнение.', create: 'Предложить рутину' },
-    calendar: { title: 'Календарь', description: 'Согласованные события рабочего пространства. Время вводится локально и сохраняется в UTC.', create: 'Добавить событие' },
-    publications: { title: 'Публикация в SF Social', description: 'Только проверенный результат или решение: сначала снимок для просмотра, затем отдельное подтверждение публикации. Личная память и сырые ответы не публикуются.', create: 'Подготовить публикацию' },
-    models: { title: 'Модели и подключения', description: 'Подключения LLM API. Persona, учётная запись провайдера и модель — отдельные сущности.', create: 'Подключить модель' },
-    external_agents: { title: 'Внешние агенты', description: 'Самостоятельное A2A-подключение, не модель и не Persona. Возможности подтверждает сервер; MCP-инструмент не является агентом.', create: 'Добавить внешнего агента' },
-    model_tasks: { title: 'История моделей', description: 'Фактические ответы и независимые проверки. Неизвестная стоимость не равна нулевой.', create: '' },
+    personas: { title: 'Персоны', description: 'Имя, характер, голос и лицо агента. Персона не выбирает модель и не даёт дополнительных прав.', create: 'Создать персону' },
+    decisions: { title: 'Решения', description: 'Предложения с доказательствами и независимая проверка Court. Вердикт не исполняет сделки и не выдаёт прав.', create: 'Новое решение' },
+    memory: { title: 'Память', description: 'Что запомнили агенты: источник, назначение и срок хранения. Продвинуть можно только подтверждённую запись.', create: 'Добавить запись' },
+    projects: { title: 'Проекты стратегий', description: 'Стратегии, их версии и параметры. Запуск бэктеста остаётся в разделе «Бэктест».', create: 'Создать проект' },
+    routines: { title: 'Рутины', description: 'Повторяющаяся работа, которую предложили агенты. Принятая рутина сама по себе не запускается.', create: 'Предложить рутину' },
+    calendar: { title: 'Календарь', description: 'События рабочего пространства. Время вводится по вашим часам и хранится в UTC.', create: 'Добавить событие' },
+    publications: { title: 'Публикации', description: 'Проверенный результат можно показать в SF Social: сначала предпросмотр, затем отдельное подтверждение. Личная память и сырые ответы не публикуются.', create: 'Подготовить публикацию' },
+    models: { title: 'Модели', description: 'Подключения к языковым моделям. Модель — исполнитель; персона и учётная запись провайдера настраиваются отдельно.', create: 'Подключить модель' },
+    external_agents: { title: 'Внешние агенты', description: 'Самостоятельные агенты, подключённые по протоколу A2A. Это не модель и не персона; возможности подтверждает сервер.', create: 'Добавить внешнего агента' },
+    model_tasks: { title: 'История ответов моделей', description: 'Фактические ответы и их проверки. Неизвестная стоимость не означает нулевую.', create: '' },
     tasks: { title: 'Действия задачи', description: 'Изменение выполняет сервер после повторной проверки прав и состояния.', create: '' },
-    experiments: { title: 'Эксперименты', description: 'Одно проверяемое задание для 2–3 моделей. Сравнение строится по фактическим ответам, не по самооценке.', create: 'Сравнить модели' },
-    automation: { title: 'Автоматизация', description: 'Разрешение на автоматизацию, согласие на конкретную рутину и бюджет — три разных условия. Включение расписания не выдаёт прав и не поднимает лимиты.', create: '' },
-    router: { title: 'Выбор подключения · Router', description: 'Кандидаты и источник выбора для конкретной задачи. Предпросмотр ничего не запускает; повторное задание требует отдельного разрешения.', create: '' },
-    system: { title: 'Система', description: 'Доступность, ограничения и состояние текущего рабочего пространства. Чтение не меняет флаги или бюджет.', create: '' },
+    experiments: { title: 'Сравнение моделей', description: 'Одно задание для 2–3 моделей и сравнение по фактическим ответам, а не по самооценке.', create: 'Сравнить модели' },
+    automation: { title: 'Автоматизация', description: 'Для автоматического запуска нужны три отдельных условия: разрешение на автоматизацию, согласие на конкретное расписание и бюджет.', create: '' },
+    router: { title: 'Выбор модели', description: 'Какая модель лучше подходит для конкретной задачи. Предпросмотр ничего не запускает; новый запуск требует отдельного разрешения.', create: '' },
+    system: { title: 'Состояние системы', description: 'Какие механизмы включены и доступны в этом рабочем пространстве. Просмотр ничего не меняет.', create: '' },
   });
+  // One grouping for the page launcher and the in-drawer navigation, so a tool
+  // has the same name and neighbours wherever it is opened from.
+  const DOMAIN_GROUPS = Object.freeze([
+    ['Работа', ['automation', 'routines', 'calendar', 'decisions']],
+    ['Команда', ['personas', 'models', 'external_agents', 'experiments', 'router']],
+    ['Знания', ['memory', 'projects', 'publications']],
+    ['', ['system']],
+  ]);
   const ACTION_LABELS = Object.freeze({ verify: 'Проверить агента', disable: 'Выключить подключение', rotate: 'Заменить секрет', preview: 'Предпросмотр выбора', apply: 'Разрешить новый запуск', seed_preview: 'Создать учебные записи Preview', create: 'Создать', connect: 'Подключить', bind_existing: 'Связать Local-подключение', update: 'Изменить', activate: 'Активировать', suspend: 'Приостановить', archive: 'В архив', promote: 'Продвинуть', publish_to_workspace: 'Опубликовать в workspace', propose_consensus: 'Собрать решение по вкладам', suggest_routine: 'Предложить по результатам', prepare: 'Подготовить снимок', publish: 'Опубликовать в SF Social', revoke: 'Отозвать разрешение', propose: 'Проверить расписание', enable: 'Включить по расписанию', commission: 'Новое поручение Координатору', preview_commission: 'Проверить план делегирования', approve_commission: 'Разрешить этот план', reconcile: 'Проверить продолжение', version: 'Новая версия', accept: 'Принять', dismiss: 'Отклонить', review: 'Проверить через Court', review_result: 'Проверить полученный результат', withdraw: 'Отозвать решение', test: 'Проверить соединение', task: 'Первое задание', disconnect: 'Отключить', cancel: 'Отменить задачу', retry: 'Новая безопасная попытка', handoff: 'Передать факты агенту', open_chat: 'Открыть ручной разбор в SF Chat' });
   const STATUS = {
     verifying: ['Проверяется', 'info'], degraded: ['Требует внимания', 'warning'], running: ['В работе', 'good'], working: ['В работе', 'good'], active: ['Активен', 'good'], healthy: ['Работает', 'good'], succeeded: ['Завершено', 'good'], completed: ['Завершено', 'good'], verified: ['Проверено', 'good'], passed: ['Проверено', 'good'], accepted: ['Принято', 'good'], submitted: ['Вклад записан', 'info'],
@@ -380,7 +388,9 @@
     const known = model?.protocol === 'chat_completions_v1' && caps?.text === true
       && ['remote_tools', 'remote_tasks', 'mcp', 'a2a', 'artifacts'].every(key => caps[key] === false);
     if (!known) return '<p class="aw-note">Протокол и возможности подключения ещё не подтверждены сервером. Название «внешний агент» само по себе не означает доступ к удалённым действиям.</p>';
-    return '<section class="aw-detail-section"><strong>Текстовый HTTPS-исполнитель</strong><p class="aw-note">Один ограниченный текстовый ответ через совместимый chat-completions endpoint. Удалённые инструменты, отдельные удалённые задачи, MCP, A2A и артефакты этим подключением не поддерживаются. Права и бюджет остаются у приложения.</p><details class="aw-technical"><summary>Протокол и возможности, полученные от сервера</summary><pre>' + esc(publicJSON({protocol: model.protocol, capabilities: caps})) + '</pre></details></section>';
+    // Identical on every text connection, so it sits behind one disclosure instead
+    // of repeating a paragraph on each card.
+    return '<details class="aw-technical"><summary>Текстовый HTTPS-исполнитель · что поддерживается</summary><p class="aw-note">Один ограниченный текстовый ответ через совместимый chat-completions endpoint. Удалённые инструменты, отдельные удалённые задачи, MCP, A2A и артефакты этим подключением не поддерживаются. Права и бюджет остаются у приложения.</p><pre>' + esc(publicJSON({protocol: model.protocol, capabilities: caps})) + '</pre></details>';
   }
   function domainError(error) {
     const code = String(error?.code || error?.data?.error || error?.error || '');
@@ -724,7 +734,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
   }
   function externalTaskProvenance(task) {
     if (task.source_kind !== 'external_agent_task_v1') return '';
-    return `<section class="aw-detail-section"><h3>Внешний агент · происхождение результата</h3><p>Модель: unknown / externally managed. Результат не входит в Model Performance.</p>${task.external_call === false ? `<p class="aw-note">Внешний сервис не вызывался.${task.cost_usd == null ? ' Денежная стоимость в сохранённой квитанции не записана; неизвестное значение не заменяется нулём.' : ''}</p>` : ''}</section>`;
+    return `<section class="aw-detail-section"><h3>Внешний агент · происхождение результата</h3><p>Какая модель работает внутри агента, неизвестно (unknown / externally managed): ею управляет внешний сервис. Поэтому результат не входит в рейтинг моделей.</p>${task.external_call === false ? `<p class="aw-note">Внешний сервис не вызывался.${task.cost_usd == null ? ' Денежная стоимость в сохранённой квитанции не записана; неизвестное значение не заменяется нулём.' : ''}</p>` : ''}</section>`;
   }
   const SELECTION_MODES = Object.freeze({ explicit_override: 'Выбрано человеком',
     router_approved: 'Выбрано Router после явного подтверждения', single_available: 'Единственное доступное подключение' });
@@ -814,6 +824,12 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     const smallEmpty = message => `<div class="aw-small-empty">${esc(message)}</div>`;
     const panel = (title, body, extra) => `<section class="aw-panel"><header class="aw-panel-heading"><h2>${esc(title)}</h2>${extra || ''}</header><div class="aw-panel-body">${body}</div></section>`;
     const note = text => `<p class="aw-note">${esc(text)}</p>`;
+    const plural = (value, one, few, many) => {
+      const n = Math.max(0, Math.floor(number(value) || 0)), tens = n % 10, hundreds = n % 100;
+      return count(n) + ' ' + (tens === 1 && hundreds !== 11 ? one : tens >= 2 && tens <= 4 && (hundreds < 12 || hundreds > 14) ? few : many);
+    };
+    // A drawer or inspector shows its shape while it loads instead of one grey line.
+    const loadingBlock = caption => `<div class="aw-skeleton-lines" aria-busy="true" aria-label="${esc(caption)}"><span></span><span></span><span></span><span></span></div><div class="aw-skeleton-cards" aria-hidden="true"><div class="aw-skeleton"></div><div class="aw-skeleton"></div></div><p class="aw-loading-caption">${esc(caption)}</p>`;
     const taskLink = (id, label) => id ? `<button class="aw-link-button" data-aw-task="${esc(id)}">${esc(label || 'Открыть задачу')} →</button>` : '';
     const avatar = (value, size) => {
       const person = actor(value), key = String(person.avatar_key || '').toLowerCase();
@@ -843,14 +859,21 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const stage = task.stage_label || task.result_label || stageName(task.stage);
       return `<button class="aw-task-card" data-aw-task="${esc(taskId(task))}" data-aw-state="${esc(taskState(task))}"><span class="aw-task-card-top">${avatar(task.lead, 'sm')}<span class="aw-task-main"><span class="aw-task-title">${esc(taskTitle(task))}</span><span class="aw-task-stage">${esc(stage || 'Ожидает исполнения')}</span></span></span><span class="aw-task-meta"><span>Координатор: ${esc(name(task.lead))}</span>${cls ? `<span>${esc(cls)}</span>` : ''}<span>${esc(date(task.updated_at || task.created_at, true))}</span></span><span class="aw-task-foot">${taskBadge(task)}${progress(task)}</span></button>`;
     }
-    function alertCard(item) {
-      const action = item.action_hint || '', reason = item.reason || item.detail || '';
+    function alertCard(item, compact) {
+      // In the overview queue the reason is printed once above the list; the card
+      // keeps what differs between items: state, title, time and the way in.
+      const action = compact ? '' : item.action_hint || '', reason = compact ? '' : item.reason || item.detail || '';
       const when = item.since || item.updated_at || item.created_at;
       return `<div class="aw-alert"><div>${item.display_status ? taskBadge(item) : badge(item.severity || item.status || 'warning')}</div><div><strong>${esc(item.display_title || item.title || item.summary)}</strong>${reason ? `<p>${esc(reason)}</p>` : ''}${action ? `<p class="aw-alert-action">${esc(action)}</p>` : ''}<div class="aw-alert-foot">${when ? `<time datetime="${esc(when)}">${esc(date(when))}</time>` : ''}${taskLink(item.task_id || item.id)}</div></div></div>`;
     }
     function agentMini(agent) {
       const evaluation = evaluationMeta(agent);
-      return `<button class="aw-agent-mini" data-aw-agent="${esc(agentId(agent))}" title="${esc(name(agent))}: ${esc(evaluation.label)}, выборка ${count(evaluation.sample)}, уверенность ${esc(evaluation.confidence)}"><span class="aw-agent-mini-top">${avatar(agent)}<span class="aw-agent-identity"><span class="aw-agent-name">${esc(name(agent))}</span><span class="aw-agent-role">${esc(role(agent))}</span></span><span class="aw-rating-mini"><strong>${count(evaluation.sample)} наблюдений</strong><small>${esc(evaluation.classLabel)}</small><small>${esc(evaluation.diagnostic ? 'Диагностика, не квалификация' : 'См. класс и источник')}</small></span></span><span class="aw-agent-mini-foot">${agentState(agent)}<span>${esc(agent.current_task?.title || agent.current_task_title || 'Нет активной задачи')}</span></span></button>`;
+      // A rating is shown only once something was observed: «0 наблюдений» on
+      // every agent was noise, and an empty sample says nothing about quality.
+      const observed = evaluation.sample > 0
+        ? `<span class="aw-rating-mini"><strong>${esc(plural(evaluation.sample, 'наблюдение', 'наблюдения', 'наблюдений'))}</strong><small>${esc(evaluation.insufficient ? 'NEW · мало данных' : evaluation.label)} · ${esc(evaluation.classLabel)}</small></span>` : '';
+      const doing = agent.current_task?.title || agent.current_task_title || role(agent);
+      return `<button class="aw-team-row" data-aw-agent="${esc(agentId(agent))}" title="${esc(name(agent))}: ${esc(evaluation.label)}, выборка ${count(evaluation.sample)}, уверенность ${esc(evaluation.confidence)}">${avatar(agent)}<span class="aw-agent-identity"><span class="aw-agent-name">${esc(name(agent))}</span><span class="aw-agent-role">${esc(doing)}</span></span><span class="aw-row-end">${agentState(agent)}${observed}</span></button>`;
     }
     function timeline(events, full) {
       if (!events.length) return smallEmpty('Пока нет событий. Здесь появится история фактических действий, проверок и результатов.');
@@ -862,53 +885,79 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const image = (index === 0 || source.kind === 'desktop_chart') && url && ['image/svg+xml', 'image/png', 'image/jpeg', 'image/webp'].includes(artifact.media_type || artifact.mime_type);
       return `<article class="aw-outcome"><div class="aw-outcome-meta"><span class="aw-source aw-source-${esc(source.kind)}">${esc(source.label)}</span>${outcome.status ? taskBadge(outcome) : ''}</div><h3>${esc(outcome.title || 'Результат задачи')}</h3>${outcome.summary ? `<p>${esc(outcome.summary)}</p>` : ''}${image ? `<a class="aw-outcome-image" href="${esc(url)}" target="_blank" rel="noopener noreferrer"><img src="${esc(url)}" alt="${esc(artifact.title || outcome.title || 'Артефакт результата')}" loading="lazy" referrerpolicy="same-origin"></a>` : ''}<div class="aw-outcome-foot"><div class="aw-actions">${taskLink(outcome.task_id, 'Результат и действия')}${source.reportUrl ? `<a class="aw-link-button" href="${esc(source.reportUrl)}">Открыть исходный отчёт ↗</a>` : ''}</div><time datetime="${esc(outcome.created_at || '')}">${esc(date(outcome.created_at, true))}</time></div></article>`;
     }
-    function foundationCard() {
-      const limitations = rows(overview.limitations).map(value => typeof value === 'string' ? value : value.summary || value.message || value.description).filter(Boolean);
-      const flags = capability('can_view_system') ? flagRows(overview.flags) : [];
-      const more = limitations.length || flags.length ? `<details class="aw-foundation-details"><summary>Ограничения и доступность</summary>${limitations.length ? `<ul>${limitations.map(value => `<li>${esc(value)}</li>`).join('')}</ul>` : ''}${flags.length ? `<div class="aw-flag-list">${flags.map(flag => `<div class="aw-flag"><code>${esc(flag.name)}</code>${badge(flag.enabled ? 'active' : 'disabled')}</div>`).join('')}</div>` : ''}</details>` : '';
-      return panel('Рабочее пространство', `<div class="aw-foundation"><span class="aw-status aw-neutral">IN DEVELOPMENT · локальная проверка</span><p>Решения, память, модели и проекты открываются в панели инструментов выше — на этой же странице.</p><div class="aw-actions"><button class="aw-link-button" data-aw-domain="personas">Управление Persona →</button><button class="aw-link-button" data-aw-domain="models">Мои подключения →</button><button class="aw-link-button" data-aw-domain="system">Состояние системы →</button></div>${more}</div>`);
-    }
     function realWorkHint() {
       const commands = realChatCommands(overview);
       if (!commands.length) return '';
-      return panel('Реальные задачи через SF Chat', `<div class="aw-chat-hint"><p>Отправьте команду в существующий чат. Примеры: замените стратегию, инструмент и период на нужные.</p>${commands.map(command => `<div class="aw-command-example"><strong>${esc(command.title)}</strong><code>${esc(command.text)}</code></div>`).join('')}<p>Даты бэктеста — UTC; конечная дата не включается. Это исследование, не торговое исполнение. Снимок сохраняет текущий вид рабочего стола.</p></div>`, '<button class="aw-link-button" data-aw-real-chat>Открыть чат →</button>');
+      return panel('Примеры поручений', `<div class="aw-chat-hint"><p>Напишите в SF Chat обычным текстом, как в этих примерах. Стратегию, инструмент и период замените на свои.</p>${commands.map(command => `<div class="aw-command-example"><strong>${esc(command.title)}</strong><code>${esc(command.text)}</code></div>`).join('')}<p>Даты бэктеста — UTC; конечная дата не включается. Это исследование, не торговое исполнение. Снимок сохраняет текущий вид рабочего стола.</p></div>`, '<button class="aw-link-button" data-aw-real-chat>Открыть чат →</button>');
+    }
+    function taskRow(task) {
+      const stage = task.stage_label || task.result_label || stageName(task.stage);
+      const sub = [name(task.lead), stage && stage !== '—' ? stage : ''].filter(Boolean).join(' · ');
+      const when = task.updated_at || task.created_at;
+      return `<button class="aw-row" data-aw-task="${esc(taskId(task))}" data-aw-state="${esc(taskState(task))}">${avatar(task.lead, 'sm')}<span><span class="aw-row-title">${esc(taskTitle(task))}</span><span class="aw-row-sub">${esc(sub)}</span></span><span class="aw-row-end">${taskBadge(task)}${number(task.progress_pct) == null ? '' : progress(task)}<time datetime="${esc(when || '')}">${esc(date(when, true))}</time></span></button>`;
+    }
+    function queueNotes(items) {
+      const seen = new Set();
+      return items.map(item => [item.reason || item.detail || '', item.action_hint || ''].filter(Boolean).join(' '))
+        .filter(text => text && !seen.has(text) && seen.add(text))
+        .map(text => `<p class="aw-queue-note">${esc(text)}</p>`).join('');
     }
     function renderOverview() {
       const tasks = rows(overview.tasks), agents = rows(overview.agents), stats = overview.stats || {};
       const active = tasks.filter(task => task.is_active === true || task.is_active == null && taskMatches(task, 'active', ''));
       const awaitingDecision = tasks.filter(task => phaseOf(task) === 'awaiting_decision');
       const awaitingReview = tasks.filter(task => phaseOf(task) === 'awaiting_review');
-      const group = active.length ? active : awaitingDecision.length ? awaitingDecision
-        : awaitingReview.length ? awaitingReview : tasks;
-      const heading = active.length ? 'Сейчас в работе'
-        : awaitingDecision.length ? 'Ожидают вашего решения'
-        : awaitingReview.length ? 'Ожидают проверки'
-        : 'Последняя работа';
-      const shown = group.slice(0, 3), outcomes = overviewOutcomes(overview).slice(0, 3);
+      const failedTasks = tasks.filter(task => phaseOf(task) === 'failed');
+      const outcomes = overviewOutcomes(overview).slice(0, 3);
       const attentionKnown = Array.isArray(overview.attention), alerts = rows(overview.attention).filter(item => !['info', 'healthy'].includes(item.severity || item.status));
-      const alertsBody = alerts.length ? `<div class="aw-stack">${alerts.slice(0, 3).map(alertCard).join('')}</div>${alerts.length > 3 ? `<button class="aw-link-button" data-aw-tab="work" data-aw-filter="attention">Показать все (${count(alerts.length)}) →</button>` : ''}` : attentionKnown && number(stats.attention) === 0 ? `<div class="aw-attention-clear">${badge('healthy')}<span>Сервер не сообщает об ошибках или ожидающих подтверждениях.</span></div>` : smallEmpty('Сводка подтверждений пока не опубликована. Отсутствие данных не означает, что все проверки пройдены.');
-      const metrics = [
-        ['В работе', stats.active_tasks, 'Очередь, выполнение и ожидание результата'], ['Результаты', stats.results_received, 'Получены, но не обязательно приняты'],
-        ['Ждут проверки', stats.awaiting_review, 'Ответ есть, проверка не пройдена'], ['Проверены вами', stats.completed_tasks, 'Принятые результаты'],
-        ['Ошибки', stats.failed, 'История сохраняется'], ['Требуют внимания', stats.attention, 'Проверки, ошибки, отклонения и блокировки'],
-      ].map(([label, value, caption]) => `<div class="aw-metric"><div class="aw-metric-label">${esc(label)}</div><div class="aw-metric-value">${count(value)}</div><div class="aw-metric-note">${esc(caption)}</div></div>`).join('');
-      content.innerHTML = `<div class="aw-rollup" aria-label="Сводка текущего рабочего пространства">${metrics}</div><div class="aw-overview"><div class="aw-column aw-column-work">${panel(heading, shown.length ? `<div class="aw-stack">${shown.map(taskCard).join('')}</div>` : smallEmpty('Задач ещё нет. Откройте SF Chat или запустите разрешённую проверку.'), '<button class="aw-link-button" data-aw-tab="work">Все задачи →</button>')}${realWorkHint()}${panel('Требует внимания', alertsBody)}</div><div class="aw-column aw-column-results">${panel('Результаты и исходные данные', outcomes.length ? `<div class="aw-outcomes">${outcomes.map(outcomeCard).join('')}</div>` : smallEmpty('Пока нет сохранённых результатов. Здесь появятся отчёты, снимки и выполненные задачи с указанным источником.'))}${panel('Последние действия', timeline(rows(overview.activity).slice(0, 4), false))}</div><div class="aw-column aw-column-team">${panel('Команда и рейтинг', agents.length ? `<div class="aw-team">${agents.slice(0, 6).map(agentMini).join('')}</div><p class="aw-rating-note">n — размер выборки. NEW — данных недостаточно. Оценки относятся к классу задач; synthetic-проверка не оценивает качество LLM.</p>` : smallEmpty('В этом рабочем пространстве пока нет агентов.'), '<button class="aw-link-button" data-aw-tab="agents">Вся команда →</button>')}${foundationCard()}</div></div>`;
+      // One queue for everything that waits on the person. The two waiting phases
+      // stay named separately: a pending check is not a decision on the owner.
+      const summary = [
+        awaitingDecision.length ? `<span class="aw-status aw-warning">Ожидают вашего решения · ${count(awaitingDecision.length)}</span>` : '',
+        awaitingReview.length ? `<span class="aw-status aw-review">Ожидают проверки · ${count(awaitingReview.length)}</span>` : '',
+        failedTasks.length ? `<span class="aw-status aw-error">Ошибки · ${count(failedTasks.length)}</span>` : '',
+      ].join('');
+      const queue = alerts.length
+        ? `${summary ? `<div class="aw-queue-summary">${summary}</div>` : ''}${queueNotes(alerts.slice(0, 3))}<div class="aw-stack">${alerts.slice(0, 3).map(item => alertCard(item, true)).join('')}</div>${alerts.length > 3 ? `<div class="aw-panel-more"><button class="aw-link-button" data-aw-tab="work" data-aw-filter="attention">Показать все (${count(alerts.length)}) →</button></div>` : ''}`
+        : attentionKnown && number(stats.attention) === 0
+          ? `<div class="aw-calm"><span class="aw-clean-mark" aria-hidden="true">✓</span><span>Сейчас от вас ничего не требуется. Проверки и решения появятся здесь, как только команда их запросит.</span></div>`
+          : smallEmpty('Сводка подтверждений пока не опубликована. Отсутствие данных не означает, что все проверки пройдены.');
+      const recent = tasks.filter(task => !ATTENTION_PHASES.includes(phaseOf(task)));
+      const shownWork = (active.length ? active : recent).slice(0, 5);
+      const workBody = shownWork.length ? `<div class="aw-row-list">${shownWork.map(taskRow).join('')}</div>`
+        : tasks.length ? `<div class="aw-calm"><span>Сейчас ничего не выполняется. Задачи, которые ждут вас, — в блоке выше.</span></div>`
+          : smallEmpty('Задач пока нет. Нажмите «Поручить задачу», чтобы дать команде первое поручение.');
+      const kpi = (label, value, note, filterKey, tone) => `<button class="aw-kpi${tone ? ' aw-kpi-' + tone : ''}" data-aw-tab="work" data-aw-filter="${filterKey}"><span class="aw-kpi-label">${esc(label)}</span><span class="aw-kpi-value">${count(value)}</span><span class="aw-kpi-note">${esc(note)}</span></button>`;
+      const kpis = kpi('Нужно ваше действие', stats.attention, 'Проверки, решения и ошибки', 'attention', number(stats.attention) > 0 ? 'hot' : '')
+        + kpi('В работе', stats.active_tasks, 'Выполняются сейчас', 'active', '')
+        + kpi('Результаты', stats.results_received, 'Из них приняты вами: ' + count(stats.completed_tasks), 'completed', '')
+        + kpi('Ошибки', stats.failed, 'История сохраняется', 'failed', number(stats.failed) > 0 ? 'bad' : '');
+      const team = agents.length ? `<div class="aw-team-list">${agents.slice(0, 6).map(agentMini).join('')}</div>` : smallEmpty('В команде пока нет агентов. Создайте персону в разделе «Персоны».');
+      content.innerHTML = `<div class="aw-kpis" aria-label="Сводка рабочего пространства">${kpis}</div><div class="aw-board"><div class="aw-column aw-column-work">${panel('Нужно ваше действие', queue, '<button class="aw-link-button" data-aw-tab="work" data-aw-filter="attention">Все →</button>')}${panel(active.length ? 'Сейчас в работе' : 'Последние задачи', workBody, '<button class="aw-link-button" data-aw-tab="work">Все задачи →</button>')}</div><div class="aw-column"><div class="aw-column aw-column-team">${panel('Команда', team, '<button class="aw-link-button" data-aw-tab="agents">Вся команда →</button>')}</div><div class="aw-column aw-column-results">${panel('Последние результаты', outcomes.length ? `<div class="aw-outcomes">${outcomes.map(outcomeCard).join('')}</div>` : smallEmpty('Результатов пока нет. Отчёты, снимки и ответы появятся здесь с указанием источника.'))}${panel('Последние действия', timeline(rows(overview.activity).slice(0, 5), false))}</div></div></div>`;
     }
     function taskTable(tasks) {
-      if (!tasks.length) return empty('Задач по этому фильтру нет', 'Измените фильтр или запустите проверочный сценарий. Новые задачи появятся после записи на сервере.');
-      return `<div class="aw-table-wrap"><table class="aw-table"><thead><tr><th>Задача / класс</th><th>Координатор</th><th>Участники</th><th>Этап</th><th>Прогресс</th><th>Статус</th><th>Обновлено</th><th>Стоимость</th></tr></thead><tbody>${tasks.map(task => `<tr><td><button class="aw-table-title" data-aw-task="${esc(taskId(task))}">${esc(taskTitle(task))}</button><div class="aw-table-sub">${esc(taskClass(task))}${task.synthetic ? ' · SYNTHETIC' : ''}</div></td><td><span class="aw-people">${avatar(task.lead, 'sm')}${esc(name(task.lead))}</span></td><td><span class="aw-faces" title="${esc(rows(task.participants).map(name).join(', '))}">${rows(task.participants).slice(0, 4).map(person => avatar(person, 'sm')).join('')}</span><span class="aw-muted">${task.participants?.length ? '' : '—'}</span></td><td>${esc(task.result_label || stageName(task.stage))}</td><td>${progress(task)}</td><td>${taskBadge(task)}</td><td>${esc(date(task.updated_at || task.created_at))}</td><td>${esc(cost(task.cost_usd))}</td></tr>`).join('')}</tbody></table></div>`;
+      if (!tasks.length) return empty('Задач по этому фильтру нет', 'Измените фильтр или поиск. Новые задачи появятся здесь, как только команда их начнёт.');
+      const measured = tasks.some(task => number(task.cost_usd) != null);
+      return `<div class="aw-table-wrap"><table class="aw-table"><thead><tr><th>Задача</th><th>Исполнитель</th><th>Статус</th><th>Этап</th><th>Обновлено</th>${measured ? '<th>Стоимость</th>' : ''}</tr></thead><tbody>${tasks.map(task => {
+        const people = rows(task.participants);
+        return `<tr><td><button class="aw-table-title" data-aw-task="${esc(taskId(task))}">${esc(taskTitle(task))}</button><div class="aw-table-sub">${esc(taskClass(task))}${task.synthetic ? ' <span class="aw-tag">ТЕСТ</span>' : ''}</div></td><td><span class="aw-people">${avatar(task.lead, 'sm')}${esc(name(task.lead))}${people.length ? `<span class="aw-faces" title="${esc(people.map(name).join(', '))}">${people.slice(0, 4).map(person => avatar(person, 'sm')).join('')}</span>` : ''}</span></td><td>${taskBadge(task)}${phaseOf(task) === 'executing' && number(task.progress_pct) != null ? progress(task) : ''}</td><td>${esc(task.result_label || stageName(task.stage))}</td><td>${esc(date(task.updated_at || task.created_at))}</td>${measured ? `<td>${esc(cost(task.cost_usd))}</td>` : ''}</tr>`;
+      }).join('')}</tbody></table></div>`;
     }
     function renderWork() {
-      const filters = { all: 'Все', active: 'Активные', waiting: 'Ожидают', review: 'Требуют решения', attention: 'Требуют внимания', completed: 'Завершённые', failed: 'Ошибки' };
-      content.innerHTML = `<div class="aw-section-heading"><div><h2>Работа команды</h2><p>От постановки задачи до результата: участники, действия, проверки и артефакты.</p></div></div><div class="aw-toolbar"><div class="aw-filters" aria-label="Фильтр задач">${Object.entries(filters).map(([key, label]) => `<button class="aw-filter" data-aw-filter="${key}" aria-pressed="${filter === key}">${label}</button>`).join('')}</div><input type="search" id="aw-task-search" class="aw-search" placeholder="Найти задачу или агента…" aria-label="Поиск задач" maxlength="160" value="${esc(query)}"></div><div id="aw-work-table">${taskTable(workRows.filter(task => taskMatches(task, filter, query)))}</div>${nextCursor ? '<div class="aw-pagination"><button class="btn" id="aw-load-more">Показать ещё</button></div>' : ''}`;
+      const filters = { all: 'Все', attention: 'Нужно ваше действие', active: 'В работе', waiting: 'Ждут результата', review: 'Ждут решения', completed: 'Завершённые', failed: 'Ошибки' };
+      content.innerHTML = `<div class="aw-work-intro"><div><h2>Задачи</h2><p>Все поручения команды: кто выполняет, на каком этапе и что ждёт вас.</p></div></div><div class="aw-toolbar"><div class="aw-filters" aria-label="Фильтр задач">${Object.entries(filters).map(([key, label]) => `<button class="aw-filter" data-aw-filter="${key}" aria-pressed="${filter === key}">${label}</button>`).join('')}</div><input type="search" id="aw-task-search" class="aw-search" placeholder="Найти задачу или агента…" aria-label="Поиск задач" maxlength="160" value="${esc(query)}"></div><div id="aw-work-table">${taskTable(workRows.filter(task => taskMatches(task, filter, query)))}</div>${nextCursor ? '<div class="aw-pagination"><button class="btn" id="aw-load-more">Показать ещё</button></div>' : ''}${realWorkHint()}`;
     }
     function agentCard(agent) {
       const evaluation = evaluationMeta(agent);
-      return `<article class="aw-agent-card"><div class="aw-agent-card-top">${avatar(agent)}<div><div class="aw-agent-name">${esc(name(agent))}</div><div class="aw-agent-role">${esc(role(agent))}</div></div></div>${agentState(agent)}<div class="aw-agent-score"><small>Результат проверок${agent.synthetic === true ? ' · SYNTHETIC' : ''}</small><strong>${esc(evaluation.label)}</strong><small>${evaluation.insufficient ? 'Недостаточно сопоставимых наблюдений' : 'Проверенные критерии, не качество LLM'}</small><div class="aw-agent-meta"><span>Выборка: ${count(evaluation.sample)}</span><span>Уверенность: ${esc(evaluation.confidence)}</span></div></div><div class="aw-agent-assignment">${esc(agent.current_task?.title || agent.current_task_title || 'Нет активной задачи')}</div><div class="aw-actions"><button class="aw-link-button" data-aw-agent="${esc(agentId(agent))}">Профиль и рейтинг →</button></div></article>`;
+      const score = evaluation.sample > 0
+        ? `<div class="aw-agent-score"><small>Результат проверок</small><strong>${esc(evaluation.label)}</strong><div class="aw-agent-meta"><span>Выборка: ${count(evaluation.sample)}</span><span>Уверенность: ${esc(evaluation.confidence)}</span></div></div>`
+        : `<div class="aw-agent-score"><small>Результат проверок</small><strong>Нет наблюдений</strong><small>Рейтинг появится после проверенных задач</small></div>`;
+      return `<article class="aw-agent-card"><div class="aw-agent-card-top">${avatar(agent)}<div><div class="aw-agent-name">${esc(name(agent))}</div><div class="aw-agent-role">${esc(role(agent))}</div></div></div>${agentState(agent)}${score}<div class="aw-agent-assignment">${esc(agent.current_task?.title || agent.current_task_title || 'Нет активной задачи')}</div><div class="aw-actions"><button class="aw-link-button" data-aw-agent="${esc(agentId(agent))}">Профиль →</button></div></article>`;
     }
     function renderAgents() {
       const agents = rows(overview.agents);
-      content.innerHTML = `<div class="aw-section-heading"><div><h2>Ваша команда</h2><p>Persona — имя, лицо и голос. Роль определяет обязанности; модель выбирается отдельно и не меняет личность агента.</p></div><div class="aw-actions"><button class="btn" data-aw-domain="personas">Создать / изменить Persona</button><button class="btn" data-aw-domain="models">Подключить свою модель</button></div></div>${agents.length ? `<div class="aw-agent-grid">${agents.map(agentCard).join('')}</div>` : empty('Команда пока пуста', 'Создайте персону и подключите свою модель через инструменты этого рабочего пространства.')}<div class="aw-note">Проверочный рейтинг — результат измеренных критериев конкретного класса задач. Сравнивайте только одинаковые классы и окна наблюдения. SYNTHETIC не оценивает качество внешней модели и не влияет на рабочую маршрутизацию.</div>${panel('Проверочный рейтинг', agents.length ? `<div class="aw-table-wrap"><table class="aw-table"><thead><tr><th>Агент / роль</th><th>Класс задачи</th><th>Наблюдения</th><th>Результат</th><th>Уверенность</th></tr></thead><tbody>${agents.map(agent => { const evaluation = evaluationMeta(agent); return `<tr><td><button class="aw-table-title" data-aw-agent="${esc(agentId(agent))}">${esc(name(agent))}</button><div class="aw-table-sub">${esc(role(agent))}</div></td><td>${esc(taskClass(agent.evaluation))}</td><td>n = ${count(evaluation.sample)}</td><td>${esc(evaluation.label)}</td><td>${esc(evaluation.confidence)}</td></tr>`; }).join('')}</tbody></table></div>` : smallEmpty('Оценки не выставлены. Нулевая выборка не означает нулевое качество.'))}`;
+      const rated = agents.filter(agent => evaluationMeta(agent).sample > 0);
+      content.innerHTML = `<div class="aw-work-intro"><div><h2>Команда</h2><p>Агент — это персона (имя, голос, лицо) с ролью. Модель, на которой он работает, выбирается отдельно и не меняет его историю.</p></div><div class="aw-actions"><button class="btn" data-aw-domain="personas">Персоны</button><button class="btn" data-aw-domain="models">Модели</button><button class="btn" data-aw-domain="external_agents">Внешние агенты</button></div></div>${agents.length ? `<div class="aw-agent-grid">${agents.map(agentCard).join('')}</div>` : empty('Команда пока пуста', 'Создайте персону и подключите модель — после этого агент сможет получать поручения.', '<button class="btn primary" data-aw-domain="personas">Создать персону</button>')}${panel('Проверочный рейтинг', rated.length ? `<div class="aw-table-wrap"><table class="aw-table"><thead><tr><th>Агент / роль</th><th>Класс задачи</th><th>Наблюдения</th><th>Результат</th><th>Уверенность</th></tr></thead><tbody>${rated.map(agent => { const evaluation = evaluationMeta(agent); return `<tr><td><button class="aw-table-title" data-aw-agent="${esc(agentId(agent))}">${esc(name(agent))}</button><div class="aw-table-sub">${esc(role(agent))}</div></td><td>${esc(taskClass(agent.evaluation))}</td><td>n = ${count(evaluation.sample)}</td><td>${esc(evaluation.label)}</td><td>${esc(evaluation.confidence)}</td></tr>`; }).join('')}</tbody></table></div><p class="aw-rating-note">Рейтинг относится к конкретному классу задач. Тестовая проверка не оценивает качество LLM и не влияет на выбор исполнителя.</p>` : smallEmpty('Наблюдений пока нет: рейтинг появится после первых проверенных задач. Нулевая выборка не означает нулевое качество.'))}`;
       if (overview?.scope?.synthetic === false) content.insertAdjacentHTML('beforeend',
         panel('Реальные задания · отдельные проверки исполнения', applicationTable(agents)));
     }
@@ -918,10 +967,17 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       qs('#aw-run-demo').disabled = demoBusy;
       qs('#aw-run-demo').textContent = demoBusy ? 'Выполняем проверки…' : 'Запустить проверочные задачи';
       qsa('[data-aw-domain]', qs('#aw-domain-launcher')).forEach(button => { button.disabled = overview?.enabled !== true; });
-      qs('#aw-pulse').innerHTML = `${badge(overview?.enabled ? 'active' : 'disabled')}<span>${count(stats.agents ?? rows(overview?.agents).length)} агентов</span><span>${count(stats.active_tasks)} в работе</span><span>${count(stats.attention)} требуют внимания</span>`;
-      const context = qs('#aw-context');
+      const attention = number(stats.attention) || 0, failed = number(stats.failed) || 0;
+      qs('#aw-pulse').innerHTML = overview?.enabled
+        ? `<span><strong>${count(stats.agents ?? rows(overview?.agents).length)}</strong> в команде</span><span><strong>${count(stats.active_tasks)}</strong> в работе</span><span class="${attention ? 'aw-pulse-attention' : ''}"><strong>${count(attention)}</strong> ждут вас</span>${failed ? `<span class="aw-pulse-error"><strong>${count(failed)}</strong> с ошибкой</span>` : ''}`
+        : badge('disabled');
+      const context = qs('#aw-context'), synthetic = Boolean(scope.synthetic || overview?.synthetic);
       context.hidden = !overview?.enabled;
-      context.innerHTML = scope.synthetic || overview?.synthetic ? '<span class="aw-context-mark">SYNTHETIC</span><span><strong>Изолированная проверка владельца.</strong> Задачи действительно выполняются локальными детерминированными обработчиками. Исходные данные тестовые; платные модели и торговые действия не вызываются. Рейтинг — не оценка качества LLM.</span>' : '<span class="aw-context-mark">LOCAL</span><span><strong>Ваше рабочее пространство.</strong> AI Центр находится в разработке. Проверочные данные не заменяют owner-данные, а выключенные пути не изменяют текущие механизмы приложения.</span>';
+      context.className = 'aw-env' + (synthetic ? ' aw-env-synthetic' : '');
+      context.textContent = synthetic ? 'Тестовые данные' : 'В разработке';
+      context.title = synthetic
+        ? 'Изолированная проверка: задачи выполняют локальные проверочные обработчики на тестовых данных. Платные модели и торговые действия не вызываются; рейтинг не оценивает качество моделей.'
+        : 'AI Центр ещё в разработке. Проверочные данные не заменяют ваши данные, а выключенные механизмы не меняют работу приложения.';
       qs('#aw-updated').textContent = 'Обновлено ' + date(new Date().toISOString());
     }
     function selectTab(next, updateLocation, background = false, options = {}) {
@@ -931,14 +987,30 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       qsa('.aw-tabs [data-aw-tab]', shell).forEach(button => { const active = button.dataset.awTab === tab; button.setAttribute('aria-selected', String(active)); button.tabIndex = active ? 0 : -1; });
       content.setAttribute('aria-labelledby', 'aw-tab-' + tab);
       if (updateLocation) root.history.replaceState(null, '', '#tab=' + encodeURIComponent(tab));
+      // The click is answered at once: the chosen tab is drawn from what is
+      // already loaded (or its skeleton the first time Work opens), and fresh
+      // data replaces it quietly instead of the user waiting for a recompute.
+      const firstWork = tab === 'work' && !workRows.length;
+      if (updateLocation && !background && overview?.enabled) {
+        if (firstWork) {
+          content.setAttribute('aria-busy', 'true');
+          content.innerHTML = '<div class="aw-skeleton-page" aria-label="Загрузка раздела"><div class="aw-skeleton aw-skeleton-strip"></div><div class="aw-skeleton-grid"><div class="aw-skeleton"></div><div class="aw-skeleton"></div><div class="aw-skeleton"></div></div></div>';
+        } else {
+          preserveView(content, tab === 'work' ? renderWork : tab === 'agents' ? renderAgents : renderOverview);
+          refreshFaces();
+        }
+      }
+      if (!updateLocation) return loadTab(false, options);
       // Work used to read fresh tasks while its header/profile retained an old
-      // overview indefinitely. User navigation refreshes both projections.
-      return updateLocation ? refresh() : loadTab(false, options);
+      // overview indefinitely. User navigation refreshes both projections; the
+      // first Work visit reads its list before the slower workspace summary.
+      if (firstWork && overview?.enabled) return loadTab(false).then(() => refresh({ reuseWork: workRows.length > 0 }));
+      return refresh();
     }
     function readError(error) {
-      if (error?.status === 403) return empty('Нет доступа к этому разделу', 'Сервер не разрешил чтение данных в текущем контексте. Обновите страницу после изменения доступа.');
-      if (error?.status === 404) return empty('Раздел недоступен', 'Этот путь пока не включён в текущем локальном build.', '<button class="btn" data-aw-retry>Проверить снова</button>');
-      return empty('Не удалось загрузить данные', 'Сохранённые записи не изменены. Повторите безопасное чтение.', '<button class="btn" data-aw-retry>Повторить</button>');
+      if (error?.status === 403) return empty('Нет доступа к этому разделу', 'Сервер не разрешил чтение в текущем рабочем пространстве. Если доступ изменился, обновите страницу.');
+      if (error?.status === 404) return empty('Раздел недоступен', 'Этот раздел пока не включён в этой сборке.', '<button class="btn" data-aw-retry>Проверить снова</button>');
+      return empty('Не удалось загрузить данные', 'Ничего не изменилось: сохранённые записи в порядке. Попробуйте загрузить ещё раз.', '<button class="btn" data-aw-retry>Повторить</button>');
     }
     function backgroundReadBlocked() {
       return disposed || document.hidden || mutationBusy || actionForm || demoBusy || pendingListReads > 0
@@ -1014,7 +1086,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         if (error?.name !== 'AbortError' && request === generation && !disposed) content.innerHTML = readError(error);
       } finally { if (request === generation && !disposed) content.setAttribute('aria-busy', 'false'); }
     }
-    async function refresh({ background = false } = {}) {
+    async function refresh({ background = false, reuseWork = false } = {}) {
       if (disposed || background && (refreshing || backgroundReadBlocked())) return;
       if (!background) stopPersonaAudio();
       refreshing = true;
@@ -1046,7 +1118,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
             && !personaAudio?.activePersona() && root.getSelection?.()?.isCollapsed !== false
             && !(content.contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName || '')));
         const workResult = tab === 'work' && result?.enabled
-          ? await readWorkPages(Math.max(1, Math.ceil(workRows.length / 50)), isCurrent) : null;
+          ? reuseWork ? { items: workRows, next_cursor: nextCursor } : await readWorkPages(Math.max(1, Math.ceil(workRows.length / 50)), isCurrent) : null;
         if (!isCurrent() || tab === 'work' && result?.enabled && !workResult) return;
         overview = result;
         renderHeader();
@@ -1127,7 +1199,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     const recordId = item => String(item?.id || item?.task_id || '');
     const recordValue = (item, key) => item?.[key] ?? item?.profile?.[key] ?? item?.presentation?.[key] ?? item?.schedule?.[key] ?? item?.packet?.[key];
     function domainNav(selected) {
-      return `<nav class="aw-domain-nav" aria-label="Инструменты в панели">${Object.entries(DOMAINS).filter(([key]) => !['tasks', 'model_tasks'].includes(key)).map(([key, meta]) => `<button class="aw-filter" data-aw-domain="${key}" aria-pressed="${selected === key}">${esc(meta.title)}</button>`).join('')}</nav>`;
+      return `<nav class="aw-domain-nav" aria-label="Инструменты в панели">${DOMAIN_GROUPS.map(([label, keys]) => `<span class="aw-nav-group">${label ? `<span class="aw-launcher-label">${esc(label)}</span>` : ''}${keys.map(key => `<button class="aw-filter" data-aw-domain="${key}" aria-pressed="${selected === key}">${esc(DOMAINS[key].title)}</button>`).join('')}</span>`).join('')}</nav>`;
     }
     function domainLimitations(data) {
       const limits = rows(data?.limitations).map(item => typeof item === 'string' ? item : item.summary || item.message || '').filter(Boolean);
@@ -1143,8 +1215,8 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const id = recordId(item), metrics = item.observed_eval || item.evaluation;
       const title = esc(item.title || item.label || item.name || item.model || 'Запись');
       const heading = domainState.key === 'system' ? `<strong>${title}</strong>` : `<button class="aw-table-title" data-aw-domain-item="${esc(id)}">${title}</button>`;
-      const component = domainState.key === 'memory' ? memoryScopeCard(item) : domainState.key === 'models' ? modelProtocolCard(item) : domainState.key === 'system' && typeof item.implemented === 'boolean' ? `<dl class="aw-detail-grid"><div><dt>Код реализован</dt><dd>${item.implemented ? 'Да' : 'Нет'}</dd></div><div><dt>Флаг</dt><dd>${item.enabled ? 'Включён' : 'Выключен'}</dd></div><div><dt>Фактический режим</dt><dd>${esc(item.mode)}</dd></div><div><dt>Доступность сейчас</dt><dd>${item.available ? 'Подтверждена' : 'Не подтверждена'}</dd></div></dl><p class="aw-note">${esc(item.note || '')}</p>` : '';
-      return `<article class="aw-domain-card"><div class="aw-domain-card-head">${heading}${item.display_status ? taskBadge(item) : badge(item.status)}</div>${item.summary || item.description ? `<p class="aw-text">${esc(item.summary || item.description)}</p>` : ''}<div class="aw-domain-card-meta">${item.model ? `<span>Model: ${esc(item.model)}</span>` : ''}${item.provider ? `<span>${esc(item.provider)}</span>` : ''}${item.synthetic === true ? '<span class="aw-status aw-info">SYNTHETIC</span>' : ''}<time>${esc(date(item.updated_at || item.created_at))}</time></div>${domainState.key === 'models' ? `<p class="aw-field-hint">${esc(connectionLabel(item))}</p>` : ''}${metrics ? `<div class="aw-domain-card-meta"><span>Проверка ответа: ${esc(pct(metrics.score_pct ?? metrics.observed_score_pct))}</span>${number(metrics.sample_size) == null ? '' : `<span>n = ${count(metrics.sample_size)}</span>`}</div><p class="aw-note">Результат указанной проверки, не общий процент профессионального качества.</p>` : ''}${item.result_text ? `<p class="aw-result-excerpt">${esc(String(item.result_text).slice(0, 240))}</p>` : ''}${component}${domainState.key === 'system' && item.fields ? `<details class="aw-technical"><summary>Технические детали</summary><pre class="aw-result-text">${esc(publicJSON(item.fields))}</pre></details>` : ''}<div class="aw-actions">${domainActionButtons(item)}</div></article>`;
+      const component = domainState.key === 'memory' ? memoryScopeCard(item) : domainState.key === 'models' ? modelProtocolCard(item) : domainState.key === 'system' && typeof item.implemented === 'boolean' ? `<dl class="aw-detail-grid"><div><dt>Реализовано</dt><dd>${item.implemented ? 'Да' : 'Нет'}</dd></div><div><dt>Включено</dt><dd>${item.enabled ? 'Да' : 'Нет'}</dd></div><div><dt>Как работает сейчас</dt><dd>${esc(item.mode)}</dd></div><div><dt>Отвечает</dt><dd>${item.available ? 'Да' : 'Нет'}</dd></div></dl>${item.note ? `<p class="aw-note">${esc(item.note)}</p>` : ''}` : '';
+      return `<article class="aw-domain-card"><div class="aw-domain-card-head">${heading}${item.display_status ? taskBadge(item) : badge(item.status)}</div>${item.summary || item.description ? `<p class="aw-text">${esc(item.summary || item.description)}</p>` : ''}<div class="aw-domain-card-meta">${item.model ? `<span>Модель: ${esc(item.model)}</span>` : ''}${item.provider ? `<span>${esc(item.provider)}</span>` : ''}${item.synthetic === true ? '<span class="aw-status aw-info">SYNTHETIC</span>' : ''}${item.updated_at || item.created_at ? `<time>${esc(date(item.updated_at || item.created_at))}</time>` : ''}</div>${domainState.key === 'models' ? `<p class="aw-field-hint">${esc(connectionLabel(item))}</p>` : ''}${metrics ? `<div class="aw-domain-card-meta"><span>Проверка ответа: ${esc(pct(metrics.score_pct ?? metrics.observed_score_pct))}</span>${number(metrics.sample_size) == null ? '' : `<span>n = ${count(metrics.sample_size)}</span>`}</div><p class="aw-note">Результат указанной проверки, не общий процент профессионального качества.</p>` : ''}${item.result_text ? `<p class="aw-result-excerpt">${esc(String(item.result_text).slice(0, 240))}</p>` : ''}${component}${domainState.key === 'system' && item.fields ? `<details class="aw-technical"><summary>Технические детали</summary><pre class="aw-result-text">${esc(publicJSON(item.fields))}</pre></details>` : ''}<div class="aw-actions">${domainActionButtons(item)}</div></article>`;
     }
     const GRANT_KINDS = { schedule: 'Расписание', delegation: 'Делегирование' };
     function automationGrantCard(item) {
@@ -1154,12 +1226,14 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       // anything, and saying «Одобрено» alone would hide that.
       const standing = item.operational === true ? 'да'
         : item.expired === true ? 'нет — срок истёк' : 'нет';
-      return `<article class="aw-domain-card"><div class="aw-domain-card-head"><button class="aw-table-title" data-aw-domain-item="${esc(id)}">${esc(kind + ' · ' + String(id).slice(0, 8))}</button>${badge(item.operational === true ? 'active' : item.status)}</div>`
+      const devices = { local_owner: 'Этот компьютер владельца', permanent: 'Доверенное устройство', session: 'Только текущая сессия' };
+      const heading = (item.kind === 'delegation' ? 'Разрешение на делегирование' : item.kind === 'schedule' ? 'Разрешение на расписание' : kind);
+      return `<article class="aw-domain-card"><div class="aw-domain-card-head"><button class="aw-table-title" data-aw-domain-item="${esc(id)}">${esc(heading)}</button>${badge(item.operational === true ? 'active' : item.status)}</div>`
         + `<dl class="aw-detail-grid"><div><dt>Действует сейчас</dt><dd>${standing}</dd></div>`
         + `<div><dt>Срок</dt><dd>${esc(date(item.expires_at))}</dd></div>`
         + `<div><dt>Потолок на вызов</dt><dd>${esc(cost(item.max_call_cost_usd))}</dd></div>`
-        + `<div><dt>Устройство</dt><dd>${esc(item.device_mode || '—')}</dd></div></dl>`
-        + `<div class="aw-actions">${domainActionButtons(item)}</div></article>`;
+        + `<div><dt>Устройство</dt><dd>${esc(devices[item.device_mode] || item.device_mode || '—')}</dd></div></dl>`
+        + `<div class="aw-actions">${domainActionButtons(item)}</div><div class="aw-hash">ID ${esc(id)}</div></article>`;
     }
     function drawDomain() {
       if (!domainState) return;
@@ -1169,7 +1243,15 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const history = ['models', 'model_tasks', 'experiments'].includes(key) ? `<div class="aw-actions"><button class="aw-link-button" data-aw-domain="models">Подключения</button><button class="aw-link-button" data-aw-domain="model_tasks">История задач моделей</button><button class="aw-link-button" data-aw-domain="experiments">Сравнения</button></div>` : '';
       let body;
       if (data.enabled !== true) body = empty('Раздел не разрешён в текущем контексте', 'Функция не удалена из плана. Сервер не разрешил её использование; проверьте ограничения ниже.');
-      else body = items(data).length ? `<div class="aw-domain-grid">${items(data).map(key === 'automation' ? automationGrantCard : domainItemCard).join('')}</div>` : smallEmpty('Сохранённых записей пока нет. Новые записи появятся только после подтверждённого действия.');
+      else if (key === 'decisions') {
+        // Authorizations recorded for ordinary requests are history, not decisions
+        // waiting for judgement; they stay available but folded.
+        const all = items(data), proposals = all.filter(item => item.decision_type !== 'explicit_task_authorization');
+        const authorizations = all.filter(item => item.decision_type === 'explicit_task_authorization');
+        body = (proposals.length ? `<div class="aw-domain-grid">${proposals.map(domainItemCard).join('')}</div>` : smallEmpty('Предложений для проверки пока нет. Создайте решение, чтобы получить независимую оценку Court.'))
+          + (authorizations.length ? `<details class="aw-technical"><summary>Разрешения на выполнение задач · ${count(authorizations.length)}</summary><p class="aw-note">Записываются автоматически, когда вы разрешаете выполнить конкретный запрос. Это не решения Court.</p><div class="aw-domain-grid">${authorizations.map(domainItemCard).join('')}</div></details>` : '');
+      }
+      else body = items(data).length ? `<div class="aw-domain-grid">${items(data).map(key === 'automation' ? automationGrantCard : domainItemCard).join('')}</div>` : smallEmpty('Записей пока нет. Они появятся после первого подтверждённого действия.');
       body += processIntelligencePanel(data, key);
       if (key === 'automation') {
         const admin = data.capability_admin || {}, granted = admin.granted === true;
@@ -1177,11 +1259,11 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         const control = admin.can_manage === true
           ? `<div class="aw-actions"><button class="btn${granted ? '' : ' primary'}" data-aw-capability="${granted ? 'revoke' : 'grant'}" data-aw-capability-user="${esc(admin.user_id)}">${granted ? 'Отозвать разрешение на автоматизацию' : 'Выдать разрешение на автоматизацию'}</button></div>`
           : `<p class="aw-note">Разрешение выдаёт владелец рабочего пространства. Самостоятельно повысить свои права здесь нельзя.</p>`;
-        body = `<section class="aw-detail-section"><h3>Условия автоматизации</h3><dl class="aw-detail-grid"><div><dt>Разрешение ai_automation</dt><dd>${badge(granted ? 'active' : 'disabled')}</dd></div><div><dt>Механизм расписаний</dt><dd>${badge(data.flags?.AI_SCHEDULER_V1 ? 'active' : 'disabled')}</dd></div><div><dt>Согласие на рутину</dt><dd>Отдельное действие для каждой записи</dd></div></dl>${control}</section>` + body;
+        body = `<section class="aw-detail-section"><h3>Условия автоматизации</h3><dl class="aw-detail-grid"><div><dt>Разрешение на автоматизацию</dt><dd>${badge(granted ? 'active' : 'disabled')}</dd></div><div><dt>Механизм расписаний</dt><dd>${badge(data.flags?.AI_SCHEDULER_V1 ? 'active' : 'disabled')}</dd></div><div><dt>Согласие на рутину</dt><dd>Отдельное действие для каждой записи</dd></div></dl>${control}</section>` + body;
         const schedules = rows(data.schedules);
         const commissions = rows(data.commissions);
         if (commissions.length) body += `<section class="aw-detail-section"><h3>Поручения Координатору</h3><div class="aw-domain-grid">${commissions.map(row => `<article class="aw-domain-card"><h4>${esc(row.goal || 'Поручение Координатору')}</h4>${badge(row.status)}<p class="aw-text">${row.stage === 'awaiting_approval' ? 'Исходный результат готов. Дочерние задания ещё не разрешены.' : row.graph ? 'Состояние общего результата и отдельных вкладов — в задаче ниже.' : 'Выполняется исходное задание; делегирование ещё не разрешено.'}</p><div class="aw-actions"><button class="btn" data-aw-task="${esc(row.root_task_id)}">Исходная задача и SF Chat</button>${row.graph?.id ? `<button class="btn" data-aw-task="${esc(row.graph.id)}">Общий результат и вклады</button>` : ''}${allowedDomainActions(data, row).map(action => `<button class="btn" data-aw-domain-action="${action}" data-aw-entity="${esc(row.id)}">${esc(actionLabel(action))}</button>`).join('')}</div><p class="aw-note">${esc(row.limitation || '')}</p></article>`).join('')}</div></section>`;
-        if (schedules.length) body += `<section class="aw-detail-section"><h3>Расписания</h3><div class="aw-domain-grid">${schedules.map(row => `<article class="aw-domain-card"><h4>${esc('Расписание · ' + String(row.id || '').slice(0, 8))}</h4><div class="aw-inline">${badge(row.status)}${row.grant_status ? badge(row.grant_status) : ''}</div><p class="aw-text">${esc(rows(row.occurrences).map(item => (item.status || '') + ' · ' + date(item.due_at)).join(' | ') || 'Запусков ещё не было.')}</p><div class="aw-actions">${allowedDomainActions(data, row).map(action => `<button class="btn" data-aw-domain-action="${action}" data-aw-entity="${esc(row.id)}">${esc(actionLabel(action))}</button>`).join('')}</div></article>`).join('')}</div></section>`;
+        if (schedules.length) body += `<section class="aw-detail-section"><h3>Расписания</h3><div class="aw-domain-grid">${schedules.map(row => `<article class="aw-domain-card"><h4>${esc('Расписание: ' + plural(rows(row.occurrences).length, 'запуск', 'запуска', 'запусков') + (rows(row.occurrences)[0]?.due_at ? ' с ' + date(rows(row.occurrences)[0].due_at) : ''))}</h4><div class="aw-inline">${badge(row.status)}${row.grant_status ? badge(row.grant_status) : ''}</div>${rows(row.occurrences).length ? `<ul class="aw-occurrences">${rows(row.occurrences).map(item => `<li><time>${esc(date(item.due_at))}</time>${badge(item.status)}${item.task_id ? taskLink(item.task_id, 'Результат') : ''}</li>`).join('')}</ul>` : '<p class="aw-text">Запусков ещё не было.</p>'}<div class="aw-hash">ID ${esc(row.id || '')}</div><div class="aw-actions">${allowedDomainActions(data, row).map(action => `<button class="btn" data-aw-domain-action="${action}" data-aw-entity="${esc(row.id)}">${esc(actionLabel(action))}</button>`).join('')}</div></article>`).join('')}</div></section>`;
       }
       if (key === 'system') {
         if (data.preview_dataset) body = note('Учебные записи Preview отделены от Local. Набор создаётся только явной кнопкой оператора, без запуска задач, выдачи прав или оценки моделей.') + body;
@@ -1217,7 +1299,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const request = ++detailGeneration;
       const prior = append && domainState?.key === key ? domainState.data : null;
       actionForm = null; detailKind = 'domain';
-      openDrawer(DOMAINS[key].title, domainNav(key) + smallEmpty('Загрузка записей текущего рабочего пространства…'));
+      openDrawer(DOMAINS[key].title, domainNav(key) + loadingBlock('Загружаем записи раздела…'));
       try {
         const data = await API.aiControlCenterDomain(key, { limit: 50, cursor: prior?.next_cursor || '' }, { signal });
         if (key === 'router' && data.enabled === true) {
@@ -1263,7 +1345,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (domainState.key === 'model_tasks') return openTask(id);
       const request = ++detailGeneration, key = domainState.key;
       actionForm = null;
-      openDrawer(DOMAINS[key].title, domainNav(key) + smallEmpty('Загрузка актуальной записи…'));
+      openDrawer(DOMAINS[key].title, domainNav(key) + loadingBlock('Загружаем запись…'));
       try {
         const result = await API.aiControlCenterDomainItem(key, id, { signal });
         if (disposed || request !== detailGeneration) return;
@@ -1557,7 +1639,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         outcomes: [{ title: 'Ответ получен', detail: String(detail.result_text).slice(0, 500) }] };
       const task = detail.task || detail, art = rows(detail.artifacts);
       const source = sourceMeta(task), sourceKind = source.kind;
-      const labels = { summary: 'Обзор', activity: 'Активность', evidence: 'Evidence', agents: 'Агенты', evaluations: 'Оценка', artifacts: 'Артефакты', decisions: 'Решения', errors: 'Ошибки' };
+      const labels = { summary: 'Обзор', activity: 'Активность', evidence: 'Доказательства', agents: 'Участники', evaluations: 'Проверки', artifacts: 'Файлы', decisions: 'Решения', errors: 'Ошибки' };
       const svg = art.find(value => safeArtifactUrl(value.url) && (value.media_type || value.mime_type) === 'image/svg+xml');
       let body;
       if (detailTab === 'summary') body = `<div class="aw-inspector-summary"><h2 class="aw-inspector-title">${esc(taskTitle(task))}</h2><div class="aw-inline">${taskBadge(task)}${task.synthetic ? '<span class="aw-status aw-info">SYNTHETIC · локальный обработчик</span>' : ''}</div><dl class="aw-detail-grid"><div><dt>Текущий этап</dt><dd>${esc(task.result_label || stageName(task.stage))}</dd></div><div><dt>Координатор</dt><dd>${esc(name(task.lead))}</dd></div><div><dt>Класс задачи</dt><dd>${esc(taskClass(task))}</dd></div><div><dt>Измеренная стоимость</dt><dd>${esc(cost(task.cost_usd))}</dd></div><div><dt>Создана</dt><dd>${esc(date(task.created_at))}</dd></div><div><dt>Обновлена</dt><dd>${esc(date(task.updated_at))}</dd></div></dl>${progress(task)}${task.error_reason ? `<p class="aw-note"><strong>${esc(task.error_reason)}</strong><br>Задание не выполнялось и не стоит в очереди. Исходное сообщение сохранено; отправьте новый запрос, когда причина устранена.${task.error_code ? `<br><span class="aw-hash">${esc(task.error_code)}</span>` : ''}</p>` : ''}${rows(task.limitations).length ? `<ul class="aw-limitations">${rows(task.limitations).map(value => `<li>${esc(value)}</li>`).join('')}</ul>` : ''}${String(task.source_url || '').startsWith('/ui/') ? `<p class="aw-text"><a class="aw-link" href="${esc(task.source_url)}">Открыть исходный отчёт</a></p>` : ''}${task.result_label ? `<p class="aw-text">${esc(task.result_label)}</p>` : ''}${task.summary ? `<details class="aw-technical"><summary>Исходное описание</summary><pre>${esc(task.summary)}</pre></details>` : ''}</div><section class="aw-detail-section"><h3>Проверяемый результат</h3>${detailRows(rows(detail.outcomes), 'Результат ещё не зафиксирован.')}</section>${art.length ? `<section class="aw-detail-section"><h3>Последний артефакт</h3>${artifacts(art.slice(-1), sourceKind)}</section>` : ''}<p class="aw-note">Здесь отображаются наблюдаемые действия и результаты. Скрытая цепочка рассуждений модели не публикуется.</p>`;
@@ -1590,7 +1672,8 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (!id) return;
       const request = ++detailGeneration;
       detailKind = 'task'; detailTab = 'summary'; detail = null; actionForm = null;
-      openDrawer('Задача', smallEmpty('Загрузка задачи и доказательств…'));
+      const known = rows(overview?.tasks).concat(workRows).find(task => taskId(task) === String(id));
+      openDrawer(known ? taskTitle(known) : 'Задача', loadingBlock('Загружаем задачу, результат и проверки…'));
       try {
         const result = await API.aiControlCenterTask(id, { signal });
         if (request !== detailGeneration || disposed) return;
@@ -1603,9 +1686,9 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       ++detailGeneration;
       detailKind = 'agent'; profile = found; detailTab = selected || 'summary';
       const evaluation = evaluationMeta(found), tasks = rows(overview.tasks).filter(task => agentId(task.lead) === id || rows(task.participants).some(value => agentId(value) === id));
-      const labels = { summary: 'Обзор', work: 'Работа', rating: 'Рейтинг', persona: 'Persona' };
+      const labels = { summary: 'Обзор', work: 'Задачи', rating: 'Рейтинг', persona: 'Персона' };
       let body = '';
-      if (detailTab === 'work') body = tasks.length ? `<div class="aw-stack">${tasks.map(taskCard).join('')}</div>` : smallEmpty('В текущей выборке нет задач этого агента. Полный журнал доступен в разделе «Работа».');
+      if (detailTab === 'work') body = tasks.length ? `<div class="aw-stack">${tasks.map(taskCard).join('')}</div>` : smallEmpty('В текущей выборке нет задач этого агента. Полный список — во вкладке «Задачи».');
       else if (detailTab === 'rating') body = `<div class="aw-metrics"><div class="aw-metric"><div class="aw-metric-label">Результат проверок</div><div class="aw-metric-value">${esc(evaluation.label)}</div><div class="aw-metric-note">${evaluation.insufficient ? 'NEW · недостаточно наблюдений' : 'Критерии конкретного класса задач'}</div></div><div class="aw-metric"><div class="aw-metric-label">Размер выборки</div><div class="aw-metric-value">${count(evaluation.sample)}</div><div class="aw-metric-note">Уверенность: ${esc(evaluation.confidence)}</div></div></div><dl class="aw-detail-grid"><div><dt>Класс</dt><dd>${esc(taskClass(found.evaluation))}</dd></div><div><dt>Окно наблюдений</dt><dd>${esc(found.evaluation?.window_label || 'Текущий локальный набор')}</dd></div><div><dt>Успешных проверок</dt><dd>${count(found.evaluation?.passed)}</dd></div><div><dt>Неуспешных проверок</dt><dd>${count(found.evaluation?.failed)}</dd></div></dl>${evaluation.insufficient && evaluation.observed != null ? note('Предварительное наблюдение: ' + pct(evaluation.observed) + '. Этого недостаточно для устойчивой оценки.') : ''}${note(found.synthetic === true ? 'Источник: synthetic-обработчик, не реальная модель.' : 'Источник: фактические ответы указанной модели и автоматическая проверка конкретного класса. Три успешные арифметические проверки не означают 100% профессионального качества. Приёмка владельцем, соответствие отчёта/PNG и профессиональная оценка — разные наблюдения.')}`;
       else if (detailTab === 'persona') body = `<dl class="aw-detail-grid"><div><dt>Persona</dt><dd>${esc(name(found))}</dd></div><div><dt>Agent Role</dt><dd>${esc(role(found))}</dd></div><div><dt>Голос</dt><dd>${esc(found.voice_label || 'Настройки существующего профиля')}</dd></div><div><dt>Model</dt><dd>${esc(found.model?.name || found.model || 'Назначается отдельно, не является Persona')}</dd></div></dl>${note('Смена модели не переименовывает агента, не меняет его историю и не выдаёт новые полномочия. Свои Persona создаются и редактируются в текущем рабочем пространстве.')}<div class="aw-actions">${/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(found.persona_id || agentId(found)) ? `<button class="btn primary" data-aw-persona-open="${esc(found.persona_id || agentId(found))}">Лицо, голос и описание</button>` : ''}<button class="btn" data-aw-domain="personas">Управление Persona</button><button class="btn" data-aw-domain="models">Мои подключения</button></div>`;
       else body = `<div class="aw-inspector-summary"><h3>Роль и специализация</h3><p class="aw-text">${esc(found.description || found.specialization || role(found))}</p><dl class="aw-detail-grid"><div><dt>Текущая работа</dt><dd>${esc(found.current_task?.title || found.current_task_title || 'Нет активной задачи')}</dd></div><div><dt>Результат проверок</dt><dd>${esc(evaluation.label)} · n = ${count(evaluation.sample)}</dd></div><div><dt>Уверенность</dt><dd>${esc(evaluation.confidence)}</dd></div><div><dt>Контур</dt><dd>${found.synthetic ? 'Synthetic · детерминированные задачи' : 'Текущее рабочее пространство'}</dd></div></dl></div><section class="aw-detail-section"><h3>Последняя работа</h3>${tasks.length ? `<div class="aw-stack">${tasks.slice(0, 3).map(taskCard).join('')}</div>` : smallEmpty('Задач в текущей выборке нет.')}</section>`;
@@ -1637,7 +1720,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         await API.aiControlCenterDemoRun({ idempotency_key: demoKey });
         demoKey = null;
         await refresh();
-        announce('Проверочный запуск записан. Откройте «Работа» для результатов, а «Агенты» — для измеренных оценок.');
+        announce('Проверочный запуск записан. Результаты — во вкладке «Задачи», измеренные оценки — в «Команде».');
       } catch (error) { announce((error?.message || 'Не удалось завершить запуск.') + ' Повторная попытка использует тот же ключ и не создаёт дубликат.', true); }
       finally { demoBusy = false; renderHeader(); }
     }
@@ -1770,6 +1853,6 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     }
     // Reuse Aurora's existing single-flight, onLeave-cleaned polling lifecycle.
     // Reading never enqueues, accepts, retries or changes a permission/flag.
-    UI.poll?.(() => refresh({ background: true }), 5000);
+    UI.poll?.(() => refresh({ background: true }), 30000);
   });
 })(typeof window !== 'undefined' ? window : globalThis);

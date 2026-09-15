@@ -277,3 +277,98 @@
 .aw-table td:nth-child(6) { min-width: 150px; }
 .aw-table td:nth-child(7) { min-width: 115px; }
 @media (max-width: 720px) { .aw-rollup { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* ---- Product shell (2026-09-14 UX review) --------------------------------
+   One compact header, one navigation bar, one attention queue. Dense but calm:
+   small uppercase panel labels, tabular numbers, colour only for state. */
+.ai-command-center { gap: 14px; }
+.aw-header { align-items: center; padding: 2px 0 0; gap: 14px 20px; }
+.aw-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 12px; }
+.aw-heading h1 { margin: 0; font-size: clamp(22px, 2.4vw, 26px); letter-spacing: -.5px; }
+.aw-header-actions { padding-top: 0; gap: 8px; }
+.aw-pulse { margin-top: 6px; gap: 6px 14px; font-size: 12px; color: var(--tx-2); }
+.aw-pulse strong { color: var(--tx); font-weight: 650; font-variant-numeric: tabular-nums; }
+.aw-pulse .aw-pulse-attention strong { color: var(--violet); }
+.aw-pulse .aw-pulse-error strong { color: var(--neg); }
+.aw-env { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--bg-2); color: var(--tx-3); font-size: 10px; font-weight: 600; letter-spacing: .2px; cursor: help; }
+.aw-env::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+.aw-env.aw-env-synthetic::before { background: var(--brand); }
+.aw-navbar { display: flex; align-items: flex-end; justify-content: space-between; flex-wrap: wrap; gap: 6px 22px; border-bottom: 1px solid var(--line-2); }
+.aw-navbar .aw-tabs { border-bottom: 0; gap: 2px; }
+.aw-navbar .aw-tabs button { font-size: 13px; padding: 11px 14px 13px; }
+.aw-domain-launcher { margin: 0; padding: 0 0 8px; gap: 4px 0; align-items: center; }
+.aw-launcher-group { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 2px; padding: 0 10px; border-left: 1px solid var(--line-2); }
+.aw-launcher-group:first-child { border-left: 0; padding-left: 0; }
+.aw-launcher-label { margin-right: 4px; color: var(--tx-3); font-size: 9px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+.aw-domain-launcher button { border: 0; background: transparent; padding: 6px 8px; font-size: 11px; color: var(--tx-2); border-radius: 6px; }
+.aw-domain-launcher button:hover, .aw-domain-launcher button:focus-visible { background: var(--brand-soft); color: var(--tx); }
+.aw-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+.aw-kpi { position: relative; padding: 13px 15px 12px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--glass); min-width: 0; text-align: left; font: inherit; color: var(--tx); }
+button.aw-kpi { cursor: pointer; }
+button.aw-kpi:hover { border-color: var(--brand-line); }
+.aw-kpi-label { display: block; color: var(--tx-3); font-size: 10px; font-weight: 700; letter-spacing: .9px; text-transform: uppercase; }
+.aw-kpi-value { display: block; margin: 6px 0 2px; font-size: 28px; line-height: 1.1; font-weight: 650; letter-spacing: -.8px; font-variant-numeric: tabular-nums; }
+.aw-kpi-note { display: block; color: var(--tx-3); font-size: 10px; line-height: 1.5; }
+.aw-kpi.aw-kpi-hot { border-color: rgba(138, 86, 255, .45); background: linear-gradient(160deg, rgba(138, 86, 255, .12), var(--glass) 70%); }
+.aw-kpi.aw-kpi-hot .aw-kpi-value { color: var(--violet); }
+.aw-kpi.aw-kpi-bad .aw-kpi-value { color: var(--neg); }
+.aw-board { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(290px, 1fr); gap: 14px; align-items: start; }
+.aw-board .aw-column { gap: 14px; }
+.aw-panel-heading h2 { font-size: 10px; }
+.aw-panel-heading .aw-panel-tools { display: flex; align-items: center; gap: 12px; }
+.aw-queue-summary { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 0 10px; }
+.aw-panel-more { padding: 10px 2px 0; }
+.aw-occurrences { list-style: none; margin: 10px 0 4px; padding: 0; display: grid; gap: 6px; }
+.aw-occurrences li { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 11px; color: var(--tx-2); }
+.aw-occurrences time { min-width: 118px; color: var(--tx-3); font-variant-numeric: tabular-nums; }
+.aw-queue-note { margin: 0 0 10px; padding: 8px 11px; border-left: 2px solid rgba(138, 86, 255, .45); background: rgba(138, 86, 255, .06); border-radius: 0 7px 7px 0; color: var(--tx-2); font-size: 11px; line-height: 1.6; }
+.aw-team-row .aw-row-end { gap: 3px; }
+.aw-team-row .aw-agent-state { justify-content: flex-end; gap: 4px; }
+.aw-team-row .aw-status { padding: 1px 6px; font-size: 9px; font-weight: 600; background: transparent; border-color: var(--line-2); }
+.aw-team-row .aw-status.aw-neutral { color: var(--tx-3); }
+.aw-queue-summary .aw-status { font-size: 10px; }
+.aw-alert { align-items: center; gap: 12px; padding: 11px 12px; border-radius: 9px; background: var(--bg-2); }
+.aw-alert > div:first-child { width: 170px; flex-shrink: 0; }
+.aw-alert > div:last-child { flex: 1; min-width: 0; }
+.aw-alert strong { font-size: 12px; font-weight: 650; }
+.aw-alert p { font-size: 11px; line-height: 1.55; margin-top: 2px; }
+.aw-alert-foot { margin-top: 5px; }
+.aw-row-list { display: grid; gap: 6px; }
+.aw-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 9px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--tx); font: inherit; text-align: left; cursor: pointer; }
+.aw-row:hover { background: var(--bg-2); border-color: var(--line-2); }
+.aw-row-title { display: block; font-size: 12px; font-weight: 600; line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aw-row-sub { display: block; margin-top: 2px; color: var(--tx-3); font-size: 10px; line-height: 1.45; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aw-row-end { display: grid; justify-items: end; gap: 4px; font-size: 10px; color: var(--tx-3); font-variant-numeric: tabular-nums; }
+.aw-tag { display: inline-flex; align-items: center; padding: 1px 6px; border-radius: 4px; background: var(--bg-3); color: var(--tx-3); font-size: 9px; font-weight: 650; letter-spacing: .3px; }
+.aw-team-list { display: grid; gap: 4px; }
+.aw-team-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 8px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--tx); font: inherit; text-align: left; cursor: pointer; }
+.aw-team-row:hover { background: var(--bg-2); }
+.aw-team-row .aw-avatar { width: 32px; height: 32px; border-radius: 9px; }
+.aw-team-row .aw-agent-name { font-size: 12px; }
+.aw-team-row .aw-agent-role { margin: 1px 0 0; font-size: 10px; }
+.aw-team-row .aw-rating-mini { max-width: none; }
+.aw-calm { display: flex; align-items: center; gap: 10px; padding: 14px 6px; color: var(--tx-3); font-size: 12px; line-height: 1.6; }
+.aw-calm .aw-clean-mark { margin: 0; flex-shrink: 0; }
+.aw-panel-foot { padding: 0 14px 12px; }
+.aw-skeleton-page { display: grid; gap: 14px; }
+.aw-skeleton-strip { height: 86px; }
+.aw-skeleton-lines { display: grid; gap: 10px; padding: 6px 0; }
+.aw-skeleton-lines span { display: block; height: 14px; border-radius: 6px; background: linear-gradient(100deg, var(--bg-2) 20%, var(--bg-3) 45%, var(--bg-2) 70%); background-size: 220% 100%; animation: aw-loading 1.7s ease-in-out infinite; }
+.aw-skeleton-lines span:nth-child(1) { width: 42%; height: 22px; }
+.aw-skeleton-lines span:nth-child(3) { width: 86%; }
+.aw-skeleton-lines span:nth-child(4) { width: 64%; }
+.aw-skeleton-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 8px; }
+.aw-skeleton-cards .aw-skeleton { height: 150px; }
+.aw-loading-caption { color: var(--tx-3); font-size: 11px; margin: 6px 0 0; }
+.aw-domain-nav { gap: 2px 0; align-items: center; }
+.aw-domain-nav .aw-nav-group { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 2px; padding: 0 10px; border-left: 1px solid var(--line-2); }
+.aw-domain-nav .aw-nav-group:first-child { border-left: 0; padding-left: 0; }
+.aw-examples summary { cursor: pointer; color: var(--tx-2); font-size: 12px; padding: 4px 0; }
+.aw-work-intro { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; }
+.aw-work-intro h2 { margin: 0; font-size: 18px; font-weight: 650; }
+.aw-work-intro p { margin: 4px 0 0; color: var(--tx-3); font-size: 12px; }
+.aw-table td { padding: 11px 14px; }
+.aw-table th { padding: 11px 14px; }
+@media (max-width: 1100px) { .aw-board { grid-template-columns: 1fr; } .aw-navbar { align-items: stretch; } .aw-domain-launcher { padding-bottom: 10px; } }
+@media (max-width: 720px) { .aw-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .aw-alert { flex-direction: column; align-items: flex-start; } .aw-alert > div:first-child { width: auto; } .aw-launcher-group { border-left: 0; padding-left: 0; } .aw-skeleton-cards { grid-template-columns: 1fr; } }
+@media (prefers-reduced-motion: reduce) { .aw-skeleton-lines span { animation: none; } }

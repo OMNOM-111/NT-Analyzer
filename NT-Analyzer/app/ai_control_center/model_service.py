@@ -6,6 +6,7 @@ No global provider discovery, chat store, background loop or routing change.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -124,6 +125,18 @@ class ModelService:
         return record
 
     def _all(self, context, kind):
+        # A read-only repository cannot be written through this service, so one
+        # request may reuse a listing instead of decoding it again for every
+        # task, reputation scope and aggregate it projects.
+        if getattr(self.repository, "read_only", False) is True:
+            cache = self.__dict__.setdefault("_read_only_listing", {})
+            key = (context, kind)
+            if key not in cache:
+                cache[key] = tuple(self._list_owned(context, kind))
+            return iter(cache[key])
+        return self._list_owned(context, kind)
+
+    def _list_owned(self, context, kind):
         cursor, seen = None, set()
         while True:
             page = self.repository.list(context=context, kind=kind, page=PageRequest(limit=100, cursor=cursor))
@@ -144,6 +157,14 @@ class ModelService:
         if isinstance(reference, dict):
             reference = c.SnapshotRef(scope=context.scope, artifact_id=_uuid(reference["artifact_id"]),
                                       sha256=reference["sha256"])
+        # Evidence is content-addressed and immutable. A read-only request may
+        # reuse a verified parse; callers always receive their own copy.
+        cache = None
+        if getattr(self.repository, "read_only", False) is True:
+            cache = self.__dict__.setdefault("_read_only_artifacts", {})
+            key = (context, reference.artifact_id, reference.sha256)
+            if key in cache:
+                return copy.deepcopy(cache[key])
         found = self.repository.get_artifact(context=context, reference=reference)
         if found is None or found[1] != "application/json":
             raise ContractError("model_evidence_unavailable")
@@ -153,6 +174,8 @@ class ModelService:
             raise ContractError("model_evidence_invalid") from None
         if not isinstance(value, dict):
             raise ContractError("model_evidence_invalid")
+        if cache is not None:
+            cache[key] = copy.deepcopy(value)
         return value
 
     def _commit(self, context, record, previous=0):
@@ -362,8 +385,8 @@ class ModelService:
                  if self._json(context, m.profile).get("source") == "private_model_connection"]
         return {"enabled": True, "items": items, "actions": ["connect"],
             "providers": [{"id": p, "label": agent_registry.PROVIDERS[p]["label"]} for p in _SUPPORTED],
-            "rubrics": list(RUBRICS), "limitations": ["Text-only OpenAI-compatible connections; no external tools.",
-                "Private own-workspace credentials only; provider availability and budget are checked per call."]}
+            "rubrics": list(RUBRICS), "limitations": ["Поддерживаются текстовые подключения, совместимые с OpenAI; внешние инструменты модели не вызывает.",
+                "Ключи хранятся только в вашем рабочем пространстве; доступность провайдера и бюджет проверяются при каждом вызове."]}
 
     def disconnect(self, *, context, model_id):
         self._access(context, "disconnect")

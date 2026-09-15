@@ -21,7 +21,8 @@ def test_shipped_refresh_keeps_shared_state_without_mutations_or_focus_interrupt
 def test_refresh_reuses_existing_aurora_poll_lifecycle_and_keeps_words_readable():
     source = (ROOT / "app/static/aurora/assets/pages/ai-command-center.js").read_text(encoding="utf-8")
     style = (ROOT / "app/static/aurora/assets/pages/ai-command-center.css").read_text(encoding="utf-8")
-    assert "UI.poll?.(() => refresh({ background: true }), 5000)" in source
+    # The overview is a heavy server projection; refresh it calmly, not as a ticker.
+    assert "UI.poll?.(() => refresh({ background: true }), 30000)" in source
     assert "setInterval(" not in source
     assert ".aw-table td { overflow-wrap: break-word; }" in style
     assert ".aw-table td:nth-child(4) { min-width: 125px; }" in style
