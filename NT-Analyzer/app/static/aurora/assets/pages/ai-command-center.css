@@ -374,3 +374,102 @@ button.aw-kpi:hover { border-color: var(--brand-line); }
 @media (max-width: 1100px) { .aw-board { grid-template-columns: 1fr; } .aw-navbar { align-items: stretch; } .aw-domain-launcher { padding-bottom: 10px; } }
 @media (max-width: 720px) { .aw-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .aw-alert { flex-direction: column; align-items: flex-start; } .aw-alert > div:first-child { width: auto; } .aw-launcher-group { border-left: 0; padding-left: 0; } .aw-skeleton-cards { grid-template-columns: 1fr; } }
 @media (prefers-reduced-motion: reduce) { .aw-skeleton-lines span { animation: none; } }
+
+/* ---- Variant B: tabs, goal corner, team hierarchy, models, bottom dock ---- */
+.ai-command-center .aw-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: 4px 0 16px; overflow-x: auto; }
+.ai-command-center .aw-tabs [role="tab"] { padding: 10px 14px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--tx-2); font-size: 13.5px; cursor: pointer; white-space: nowrap; }
+.ai-command-center .aw-tabs [role="tab"][aria-selected="true"] { color: var(--tx); border-bottom-color: var(--brand); }
+.aw-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
+.aw-corner { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 12px; }
+.aw-corner-card { border: 1px solid var(--line); border-radius: 14px; background: var(--bg-2); padding: 14px 16px; }
+.aw-corner-card h2 { margin: 0 0 8px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--tx-3); font-weight: 600; }
+.aw-corner-empty { margin: 0 0 10px; color: var(--tx-2); font-size: 12.5px; line-height: 1.5; }
+.aw-today { display: flex; flex-direction: column; gap: 4px; }
+.aw-today-row { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 6px 0; border: 0; border-top: 1px solid var(--line); background: none; color: var(--tx); text-align: left; font-size: 12.5px; cursor: pointer; }
+.aw-today-row:first-child { border-top: 0; }
+.aw-corner-attention { display: flex; gap: 10px; align-items: center; padding: 12px 14px; border-radius: 14px; border: 1px solid rgba(180, 140, 255, .45); background: rgba(138, 86, 255, .1); color: var(--tx); text-align: left; cursor: pointer; font-size: 12.5px; }
+.aw-corner-attention strong { font-size: 20px; color: var(--violet); }
+.aw-grid-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 14px; }
+.aw-grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 14px; }
+.aw-panel-text { margin: 0; color: var(--tx-2); font-size: 12.5px; line-height: 1.55; }
+.aw-panel-hint { color: var(--tx-3); font-size: 11.5px; }
+.aw-kpi-static { cursor: default; }
+.aw-kpis-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.aw-subhead { margin: 16px 0 8px; font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--tx-3); font-weight: 600; }
+.aw-rate { font-weight: 650; font-size: 14px; }
+.aw-rate-good { color: var(--pos); } .aw-rate-mid { color: var(--warn); } .aw-rate-low { color: var(--neg); } .aw-rate-none { color: var(--tx-3); }
+.aw-model-mini { display: flex; flex-direction: column; }
+.aw-model-mini-row, .aw-model-row, .aw-research-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 9px 0; border: 0; border-top: 1px solid var(--line); background: none; color: var(--tx); text-align: left; cursor: pointer; }
+.aw-model-mini-row:first-child, .aw-research-row:first-child { border-top: 0; }
+.aw-model-mini-row > span:first-child, .aw-research-row > span:first-child { flex: 1; min-width: 0; }
+.aw-model-mini-row strong, .aw-research-row strong { display: block; font-size: 13px; font-weight: 600; }
+.aw-model-mini-row small, .aw-research-row small { display: block; color: var(--tx-3); font-size: 11.5px; }
+.aw-model-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 14px; background: var(--bg-2); padding: 4px 16px; margin-bottom: 14px; }
+.aw-model-row { padding: 12px 0; }
+.aw-model-row:first-child { border-top: 0; }
+.aw-model-mark { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; font-weight: 700; color: var(--brand); background: var(--brand-soft); flex: none; }
+.aw-model-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.aw-model-main strong { font-size: 14px; }
+.aw-model-main small { color: var(--tx-3); font-size: 11.5px; }
+.aw-conn-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 12.5px; padding: 6px 0; border-top: 1px solid var(--line); }
+.aw-conn-row:first-child { border-top: 0; }
+.aw-org { padding: 4px 0 6px; }
+.aw-org-row { display: flex; justify-content: center; flex-wrap: wrap; gap: 10px; }
+.aw-org-line { width: 1px; height: 14px; background: var(--line-2); margin: 3px auto; }
+.aw-org-depts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.aw-org-dept, .aw-org-others { border: 1px dashed var(--line-2); border-radius: 14px; padding: 10px 10px 12px; }
+.aw-org-others { margin-top: 12px; }
+.aw-org-dept h3, .aw-org-others h3 { margin: 0; text-align: center; font-size: 12.5px; }
+.aw-org-dept p { margin: 0 0 8px; text-align: center; color: var(--tx-3); font-size: 11px; }
+.aw-org-others h3 { margin-bottom: 8px; }
+.aw-org-slots { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+.aw-slot { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 5px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--bg-3); color: var(--tx); cursor: pointer; text-align: left; }
+.aw-slot strong { display: block; font-size: 12.5px; line-height: 1.2; }
+.aw-slot small { display: block; font-size: 10.5px; line-height: 1.2; color: var(--tx-3); }
+.aw-slot .aw-avatar { width: 28px; height: 28px; }
+.aw-slot-face { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 650; color: var(--tx-3); background: var(--bg-2); border: 1px dashed var(--line-3); flex: none; }
+.aw-slot-empty { border-style: dashed; background: transparent; color: var(--tx-2); }
+.aw-slot-owner { cursor: default; }
+.aw-slot-busy { border-color: rgba(52, 211, 153, .6); box-shadow: 0 0 0 3px rgba(52, 211, 153, .1), 0 0 16px rgba(52, 211, 153, .2); }
+.aw-slot-waiting { border-color: rgba(180, 140, 255, .55); }
+.aw-org-judges .aw-slot { border-color: rgba(251, 146, 60, .38); }
+.aw-org-judges .aw-slot-empty { border-color: rgba(251, 146, 60, .3); }
+.aw-memory-graph { display: block; width: 100%; height: auto; }
+.aw-memory-graph text { fill: var(--tx-3); font-size: 9.5px; }
+.aw-graph-spoke { stroke: var(--line-2); stroke-width: 1; }
+.aw-graph-link { stroke: var(--brand); stroke-opacity: .45; stroke-width: 1.2; }
+.aw-graph-core { fill: var(--brand); }
+.aw-graph-node { fill: var(--violet); }
+.aw-graph-verified_lesson { fill: var(--pos); }
+.aw-dock { position: sticky; bottom: 0; z-index: 6; display: grid; grid-template-columns: auto minmax(0, 1fr); margin-top: 16px; border: 1px solid var(--line-2); border-radius: 14px 14px 0 0; background: var(--glass); backdrop-filter: blur(12px); }
+.aw-strip { display: flex; align-items: center; gap: 5px; padding: 8px 12px; border-right: 1px solid var(--line); overflow-x: auto; max-width: 48vw; }
+.aw-strip-face { position: relative; padding: 2px; border-radius: 50%; border: 1px solid transparent; background: none; cursor: pointer; flex: none; }
+.aw-strip-face .aw-avatar { width: 30px; height: 30px; }
+.aw-strip-busy { border-color: rgba(52, 211, 153, .7); box-shadow: 0 0 12px rgba(52, 211, 153, .35); }
+.aw-strip-busy::after { content: ""; position: absolute; right: 0; top: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--pos); animation: aw-blink 1.6s infinite; }
+.aw-strip-waiting { border-color: rgba(180, 140, 255, .6); }
+@keyframes aw-blink { 50% { opacity: .35; } }
+.aw-log { display: flex; flex-direction: column; min-width: 0; }
+.aw-log-head { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border: 0; background: none; color: var(--tx); font-size: 12.5px; font-weight: 600; cursor: pointer; text-align: left; }
+.aw-log-live { width: 7px; height: 7px; border-radius: 50%; background: var(--pos); box-shadow: 0 0 8px var(--pos); }
+.aw-log-hint { margin-left: auto; color: var(--tx-3); font-weight: 500; }
+.aw-log-body { max-height: 66px; overflow: auto; padding: 0 14px 8px; font: 11.5px/1.6 var(--mono); transition: max-height .2s; }
+.aw-log-open .aw-log-body { max-height: 40vh; }
+.aw-log-line { display: flex; gap: 10px; width: 100%; padding: 1px 0; border: 0; background: none; color: var(--tx-2); font: inherit; text-align: left; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+div.aw-log-line { cursor: default; }
+.aw-log-line time { color: var(--tx-4); flex: none; }
+.aw-log-line span { overflow: hidden; text-overflow: ellipsis; }
+.aw-log-empty { margin: 0; color: var(--tx-3); font-family: var(--font); }
+@media (max-width: 1250px) { .aw-layout { grid-template-columns: 1fr; } .aw-corner { position: static; } .aw-grid-3 { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 860px) { .aw-grid-3, .aw-grid-2, .aw-org-depts { grid-template-columns: 1fr; } .aw-dock { grid-template-columns: 1fr; } .aw-strip { max-width: none; border-right: 0; border-bottom: 1px solid var(--line); } }
+@media (prefers-reduced-motion: reduce) { .aw-strip-busy::after { animation: none; } .aw-log-body { transition: none; } }
+
+/* Overview: two wide columns (work, team) above a results row, so rows never wrap letter by letter. */
+.aw-overview-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 14px; margin-bottom: 14px; align-items: start; }
+.aw-results-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.aw-overview-grid .aw-column, .aw-results-row { min-width: 0; }
+.aw-team-row { flex-wrap: wrap; }
+.aw-team-row .aw-agent-identity { min-width: 140px; flex: 1 1 140px; }
+.aw-team-row .aw-row-end { flex-wrap: wrap; justify-content: flex-end; }
+.aw-agent-name, .aw-agent-role { overflow-wrap: normal; word-break: normal; }
+@media (max-width: 1100px) { .aw-overview-grid, .aw-results-row { grid-template-columns: 1fr; } }

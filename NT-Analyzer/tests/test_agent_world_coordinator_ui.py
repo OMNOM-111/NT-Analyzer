@@ -141,7 +141,8 @@ def run_router_ui(monkeypatch, scenario, setup=""):
 
 def test_coordinator_helpers_are_exported_without_adding_a_page():
     assert base.evaluate("['validCoordinatorPreview','coordinatorApproval','connectionLabel'].every(key=>typeof ui[key]==='function')")
-    assert base.PAGE.read_text(encoding="utf-8").count('data-aw-tab="') == 3
+    # Six owner-chosen views (variant B); a helper must not add another.
+    assert base.PAGE.read_text(encoding="utf-8").count('data-aw-tab="') == 6
 
 
 def test_valid_coordinator_preview_is_unapproved_bounded_and_source_bound():

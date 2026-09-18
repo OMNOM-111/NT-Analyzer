@@ -62,7 +62,8 @@ def run_ui(monkeypatch, scenario, setup=""):
 def test_audio_script_is_local_and_precedes_page_code_without_new_page():
     html = base.PAGE.read_text(encoding="utf-8")
     assert html.index('src="assets/persona-audio.js') < html.index('src="assets/pages/ai-command-center.js')
-    assert html.count('data-aw-tab="') == 3
+    # Six owner-chosen views (variant B); persona audio must not add another.
+    assert html.count('data-aw-tab="') == 6
     assert AUDIO.is_file()
     script = base.SCRIPT.read_text(encoding="utf-8")
     assert "fetch(" not in script

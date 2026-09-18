@@ -70,22 +70,23 @@ def test_page_keeps_existing_aurora_shell_and_scoped_assets():
     assert "base-uri 'none'" in csp
 
 
-def test_exactly_three_main_views_keep_inspectors_on_the_same_page():
+def test_six_main_views_keep_inspectors_on_the_same_page():
     parser = Tags()
     parser.feed(PAGE.read_text(encoding="utf-8"))
     tabs = [attrs for tag, attrs in parser.tags if tag == "button" and attrs.get("role") == "tab"]
+    # Owner-chosen variant B: Обзор / Задачи / Команда / Модели / Исследования / Память.
     assert [tab["data-aw-tab"] for tab in tabs] == [
-        "overview", "work", "agents",
+        "overview", "work", "agents", "models", "research", "memory",
     ]
     assert all(tab["aria-controls"] == "aw-content" for tab in tabs)
-    assert [tab["tabindex"] for tab in tabs] == ["0", "-1", "-1"]
+    assert [tab["tabindex"] for tab in tabs] == ["0", "-1", "-1", "-1", "-1", "-1"]
     assert all("hidden" not in tab for tab in tabs)
     script = SCRIPT.read_text(encoding="utf-8")
     assert "['ArrowLeft', 'ArrowRight', 'Home', 'End']" in script
     assert "event.key === 'Tab'" in script
     assert "event.key === 'Escape'" in script
     assert "aria-modal" in script
-    assert "const TABS = ['overview', 'work', 'agents']" in script
+    assert "const TABS = ['overview', 'work', 'agents', 'models', 'research', 'memory']" in script
     assert "currentDrawer = UI.drawer(" in script
     assert "root.location.href" not in script
 
@@ -109,10 +110,13 @@ def test_domain_tools_remain_accessible_on_one_page_and_load_only_on_request():
     parser.feed(PAGE.read_text(encoding="utf-8"))
     launcher = [attrs["data-aw-domain"] for tag, attrs in parser.tags if "data-aw-domain" in attrs]
     # Technical diagnostics stay one click away in the header, outside the
-    # everyday tools. An external agent is its own tool, never folded into Модели.
-    # The page launcher and the in-drawer navigation share one grouping and names.
-    assert launcher == ["system", "automation", "routines", "calendar", "decisions", "personas", "models",
-                        "external_agents", "experiments", "memory", "projects", "publications"]
+    # everyday tools. Every other tool lives in the tab it belongs to; none is
+    # dropped, and an external agent stays its own tool, never folded into Модели.
+    assert launcher == ["system"]
+    tools = script.split("const TAB_TOOLS = Object.freeze({", 1)[1].split("});", 1)[0]
+    for key in ["automation", "routines", "calendar", "decisions", "personas", "models", "router",
+                "external_agents", "experiments", "memory", "projects", "publications"]:
+        assert f"['{key}', " in tools, key
     assert 'class="btn ghost aw-diagnostics" data-aw-domain="system"' in PAGE.read_text(encoding="utf-8")
     assert "['', ['system']]" not in script
     assert "const DOMAIN_GROUPS = Object.freeze([" in script
