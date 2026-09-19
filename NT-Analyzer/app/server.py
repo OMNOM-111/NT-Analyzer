@@ -134,6 +134,7 @@ if __package__ is None or __package__ == "":
     from app.ai_lab import agent_tts as ai_agent_tts  # type: ignore[no-redef]
     from app.ai_lab import news_agent as ai_news_agent  # type: ignore[no-redef]
     from app.ai_lab import research_catalog as ai_research_catalog  # type: ignore[no-redef]
+    from app.ai_lab import knowledge_base as ai_knowledge_base  # type: ignore[no-redef]
     from app import local_secrets as _local_secrets  # type: ignore[no-redef]
     from app import news_refresh  # type: ignore[no-redef]
     from app import runtime_env  # type: ignore[no-redef]
@@ -239,6 +240,7 @@ else:
     from .ai_lab import agent_tts as ai_agent_tts
     from .ai_lab import news_agent as ai_news_agent
     from .ai_lab import research_catalog as ai_research_catalog
+    from .ai_lab import knowledge_base as ai_knowledge_base
     from . import local_secrets as _local_secrets
     from . import news_refresh
     from . import runtime_env
@@ -9078,6 +9080,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(HTTPStatus.OK, ai_research_catalog.list_researches())
             except Exception as e:
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"research list failed: {e}")
+            return True
+
+        if path == "/api/ai-lab/knowledge-base":
+            # Read-only fragments of the strategy-development knowledge the Lab uses.
+            try:
+                self._json(HTTPStatus.OK, ai_knowledge_base.snapshot())
+            except Exception as e:
+                self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"knowledge base failed: {e}")
             return True
 
         if sub == "researches" and len(parts) == 4:

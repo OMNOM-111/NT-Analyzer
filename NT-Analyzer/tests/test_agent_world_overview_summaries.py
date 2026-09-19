@@ -7,7 +7,7 @@ import pytest
 
 from app.ai_control_center import overview_summaries
 from app.ai_control_center.states import ContractError
-from app.ai_lab import registry
+from app.ai_lab import agent_registry, knowledge_base, registry, research_catalog
 
 
 def iso(**delta):
@@ -32,6 +32,10 @@ def domains(monkeypatch):
 
     monkeypatch.setattr(overview_summaries.domain_gateway, "list_domain", list_domain)
     monkeypatch.setattr(registry, "list_experiments", lambda: [])
+    monkeypatch.setattr(research_catalog, "list_researches", lambda: {"researches": []})
+    monkeypatch.setattr(knowledge_base, "brief", lambda: {"fragments": 0})
+    monkeypatch.setattr(agent_registry, "list_agents", lambda: [])
+    monkeypatch.setattr(agent_registry, "usage_rows", lambda limit: [])
     return lists, reads
 
 
@@ -57,7 +61,9 @@ def test_memory_counts_only_live_records_and_lists_lessons_first(domains):
 
 def test_research_totals_are_the_owners_lab_only(domains):
     for scope in [authorized(owner=False), authorized(runtime=False), authorized(role="member")]:
-        assert overview_summaries.build(scope)["research"] == {"unavailable": "owner_lab_only"}
+        built = overview_summaries.build(scope)
+        for block in ("research", "knowledge", "lab_models"):
+            assert built[block] == {"unavailable": "owner_lab_only"}
 
 
 def test_research_week_deltas_follow_creation_and_status_changes(domains, monkeypatch):
@@ -69,7 +75,7 @@ def test_research_week_deltas_follow_creation_and_status_changes(domains, monkey
         {"status": "rejected", "created_at_utc": iso(days=1), "updated_at_utc": iso(days=1)},
     ])
     research = overview_summaries.build(authorized())["research"]
-    assert research == {"experiments": 5, "experiments_week": 2, "candidates": 2, "candidates_week": 1,
+    assert research == {"researches": 0, "experiments": 5, "experiments_week": 2, "candidates": 2, "candidates_week": 1,
                         "champions": 1, "champions_week": 1, "archived": 1, "archived_week": 0, "rejected": 1}
 
 
@@ -87,3 +93,30 @@ def test_each_block_reads_one_bounded_page(domains):
     _, reads = domains
     overview_summaries.build(authorized())
     assert sorted(reads) == [("memory", overview_summaries.READ_LIMIT), ("models", overview_summaries.READ_LIMIT)]
+
+
+def test_strategies_developed_before_the_registry_count_in_the_research_tiles(domains, monkeypatch):
+    monkeypatch.setattr(research_catalog, "list_researches", lambda: {"researches": [
+        {"evaluation": {"linked_strategy_profiles": 6, "working_strategies": 2, "archived_strategies": 4}},
+        {"evaluation": {"linked_strategy_profiles": 1, "working_strategies": 1, "archived_strategies": 0}}]})
+    research = overview_summaries.build(authorized())["research"]
+    assert (research["researches"], research["experiments"], research["candidates"], research["archived"]) == (2, 7, 3, 4)
+    assert research["experiments_week"] == 0
+
+
+def test_model_roster_carries_usage_by_role_and_never_a_secret(domains, monkeypatch):
+    monkeypatch.setattr(agent_registry, "list_agents", lambda: [
+        {"id": "AGT-1", "name": "DeepSeek", "provider": "deepseek", "model": "deepseek-v4-pro", "enabled": True,
+         "monthly_budget_usd": 5.0, "spend_month_usd": 0.5, "key_mask": "sk-****", "last_test": {"ok": True}},
+        {"id": "AGT-2", "name": "Idle", "provider": "gemini", "model": "gemini-2.5-flash", "enabled": False}])
+    monkeypatch.setattr(agent_registry, "usage_rows", lambda limit: [
+        {"agent_id": "AGT-1", "role": "orchestrator", "status": "success", "cost_usd": 0.01, "total_tokens": 100, "timestamp_utc": iso(hours=2)},
+        {"agent_id": "AGT-1", "role": "orchestrator", "status": "error", "cost_usd": 0, "total_tokens": 0, "timestamp_utc": iso(hours=1)},
+        {"agent_id": "AGT-1", "role": "coder", "status": "success", "cost_usd": 0.02, "total_tokens": 50, "timestamp_utc": iso(minutes=5)}])
+    items = overview_summaries.build(authorized())["lab_models"]["items"]
+    first = items[0]
+    assert [item["id"] for item in items] == ["AGT-1", "AGT-2"]
+    assert (first["requests"], first["ok"], first["errors"], first["tokens"]) == (3, 2, 1, 150)
+    assert [(row["role"], row["requests"], row["ok"]) for row in first["by_role"]] == [("orchestrator", 2, 1), ("coder", 1, 1)]
+    assert first["recent"][0]["role"] == "coder" and first["last_test_ok"] is True
+    assert "key_mask" not in first and "api_key" not in str(items)

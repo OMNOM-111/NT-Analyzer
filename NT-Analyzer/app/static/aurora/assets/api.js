@@ -685,6 +685,7 @@
     aiSweepStale: (body) => send('/api/ai-lab/maintenance/sweep-stale', 'POST', body || {}),
     aiUserResearchScan: (body) => send('/api/ai-lab/user-research/scan', 'POST', body || {}),
     aiResearches: (o) => getJSON('/api/ai-lab/researches', o),
+    aiKnowledgeBase: (o) => getJSON('/api/ai-lab/knowledge-base', o),
     aiResearch: (id, o) => getJSON('/api/ai-lab/researches/' + encodeURIComponent(id), o),
     aiResearchCreate: (body) => send('/api/ai-lab/researches', 'POST', body || {}),
     aiResearchUpdate: (id, body) => send('/api/ai-lab/researches/' + encodeURIComponent(id), 'POST', body || {}),

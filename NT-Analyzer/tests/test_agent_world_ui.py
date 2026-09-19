@@ -155,7 +155,9 @@ def test_overview_is_a_brief_of_every_view_and_the_queue_lives_in_tasks():
     assert "panel('Нужно ваше действие'" in queue
     assert "panel('Последние результаты'" in queue
     assert 'overviewOutcomes(overview)' in queue
-    assert 'attentionKnown && number(stats.attention) === 0' in queue
+    assert 'attentionKnown && !alerts.length' in queue
+    # System test checks settle on their own; only the owner's questions queue.
+    assert 'alerts = rows(overview.attention).filter(item => ownerFacing(item)' in queue
     assert 'Отсутствие данных не означает' in queue
     work = script.split("function renderWork()", 1)[1].split("const toolsRow", 1)[0]
     assert "workQueue()" in work and "toolsRow('work')" in work
@@ -1028,3 +1030,38 @@ def test_synthetic_publication_requires_explicit_named_diagnostic_envelope(chang
 @pytest.mark.parametrize("source", ["memory:11111111-1111-1111-1111-111111111111", "outcome:garbage", "decision:../../other", "backtest:a?owner=true", "https://external.invalid"])
 def test_publication_prepare_does_not_accept_memory_arbitrary_urls_or_invalid_ids(source):
     assert evaluate(f"(() => {{try {{ui.domainPayload('publications','prepare',{{source:{json.dumps(source)}}});return false;}}catch (_){{return true;}}}})()") is True
+
+
+def test_owner_questions_exclude_system_test_checks_and_open_the_managers_chat():
+    script = SCRIPT.read_text(encoding="utf-8")
+    assert "const ownerFacing = task => task?.synthetic !== true && !DIAGNOSTIC_CLASSES.has(" in script
+    problems = script.split("function problemsBody()", 1)[1].split("function modelSummaryGroups()", 1)[0]
+    assert "rows(overview.tasks).filter(ownerFacing)" in problems
+    assert 'data-aw-ask="' in problems and "Вопросов к вам нет" in problems
+    ask = script.split("async function askManager(", 1)[1].split("async function runDemo()", 1)[0]
+    # The task's own dialogue first; otherwise the Manager's chat with a brief to finish.
+    assert "API.aiControlCenterTaskChat(id, {})" in ask and "UI.openSFChat({ conversationType: 'ai' })" in ask
+    assert "input.value = " in ask and "send" not in ask.lower()
+
+
+def test_hiring_asks_only_for_a_face_and_a_name():
+    script = SCRIPT.read_text(encoding="utf-8")
+    hire = script.split("async function hire(form)", 1)[1].split("function renderModels()", 1)[0]
+    assert "const payload = { name: chosen, avatar_key: face, ...(slot.key === 'manager' ? { main_assistant: true } : { team_role: slot.key }) };" in hire
+    assert "API.aiControlCenterDomainAction('personas', 'new', 'create'" in hire
+    assert "'activate'" in hire and "expected_revision: item.revision" in hire
+    # A Persona hired into a place sits only there, whatever its face.
+    assert "const fits = (slot, agent) => agent.team_role ? agent.team_role === slot.key : slot.match(agent);" in script
+    assert "data-aw-hire=" in script
+
+
+def test_models_view_lists_the_whole_roster_with_spend_quota_and_usage():
+    script = SCRIPT.read_text(encoding="utf-8")
+    table = script.split("function labModelTable(models)", 1)[1].split("function openLabModel(", 1)[0]
+    for column in ["Модель", "Где работает", "Запросов за месяц", "Успех", "Расход за месяц", "Квота", "Последний раз"]:
+        assert f"<th>{column}</th>" in table, column
+    card = script.split("function openLabModel(", 1)[1].split("function renderModels()", 1)[0]
+    assert "Под какими агентами работала" in card and "Последние вызовы" in card
+    # Fewer than three calls give no rating yet.
+    assert "const labRate = model => model.requests >= 3 ? model.ok / model.requests : null;" in script
+    assert "key_mask" not in script

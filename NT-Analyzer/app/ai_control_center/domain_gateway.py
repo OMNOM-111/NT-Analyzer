@@ -953,6 +953,7 @@ def enrich_overview(authorized, base=None):
     tasks = [projected_task(row) for row in tasks]
     tasks.sort(key=lambda row: str(row.get("updated_at") or ""), reverse=True)
     from .application_roles import ROLES
+    from .team_roles import TEAM_ROLES
     assignments = {}
     for person in people:
         spec = ROLES.get(person.get("application_role"))
@@ -995,8 +996,9 @@ def enrich_overview(authorized, base=None):
             "persona_profile": {key: person.get(key) for key in ("description", "style", "voice_label") if person.get(key)},
             "presentation": person.get("presentation", {}),
             "application_role": person.get("application_role", ""),
+            "team_role": person.get("team_role", ""),
             "avatar_key": presentation.avatar_key(person.get("avatar_key", "")),
-            "role": role_spec.get("label", "Персона · роль не назначена"),
+            "role": TEAM_ROLES.get(person.get("team_role", ""), {}).get("title") or role_spec.get("label", "Персона · роль не назначена"),
             "persona_status": person["status"],
             "status": "working" if personal_counts["active_tasks"] else "awaiting_review" if personal_counts["awaiting_review"] else "warning" if personal_counts["failed_tasks"] else "free" if person["status"] == "active" else person["status"],
             "task_counts": personal_counts,

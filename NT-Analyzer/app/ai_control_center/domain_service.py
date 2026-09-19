@@ -213,8 +213,14 @@ class DomainService:
             from .presentation import avatar_key
             from .persona_voice import VOICE_FIELDS, normalize_fields
             from .persona_identity import IDENTITY_FIELDS, normalize_fields as normalize_identity
-            data = _fields(payload, ("name",), ("description", "style", "application_role", "avatar_key", *VOICE_FIELDS, *IDENTITY_FIELDS))
-            return {"name": _text(data["name"], limit=160), "description": _text(data.get("description", ""), empty=True),
+            from .team_roles import TEAM_ROLES, team_role
+            data = _fields(payload, ("name",), ("description", "style", "application_role", "team_role", "avatar_key", *VOICE_FIELDS, *IDENTITY_FIELDS))
+            place = team_role(data.get("team_role", ""))
+            # A place in the team carries its duties; hiring needs only a face
+            # and a name, and an explicit description still wins.
+            description = data.get("description", "") or (TEAM_ROLES[place]["duty"] if place else "")
+            return {"name": _text(data["name"], limit=160), "description": _text(description, empty=True),
+                    **({"team_role": place} if place else {}),
                     "style": _text(data.get("style", ""), limit=1000, empty=True),
                     "application_role": role_key(data.get("application_role", "")),
                     "avatar_key": avatar_key(data.get("avatar_key", "")),
@@ -360,7 +366,7 @@ class DomainService:
                 from .persona_voice import VOICE_FIELDS
                 from .persona_identity import IDENTITY_FIELDS
                 previous = self._json(context, record.profile)
-                clean = {**{key: previous[key] for key in ("description", "style", "application_role", "avatar_key", *VOICE_FIELDS, *IDENTITY_FIELDS)
+                clean = {**{key: previous[key] for key in ("description", "style", "application_role", "team_role", "avatar_key", *VOICE_FIELDS, *IDENTITY_FIELDS)
                             if key in previous and key not in clean}, **clean}
             if domain == "memory":
                 previous = self._json(context, record.content)

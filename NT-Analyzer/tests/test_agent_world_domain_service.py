@@ -727,3 +727,17 @@ def test_shared_memory_integrity_failure_is_not_masked_as_success(env):
         db.execute("UPDATE aw_artifacts SET content=? WHERE artifact_id=?", (b'{"tampered":true}', str(record.content.artifact_id)))
     with pytest.raises(ContractError, match="artifact_integrity_mismatch"):
         get(env, "memory", shared["id"], context(user=2))
+
+
+def test_hiring_into_a_team_place_needs_only_a_name_and_brings_the_duties(env):
+    from app.ai_control_center.team_roles import TEAM_ROLES
+    hired = create(env, payload={"name": "Сева", "team_role": "researcher"}, key="hire-researcher-001")["item"]
+    assert hired["team_role"] == "researcher" and hired["description"] == TEAM_ROLES["researcher"]["duty"]
+    own_words = create(env, payload={"name": "Дина", "team_role": "code_reviewer", "description": "Своё описание"}, key="hire-reviewer-001")["item"]
+    assert own_words["description"] == "Своё описание"
+    renamed = act(env, act(env, hired)["item"], action="update", payload={"name": "Сева Research"})["item"]
+    assert renamed["team_role"] == "researcher"
+    with pytest.raises(ContractError, match="invalid_team_role"):
+        create(env, payload={"name": "Кто-то", "team_role": "trader"}, key="hire-invalid-001")
+    plain = create(env, payload={"name": "Без места"}, key="hire-plain-001")["item"]
+    assert "team_role" not in plain
