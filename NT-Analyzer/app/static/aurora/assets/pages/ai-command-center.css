@@ -653,3 +653,37 @@ div.aw-act { cursor: default; }
 .aw-kb-item small { display: block; color: var(--tx-3); font-size: 10.5px; }
 .aw-kb-item p { margin: 4px 0 0; color: var(--tx-2); font-size: 11.5px; line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 @media (max-width: 860px) { .aw-kb-items { grid-template-columns: 1fr; } }
+.aw-connect { display: flex; flex-direction: column; gap: 12px; }
+.aw-connect label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--tx-2); }
+.aw-connect input, .aw-connect select { padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg-1); color: var(--tx); font: inherit; font-size: 13px; }
+.aw-std-face { width: 62%; height: 62%; color: #5b7394; }
+.aw-avatar:has(.aw-std-face), .aw-person-face:has(.aw-std-face) { display: grid; place-items: center; background: linear-gradient(160deg, #16263f, #101b2d); }
+.aw-team-toolbar { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-bottom: 6px; font-size: 12px; }
+.aw-staff-table .aw-avatar { width: 30px; height: 30px; border-radius: 50%; flex: none; }
+.aw-staff-table tbody tr { cursor: pointer; }
+.aw-staff-table tbody tr:hover td { background: var(--bg-3); }
+.aw-model-chip { display: inline-block; margin: 2px 6px 2px 0; padding: 1px 7px; border: 1px solid var(--line-2); border-radius: 999px; font-size: 11px; color: var(--tx-2); white-space: nowrap; }
+.aw-pin { display: block; margin-top: 2px; color: var(--violet); font-size: 11px; }
+.aw-rules { margin: 0 0 10px; padding-left: 18px; display: grid; gap: 5px; font-size: 12.5px; color: var(--tx-2); }
+.aw-rules b { color: var(--tx); font-weight: 650; }
+.aw-place-table td, .aw-place-table th { text-align: center; }
+.aw-place-table td:first-child, .aw-place-table th:first-child { text-align: left; }
+.aw-place-table td small { display: block; color: var(--tx-3); font-size: 10.5px; }
+.aw-cell-no { color: var(--tx-4); font-size: 11px; }
+.aw-cell-wait { color: var(--warn); font-size: 11px; }
+.aw-cell-try { color: var(--tx-3); font-size: 11px; }
+.aw-graph3d { height: 320px; cursor: grab; touch-action: none; user-select: none; }
+.aw-graph3d.aw-graph-open { height: 460px; }
+.aw-graph3d.aw-grabbing { cursor: grabbing; }
+.aw-g-ref { fill: #94a3b8; } .aw-lg-ref { color: #94a3b8; }
+.aw-pipeline { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; }
+.aw-stage { flex: 1 1 120px; border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; background: var(--bg-1); min-width: 0; }
+.aw-stage small { display: block; color: var(--tx-3); font-size: 11px; }
+.aw-stage b { display: block; font-size: 20px; margin: 3px 0 1px; }
+.aw-stage span { font-size: 11px; }
+.aw-stage-arrow { align-self: center; color: var(--tx-4); }
+.aw-strategy-table td small { display: block; font-size: 10.5px; }
+.aw-connect textarea { padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg-1); color: var(--tx); font: inherit; font-size: 13px; resize: vertical; }
+@media (max-width: 860px) { .aw-stage-arrow { display: none; } }
+.aw-rd-full { padding: 12px 16px 16px; border-top: 1px solid var(--line); }
+.aw-rd-full h3 { margin: 0 0 8px; font-size: 12.5px; font-weight: 650; color: var(--tx); text-transform: none; letter-spacing: 0; }

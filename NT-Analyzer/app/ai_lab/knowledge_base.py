@@ -16,8 +16,11 @@ from typing import Any, Dict, Iterable, List, Tuple
 from . import paths
 from .io_utils import iter_jsonl
 
-# Fragment kinds follow the AI Center legend.
-RULE, LESSON, STRATEGY, DATA = "rule", "lesson", "strategy", "data"
+# Fragment kinds follow the AI Center legend. The registry is the history of
+# the owner's own strategies; the reference library holds public samples that
+# only compile and pass checks - neither is a proven strategy by itself.
+RULE, REGISTRY, LESSON, REFERENCE, DATA = "rule", "registry", "lesson", "reference", "data"
+REGISTRY_DOCUMENT = "Реестр стратегий.md"
 _SECTION = re.compile(r"^##\s+(.+?)\s*$", re.M)
 _TITLE = re.compile(r"^#\s+(.+?)\s*$", re.M)
 # Service sections of the documents, not knowledge of their own.
@@ -45,13 +48,13 @@ def strategy_rules_dirs() -> List[Path]:
 def _sources() -> List[Tuple[str, Path]]:
     files: List[Tuple[str, Path]] = []
     for folder in strategy_rules_dirs():
-        files.extend((RULE, path) for path in sorted(folder.glob("*.md")))
+        files.extend((REGISTRY if path.name == REGISTRY_DOCUMENT else RULE, path) for path in sorted(folder.glob("*.md")))
     lessons = paths.REFERENCE_STRATEGIES_DIR / "ai_lessons"
     if lessons.is_dir():
         # The summary of rules leads; per-experiment post-mortems follow.
         files.extend((LESSON, path) for path in sorted(lessons.glob("*.md"), key=lambda path: (path.name != "LESSONS_SUMMARY.md", path.name)))
     if paths.REFERENCE_STRATEGIES_DIR.is_dir():
-        files.extend((STRATEGY, path) for path in sorted(paths.REFERENCE_STRATEGIES_DIR.glob("REF-*/normalized_spec.md")))
+        files.extend((REFERENCE, path) for path in sorted(paths.REFERENCE_STRATEGIES_DIR.glob("REF-*/normalized_spec.md")))
     research = paths.USER_RESEARCH_DIR / "curated" / "researches"
     if research.is_dir():
         files.extend((DATA, path) for path in sorted(research.glob("*.md")))
@@ -76,11 +79,11 @@ def _fragments(kind: str, path: Path) -> Iterable[Dict[str, Any]]:
         return []
     heading = _TITLE.search(text)
     document = (heading.group(1) if heading else path.stem).strip()
-    if kind == STRATEGY:
+    if kind == REFERENCE:
         document = re.sub(r"^Normalized Spec:\s*", "", document)
-    source = path.parent.name + "/" + path.name if kind == STRATEGY else path.name
+    source = path.parent.name + "/" + path.name if kind == REFERENCE else path.name
     base = {"kind": kind, "document": document, "source": source, "updated_at": _stamp(path)}
-    if kind in {STRATEGY, DATA}:
+    if kind in {REFERENCE, DATA}:
         # One fragment per strategy or research material: its first sections.
         sections = _SECTION.split(text)
         body = " ".join(sections[index + 1] for index in range(1, len(sections) - 1, 2)
@@ -124,8 +127,9 @@ def snapshot() -> Dict[str, Any]:
         "items": items,
         "fragments": len(items),
         "rules": count(RULE),
+        "registry": count(REGISTRY),
         "lessons": count(LESSON),
-        "strategies": count(STRATEGY),
+        "references": count(REFERENCE),
         "materials": count(DATA),
         "documents": len(files) + (1 if any(item["source"] == "lesson_log.jsonl" for item in items) else 0),
         "rules_found": bool(strategy_rules_dirs()),
@@ -139,6 +143,6 @@ def brief(limit: int = 3) -> Dict[str, Any]:
     value = snapshot()
     logged = [item for item in value["items"] if item["source"] == "lesson_log.jsonl"][::-1]
     lessons = (logged + [item for item in value["items"] if item["kind"] == LESSON and item not in logged])[:limit]
-    return {key: value[key] for key in ("fragments", "rules", "lessons", "strategies", "materials", "documents", "rules_found")} | {
+    return {key: value[key] for key in ("fragments", "rules", "registry", "lessons", "references", "materials", "documents", "rules_found")} | {
         "latest": [{"id": item["id"], "title": item["title"], "document": item["document"], "updated_at": item["updated_at"]} for item in lessons]}
 

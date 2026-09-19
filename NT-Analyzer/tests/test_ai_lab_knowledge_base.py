@@ -42,7 +42,7 @@ def lab(tmp_path, monkeypatch):
 def test_documents_become_section_fragments_by_kind(lab):
     value = knowledge_base.snapshot()
     kinds = {item["id"]: item["kind"] for item in value["items"]}
-    assert (value["rules"], value["lessons"], value["strategies"], value["materials"]) == (2, 3, 1, 1)
+    assert (value["rules"], value["registry"], value["lessons"], value["references"], value["materials"]) == (2, 0, 3, 1, 1)
     titles = [item["title"] for item in value["items"]]
     assert "Комиссии" in titles and "Promotion gates" in titles and "REF-001 — SMA Crossover" in titles
     # Service sections are not knowledge of their own.
@@ -64,7 +64,8 @@ def test_the_lab_reads_the_rules_from_the_data_root_in_a_worktree(lab):
 
 
 def test_a_changed_file_is_read_again(lab):
-    first = knowledge_base.snapshot()["rules"]
+    first = knowledge_base.snapshot()["registry"]
     rules = Path(paths.MUTABLE_AI_LAB_DIR) / "strategy_rules" / "Реестр стратегий.md"
     rules.write_text("# Реестр\n\n## Готовые стратегии\nMNQ v1.\n", encoding="utf-8")
-    assert knowledge_base.snapshot()["rules"] == first + 1
+    # The registry of the owner's strategies is its own kind, not a rule.
+    assert knowledge_base.snapshot()["registry"] == first + 1

@@ -27,12 +27,6 @@
     ['Команда', ['personas', 'models', 'external_agents', 'experiments', 'router']],
     ['Знания', ['memory', 'projects', 'publications']],
   ]);
-  // Tools that are not part of the planned five views live in the separate Задачи view.
-  const TAB_TOOLS = Object.freeze({
-    work: [['automation', 'Автоматизация'], ['routines', 'Рутины'], ['calendar', 'Календарь'], ['decisions', 'Решения · Court'],
-      ['router', 'Выбор модели'], ['experiments', 'Сравнение моделей'], ['projects', 'Проекты стратегий'], ['personas', 'Персоны'],
-      ['external_agents', 'Внешние агенты'], ['publications', 'Публикации'], ['system', 'Диагностика системы']],
-  });
   // Domain lists a tab reads; they load only when that tab is opened.
   const TAB_DATA = Object.freeze({ models: ['models'], research: ['lab_research'], memory: ['memory', 'knowledge'] });
   // The owner's team scheme (docs/product/AI_CENTER_OWNER_RULES.md, section 4). A slot
@@ -899,9 +893,11 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     // A drawer or inspector shows its shape while it loads instead of one grey line.
     const loadingBlock = caption => `<div class="aw-skeleton-lines" aria-busy="true" aria-label="${esc(caption)}"><span></span><span></span><span></span><span></span></div><div class="aw-skeleton-cards" aria-hidden="true"><div class="aw-skeleton"></div><div class="aw-skeleton"></div></div><p class="aw-loading-caption">${esc(caption)}</p>`;
     const taskLink = (id, label) => id ? `<button class="aw-link-button" data-aw-task="${esc(id)}">${esc(label || 'Открыть задачу')} →</button>` : '';
+    // Until a Persona gets a photo of its own it wears this one standard face.
+    const standardFace = () => '<svg class="aw-std-face" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="9" r="4" fill="currentColor"/><path d="M4 21c1-4.5 4.5-7 8-7s7 2.5 8 7" fill="currentColor"/></svg>';
     const avatar = (value, size) => {
       const person = actor(value), key = String(person.avatar_key || '').toLowerCase();
-      const image = AVATAR_KEYS.includes(key) && UI.agentAvatarHtml ? UI.agentAvatarHtml(key, { size: 'sm' }) : esc(name(person).slice(0, 1).toLocaleUpperCase('ru-RU'));
+      const image = AVATAR_KEYS.includes(key) && UI.agentAvatarHtml ? UI.agentAvatarHtml(key, { size: 'sm' }) : standardFace();
       return `<span class="aw-avatar${size ? ` aw-avatar-${esc(size)}` : ''}" aria-hidden="true">${image}</span>`;
     };
     const progress = task => number(task.progress_pct) == null ? `<span class="aw-muted">${esc(task.display_status_label || phaseLabel(task))}</span>` : `<span class="aw-progress"><progress max="100" value="${Math.min(100, Math.max(0, number(task.progress_pct)))}" aria-label="Выполнено ${esc(pct(task.progress_pct))}"></progress><span>${esc(pct(task.progress_pct))}</span></span>`;
@@ -1028,12 +1024,13 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     function memoryBody(summary, knowledge) {
       if ((!summary || summary.unavailable) && (!knowledge || knowledge.unavailable)) return smallEmpty('Память недоступна в этом рабочем пространстве.');
       const own = summary && !summary.unavailable ? summary : {}, base = knowledge && !knowledge.unavailable ? knowledge : {};
+      const research = overview?.summaries?.research || { unavailable: true };
       const plus = own.capped ? '+' : '', day = value => number(value) > 0 ? '↑ ' + count(value) + ' за сутки' : '';
       const sum = (a, b) => (number(a) || 0) + (number(b) || 0);
       const lessons = [...rows(own.latest).filter(item => item.memory_class === 'verified_lesson').map(item => ({ id: item.id, title: item.title, when: item.created_at, record: true })),
         ...rows(base.latest).map(item => ({ title: item.title, when: item.updated_at, note: item.document }))].slice(0, 3);
       return `<div class="aw-nums">${bnum('Фрагменты памяти', count(sum(own.records, base.fragments)) + plus, day(own.records_day))}${bnum('Уроков извлечено', count(sum(own.verified_lessons, base.lessons)) + plus, day(own.lessons_day))}`
-        + `${bnum('Стратегий в памяти', count(sum(own.strategies, base.strategies)))}${bnum('Источники данных', count(sum(own.sources, base.documents)))}</div>`
+        + `<span title="Наши разработанные стратегии из исследований; образцы эталонной библиотеки сюда не входят">${bnum('Стратегий в памяти', count(sum(own.strategies, research.unavailable ? 0 : research.experiments)))}</span>${bnum('Источники данных', count(sum(own.sources, base.documents)))}</div>`
         + `<div class="aw-subtle">Последние уроки</div>`
         + (lessons.length ? lessons.map(item => item.record
           ? `<button class="aw-lesson" data-aw-domain-open="memory" data-aw-entity="${esc(item.id || '')}"><time>${esc(clock(item.when))}</time><span class="aw-clamp">${esc(item.title || 'Запись')}</span></button>`
@@ -1131,14 +1128,13 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const filters = { all: 'Все', attention: 'Нужно ваше действие', active: 'В работе', waiting: 'Ждут результата', review: 'Ждут решения', completed: 'Завершённые', failed: 'Ошибки' };
       // A separate view for what the five planned views do not cover: checking
       // and accepting results, the full task list and the extra tools.
-      content.innerHTML = `<div class="aw-work-view"><div class="aw-work-intro"><div><h2>Задачи</h2><p>Отдельная вкладка: проверка и приём результатов, все поручения команды и инструменты, которых нет в основных вкладках.</p></div></div>`
-        + bcard('Инструменты', 'layers', 'gray', `<div class="aw-tools" aria-label="Инструменты">${toolsRow('work')}</div>`) + workQueue()
+      content.innerHTML = `<div class="aw-work-view"><div class="aw-work-intro"><div><h2>Задачи</h2><p>Вопросы к вам, результаты на приём и все поручения команды.</p></div></div>`
+        + workQueue()
         + `<div class="aw-toolbar"><div class="aw-filters" aria-label="Фильтр задач">${Object.entries(filters).map(([key, label]) => `<button class="aw-filter" data-aw-filter="${key}" aria-pressed="${filter === key}">${label}</button>`).join('')}</div><input type="search" id="aw-task-search" class="aw-search" placeholder="Найти задачу или агента…" aria-label="Поиск задач" maxlength="160" value="${esc(query)}"></div>`
         + `<div id="aw-work-table">${taskTable(workRows.filter(task => (showTests || ownerFacing(task)) && taskMatches(task, filter, query)))}</div>`
         + (tests ? `<p class="aw-tests-toggle"><button class="aw-link-button" data-aw-show-tests aria-pressed="${showTests}">${showTests ? 'Скрыть тестовые проверки системы' : `Показать тестовые проверки системы (${count(tests)})`}</button> <span class="aw-muted">— они выполняются сами и не требуют вашего участия.</span></p>` : '')
         + `${nextCursor ? '<div class="aw-pagination"><button class="btn" id="aw-load-more">Показать ещё</button></div>' : ''}${realWorkHint()}</div>`;
     }
-    const toolsRow = tabKey => (TAB_TOOLS[tabKey] || []).map(([key, label]) => `<button class="btn sm${key === 'system' ? ' aw-diagnostics' : ''}" data-aw-domain="${esc(key)}">${esc(label)}</button>`).join('');
     const agentPhase = agent => {
       const status = String(agent?.status || '');
       if (BUSY_STATES.has(status) || agent?.current_task) return 'busy';
@@ -1227,7 +1223,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const slotsOf = dept => placed.filter(([slot]) => slot.dept === dept).map(([slot, agent]) => teamSlot(slot, agent)).join('');
       // A persona without a place in the scheme is not dropped: it is named
       // here and has its own card below the hierarchy.
-      const outside = others.length ? `<p class="aw-org-others">Вне схемы: ${esc(plural(others.length, 'персона', 'персоны', 'персон'))} без роли в иерархии — ${esc(others.slice(0, 3).map(name).join(', '))}${others.length > 3 ? ' и другие' : ''}. Их карточки — ниже.</p>` : '';
+      const outside = others.length ? `<p class="aw-org-others">Вне схемы: ${esc(plural(others.length, 'персона', 'персоны', 'персон'))} без роли в иерархии — ${esc(others.slice(0, 3).map(name).join(', '))}${others.length > 3 ? ' и другие' : ''}. Они есть в таблице ниже.</p>` : '';
       return `<div class="aw-org"><div class="aw-org-row"><span class="aw-person aw-person-owner aw-person-lead">${ownerFace()}<span><b>Вы</b><small>Владелец</small></span></span></div>`
         + `<div class="aw-org-line" aria-hidden="true"></div><div class="aw-org-row">${slotsOf('lead')}</div><div class="aw-org-line" aria-hidden="true"></div><div class="aw-org-row">${slotsOf('staff')}</div><div class="aw-org-line" aria-hidden="true"></div>`
         + `<div class="aw-org-depts">${TEAM_DEPTS.map(([key, title, sub]) => `<div class="aw-org-dept aw-org-${key}"><h3>${esc(title)}</h3><p>${esc(sub)}</p><div class="aw-org-slots">${slotsOf(key)}</div></div>`).join('')}</div>${outside}</div>`;
@@ -1237,19 +1233,78 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const tasks = rows(overview?.tasks).filter(task => agentId(actor(task.lead)) === id);
       return modelGroupsFromTasks(tasks).map(group => ({ model: group.id, ...group.stats }));
     }
-    function acard(agent) {
-      const tasks = rows(overview?.tasks).filter(task => agentId(actor(task.lead)) === agentId(agent));
-      const stats = taskStats(tasks), models = agentModels(agent), phase = agentPhase(agent);
-      const model = models[0]?.model ? prettyModel(models[0].model) : agent.model ? prettyModel(agent.model) : 'модель не выбрана';
-      return `<button class="aw-acard${phase ? ' aw-acard-' + phase : ''}" data-aw-agent-card="${esc(agentId(agent))}">${avatar(agent)}<span class="aw-acard-main"><b>${esc(name(agent))}</b><small>${esc(role(agent))} · ${esc(model)}</small></span>`
-        + `<span class="aw-acard-r"><b class="aw-rate aw-rate-${rated(stats) ? rateTone(stats.rate) : 'none'}" title="${esc(rateTitle(stats))}">${rated(stats) ? esc(pct(stats.rate * 100)) : stats.ok + stats.bad ? 'NEW' : '—'}</b><small>${esc(plural(stats.total, 'задача', 'задачи', 'задач'))}</small></span></button>`;
+    // The registry's usage log names the job a model worked for; these are the
+    // same jobs in the team scheme.
+    const LAB_ROLES_BY_PLACE = Object.freeze({ manager: ['orchestrator', 'chief_agent', 'telegram_assistant'], researcher: ['strategy_analyst', 'hypothesis_fallback'],
+      ninjascript_coder: ['coder', 'compile_error_fixer_fallback'], backtester: ['backtest_analyst'], optimizer: ['optimizer'], accountant: ['accountant'],
+      news_analyst: ['news_analyst', 'news'], judge_risk: ['risk_manager'] });
+    const NAME_POOL = Object.freeze(['Олег', 'Лера', 'Сева', 'Толик', 'Артём', 'Дина', 'Гоша', 'Паша', 'Марина', 'Никита', 'Иван', 'Вера', 'Кирилл', 'Ника', 'Слава',
+      'Алина', 'Денис', 'Мира', 'Егор', 'Злата', 'Роман', 'Ася', 'Лев', 'Тая', 'Фёдор', 'Ульяна', 'Глеб', 'Софья']);
+    function autoTeamButton(agents) {
+      const free = teamPlacement(agents.filter(agent => !RETIRED_PERSONA.has(String(agent.persona_status || '')))).placed.filter(([, agent]) => !agent).length;
+      return free ? `<div class="aw-team-toolbar"><span class="aw-muted">Свободных мест: ${count(free)}</span><button class="btn sm primary" data-aw-auto-team title="Всем свободным местам — случайное имя и стандартное фото">Сформировать команду автоматически</button></div>` : '';
+    }
+    // Every free place gets a random unused name and the standard face; the
+    // Manager keeps the owner's default name. Faces can be changed afterwards.
+    async function autoTeam(button) {
+      const agents = rows(overview?.agents).filter(agent => !RETIRED_PERSONA.has(String(agent.persona_status || '')));
+      const free = teamPlacement(agents).placed.filter(([, agent]) => !agent).map(([slot]) => slot);
+      if (!free.length) return;
+      if (UI.confirmDialog && !(await UI.confirmDialog(`Добавить в команду ${plural(free.length, 'агента', 'агентов', 'агентов')} на свободные места? Имена выберутся случайно, фото — стандартное; изменить можно потом.`))) return;
+      const taken = new Set(agents.map(agent => name(agent)));
+      // A shuffle from the browser's cryptographic source: names are only chosen, never scored.
+      const names = NAME_POOL.filter(value => !taken.has(value)).map(value => [root.crypto.getRandomValues(new Uint32Array(1))[0], value]).sort((a, b) => a[0] - b[0]).map(([, value]) => value);
+      if (button) button.disabled = true;
+      let hired = 0;
+      try {
+        for (const slot of free) {
+          const chosen = slot.key === 'manager' && !taken.has('Витёк') ? 'Витёк' : names.shift() || `${slot.title} ${hired + 1}`;
+          const payload = { name: chosen, avatar_key: slot.key === 'manager' ? 'vitek' : '', ...(slot.key === 'manager' ? { main_assistant: true } : { team_role: slot.key }) };
+          const created = await API.aiControlCenterDomainAction('personas', 'new', 'create', { payload, idempotency_key: root.crypto.randomUUID() });
+          const item = created?.item;
+          if (item?.id && rows(item.actions).includes('activate')) {
+            await API.aiControlCenterDomainAction('personas', item.id, 'activate', { payload: {}, idempotency_key: root.crypto.randomUUID(), expected_revision: item.revision });
+          }
+          hired += 1;
+        }
+        announce(`В команду добавлено ${plural(hired, 'агент', 'агента', 'агентов')}.`);
+      } catch (reason) {
+        announce(`Добавлено ${plural(hired, 'агент', 'агента', 'агентов')}; дальше ошибка: ${reason?.message || 'нет ответа'}.`, true);
+      } finally { domainCache.clear(); await refresh(); }
+    }
+    // One row per agent: how much it works, how well, what was accepted or
+    // turned down, and which models worked under it.
+    function staffRow(agent, slot) {
+      const id = agentId(agent), tasks = rows(overview?.tasks).filter(task => agentId(actor(task.lead)) === id), stats = taskStats(tasks);
+      const labRoles = slot ? LAB_ROLES_BY_PLACE[slot.key] || [] : [];
+      const lab = rows(labModels()).flatMap(model => rows(model.by_role).filter(row => labRoles.includes(row.role)).map(row => ({ ...row, model: model.name || model.model })));
+      const calls = lab.reduce((sum, row) => sum + row.requests, 0), callsOk = lab.reduce((sum, row) => sum + row.ok, 0);
+      const models = [...agentModels(agent).map(row => ({ label: prettyModel(row.model), n: row.total, rate: row.rate != null && row.ok + row.bad >= 3 ? row.rate : null })),
+        ...lab.map(row => ({ label: row.model, n: row.requests, rate: row.requests >= 3 ? row.ok / row.requests : null }))].sort((a, b) => b.n - a.n);
+      const last = [...tasks.map(task => task.updated_at || task.created_at), ...lab.map(row => row.last_at)].filter(Boolean).sort().pop();
+      const decided = stats.ok + stats.bad, callRate = calls >= 3 ? callsOk / calls : null;
+      const rate = rated(stats) ? stats.rate : callRate;
+      return `<tr data-aw-agent-card="${esc(id)}" tabindex="0"><td><div class="aw-lab-name">${avatar(agent, 'sm')}<span><strong>${esc(name(agent))}</strong><small>${esc(slot ? slot.title : role(agent))}</small></span></div></td>`
+        + `<td class="aw-num-cell">${count(tasks.length)}<small>вызовов моделей ${count(calls)}</small></td>`
+        + `<td class="aw-num-cell"><b class="aw-rate aw-rate-${rateTone(rate)}">${rate == null ? (decided || calls ? 'NEW' : '—') : esc(pct(rate * 100))}</b></td>`
+        + `<td class="aw-num-cell"><span class="aw-good-text">${count(stats.ok)}</span> / <span class="${stats.bad ? 'aw-bad-text' : 'aw-muted'}">${count(stats.bad)}</span></td>`
+        + `<td>${models.length ? models.slice(0, 3).map(row => `<span class="aw-model-chip">${esc(row.label)} · ${count(row.n)}${row.rate == null ? '' : ' · ' + esc(pct(row.rate * 100))}</span>`).join('') : '<span class="aw-muted">моделей ещё не было</span>'}</td>`
+        + `<td class="aw-num-cell">${esc(last ? clock(last) : '—')}</td></tr>`;
+    }
+    function staffTable(agents) {
+      const live = agents.filter(agent => !RETIRED_PERSONA.has(String(agent.persona_status || '')));
+      const { placed, others } = teamPlacement(live);
+      const rowsOf = [...placed.filter(([, agent]) => agent).map(([slot, agent]) => staffRow(agent, slot)), ...others.map(agent => staffRow(agent, null))];
+      return rowsOf.length ? `<div class="aw-table-wrap"><table class="aw-lab-table aw-staff-table"><thead><tr><th>Агент</th><th>Задач</th><th>Рейтинг</th><th>Одобрено / отклонено</th><th>Модели под агентом</th><th>Последняя работа</th></tr></thead><tbody>${rowsOf.join('')}</tbody></table></div>`
+        + '<p class="aw-muted aw-hint-line">Рейтинг — доля одобренных результатов среди завершённых задач (NEW — меньше трёх); для должностей, где работают модели Лаборатории, — доля успешных вызовов. Нажмите на строку — подробности агента.</p>'
+        : smallEmpty('Агентов пока нет.');
     }
     function renderAgents() {
       const agents = rows(overview.agents);
       const hint = '<span class="aw-bcard-hint">вы общаетесь только с Управляющим; он передаёт задачи Заместителю, тот — отделам, спорное уходит судьям</span>';
       content.innerHTML = agents.length
-        ? bcard('Иерархия', 'users', 'green', teamChart(agents), hint) + `<div class="aw-agents">${agents.map(acard).join('')}</div>`
-        : bcard('Иерархия', 'users', 'green', empty('Команда пока пуста', 'Подключите модель и создайте персону — после этого появится команда.', '<button class="btn primary" data-aw-domain="personas">Создать персону</button>'), hint);
+        ? bcard('Иерархия', 'users', 'green', autoTeamButton(agents) + teamChart(agents), hint) + bcard('Персонал', 'users', 'blue', staffTable(agents))
+        : bcard('Иерархия', 'users', 'green', empty('Команда пока пуста', 'Сформируйте команду автоматически или нажмите на свободное место в схеме.', '<button class="btn primary" data-aw-auto-team>Сформировать команду автоматически</button>'), hint);
     }
     // The agent card is one element of the page: filled when a face or a card
     // is clicked, emptied when it closes.
@@ -1272,7 +1327,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         + `<div class="aw-pop-state">${agentState(agent)}</div>`
         + `<p class="aw-pop-now"><span class="aw-muted">Проверки:</span> ${esc(checks)}</p>`
         + (evaluation.sample > 0 ? '<p class="aw-pop-note">Рейтинг относится к конкретному классу задач: проверка не оценивает качество LLM в целом.</p>' : '') + table
-        + `<div class="aw-actions"><button class="btn sm" data-aw-domain="models">Сменить модель</button><button class="btn sm" data-aw-agent="${esc(id)}">Имя и фото</button></div>`;
+        + (agent.persona_status ? `<div class="aw-actions"><button class="btn sm" data-aw-rename="${esc(id)}">Имя и фото</button></div>` : '');
       pop.setAttribute('aria-label', 'Карточка агента ' + name(agent));
       pop.hidden = false;
       refreshFaces(pop);
@@ -1289,10 +1344,10 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     function openHire(key, anchor) {
       const pop = qs('#aw-agent-pop'), slot = TEAM_SLOTS.find(value => value.key === key);
       if (!pop || !slot) return;
-      const faces = [['', 'Без фото'], ...AVATAR_KEYS.filter(face => slot.key === 'manager' || !['vitek', 'manager'].includes(face)).map(face => [face, AVATAR_LABELS[face] || face])];
+      const faces = [['', 'Стандартное фото'], ...AVATAR_KEYS.filter(face => slot.key === 'manager' || !['vitek', 'manager'].includes(face)).map(face => [face, AVATAR_LABELS[face] || face])];
       pop.innerHTML = `<form id="aw-hire-form" data-slot="${esc(slot.key)}"><div class="aw-pop-head"><div><b>${esc(slot.title)}</b><small>${esc(slot.note)} — обязанности уже заложены в должность</small></div><button type="button" class="aw-pop-x" data-aw-pop-close aria-label="Закрыть">×</button></div>`
         + `<p class="aw-pop-now">Выберите лицо и имя — больше ничего заполнять не нужно.</p>`
-        + `<div class="aw-hire-faces" role="radiogroup" aria-label="Лицо агента">${faces.map(([face, label], index) => `<label class="aw-hire-face" title="${esc(label)}"><input type="radio" name="face" value="${esc(face)}"${index === 1 || (!face && faces.length === 1) ? ' checked' : ''}>${face && UI.agentAvatarHtml ? UI.agentAvatarHtml(face, { size: 'sm' }) : `<span class="aw-person-face">${esc(slot.name.slice(0, 1))}</span>`}</label>`).join('')}</div>`
+        + `<div class="aw-hire-faces" role="radiogroup" aria-label="Лицо агента">${faces.map(([face, label], index) => `<label class="aw-hire-face" title="${esc(label)}"><input type="radio" name="face" value="${esc(face)}"${index === 1 || (!face && faces.length === 1) ? ' checked' : ''}>${face && UI.agentAvatarHtml ? UI.agentAvatarHtml(face, { size: 'sm' }) : `<span class="aw-person-face">${standardFace()}</span>`}</label>`).join('')}</div>`
         + `<label class="aw-hire-name">Имя<input name="name" maxlength="80" value="${esc(slot.name)}" required></label>`
         + `<p class="aw-hire-error" hidden></p><div class="aw-actions"><button class="btn primary sm" type="submit">Добавить в команду</button><button class="btn sm" type="button" data-aw-pop-close>Отмена</button></div></form>`;
       pop.setAttribute('aria-label', 'Новый агент: ' + slot.title);
@@ -1354,12 +1409,42 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (model.billing_mode === 'free_tier') return { used: null, text: `бесплатно · ${count(model.requests_today)} запросов сегодня` };
       return { used: null, text: 'лимит не задан' };
     }
+    // The old AI agents registry carries a role per model. It is shown as such,
+    // not as a pin: a pin is the owner's own decision, not yet recorded anywhere.
+    const pinnedRole = model => ['general', '', undefined, null].includes(model.role) ? '' : model.role;
+    // Proposed distribution cycle (owner's confirmation pending, rules 3.3):
+    // every text model tries every open job, jobs with responsibility take only
+    // proven models, and special-purpose models stay in their own function.
+    const PLACE_COLUMNS = Object.freeze([['orchestrator', 'Управляющий', 'responsible'], ['strategy_analyst', 'Исследователь', 'open'], ['coder', 'Кодер', 'open'],
+      ['backtest_analyst', 'Бэктестер', 'open'], ['optimizer', 'Оптимизатор', 'open'], ['accountant', 'Бухгалтер', 'responsible'],
+      ['news_analyst', 'Новости', 'open'], ['risk_manager', 'Судьи', 'responsible']]);
+    const SPECIAL = model => /embedding|tts|whisper|dall|image/i.test(String(model.model || '')) || model.role === 'embedding';
+    const proven = model => model.requests >= 20 && model.ok / model.requests >= 0.9;
+    function placeCell(model, [role, , kind]) {
+      const row = rows(model.by_role).find(value => value.role === role || (role === 'news_analyst' && value.role === 'news'));
+      if (SPECIAL(model)) return '<td class="aw-cell-no" title="Специальная модель — только своя функция">нельзя</td>';
+      if (row) return `<td class="aw-rate-${rateTone(row.requests >= 3 ? row.ok / row.requests : null)}" title="${esc(`${count(row.ok)} успешно из ${count(row.requests)}`)}">${row.requests >= 3 ? esc(pct(row.ok / row.requests * 100)) : 'NEW'}<small>${count(row.requests)}</small></td>`;
+      if (kind === 'responsible' && !proven(model)) return '<td class="aw-cell-wait" title="Ответственная должность — только после 20 вызовов с успехом от 90%">после проверки</td>';
+      return '<td class="aw-cell-try" title="Ещё не работала здесь — получит пробные задачи">проба</td>';
+    }
+    function distribution(models) {
+      const live = models.filter(model => model.enabled);
+      return `<ol class="aw-rules"><li><b>Закрепление важнее всего.</b> Если вы или пользователь закрепили модель за должностью, она работает только там. Роли из старого реестра «AI агенты» пока закреплением не считаются — оставить их или снять, решите вы.</li>`
+        + `<li><b>Пробный круг.</b> Новая модель получает по 3 пробные задачи в каждой открытой должности: Исследователь, Кодер, Бэктестер, Оптимизатор, Новости.</li>`
+        + `<li><b>Дальше — по рейтингу.</b> В должность идёт модель с лучшим успехом именно под этой должностью; 10% задач — на пробу других, чтобы рейтинг не застывал.</li>`
+        + `<li><b>Ответственные должности</b> — Управляющий, Бухгалтер, Судьи — только проверенные модели: от 20 вызовов и успех от 90%.</li>`
+        + `<li><b>Специальные модели</b> (поиск по памяти, озвучка) в текстовые должности не попадают.</li></ol>`
+        + `<p class="aw-muted aw-hint-line">Предложение правил — ждёт вашего утверждения. Ниже — как они ложатся на текущие модели: процент — успех под должностью (число вызовов), «проба» — будет пробовать, «после проверки» — пока не допущена.</p>`
+        + `<div class="aw-table-wrap"><table class="aw-lab-table aw-place-table"><thead><tr><th>Модель</th>${PLACE_COLUMNS.map(([, title]) => `<th>${esc(title)}</th>`).join('')}</tr></thead>`
+        + `<tbody>${live.map(model => `<tr><td><strong>${esc(model.name || model.model)}</strong></td>${PLACE_COLUMNS.map(column => placeCell(model, column)).join('')}</tr>`).join('')}</tbody></table></div>`;
+    }
     function labModelRow(model) {
       const rate = labRate(model), left = quota(model);
-      const roles = [...new Set([model.role, ...rows(model.by_role).map(row => row.role)].filter(Boolean))].slice(0, 3).map(labRole);
+      const worked = rows(model.by_role).slice(0, 3).map(row => `${labRole(row.role)} ${row.requests >= 3 ? pct(row.ok / row.requests * 100) : 'NEW'} (${count(row.requests)})`);
+      const pin = pinnedRole(model);
       return `<tr class="aw-lab-row${model.enabled ? '' : ' aw-lab-off'}" data-aw-lab-model="${esc(model.id)}" tabindex="0">`
         + `<td><div class="aw-lab-name"><span class="aw-icbox aw-t-cyan">${esc(String(model.name || model.model || '?').slice(0, 1).toUpperCase())}</span><span><strong>${esc(model.name || model.model)}</strong><small>${esc(providerLabel(model.provider))} · ${esc(model.model || '')}${model.enabled ? '' : ' · выключена'}</small></span></div></td>`
-        + `<td>${esc(roles.join(', ') || '—')}</td>`
+        + `<td>${worked.length ? esc(worked.join(', ')) : '<span class="aw-muted">ещё не работала</span>'}${pin ? `<small class="aw-pin" title="Роль, записанная в старом реестре «AI агенты»; закреплением её считать нельзя, пока вы не подтвердите">роль в старом реестре: ${esc(labRole(pin))}</small>` : ''}</td>`
         + `<td class="aw-num-cell">${count(model.requests_month)}<small>всего ${count(model.requests)}</small></td>`
         + `<td class="aw-num-cell"><b class="aw-rate aw-rate-${rateTone(rate)}" title="${esc(model.requests ? `Успешно ${model.ok} из ${model.requests} вызовов` : 'Вызовов ещё не было')}">${rate == null ? (model.requests ? 'NEW' : '—') : esc(pct(rate * 100))}</b>${model.errors ? `<small>ошибок ${count(model.errors)}</small>` : ''}</td>`
         + `<td class="aw-num-cell">${esc(usd(model.spend_month_usd))}<small>всего ${esc(usd(model.spend_all_time_usd))}</small></td>`
@@ -1370,7 +1455,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (!models.length) return smallEmpty('Моделей пока нет. Подключите модель по API — она проверится одним запросом.');
       const enabled = models.filter(model => model.enabled).length, spend = models.reduce((sum, model) => sum + (number(model.spend_month_usd) || 0), 0);
       return `<div class="aw-lab-totals"><span><b>${count(models.length)}</b> моделей</span><span><b>${count(enabled)}</b> включено</span><span><b>${esc(usd(spend))}</b> расход за месяц</span><span><b>${count(models.reduce((sum, model) => sum + (number(model.requests_month) || 0), 0))}</b> запросов за месяц</span></div>`
-        + `<div class="aw-table-wrap"><table class="aw-lab-table"><thead><tr><th>Модель</th><th>Где работает</th><th>Запросов за месяц</th><th>Успех</th><th>Расход за месяц</th><th>Квота</th><th>Последний раз</th></tr></thead><tbody>${models.map(labModelRow).join('')}</tbody></table></div>`;
+        + `<div class="aw-table-wrap"><table class="aw-lab-table"><thead><tr><th>Модель</th><th>Где работала · успех</th><th>Запросов за месяц</th><th>Успех</th><th>Расход за месяц</th><th>Квота</th><th>Последний раз</th></tr></thead><tbody>${models.map(labModelRow).join('')}</tbody></table></div>`;
     }
     function openLabModel(id) {
       const model = rows(labModels()).find(row => row.id === id);
@@ -1388,11 +1473,87 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         + byRole + recent
         + `<div class="aw-actions"><a class="btn sm" href="ai-agents.html">Ключи и настройки — «AI агенты»</a></div>`, { size: 'model' });
     }
+    // Connecting a model: provider, model, key and how it is paid for. The key
+    // goes straight to the encrypted store; the model then checks itself with
+    // one short request.
+    const BILLING_CHOICES = [['free_tier', 'Бесплатно (с дневным лимитом провайдера)'], ['payg', 'По токенам, с потолком в месяц'], ['credit', 'Грант или предоплата']];
+    async function openConnect() {
+      ++detailGeneration; detailKind = 'connect_model'; actionForm = null;
+      openDrawer('Подключить модель', loadingBlock('Загружаем провайдеров…'), { size: 'card' });
+      let providers = [];
+      try { providers = rows((await API.aiAgents({ signal }))?.providers); } catch (error) { if (error?.name === 'AbortError') return; }
+      const body = currentDrawer && qs('.drawer-b', currentDrawer);
+      if (!body) return;
+      body.innerHTML = `<div class="aw-inspector"><form id="aw-connect-form" class="aw-connect">`
+        + `<p class="aw-muted">Модель проверит себя одним коротким запросом. Данные стратегий в проверке не используются.</p>`
+        + `<label>Провайдер<select name="provider" required>${providers.map(item => `<option value="${esc(item.id)}">${esc(item.label || item.id)}</option>`).join('')}</select></label>`
+        + `<label>Модель<input name="model" required maxlength="180" placeholder="например, gemini-2.5-flash"></label>`
+        + `<label>Ключ API<input name="api_key" type="password" required autocomplete="off" placeholder="Вставьте ключ провайдера"></label>`
+        + `<label>Название<input name="name" maxlength="80" placeholder="Как показывать модель в списке"></label>`
+        + `<label>Как оплачивается<select name="billing_mode">${BILLING_CHOICES.map(([key, label]) => `<option value="${key}">${esc(label)}</option>`).join('')}</select></label>`
+        + `<label data-aw-billing="payg" hidden>Потолок расходов в месяц, $<input name="monthly_budget_usd" type="number" min="0" step="0.01" value="5"></label>`
+        + `<label data-aw-billing="credit" hidden>Сумма гранта, $<input name="credit_total_usd" type="number" min="0" step="0.01" value="100"></label>`
+        + `<p class="aw-hire-error" hidden></p><div class="aw-actions"><button class="btn primary" type="submit">Подключить и проверить</button></div></form></div>`;
+      const form = qs('#aw-connect-form', body);
+      const billing = () => qsa('[data-aw-billing]', form).forEach(field => { field.hidden = field.dataset.awBilling !== form.elements.billing_mode.value; });
+      form.elements.billing_mode.addEventListener('change', billing); billing();
+      form.addEventListener('submit', event => { event.preventDefault(); void connect(form); });
+      form.elements.model.focus();
+    }
+    async function connect(form) {
+      const values = Object.fromEntries(new FormData(form).entries()), error = qs('.aw-hire-error', form);
+      const agent = { provider: values.provider, model: String(values.model || '').trim(), api_key: values.api_key, billing_mode: values.billing_mode,
+        name: String(values.name || '').trim() || `${values.provider} · ${String(values.model || '').trim()}`,
+        ...(values.billing_mode === 'payg' ? { monthly_budget_usd: Number(values.monthly_budget_usd) || 0 } : {}),
+        ...(values.billing_mode === 'credit' ? { credit_total_usd: Number(values.credit_total_usd) || 0 } : {}) };
+      qsa('button, input, select', form).forEach(input => { input.disabled = true; });
+      try {
+        const created = await API.aiAgentCreate(agent);
+        const id = created?.agent?.id;
+        const test = id ? await API.aiAgentTest(id).catch(reason => ({ ok: false, error: reason?.message })) : null;
+        UI.closeDrawer();
+        announce(test?.ok === false ? `Модель ${agent.name} подключена, но проверка не прошла: ${test.error || 'нет ответа'}.` : `Модель ${agent.name} подключена и ответила на проверку.`, test?.ok === false);
+        await refresh();
+      } catch (reason) {
+        error.textContent = reason?.message || 'Не удалось подключить модель.'; error.hidden = false;
+        qsa('button, input, select', form).forEach(input => { input.disabled = false; });
+      }
+    }
+    function openRename(id, anchor) {
+      const pop = qs('#aw-agent-pop'), agent = rows(overview?.agents).find(value => agentId(value) === id);
+      if (!pop || !agent) return;
+      const current = avatarKeyOf(agent);
+      const faces = [['', 'Стандартное фото'], ...AVATAR_KEYS.map(face => [face, AVATAR_LABELS[face] || face])];
+      pop.innerHTML = `<form id="aw-rename-form" data-agent="${esc(id)}" data-revision="${esc(String(agent.revision ?? ''))}"><div class="aw-pop-head"><div><b>${esc(name(agent))}</b><small>${esc(role(agent))}</small></div><button type="button" class="aw-pop-x" data-aw-pop-close aria-label="Закрыть">×</button></div>`
+        + `<div class="aw-hire-faces" role="radiogroup" aria-label="Лицо агента">${faces.map(([face, label]) => `<label class="aw-hire-face" title="${esc(label)}"><input type="radio" name="face" value="${esc(face)}"${face === current ? ' checked' : ''}>${face && UI.agentAvatarHtml ? UI.agentAvatarHtml(face, { size: 'sm' }) : standardFace()}</label>`).join('')}</div>`
+        + `<label class="aw-hire-name">Имя<input name="name" maxlength="80" value="${esc(name(agent))}" required></label>`
+        + `<p class="aw-hire-error" hidden></p><div class="aw-actions"><button class="btn primary sm" type="submit">Сохранить</button><button class="btn sm" type="button" data-aw-pop-close>Отмена</button></div></form>`;
+      pop.hidden = false;
+      refreshFaces(pop);
+      pop.querySelector?.('input[name="name"]')?.focus?.();
+      void anchor;
+    }
+    async function rename(form) {
+      const error = form.querySelector('.aw-hire-error'), chosen = String(form.elements.name.value || '').trim();
+      if (!chosen) { error.textContent = 'Введите имя.'; error.hidden = false; return; }
+      form.querySelectorAll('button, input').forEach(input => { input.disabled = true; });
+      try {
+        const item = await API.aiControlCenterDomainItem('personas', form.dataset.agent);
+        const record = item?.item || item;
+        await API.aiControlCenterDomainAction('personas', form.dataset.agent, 'update', { payload: { name: chosen, avatar_key: form.querySelector('input[name="face"]:checked')?.value || '' },
+          idempotency_key: root.crypto.randomUUID(), expected_revision: record?.revision });
+        closeAgentCard(); announce('Сохранено.'); await refresh();
+      } catch (reason) {
+        error.textContent = reason?.message || 'Не удалось сохранить.'; error.hidden = false;
+        form.querySelectorAll('button, input').forEach(input => { input.disabled = false; });
+      }
+    }
     function renderModels() {
       const lab = labModels();
       if (lab) {
         content.innerHTML = bcard('Подключённые модели', 'cpu', 'cyan', labModelTable(lab), '<button class="aw-link-button" data-aw-connect-model>+ подключить модель</button>')
-          + '<p class="aw-muted aw-hint-line">Нажмите на модель: расход, квота, тариф, под какими агентами работала, успешность и последние вызовы.</p>';
+          + '<p class="aw-muted aw-hint-line">Нажмите на модель: расход, квота, тариф, под какими агентами работала, успешность и последние вызовы.</p>'
+          + bcard('Распределение по должностям', 'layers', 'violet', distribution(lab));
         return;
       }
       const data = cachedDomain('models');
@@ -1420,7 +1581,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         + table
         + `<label class="aw-switch-row" title="Появится вместе с общей моделью владельца"><input type="checkbox" disabled> Поделиться со всеми пользователями (только владелец) · в разработке</label>`
         + `<label class="aw-switch-row" title="Включение и выключение — в подключениях модели"><input type="checkbox" disabled ${group.activeCount > 0 ? 'checked' : ''}> Модель включена</label>`
-        + `<div class="aw-actions"><button class="btn sm" data-aw-domain="models">Подключения и проверка</button><code class="aw-model-code">${esc(group.id)}</code></div>`, { size: 'card' });
+        + `<p class="aw-muted"><code class="aw-model-code">${esc(group.id)}</code></p>`, { size: 'card' });
     }
     const RESEARCH_STATUS = Object.freeze({ new: ['Новое', 'info'], active: ['Активное', 'good'], promising: ['Перспективное', 'good'], validated: ['Подтверждено', 'good'],
       exhausted: ['Неактуально', 'neutral'], at_risk: ['Под вопросом', 'warning'], paused: ['Пауза', 'warning'], archived: ['Архив', 'neutral'] });
@@ -1432,7 +1593,6 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     const researchChip = row => { const [label, tone] = researchMeta(row); return `<span class="aw-chip aw-chip-${tone}">● ${esc(label)}</span>`; };
     const researchWhere = row => { const window = row?.evaluation?.best_variant?.best_window || {}; return [row.family_name !== row.title ? row.family_name : '', window.instrument, window.timeframe].filter(value => value && value !== '—').join(' · '); };
     const money = value => Number(value).toLocaleString('ru-RU', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-    const researchLink = row => 'ai-lab.html' + (row.research_id ? '?research=' + encodeURIComponent(row.research_id) : '');
     function researchYears(window) {
       const from = Date.parse(window?.from_utc || ''), to = Date.parse(window?.to_utc || '');
       return Number.isFinite(from) && Number.isFinite(to) && to > from ? ((to - from) / (365.25 * 24 * 3600 * 1000)).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) : '—';
@@ -1447,20 +1607,68 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const params = best?.best_parameter_variant?.parameters && typeof best.best_parameter_variant.parameters === 'object' ? Object.entries(best.best_parameter_variant.parameters).slice(0, 8) : [];
       const where = researchWhere(row), [label] = researchMeta(row);
       const champion = best && best.qualifies === true;
-      return `<header class="aw-rd-head"><span class="aw-icbox aw-t-${tone}">${icon(mark)}</span><div><b>${esc(row.title || row.family_name || 'Исследование')}</b> ${researchChip(row)}<small>${esc(where)}${where && row.research_id ? ' · ' : ''}${row.research_id ? 'ID: ' + esc(row.research_id) : ''}</small></div><a class="btn sm" href="${esc(researchLink(row))}">Открыть в Лаборатории</a></header>`
+      return `<header class="aw-rd-head"><span class="aw-icbox aw-t-${tone}">${icon(mark)}</span><div><b>${esc(row.title || row.family_name || 'Исследование')}</b> ${researchChip(row)}<small>${esc(where)}${where && row.research_id ? ' · ' : ''}${row.research_id ? 'ID: ' + esc(row.research_id) : ''}</small></div></header>`
         + `<div class="aw-rd"><div class="aw-rd-col"><h3>Гипотеза</h3><p>${esc(hypothesis)}</p><h3>Цели исследования</h3>${goals.length ? `<ul class="aw-checks">${goals.map(goal => `<li>${icon('check', 14)}${esc(goal)}</li>`).join('')}</ul>` : smallEmpty('Цели не записаны.')}</div>`
         + `<div class="aw-rd-col"><div class="aw-rd-stats"><div><small>Оценено стратегий</small><b>${count(evaluated)}</b>${number(policy.target_strategies) != null ? `<span class="aw-muted">цель ${count(policy.target_strategies)}</span>` : ''}</div><div><small>Прошли пороги</small><b>${count(passed)}</b><span class="aw-up">${evaluated ? esc(pct(passed / evaluated * 100)) : '—'}</span></div><div><small>Вариантов параметров</small><b>${count(evaluation.parameter_variants)}</b></div><div><small>Текущий статус</small><b class="aw-rd-status aw-st-${researchMeta(row)[1]}">● ${esc(label)}</b></div></div>`
         + (evaluation.automatic_conclusion ? `<p class="aw-muted aw-rd-conclusion">${esc(evaluation.automatic_conclusion)}</p>` : '')
         + (champion ? `<h3>Лучший вариант (чемпион) <span class="aw-chip aw-chip-champ">CHAMPION</span></h3><div class="aw-champ"><div><small>Вариант</small><b>${esc(best.class_name || best.experiment_id || '—')}</b></div><div><small>PF</small><b>${best.profit_factor == null ? '—' : esc(Number(best.profit_factor).toLocaleString('ru-RU', { maximumFractionDigits: 2 }))}</b></div><div><small>P&amp;L</small><b>${best.net_profit == null ? '—' : esc(money(best.net_profit))}</b></div><div><small>Max DD</small><b>${best.max_drawdown == null ? '—' : esc(money(best.max_drawdown))}</b></div><div><small>Годы теста</small><b>${esc(researchYears(best.best_window))}</b></div></div>`
             + (params.length ? `<h3>Параметры</h3><div class="aw-params">${params.map(([key, value]) => `<span>${esc(key)} ${esc(typeof value === 'object' ? JSON.stringify(value) : String(value))}</span>`).join('')}</div>` : '')
-            + `<a class="aw-rd-open" href="${esc(researchLink(row))}">Открыть лучший вариант →</a>`
           : '<p class="aw-muted">Чемпиона пока нет: ни одна стратегия не прошла пороги.</p>'
-            + (best ? `<p class="aw-muted">Лучший результат пока: <b>${esc(best.class_name || best.experiment_id || '—')}</b>${best.profit_factor == null ? '' : ` · PF ${esc(Number(best.profit_factor).toLocaleString('ru-RU', { maximumFractionDigits: 2 }))}`}${best.net_profit == null ? '' : ` · P&amp;L ${esc(money(best.net_profit))}`}</p>` : '')) + '</div></div>';
+            + (best ? `<p class="aw-muted">Лучший результат пока: <b>${esc(best.class_name || best.experiment_id || '—')}</b>${best.profit_factor == null ? '' : ` · PF ${esc(Number(best.profit_factor).toLocaleString('ru-RU', { maximumFractionDigits: 2 }))}`}${best.net_profit == null ? '' : ` · P&amp;L ${esc(money(best.net_profit))}`}</p>` : '')) + '</div></div>' + `<div class="aw-rd-full">${familyStrategies(row)}</div>`;
+    }
+    // Stages of a strategy in the lab, from the owner's development rules:
+    // hypothesis → code → compile → backtest with costs → thresholds → demo.
+    const STRATEGY_STAGE = Object.freeze({ inventory: ['В разработке', 'info'], approved_demo: ['Одобрена для демо (по профилю)', 'good'], archived: ['В архиве', 'neutral'],
+      rejected: ['Отклонена', 'warning'], sandbox_candidate: ['Кандидат', 'good'], portfolio_contributor: ['Кандидат', 'good'], champion_candidate: ['Чемпион', 'good'],
+      human_review_candidate: ['Ждёт вашего решения', 'warning'], running: ['Идёт бэктест', 'info'], draft: ['Черновик', 'neutral'] });
+    const stageOf = node => STRATEGY_STAGE[String(node.status || '')] || [String(node.status || 'этап не указан').replace(/_/g, ' '), 'neutral'];
+    function familyStrategies(row) {
+      const nodes = rows(row.evaluation?.tree).flatMap(family => rows(family.strategies));
+      if (!nodes.length) return '<p class="aw-muted">Стратегий в этом семействе пока нет — лаборатория создаст их по гипотезе.</p>';
+      return `<h3>Стратегии семейства · ${count(nodes.length)}</h3><div class="aw-table-wrap"><table class="aw-lab-table aw-strategy-table"><thead><tr><th>Стратегия</th><th>Этап</th><th>PF</th><th>P&amp;L</th><th>Вариантов</th><th>Окно теста</th><th>Пороги</th></tr></thead><tbody>`
+        + nodes.map(node => { const [label, tone] = stageOf(node), window = node.best_window || {};
+          return `<tr><td><strong>${esc(node.class_name || '—')}</strong>${node.archive_reason ? `<small class="aw-muted">${esc(node.archive_reason)}</small>` : ''}</td><td><span class="aw-st aw-st-${tone}">● ${esc(label)}</span></td>`
+            + `<td>${node.profit_factor == null ? '—' : esc(Number(node.profit_factor).toLocaleString('ru-RU', { maximumFractionDigits: 2 }))}</td><td>${node.net_profit == null ? '—' : esc(money(node.net_profit))}</td><td>${count(node.variant_count)}</td>`
+            + `<td>${esc([window.instrument, window.timeframe].filter(value => value && value !== '—').join(' · ') || '—')}${researchYears(window) !== '—' ? `<small class="aw-muted">${esc(researchYears(window))} г.</small>` : ''}</td>`
+            + `<td>${node.qualifies ? '<span class="aw-good-text">прошла</span>' : '<span class="aw-muted">нет</span>'}</td></tr>`; }).join('') + '</tbody></table></div>';
+    }
+    // The lab at a glance: where every strategy of every research stands.
+    function labPipeline(list) {
+      const nodes = list.flatMap(row => rows(row.evaluation?.tree).flatMap(family => rows(family.strategies)));
+      const stages = [['Гипотезы', list.length, 'исследований'], ['В разработке', nodes.filter(node => !node.archived && !['approved_demo'].includes(node.status) && !node.qualifies).length, 'код и бэктесты'],
+        ['Прошли пороги', nodes.filter(node => node.qualifies).length, 'PF, сделки, годы'], ['Одобрены для демо', nodes.filter(node => node.status === 'approved_demo').length, 'по профилям'],
+        ['В архиве', nodes.filter(node => node.archived || node.status === 'archived').length, 'сохранены для сравнения']];
+      return `<div class="aw-pipeline">${stages.map(([title, value, note], index) => `<div class="aw-stage"><small>${index + 1}. ${esc(title)}</small><b>${count(value)}</b><span class="aw-muted">${esc(note)}</span></div>`).join('<span class="aw-stage-arrow" aria-hidden="true">→</span>')}</div>`
+        + '<p class="aw-muted aw-hint-line">Как создаётся стратегия: гипотеза → код NinjaScript по спецификации → компиляция → бэктест с комиссией и проскальзыванием → проверка порогов (PF, число сделок, годы истории) → демо-счёт. Чемпион — стратегия, прошедшая все пороги своего исследования.</p>';
+    }
+    function openNewResearch() {
+      ++detailGeneration; detailKind = 'new_research'; actionForm = null;
+      openDrawer('Новое исследование', `<form id="aw-research-form" class="aw-connect"><p class="aw-muted">Лаборатория проверит гипотезу на стратегиях и выберет чемпиона по порогам.</p>`
+        + `<label>Название<input name="title" required maxlength="120" placeholder="например, MNQ Liquidity Sweep"></label>`
+        + `<label>Семейство<input name="family_name" maxlength="120" placeholder="если отличается от названия"></label>`
+        + `<label>Гипотеза<textarea name="hypothesis" rows="3" maxlength="1000" placeholder="Что должно давать преимущество и почему"></textarea></label>`
+        + `<label>Цели и пороги — по одной на строке<textarea name="objectives" rows="4" maxlength="2000" placeholder="PF ≥ 1.40&#10;Max DD ≤ 12%&#10;Минимум 2 года истории"></textarea></label>`
+        + `<p class="aw-hire-error" hidden></p><div class="aw-actions"><button class="btn primary" type="submit">Создать исследование</button></div></form>`, { size: 'card' });
+      const form = currentDrawer && qs('#aw-research-form', currentDrawer);
+      form?.addEventListener('submit', async event => {
+        event.preventDefault();
+        const values = Object.fromEntries(new FormData(form).entries()), error = qs('.aw-hire-error', form);
+        const lines = text => String(text || '').split('\n').map(line => line.trim()).filter(Boolean);
+        qsa('button, input, textarea', form).forEach(input => { input.disabled = true; });
+        try {
+          await API.aiResearchCreate({ title: String(values.title || '').trim(), family_name: String(values.family_name || '').trim(), source_type: 'research',
+            hypotheses: lines(values.hypothesis), objectives: lines(values.objectives) });
+          UI.closeDrawer(); domainCache.delete('lab_research'); announce('Исследование создано.'); await refresh();
+        } catch (reason) {
+          error.textContent = reason?.message || 'Не удалось создать исследование.'; error.hidden = false;
+          qsa('button, input, textarea', form).forEach(input => { input.disabled = false; });
+        }
+      });
     }
     function renderResearch() {
       const tiles = `<div class="aw-btiles">${researchTiles()}</div>`;
       const data = cachedDomain('lab_research');
-      const more = '<a class="btn sm" href="ai-lab.html">+ Новое</a>';
+      const more = '<button class="btn sm" data-aw-new-research>+ Новое исследование</button>';
       if (!data) { content.innerHTML = tiles + bcard('Семейства исследований', '', '', loadingBlock('Загружаем исследования…')); return; }
       const list = rows(data.researches);
       if (data.unavailable || !list.length) {
@@ -1472,18 +1680,20 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       researchPick = Math.min(researchPick, list.length - 1);
       const families = list.map((row, index) => { const [mark, tone] = RESEARCH_MARKS[index % RESEARCH_MARKS.length];
         return `<button class="aw-fam${index === researchPick ? ' aw-fam-on' : ''}" data-aw-research="${index}"><span class="aw-icbox aw-t-${tone}">${icon(mark)}</span><span><b>${esc(row.title || row.family_name || 'Исследование')}</b><small>${esc(researchWhere(row) || '—')}</small><small>ID: ${esc(row.research_id || '—')}</small></span>${researchState(row)}</button>`; }).join('');
-      content.innerHTML = tiles + bcard('Семейства исследований', '', '', `<div class="aw-research"><div class="aw-famlist">${families}</div><div class="aw-famdetail">${researchDetail(list[researchPick], researchPick)}</div></div>`, more, 'aw-bcard-research');
+      content.innerHTML = tiles + bcard('Лаборатория создания стратегий', 'flask', 'violet', labPipeline(list))
+        + bcard('Семейства исследований', '', '', `<div class="aw-research"><div class="aw-famlist">${families}</div><div class="aw-famdetail">${researchDetail(list[researchPick], researchPick)}</div></div>`, more, 'aw-bcard-research');
     }
     // Memory that agents no longer read is not shown as memory.
     const MEMORY_GONE = new Set(['revoked', 'expired', 'archived', 'retired', 'superseded']);
     let graphOpen = false;
-    const KNOWLEDGE_GROUPS = Object.freeze([['rule', 'Правила разработки стратегий', 'rule'], ['lesson', 'Уроки', 'concept'],
-      ['strategy', 'Эталонные стратегии', 'strategy'], ['data', 'Материалы исследований', 'data']]);
+    const KNOWLEDGE_GROUPS = Object.freeze([['rule', 'Правила разработки стратегий', 'rule'], ['registry', 'Реестр наших стратегий — история и статусы на июнь 2026', 'strategy'],
+      ['lesson', 'Уроки', 'concept'], ['reference', 'Эталонная библиотека — образцы из открытых источников, не наши стратегии', 'ref'], ['data', 'Материалы исследований', 'data']]);
+    const KNOWLEDGE_SHORT = Object.freeze({ rule: 'Правила', registry: 'Наши стратегии', lesson: 'Уроки', reference: 'Эталоны', data: 'Исследования', memory: 'Записи команды' });
     function renderMemory() {
       const memory = cachedDomain('memory'), knowledge = cachedDomain('knowledge');
       const summary = overview?.summaries?.memory, brief = overview?.summaries?.knowledge;
-      const all = '<button class="aw-link-button" data-aw-domain="memory">Записи команды</button>';
-      const legend = '<div class="aw-graph-legend"><span class="aw-lg-strategy">● стратегии</span><span class="aw-lg-concept">● уроки и концепты</span><span class="aw-lg-rule">● правила и политика</span><span class="aw-lg-data">● данные и доказательства</span><span class="aw-lg-context">● записи команды</span></div>';
+      const all = '';
+      const legend = '<div class="aw-graph-legend"><span class="aw-lg-rule">● правила</span><span class="aw-lg-strategy">● наши стратегии</span><span class="aw-lg-concept">● уроки</span><span class="aw-lg-ref">● эталоны (открытые источники)</span><span class="aw-lg-data">● материалы исследований</span><span class="aw-lg-context">● записи команды</span><span class="aw-muted">· потяните граф мышью, чтобы повернуть</span></div>';
       if (!memory || !knowledge) { content.innerHTML = bcard('Память и уроки', 'brain', 'violet', memoryBody(summary, brief), all) + bcard('Граф знаний', 'layers', 'cyan', loadingBlock('Загружаем память…')); return; }
       const records = memory.unavailable ? [] : items(memory).filter(record => !MEMORY_GONE.has(String(record.status || '')));
       const base = knowledge.unavailable ? [] : rows(knowledge.items);
@@ -1491,6 +1701,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       content.innerHTML = bcard('Память и уроки', 'brain', 'violet', memoryBody(summary, brief), all)
         + bcard('Граф знаний', 'layers', 'cyan', graph + legend, records.length + base.length >= 3 ? `<button class="btn sm" data-aw-graph-toggle aria-pressed="${graphOpen}">${graphOpen ? 'Свернуть граф' : 'Раскрыть граф'}</button>` : '')
         + (base.length ? bcard('База знаний', 'archive', 'gray', knowledgeList(base)) : knowledge.unavailable ? '' : bcard('База знаний', 'archive', 'gray', smallEmpty('Документов базы знаний пока нет.')));
+      mountGraph3d();
     }
     function knowledgeList(base) {
       return KNOWLEDGE_GROUPS.map(([kind, title], index) => {
@@ -1501,33 +1712,75 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
           + `<div class="aw-kb-items">${group.map(item => `<div class="aw-kb-item"><b>${esc(item.title)}</b>${item.title !== item.document ? `<small>${esc(item.document)}</small>` : ''}<p>${esc(item.summary || '')}</p></div>`).join('')}</div></details>`;
       }).join('');
     }
-    // One centre, the four kinds of knowledge (and the team's records) around
-    // it, and each kind's documents fanned out from it.
+    // The knowledge graph in 3D: the kinds of knowledge sit on a sphere around
+    // the centre, each kind's documents cluster around it, and the owner turns
+    // the sphere with the mouse. New documents appear as new branches.
+    let graphModel = null, graphFrame = 0;
     function knowledgeGraph(base, records, open) {
-      const W = 720, H = open ? 440 : 280, cx = W / 2, cy = H / 2, limit = open ? 9 : 4;
-      const short = value => { const text = String(value); return text.length > 26 ? text.slice(0, 25).trimEnd() + '…' : text; };
-      const kinds = [...KNOWLEDGE_GROUPS.filter(([kind]) => base.some(item => item.kind === kind)), ...(records.length ? [['memory', 'Записи команды', 'context']] : [])];
-      const leavesOf = kind => kind === 'memory' ? records.map(record => ({ label: record.title || 'Запись', id: record.id }))
-        : [...new Set(base.filter(item => item.kind === kind).map(item => item.document))].map(label => ({ label }));
-      const nodes = [], links = [];
-      kinds.forEach(([kind, title, tone], index) => {
-        const angle = index / kinds.length * Math.PI * 2 - Math.PI / 2;
-        const hub = { x: cx + Math.cos(angle) * (open ? 130 : 110), y: cy + Math.sin(angle) * (open ? 105 : 62), r: 7, tone, label: title };
-        nodes.push(hub); links.push([{ x: cx, y: cy }, hub]);
-        const leaves = leavesOf(kind), shown = leaves.slice(0, limit);
-        shown.forEach((leaf, at) => {
-          const spread = shown.length > 1 ? (at / (shown.length - 1) - .5) * (open ? 1.5 : 1.2) : 0, a = angle + spread;
-          const node = { x: Math.max(14, Math.min(W - 14, hub.x + Math.cos(a) * (open ? 150 : 115))), y: Math.max(12, Math.min(H - 12, hub.y + Math.sin(a) * (open ? 90 : 52))), r: 4, tone, label: leaf.label, id: leaf.id };
-          nodes.push(node); links.push([hub, node]);
+      const limit = open ? 16 : 8, kinds = [...KNOWLEDGE_GROUPS.filter(([kind]) => base.some(item => item.kind === kind)), ...(records.length ? [['memory', 'Записи команды', 'context']] : [])];
+      const sphere = (index, total) => { const y = total > 1 ? 1 - index / (total - 1) * 2 : 0, r = Math.sqrt(1 - y * y), phi = index * 2.399963; return [Math.cos(phi) * r, y, Math.sin(phi) * r]; };
+      const nodes = [{ x: 0, y: 0, z: 0, r: 9, tone: 'hub', label: 'Память', hub: true }], links = [];
+      kinds.forEach(([kind, , tone], index) => {
+        const [hx, hy, hz] = sphere(index, kinds.length), hub = nodes.push({ x: hx, y: hy, z: hz, r: 7, tone, label: KNOWLEDGE_SHORT[kind], hub: true }) - 1;
+        links.push([0, hub]);
+        const leaves = kind === 'memory' ? records.map(record => record.title || 'Запись') : [...new Set(base.filter(item => item.kind === kind).map(item => item.document))];
+        leaves.slice(0, limit).forEach((label, at, shown) => {
+          const [ox, oy, oz] = sphere(at, Math.max(shown.length, 2));
+          links.push([hub, nodes.push({ x: hx * 1.6 + ox * .42, y: hy * 1.6 + oy * .42, z: hz * 1.6 + oz * .42, r: 4, tone, label }) - 1]);
         });
-        if (leaves.length > shown.length) nodes.push({ x: hub.x, y: hub.y + 16, r: 0, tone, label: `ещё ${leaves.length - shown.length}`, more: true });
+        if (leaves.length > limit) nodes[hub].label += ` · ещё ${leaves.length - limit}`;
       });
-      const line = ([a, b]) => `<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" class="aw-graph-link"/>`;
-      const dot = node => node.r ? `<circle cx="${node.x.toFixed(1)}" cy="${node.y.toFixed(1)}" r="${node.r + 5}" class="aw-g-${node.tone} aw-graph-halo"/><circle cx="${node.x.toFixed(1)}" cy="${node.y.toFixed(1)}" r="${node.r}" class="aw-g-${node.tone}"/>` : '';
-      const text = node => `<text x="${(node.more ? node.x : node.x < cx - 4 ? node.x - node.r - 7 : node.x + node.r + 7).toFixed(1)}" y="${(node.y + 4).toFixed(1)}" text-anchor="${node.more ? 'middle' : node.x < cx - 4 ? 'end' : 'start'}"${node.more ? ' class="aw-graph-more-label"' : ''}>${esc(short(node.label))}</text>`;
-      const item = node => `<g${node.id ? ` class="aw-graph-item" data-aw-graph-record="${esc(node.id)}"` : ''}><title>${esc(node.label)}</title>${dot(node)}${text(node)}</g>`;
-      return `<svg class="aw-memory-graph${open ? ' aw-graph-open' : ''}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Граф знаний">${links.map(line).join('')}`
-        + `<circle cx="${cx}" cy="${cy}" r="9" class="aw-g-hub"/><text x="${cx}" y="${cy - 14}" text-anchor="middle" class="aw-graph-centre">Память</text>${nodes.map(item).join('')}</svg>`;
+      graphModel = { nodes, links, yaw: .6, pitch: -.25, height: open ? 460 : 320 };
+      return `<svg class="aw-memory-graph aw-graph3d${open ? ' aw-graph-open' : ''}" viewBox="0 0 720 ${graphModel.height}" role="img" aria-label="Граф знаний: ${esc(plural(nodes.length - 1, 'узел', 'узла', 'узлов'))}">`
+        + links.map(() => '<line class="aw-graph-link"/>').join('')
+        + nodes.map(node => `<g class="aw-g3-node"><title>${esc(node.label)}</title><circle class="aw-g-${node.tone} aw-graph-halo"/><circle class="aw-g-${node.tone}"/><text${node.hub ? ' class="aw-graph-centre"' : ''}>${esc(node.label.length > 28 ? node.label.slice(0, 27) + '…' : node.label)}</text></g>`).join('') + '</svg>';
+    }
+    function mountGraph3d() {
+      root.cancelAnimationFrame?.(graphFrame);
+      const svg = content.querySelector?.('.aw-graph3d'), model = graphModel;
+      if (!svg || !model || !root.requestAnimationFrame) return;
+      const lines = [...svg.querySelectorAll('line')], groups = [...svg.querySelectorAll('.aw-g3-node')];
+      const W = 720, H = model.height, scale = Math.min(W, H) * .19, still = root.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+      let dragging = null, idle = 0;
+      const draw = () => {
+        const cy = Math.cos(model.yaw), sy = Math.sin(model.yaw), cp = Math.cos(model.pitch), sp = Math.sin(model.pitch);
+        const points = model.nodes.map(node => {
+          const x = node.x * cy + node.z * sy, z1 = -node.x * sy + node.z * cy, y = node.y * cp - z1 * sp, z = node.y * sp + z1 * cp;
+          const depth = 3 / (3 + z);
+          return { sx: W / 2 + x * scale * depth, sy: H / 2 + y * scale * depth, z, depth };
+        });
+        model.links.forEach(([a, b], index) => { const p = points[a], q = points[b], line = lines[index];
+          line.setAttribute('x1', p.sx.toFixed(1)); line.setAttribute('y1', p.sy.toFixed(1)); line.setAttribute('x2', q.sx.toFixed(1)); line.setAttribute('y2', q.sy.toFixed(1));
+          line.setAttribute('stroke-opacity', (.25 + .6 * Math.min(p.depth, q.depth) / 1.5).toFixed(2)); });
+        model.nodes.map((node, index) => [index, points[index]]).sort((a, b) => b[1].z - a[1].z).forEach(([index, p]) => {
+          const node = model.nodes[index], group = groups[index], [halo, dot] = group.querySelectorAll('circle'), text = group.querySelector('text');
+          const r = node.r * p.depth;
+          halo.setAttribute('cx', p.sx.toFixed(1)); halo.setAttribute('cy', p.sy.toFixed(1)); halo.setAttribute('r', (r + 5).toFixed(1));
+          dot.setAttribute('cx', p.sx.toFixed(1)); dot.setAttribute('cy', p.sy.toFixed(1)); dot.setAttribute('r', r.toFixed(1));
+          const left = p.sx < W / 2 - 4 && !node.hub;
+          text.setAttribute('x', (node.hub ? p.sx : left ? p.sx - r - 6 : p.sx + r + 6).toFixed(1)); text.setAttribute('y', (node.hub ? p.sy - r - 7 : p.sy + 4).toFixed(1));
+          text.setAttribute('text-anchor', node.hub ? 'middle' : left ? 'end' : 'start');
+          group.setAttribute('opacity', Math.max(.25, Math.min(1, (p.depth - .55) * 1.6)).toFixed(2));
+          // Labels of the far side stay hidden so the near ones read cleanly.
+          text.setAttribute('visibility', node.hub || p.depth > .97 ? 'visible' : 'hidden');
+          group.parentNode.appendChild(group);
+        });
+      };
+      const tick = () => {
+        if (!svg.isConnected) return;
+        if (!dragging && !still && Date.now() - idle > 1500) { model.yaw += .0035; draw(); }
+        graphFrame = root.requestAnimationFrame(tick);
+      };
+      svg.addEventListener('pointerdown', event => { dragging = { x: event.clientX, y: event.clientY }; svg.setPointerCapture?.(event.pointerId); svg.classList.add('aw-grabbing'); });
+      svg.addEventListener('pointermove', event => {
+        if (!dragging) return;
+        model.yaw += (event.clientX - dragging.x) * .008; model.pitch = Math.max(-1.3, Math.min(1.3, model.pitch + (event.clientY - dragging.y) * .008));
+        dragging = { x: event.clientX, y: event.clientY }; draw();
+      });
+      const release = () => { dragging = null; idle = Date.now(); svg.classList.remove('aw-grabbing'); };
+      svg.addEventListener('pointerup', release); svg.addEventListener('pointercancel', release);
+      draw();
+      graphFrame = root.requestAnimationFrame(tick);
     }
     // The corner and the dock are redrawn on every refresh; an unchanged block
     // is left in place so faces do not reload and the log keeps its scroll.
@@ -2408,6 +2661,8 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (currentDrawer?.querySelector('.aw-inspector') && event.target.closest('.drawer-back, [data-close-drawer]')) { stopPersonaAudio(); ++detailGeneration; actionForm = null; restoreFocus(); return; }
       if (agentPopOpen() && !event.target.closest?.('#aw-agent-pop') && !event.target.closest?.('[data-aw-agent-card]')) closeAgentCard();
       // A model row is a table row, not a button; the whole row opens its card.
+      const staffLine = event.target.closest?.('tr[data-aw-agent-card]');
+      if (staffLine && shell.contains(staffLine)) { openAgentCard(staffLine.dataset.awAgentCard, staffLine); return; }
       const labRow = event.target.closest?.('[data-aw-lab-model]');
       if (labRow && shell.contains(labRow)) { openLabModel(labRow.dataset.awLabModel); return; }
       const graphRecord = event.target.closest?.('[data-aw-graph-record]');
@@ -2420,7 +2675,10 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (target.hasAttribute('data-aw-pop-close')) { closeAgentCard(); return; }
       if (target.dataset.awAgentCard) { openAgentCard(target.dataset.awAgentCard, target); return; }
       if (target.dataset.awHire) { openHire(target.dataset.awHire, target); return; }
-      if (target.hasAttribute('data-aw-connect-model')) { stopPersonaAudio(); openDomain('models').then(() => openDomainAction('connect', 'new')); return; }
+      if (target.hasAttribute('data-aw-connect-model')) { stopPersonaAudio(); void openConnect(); return; }
+      if (target.dataset.awRename) { openRename(target.dataset.awRename, target); return; }
+      if (target.hasAttribute('data-aw-auto-team')) { void autoTeam(target); return; }
+      if (target.hasAttribute('data-aw-new-research')) { openNewResearch(); return; }
       if (target.dataset.awResearch) { researchPick = Number(target.dataset.awResearch) || 0; renderResearch(); return; }
       if (target.hasAttribute('data-aw-open-log')) { toggleLog(true); qs('#aw-log-toggle')?.focus?.(); return; }
       if (target.hasAttribute('data-aw-graph-toggle')) { graphOpen = !graphOpen; renderMemory(); return; }
@@ -2486,7 +2744,10 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       }
     }
     document.addEventListener('click', click);
-    const hireSubmit = event => { if (event.target?.id === 'aw-hire-form') { event.preventDefault(); void hire(event.target); } };
+    const hireSubmit = event => {
+      if (event.target?.id === 'aw-hire-form') { event.preventDefault(); void hire(event.target); }
+      if (event.target?.id === 'aw-rename-form') { event.preventDefault(); void rename(event.target); }
+    };
     document.addEventListener('submit', hireSubmit);
     UI.onLeave(() => document.removeEventListener('submit', hireSubmit));
     document.addEventListener('keydown', keyboard);

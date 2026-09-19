@@ -106,30 +106,20 @@ def test_page_uses_existing_transport_and_does_not_create_auth_or_chat_store():
     assert "idempotency_key: demoKey" in script
 
 
-def test_domain_tools_remain_accessible_on_one_page_and_load_only_on_request():
+def test_domain_tools_of_the_previous_version_have_no_launchers_in_the_six_views():
     script = SCRIPT.read_text(encoding="utf-8")
     parser = Tags()
     parser.feed(PAGE.read_text(encoding="utf-8"))
     launcher = [attrs["data-aw-domain"] for tag, attrs in parser.tags if "data-aw-domain" in attrs]
-    # The five planned views carry no tool buttons. Every tool that is not part
-    # of the plan, technical diagnostics included, lives in the separate Задачи
-    # view; none is dropped, and an external agent stays its own tool, never
-    # folded into Модели.
+    # Owner's decision (19.09.2026): the six views hold everything; the tools of
+    # the previous version (automation, routines, calendar, system...) have no
+    # buttons. Connecting a model and adding an agent have their own panels.
     assert launcher == []
-    tools = script.split("const TAB_TOOLS = Object.freeze({", 1)[1].split("});", 1)[0]
-    assert re.findall(r"^\s+(\w+): \[", tools, re.M) == ["work"]
-    for key in ["automation", "routines", "calendar", "decisions", "personas", "router",
-                "external_agents", "experiments", "projects", "publications", "system"]:
-        assert f"['{key}', " in tools, key
-    # Models and memory keep their own entry points inside their planned views.
-    assert "data-aw-connect-model" in PAGE.read_text(encoding="utf-8")
-    assert 'data-aw-domain="models"' in script and 'data-aw-domain="memory"' in script
-    assert "key === 'system' ? ' aw-diagnostics' : ''" in script
-    assert "['', ['system']]" not in script
+    assert "TAB_TOOLS" not in script and "toolsRow" not in script
+    assert "async function openConnect()" in script and "API.aiAgentCreate(agent)" in script
+    assert "function openRename(" in script and "data-aw-rename=" in script
+    # The inspector machinery stays for tasks and loads only on request.
     assert "const DOMAIN_GROUPS = Object.freeze([" in script
-    assert "DOMAIN_GROUPS.map(([label, keys])" in script
-    # Flags stay visible to the operator, in the system tool rather than the overview.
-    assert "const flags = flagRows(data.flags);" in script
     assert "API.aiControlCenterSection(" not in script
     for method in ["Domain", "DomainItem", "DomainAction"]:
         assert f"API.aiControlCenter{method}(" in script
@@ -159,8 +149,8 @@ def test_overview_is_a_brief_of_every_view_and_the_queue_lives_in_tasks():
     # System test checks settle on their own; only the owner's questions queue.
     assert 'alerts = rows(overview.attention).filter(item => ownerFacing(item)' in queue
     assert 'Отсутствие данных не означает' in queue
-    work = script.split("function renderWork()", 1)[1].split("const toolsRow", 1)[0]
-    assert "workQueue()" in work and "toolsRow('work')" in work
+    work = script.split("function renderWork()", 1)[1].split("const agentPhase", 1)[0]
+    assert "workQueue()" in work and "toolsRow" not in script
     # A rating over fewer than three finished tasks is NEW, never a percentage.
     assert "const rated = stats => stats.rate != null && stats.ok + stats.bad >= 3;" in script
 
@@ -1058,10 +1048,46 @@ def test_hiring_asks_only_for_a_face_and_a_name():
 def test_models_view_lists_the_whole_roster_with_spend_quota_and_usage():
     script = SCRIPT.read_text(encoding="utf-8")
     table = script.split("function labModelTable(models)", 1)[1].split("function openLabModel(", 1)[0]
-    for column in ["Модель", "Где работает", "Запросов за месяц", "Успех", "Расход за месяц", "Квота", "Последний раз"]:
+    for column in ["Модель", "Где работала · успех", "Запросов за месяц", "Успех", "Расход за месяц", "Квота", "Последний раз"]:
         assert f"<th>{column}</th>" in table, column
     card = script.split("function openLabModel(", 1)[1].split("function renderModels()", 1)[0]
     assert "Под какими агентами работала" in card and "Последние вызовы" in card
     # Fewer than three calls give no rating yet.
     assert "const labRate = model => model.requests >= 3 ? model.ok / model.requests : null;" in script
     assert "key_mask" not in script
+
+
+def test_team_forms_itself_and_lists_the_staff_in_one_table():
+    script = SCRIPT.read_text(encoding="utf-8")
+    auto = script.split("async function autoTeam(button)", 1)[1].split("function staffRow(", 1)[0]
+    # Every free place, a random unused name and the standard face; confirmed first.
+    assert "UI.confirmDialog" in auto and "root.crypto.getRandomValues" in auto
+    assert "avatar_key: slot.key === 'manager' ? 'vitek' : ''" in auto and "team_role: slot.key" in auto
+    table = script.split("function staffTable(agents)", 1)[1].split("function renderAgents()", 1)[0]
+    for column in ["Агент", "Задач", "Рейтинг", "Одобрено / отклонено", "Модели под агентом", "Последняя работа"]:
+        assert f"<th>{column}</th>" in table, column
+    assert "const standardFace = () =>" in script
+
+
+def test_models_show_where_they_worked_and_registry_roles_are_not_pins():
+    script = SCRIPT.read_text(encoding="utf-8")
+    assert "роль в старом реестре" in script and "закреплена: " not in script
+    rules = script.split("function distribution(models)", 1)[1].split("function labModelRow(", 1)[0]
+    assert "Предложение правил — ждёт вашего утверждения" in rules
+    assert "только проверенные модели" in rules
+
+
+def test_research_shows_the_lab_in_place_without_links_out():
+    script = SCRIPT.read_text(encoding="utf-8")
+    assert "ai-lab.html" not in script.split("function researchDetail(", 1)[1].split("function renderMemory()", 1)[0]
+    assert "function labPipeline(list)" in script and "function familyStrategies(row)" in script
+    assert "API.aiResearchCreate(" in script and "data-aw-new-research" in script
+
+
+def test_memory_keeps_our_strategies_apart_from_the_public_reference_library():
+    script = SCRIPT.read_text(encoding="utf-8")
+    assert "Эталонная библиотека — образцы из открытых источников, не наши стратегии" in script
+    assert "Реестр наших стратегий" in script
+    # The graph turns under the mouse and stops with its view.
+    assert "function mountGraph3d()" in script and "pointermove" in script and "svg.isConnected" in script
+

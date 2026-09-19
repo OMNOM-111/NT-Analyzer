@@ -79,7 +79,7 @@ def render(state: dict, tab: str = "work", agent: str = "") -> dict:
     result = evaluate(harness)
     # Negative copy assertions must inspect the actual view, not pass on the
     # generic error page when the disposable DOM port is incomplete.
-    expected = {"work": ["aw-work-view", "aw-column-work", "aw-column-results"], "agents": ["aw-agents"]}[tab]
+    expected = {"work": ["aw-work-view", "aw-column-work", "aw-column-results"], "agents": ["aw-staff-table"]}[tab]
     assert all(name in result["html"] for name in expected + (["aw-pop-head"] if agent else [])), result["html"]
     return result
 
