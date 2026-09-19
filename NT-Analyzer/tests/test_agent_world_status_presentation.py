@@ -40,37 +40,47 @@ def evaluate(expression: str):
     return json.loads(process.stdout)
 
 
-def render(state: dict) -> dict:
-    """Boot the real page module against a stubbed DOM and return its HTML."""
+def render(state: dict, tab: str = "work", agent: str = "") -> dict:
+    """Boot the real page module against a stubbed DOM and return its HTML.
+
+    Task cards and the attention queue live in the separate Задачи view; an
+    agent's state chips and checks are on the agent card opened from Команда.
+    """
     harness = """(async () => {
       const fs = require('node:fs'), vm = require('node:vm');
-      const nodes = new Map();
-      const tabs = ['overview','work','agents'].map(key => ({dataset:{awTab:key},setAttribute(){}}));
+      const nodes = new Map(), listeners = {};
+      const tabs = ['overview','agents','models','research','memory','work'].map(key => ({dataset:{awTab:key},setAttribute(){}}));
       const node = key => {
         if (!nodes.has(key)) nodes.set(key,{innerHTML:'',textContent:'',hidden:false,
-          setAttribute(){},addEventListener(){},classList:{toggle(){}},contains(){return false;},
+          setAttribute(){},addEventListener(){},classList:{toggle(){}},contains(value){return Boolean(value && value.inPage);},
           querySelectorAll(selector){return selector.includes('[data-aw-tab]')?tabs:[];}});
         return nodes.get(key);
       };
-      const document = {querySelector:node,addEventListener(){},removeEventListener(){}};
+      const document = {querySelector:node,addEventListener(type,fn){listeners[type]=fn;},removeEventListener(){}};
       const data = DATA;
       let started;
       const window = {UI:{ready(fn){started=fn();},signal(){},onLeave(){},wireAgentFaces(){}},
-        API:{http:{async aiControlCenterOverview(){return data;}}},
-        location:{hash:'',search:''}};
+        API:{http:{async aiControlCenterOverview(){return data;},
+          async aiControlCenterTasks(){return {items:data.tasks,next_cursor:null};}}},
+        location:{hash:HASH,search:''}};
       const source = fs.readFileSync(SCRIPT_PATH,'utf8');
       vm.runInNewContext(source,{window,document,URLSearchParams,Date});
       await started;
-      return {html:node('#aw-content').innerHTML, pulse:node('#aw-pulse').innerHTML};
+      const agent = AGENT;
+      if (agent) {
+        const target = {inPage:true,tagName:'BUTTON',dataset:{awAgentCard:agent},
+          hasAttribute(){return false;},closest(selector){return selector==='button, a'?target:null;}};
+        listeners.click({target});
+      }
+      return {html:node('#aw-content').innerHTML + node('#aw-agent-pop').innerHTML, pulse:node('#aw-pulse').innerHTML};
     })()"""
-    harness = harness.replace("DATA", json.dumps(state)).replace(
-        "SCRIPT_PATH", json.dumps(str(SCRIPT)))
+    harness = (harness.replace("HASH", json.dumps("#tab=" + tab)).replace("AGENT", json.dumps(agent))
+               .replace("SCRIPT_PATH", json.dumps(str(SCRIPT))).replace("DATA", json.dumps(state)))
     result = evaluate(harness)
-    # Negative copy assertions must inspect the actual Overview, not pass on
-    # the generic error page when the disposable DOM port is incomplete.
-    assert all(name in result["html"] for name in [
-        "aw-column-work", "aw-column-results", "aw-column-team",
-    ]), result["html"]
+    # Negative copy assertions must inspect the actual view, not pass on the
+    # generic error page when the disposable DOM port is incomplete.
+    expected = {"work": ["aw-work-view", "aw-column-work", "aw-column-results"], "agents": ["aw-agents"]}[tab]
+    assert all(name in result["html"] for name in expected + (["aw-pop-head"] if agent else [])), result["html"]
     return result
 
 
@@ -253,7 +263,7 @@ def test_enabled_idle_agent_is_not_presented_as_working():
              "evaluation": {"sample_size": 3, "score_pct": 100, "confidence": "low",
                             "task_class": "json_arithmetic",
                             "mode": "real_model_bounded_capability"}}
-    result = render(workspace([], agents=[agent]))
+    result = render(workspace([], agents=[agent]), tab="agents", agent=agent["id"])
     assert "Включён" in result["html"] and "Свободен" in result["html"]
     assert "Активен" not in result["html"]
 
@@ -262,7 +272,7 @@ def test_executing_agent_is_shown_as_enabled_and_busy():
     agent = {"id": "aaaaaaaa-2222-1111-1111-111111111111", "display_name": "Иван",
              "status": "working", "availability": "active", "occupancy": "working",
              "role": "Графики", "synthetic": False, "evaluation": {"sample_size": 0}}
-    result = render(workspace([], agents=[agent]))
+    result = render(workspace([], agents=[agent]), tab="agents", agent=agent["id"])
     assert "Включён" in result["html"] and "Выполняет задачу" in result["html"]
 
 
@@ -285,7 +295,7 @@ def test_score_always_carries_the_class_of_check_it_was_measured_on():
              "evaluation": {"sample_size": 3, "score_pct": 100, "confidence": "low",
                             "task_class": "json_arithmetic",
                             "mode": "real_model_bounded_capability"}}
-    result = render(workspace([], agents=[agent]))
+    result = render(workspace([], agents=[agent]), tab="agents", agent=agent["id"])
     assert "Арифметика · JSON" in result["html"]
 
 
@@ -385,10 +395,10 @@ def test_agent_face_is_an_explicit_stored_choice_not_the_name():
     agent = {"id": "aaaaaaaa-4444-1111-1111-111111111111", "display_name": "Толик",
              "availability": "active", "occupancy": "free", "synthetic": False,
              "evaluation": {"sample_size": 0}}
-    without = render(workspace([], agents=[agent]))
+    without = render(workspace([], agents=[agent]), tab="agents")
     assert "Т" in without["html"]
     # An unapproved key must not resolve to a shipped agent asset either.
-    assert render(workspace([], agents=[{**agent, "avatar_key": "../vitek"}]))["html"].count("aw-avatar") \
+    assert render(workspace([], agents=[{**agent, "avatar_key": "../vitek"}]), tab="agents")["html"].count("aw-avatar") \
         == without["html"].count("aw-avatar")
 
 
@@ -424,7 +434,7 @@ def test_a_free_agent_shows_what_waits_on_the_owner_without_conflating_it():
              "synthetic": False, "evaluation": {"sample_size": 0}}
     def chips(state):
         """Only the agent-state chips; page copy elsewhere mentions both words."""
-        html = render(workspace([], agents=[state]))["html"]
+        html = render(workspace([], agents=[state]), tab="agents", agent=state["id"])["html"]
         found = re.findall(r'<span class="aw-agent-state">(.*?)</span></span>', html, re.S)
         return " ".join(found)
 
@@ -456,7 +466,7 @@ def test_every_agent_row_answers_both_questions_not_just_domain_ones():
     # And the page must still degrade honestly if a row somehow lacks them.
     bare = {"id": "aaaaaaaa-6666-1111-1111-111111111111", "display_name": "Legacy",
             "synthetic": False, "evaluation": {"sample_size": 0}}
-    html = render(workspace([], agents=[bare]))["html"]
+    html = render(workspace([], agents=[bare]), tab="agents", agent=bare["id"])["html"]
     assert "Доступность не указана" in html and "Свободен" in html
 
 

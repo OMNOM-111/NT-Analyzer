@@ -1,7 +1,8 @@
 /* Agent World presentation. All authority, scope, execution and data stay server-side. */
 (function (root) {
   'use strict';
-  const TABS = ['overview', 'work', 'agents', 'models', 'research', 'memory'];
+  // Five planned views (prototype B) and one separate view for work that was not in the plan.
+  const TABS = ['overview', 'agents', 'models', 'research', 'memory', 'work'];
   const DOMAINS = Object.freeze({
     personas: { title: 'Персоны', description: 'Имя, характер, голос и лицо агента. Персона не выбирает модель и не даёт дополнительных прав.', create: 'Создать персону' },
     decisions: { title: 'Решения', description: 'Предложения с доказательствами и независимая проверка Court. Вердикт не исполняет сделки и не выдаёт прав.', create: 'Новое решение' },
@@ -26,22 +27,20 @@
     ['Команда', ['personas', 'models', 'external_agents', 'experiments', 'router']],
     ['Знания', ['memory', 'projects', 'publications']],
   ]);
-  // Each tab carries the tools that belong to it, instead of one long tool bar.
+  // Tools that are not part of the planned five views live in the separate Задачи view.
   const TAB_TOOLS = Object.freeze({
-    work: [['automation', 'Автоматизация'], ['routines', 'Рутины'], ['calendar', 'Календарь']],
-    agents: [['personas', 'Персоны'], ['external_agents', 'Внешние агенты']],
-    models: [['models', 'Подключения моделей'], ['router', 'Выбор модели'], ['experiments', 'Сравнение моделей']],
-    research: [['projects', 'Проекты стратегий'], ['decisions', 'Решения · Court']],
-    memory: [['memory', 'Память'], ['publications', 'Публикации']],
+    work: [['automation', 'Автоматизация'], ['routines', 'Рутины'], ['calendar', 'Календарь'], ['decisions', 'Решения · Court'],
+      ['router', 'Выбор модели'], ['experiments', 'Сравнение моделей'], ['projects', 'Проекты стратегий'], ['personas', 'Персоны'],
+      ['external_agents', 'Внешние агенты'], ['publications', 'Публикации'], ['system', 'Диагностика системы']],
   });
   // Domain lists a tab reads; they load only when that tab is opened.
-  const TAB_DATA = Object.freeze({ models: ['models'], research: ['projects', 'decisions', 'experiments'], memory: ['memory', 'publications'] });
+  const TAB_DATA = Object.freeze({ models: ['models'], research: ['lab_research'], memory: ['memory'] });
   // The owner's team scheme (docs/product/AI_CENTER_OWNER_RULES.md, section 4). A slot
   // shows the persona explicitly assigned to that job; an empty slot stays empty.
   const avatarKeyOf = agent => String(agent?.avatar_key || '').toLowerCase();
   const TEAM_SLOTS = Object.freeze([
-    { dept: 'lead', title: 'Управляющий', note: 'ваша правая рука', match: agent => agent.main_assistant === true || ['vitek', 'manager'].includes(avatarKeyOf(agent)) },
-    { dept: 'staff', title: 'Заместитель', note: 'курирует всех, докладывает', match: agent => agent.role_key === 'deputy' },
+    { dept: 'lead', lead: true, title: 'Управляющий', note: 'ваша правая рука', match: agent => agent.main_assistant === true || ['vitek', 'manager'].includes(avatarKeyOf(agent)) },
+    { dept: 'staff', lead: true, title: 'Заместитель', note: 'курирует всех, докладывает', match: agent => agent.role_key === 'deputy' },
     { dept: 'staff', title: 'Секретарь', note: 'протокол, журнал', match: agent => agent.role_key === 'secretary' },
     { dept: 'dev', title: 'Исследователь', note: 'гипотезы, режимы рынка', match: agent => agent.role_key === 'researcher' },
     { dept: 'dev', title: 'Квант-аналитик', note: 'статистика, признаки', match: agent => agent.role_key === 'quant_analyst' },
@@ -68,6 +67,22 @@
   const PROVIDER_LABELS = Object.freeze({ deepseek: 'DeepSeek', openai: 'OpenAI', anthropic: 'Anthropic', google: 'Google', xai: 'xAI', mistral: 'Mistral', openrouter: 'OpenRouter', lmstudio: 'LM Studio', ollama: 'Ollama' });
   const providerLabel = key => PROVIDER_LABELS[String(key || '').toLowerCase()] || String(key || 'провайдер не указан');
   const rateTone = rate => rate == null ? 'none' : rate >= 0.9 ? 'good' : rate >= 0.75 ? 'mid' : 'low';
+  const AW_ICONS = Object.freeze({
+    flask: '<path d="M9 3h6M10 3v6l-5 9a2 2 0 0 0 2 3h10a2 2 0 0 0 2-3l-5-9V3"/><path d="M7.5 15h9"/>',
+    users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.6 3.4-5.5 6.5-5.5s5.7 1.9 6.5 5.5"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14.5c1.9.6 3.1 2.4 3.5 5.5"/>',
+    trophy: '<path d="M8 4h8v5a4 4 0 0 1-8 0z"/><path d="M8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 13v4M8.5 20h7M10 17h4"/>',
+    archive: '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11h14V8M10 12h4"/>',
+    brain: '<path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V5a3 3 0 0 0-3-1zM15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1"/>',
+    alert: '<path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.5"/>',
+    grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+    gauge: '<circle cx="12" cy="12" r="9"/><path d="M12 12l4-3"/>',
+    target: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>',
+    cpu: '<rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
+    layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
+    goal: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+  });
   const MEMORY_CLASS = Object.freeze({ verified_lesson: 'Проверенный урок', working_note: 'Рабочая заметка', fact: 'Факт', preference: 'Предпочтение' });
   const ACTION_LABELS = Object.freeze({ verify: 'Проверить агента', disable: 'Выключить подключение', rotate: 'Заменить секрет', preview: 'Предпросмотр выбора', apply: 'Разрешить новый запуск', seed_preview: 'Создать учебные записи Preview', create: 'Создать', connect: 'Подключить', bind_existing: 'Связать Local-подключение', update: 'Изменить', activate: 'Активировать', suspend: 'Приостановить', archive: 'В архив', promote: 'Продвинуть', publish_to_workspace: 'Опубликовать в workspace', propose_consensus: 'Собрать решение по вкладам', suggest_routine: 'Предложить по результатам', prepare: 'Подготовить снимок', publish: 'Опубликовать в SF Social', revoke: 'Отозвать разрешение', propose: 'Проверить расписание', enable: 'Включить по расписанию', commission: 'Новое поручение Координатору', preview_commission: 'Проверить план делегирования', approve_commission: 'Разрешить этот план', reconcile: 'Проверить продолжение', version: 'Новая версия', accept: 'Принять', dismiss: 'Отклонить', review: 'Проверить через Court', review_result: 'Проверить полученный результат', withdraw: 'Отозвать решение', test: 'Проверить соединение', task: 'Первое задание', disconnect: 'Отключить', cancel: 'Отменить задачу', retry: 'Новая безопасная попытка', handoff: 'Передать факты агенту', open_chat: 'Открыть ручной разбор в SF Chat' });
   const STATUS = {
@@ -945,8 +960,114 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         .filter(text => text && !seen.has(text) && seen.add(text))
         .map(text => `<p class="aw-queue-note">${esc(text)}</p>`).join('');
     }
+    // ---- Variant B, cell by cell from the owner-approved prototype (world2/b.html) ----
+    const icon = (key, size) => `<svg class="aw-ic" viewBox="0 0 24 24" width="${size || 18}" height="${size || 18}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${AW_ICONS[key] || ''}</svg>`;
+    const bcard = (title, iconKey, tone, body, more, extra) => `<section class="aw-bcard${extra ? ' ' + extra : ''}"><header class="aw-bcard-h">${iconKey ? `<span class="aw-icbox aw-t-${tone}">${icon(iconKey)}</span>` : ''}<h2 title="${esc(title)}">${esc(title)}</h2>${more ? `<span class="aw-bcard-more">${more}</span>` : ''}</header><div class="aw-bcard-b">${body}</div></section>`;
+    const btile = (label, value, trend, iconKey, tone) => `<div class="aw-btile"><div><div class="aw-btile-k">${esc(label)}</div><div class="aw-btile-v">${esc(String(value))}</div><div class="aw-btile-t${trend.up ? ' aw-up' : ''}"${trend.title ? ` title="${esc(trend.title)}"` : ''}>${esc(trend.text)}</div></div><span class="aw-icbox aw-t-${tone}">${icon(iconKey)}</span></div>`;
+    const bnum = (label, value, note) => `<div class="aw-num"><small>${esc(label)}</small><b>${esc(String(value))}</b>${note ? `<span class="aw-up">${esc(note)}</span>` : ''}</div>`;
+    // List times read like the prototype (10:35). An entry from another day
+    // shows its date instead, so yesterday's event never passes for today's.
+    const sameDay = parsed => parsed.toDateString() === new Date().toDateString();
+    const clock = value => {
+      const parsed = new Date(value || '');
+      if (!Number.isFinite(parsed.getTime())) return '—';
+      return sameDay(parsed) ? parsed.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }) : parsed.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+    };
+    const logTime = value => {
+      const parsed = new Date(value || '');
+      if (!Number.isFinite(parsed.getTime())) return '—';
+      const time = parsed.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      return sameDay(parsed) ? time : parsed.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }) + ' ' + time.slice(0, 5);
+    };
+    // The same NEW rule as the checks: fewer than three finished tasks give no
+    // rating yet, so 100 % over two diagnostics never reads as proven quality.
+    const rated = stats => stats.rate != null && stats.ok + stats.bad >= 3;
+    const rateTitle = stats => stats.ok + stats.bad
+      ? `Успешно ${stats.ok} из ${stats.ok + stats.bad} завершённых задач${rated(stats) ? '' : '; рейтинг появится после трёх'}. Это не оценка качества модели.`
+      : 'Завершённых задач пока нет';
+    function researchTiles() {
+      const lab = overview?.summaries?.research || {}, closed = !overview?.summaries || Boolean(lab.unavailable);
+      const tile = (label, key, iconKey, tone, meaning) => {
+        const week = number(lab[key + '_week']) || 0;
+        const trend = closed ? { text: 'Лаборатория AI владельца' } : week > 0 ? { up: true, text: '↑ ' + count(week) + ' за 7 дней', title: meaning } : { text: '— без изменений', title: meaning };
+        return btile(label, closed ? '—' : count(lab[key]), trend, iconKey, tone);
+      };
+      return tile('Эксперименты', 'experiments', 'flask', 'violet', 'Новые эксперименты за последние 7 дней')
+        + tile('Кандидаты', 'candidates', 'users', 'blue', 'Кандидаты, которые изменились за последние 7 дней')
+        + tile('Чемпионы', 'champions', 'trophy', 'green', 'Чемпионы, которые изменились за последние 7 дней')
+        + tile('Архивировано', 'archived', 'archive', 'gray', 'Ушли в архив за последние 7 дней');
+    }
+    function activityRows(limit) {
+      const byTask = new Map(rows(overview.tasks).map(task => [taskId(task), task]));
+      const events = rows(overview.activity).slice(0, limit);
+      if (!events.length) return smallEmpty('Пока нет событий. Здесь появится, кто что сделал и с каким результатом.');
+      return events.map(event => {
+        const task = byTask.get(String(event.task_id || '')), lead = task ? actor(task.lead) : null, when = event.time || event.timestamp || event.created_at;
+        const who = lead ? name(lead) : 'Команда', raw = String(event.summary || event.title || 'Событие');
+        const text = raw.startsWith(who + ' · ') ? raw.slice(who.length + 3) : raw;
+        const inner = `<time datetime="${esc(when || '')}">${esc(clock(when))}</time>${lead ? avatar(lead, 'xs') : '<span class="aw-avatar aw-avatar-xs" aria-hidden="true">·</span>'}<span class="aw-clamp"><strong>${esc(who)}</strong> <span class="aw-muted">${esc(text)}</span></span>`;
+        return event.task_id ? `<button class="aw-act" data-aw-task="${esc(event.task_id)}" title="${esc(who + ' · ' + text)}">${inner}</button>` : `<div class="aw-act">${inner}</div>`;
+      }).join('');
+    }
+    function memoryBody(summary) {
+      if (!summary || summary.unavailable) return smallEmpty('Память недоступна в этом рабочем пространстве.');
+      const plus = summary.capped ? '+' : '', day = value => number(value) > 0 ? '↑ ' + count(value) + ' за сутки' : '';
+      const latest = rows(summary.latest), lessons = latest.length > 0 && latest.every(item => item.memory_class === 'verified_lesson');
+      return `<div class="aw-nums">${bnum('Фрагменты памяти', count(summary.records) + plus, day(summary.records_day))}${bnum('Уроков извлечено', count(summary.verified_lessons) + plus, day(summary.lessons_day))}`
+        + `${bnum('Стратегий в памяти', count(summary.strategies))}${bnum('Источники данных', count(summary.sources))}</div>`
+        + `<div class="aw-subtle">${lessons || !latest.length ? 'Последние уроки' : 'Последние записи'}</div>`
+        + (latest.length ? latest.map(item => `<button class="aw-lesson" data-aw-domain-open="memory" data-aw-entity="${esc(item.id || '')}"><time>${esc(clock(item.created_at))}</time><span class="aw-clamp">${esc(item.title || 'Запись')}</span></button>`).join('')
+          : smallEmpty('Уроков пока нет: проверенный результат задачи можно сохранить в память.'));
+    }
+    function problemsBody() {
+      const tasks = rows(overview.tasks), shown = task => String(task.display_status || task.status || '');
+      // Three separate groups, as in the prototype: an error; something turned
+      // down or waiting on a decision; a result waiting for the owner's check.
+      const levels = tasks.map(task => [task, phaseOf(task) === 'failed' && shown(task) !== 'rejected' ? 'crit'
+        : shown(task) === 'rejected' || phaseOf(task) === 'awaiting_decision' ? 'warn' : phaseOf(task) === 'awaiting_review' ? 'info' : '']).filter(([, level]) => level);
+      const total = level => levels.filter(([, value]) => value === level).length;
+      const when = task => task.updated_at || task.created_at || '';
+      const list = levels.slice().sort(([a], [b]) => String(when(b)).localeCompare(String(when(a)))).slice(0, 5)
+        .map(([task, level]) => `<button class="aw-alert-line aw-al-${level}" data-aw-task="${esc(taskId(task))}" title="${esc(taskTitle(task))}"><span aria-hidden="true">${level === 'warn' ? '▲' : '●'}</span><time>${esc(clock(when(task)))}</time><span class="aw-clamp">${esc(taskTitle(task))} · ${esc(task.display_status_label || phaseLabel(task))}</span></button>`);
+      return `<div class="aw-sev"><div class="aw-sev-crit" title="Задачи с ошибкой"><small>Крити\u00ADческие</small><b>${count(total('crit'))}</b></div><div class="aw-sev-warn" title="Отклонённые задачи и задачи, которые ждут решения"><small>Предупре\u00ADждения</small><b>${count(total('warn'))}</b></div><div class="aw-sev-info" title="Результаты, которые ждут вашей проверки"><small>Информа\u00ADционные</small><b>${count(total('info'))}</b></div></div>`
+        + (list.length ? list.join('') : '<div class="aw-calm"><span class="aw-clean-mark" aria-hidden="true">✓</span><span>Ошибок и предупреждений нет.</span></div>');
+    }
+    function modelSummaryGroups() {
+      const summary = overview?.summaries?.models;
+      const known = summary && !summary.unavailable ? rows(summary.items).map(item => ({ model: item.model, provider: item.provider, connections: item.connections, active: item.active })) : undefined;
+      return modelGroupsFromTasks(rows(overview.tasks), known);
+    }
+    function modelRows(groups) {
+      if (!groups.length) return smallEmpty('Моделей пока нет. Подключите модель по API — она проверится одним запросом.');
+      // The bar is the model's share of the team's tasks; spend against a limit
+      // takes its place once tariffs and limits are recorded.
+      const total = groups.reduce((sum, group) => sum + group.stats.total, 0);
+      return groups.map(group => {
+        const share = total ? Math.round(group.stats.total / total * 100) : 0;
+        return `<button class="aw-mrow" data-aw-model-group="${esc(group.id)}"><span class="aw-icbox aw-t-cyan">${esc(prettyModel(group.id).slice(0, 1))}</span>`
+          + `<span class="aw-mrow-main"><strong>${esc(prettyModel(group.id))}</strong>${rated(group.stats) ? '' : ' <span class="aw-chip aw-chip-new">новая · без рейтинга</span>'}`
+          + `<small>${group.stats.total ? esc(plural(group.stats.total, 'задача', 'задачи', 'задач')) : 'ещё не работала'} · ${esc(providerLabel(group.provider))} · ${esc(plural(group.connectionCount, 'подключение', 'подключения', 'подключений'))}</small>`
+          + `<span class="aw-use" title="Доля задач команды: ${share}%"><span style="width:${share}%"></span></span></span>`
+          + `<span class="aw-rate aw-rate-${rated(group.stats) ? rateTone(group.stats.rate) : 'none'}" title="${esc(rateTitle(group.stats))}">${rated(group.stats) ? esc(pct(group.stats.rate * 100)) : '—'}</span></button>`;
+      }).join('');
+    }
     function renderOverview() {
-      const tasks = rows(overview.tasks), agents = rows(overview.agents), stats = overview.stats || {};
+      content.innerHTML = `<div class="aw-btiles">${researchTiles()}</div><div class="aw-brow3">`
+        + bcard('Недавняя активность', 'grid', 'blue', activityRows(5), '<button class="aw-link-button" data-aw-open-log>Смотреть все</button>')
+        + bcard('Память и уроки', 'brain', 'violet', memoryBody(overview?.summaries?.memory), '<button class="aw-link-button" data-aw-tab="memory">Перейти</button>')
+        + bcard('Ошибки и предупреждения', 'alert', 'red', problemsBody(), '<button class="aw-link-button" data-aw-tab="work" data-aw-filter="attention">Смотреть все</button>')
+        + `</div>` + bcard('Модели кратко', 'cpu', 'cyan', modelRows(modelSummaryGroups()), '<button class="aw-link-button" data-aw-tab="models">Все модели</button>');
+    }
+    function taskTable(tasks) {
+      if (!tasks.length) return empty('Задач по этому фильтру нет', 'Измените фильтр или поиск. Новые задачи появятся здесь, как только команда их начнёт.');
+      const measured = tasks.some(task => number(task.cost_usd) != null);
+      return `<div class="aw-table-wrap"><table class="aw-table"><thead><tr><th>Задача</th><th>Исполнитель</th><th>Статус</th><th>Этап</th><th>Обновлено</th>${measured ? '<th>Стоимость</th>' : ''}</tr></thead><tbody>${tasks.map(task => {
+        const people = rows(task.participants);
+        return `<tr><td><button class="aw-table-title" data-aw-task="${esc(taskId(task))}">${esc(taskTitle(task))}</button><div class="aw-table-sub">${esc(taskClass(task))}${task.synthetic ? ' <span class="aw-tag">ТЕСТ</span>' : ''}</div></td><td><span class="aw-people">${avatar(task.lead, 'sm')}${esc(name(task.lead))}${people.length ? `<span class="aw-faces" title="${esc(people.map(name).join(', '))}">${people.slice(0, 4).map(person => avatar(person, 'sm')).join('')}</span>` : ''}</span></td><td>${taskBadge(task)}${phaseOf(task) === 'executing' && number(task.progress_pct) != null ? progress(task) : ''}</td><td>${esc(task.result_label || stageName(task.stage))}</td><td>${esc(date(task.updated_at || task.created_at))}</td>${measured ? `<td>${esc(cost(task.cost_usd))}</td>` : ''}</tr>`;
+      }).join('')}</tbody></table></div>`;
+    }
+    function workQueue() {
+      const tasks = rows(overview.tasks), stats = overview.stats || {};
       const active = tasks.filter(task => task.is_active === true || task.is_active == null && taskMatches(task, 'active', ''));
       const awaitingDecision = tasks.filter(task => phaseOf(task) === 'awaiting_decision');
       const awaitingReview = tasks.filter(task => phaseOf(task) === 'awaiting_review');
@@ -968,47 +1089,21 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const recent = tasks.filter(task => !ATTENTION_PHASES.includes(phaseOf(task)));
       const shownWork = (active.length ? active : recent).slice(0, 5);
       const workBody = shownWork.length ? `<div class="aw-row-list">${shownWork.map(taskRow).join('')}</div>`
-        : tasks.length ? `<div class="aw-calm"><span>Сейчас ничего не выполняется. Задачи, которые ждут вас, — в блоке выше.</span></div>`
-          : smallEmpty('Задач пока нет. Нажмите «Поручить задачу», чтобы дать команде первое поручение.');
-      const kpi = (label, value, note, filterKey, tone) => `<button class="aw-kpi${tone ? ' aw-kpi-' + tone : ''}" data-aw-tab="work" data-aw-filter="${filterKey}"><span class="aw-kpi-label">${esc(label)}</span><span class="aw-kpi-value">${count(value)}</span><span class="aw-kpi-note">${esc(note)}</span></button>`;
-      const kpis = kpi('Нужно ваше действие', stats.attention, 'Проверки, решения и ошибки', 'attention', number(stats.attention) > 0 ? 'hot' : '')
-        + kpi('В работе', stats.active_tasks, 'Выполняются сейчас', 'active', '')
-        + kpi('Результаты', stats.results_received, 'Из них приняты вами: ' + count(stats.completed_tasks), 'completed', '')
-        + kpi('Ошибки', stats.failed, 'История сохраняется', 'failed', number(stats.failed) > 0 ? 'bad' : '');
-      const team = agents.length ? `<div class="aw-team-list">${agents.slice(0, 6).map(agentMini).join('')}</div>` : smallEmpty('В команде пока нет агентов. Создайте персону в разделе «Персоны».');
-      const problems = tasks.filter(task => phaseOf(task) === 'failed' || ['rejected', 'blocked'].includes(String(task.display_status || '')));
-      const problemsBody = problems.length ? `<div class="aw-row-list">${problems.slice(0, 5).map(taskRow).join('')}</div>`
-        : `<div class="aw-calm"><span class="aw-clean-mark" aria-hidden="true">✓</span><span>Ошибок и сбоев нет. Если задача не выполнится, она появится здесь с причиной.</span></div>`;
-      const models = modelGroupsFromTasks(tasks).slice(0, 4);
-      const modelsBody = models.length ? `<div class="aw-model-mini">${models.map(group => `<button class="aw-model-mini-row" data-aw-model-group="${esc(group.id)}"><span><strong>${esc(prettyModel(group.id))}</strong><small>${esc(plural(group.stats.total, 'задача', 'задачи', 'задач'))} · ${esc(plural(group.byAgent.length, 'агент', 'агента', 'агентов'))}</small></span><span class="aw-rate aw-rate-${rateTone(group.stats.rate)}">${group.stats.rate == null ? '—' : esc(pct(group.stats.rate * 100))}</span></button>`).join('')}</div>`
-        : smallEmpty('Модели ещё не выполняли задач в этом рабочем пространстве.');
-      content.innerHTML = `<div class="aw-kpis" aria-label="Сводка рабочего пространства">${kpis}</div><div class="aw-overview-grid">`
-        + `<div class="aw-column aw-column-work">${panel('Нужно ваше действие', queue, '<button class="aw-link-button" data-aw-tab="work" data-aw-filter="attention">Все →</button>')}${panel(active.length ? 'Сейчас в работе' : 'Последние задачи', workBody, '<button class="aw-link-button" data-aw-tab="work">Все задачи →</button>')}${panel('Ошибки и предупреждения', problemsBody)}</div>`
-        + `<div class="aw-column aw-column-team">${panel('Команда', team, '<button class="aw-link-button" data-aw-tab="agents">Вся команда →</button>')}${panel('Модели в работе', modelsBody, '<button class="aw-link-button" data-aw-tab="models">Все модели →</button>')}${panel('Память и уроки', '<p class="aw-panel-text">Проверенные результаты задач команда сохраняет как уроки: с источником, видимостью и сроком хранения.</p>', '<button class="aw-link-button" data-aw-tab="memory">Открыть память →</button>')}</div></div>`
-        + `<div class="aw-column aw-column-results aw-results-row">${panel('Последние результаты', outcomes.length ? `<div class="aw-outcomes">${outcomes.map(outcomeCard).join('')}</div>` : smallEmpty('Результатов пока нет. Отчёты, снимки и ответы появятся здесь с указанием источника.'))}${panel('Недавняя активность', timeline(rows(overview.activity).slice(0, 5), false))}</div>`;
-    }
-    function taskTable(tasks) {
-      if (!tasks.length) return empty('Задач по этому фильтру нет', 'Измените фильтр или поиск. Новые задачи появятся здесь, как только команда их начнёт.');
-      const measured = tasks.some(task => number(task.cost_usd) != null);
-      return `<div class="aw-table-wrap"><table class="aw-table"><thead><tr><th>Задача</th><th>Исполнитель</th><th>Статус</th><th>Этап</th><th>Обновлено</th>${measured ? '<th>Стоимость</th>' : ''}</tr></thead><tbody>${tasks.map(task => {
-        const people = rows(task.participants);
-        return `<tr><td><button class="aw-table-title" data-aw-task="${esc(taskId(task))}">${esc(taskTitle(task))}</button><div class="aw-table-sub">${esc(taskClass(task))}${task.synthetic ? ' <span class="aw-tag">ТЕСТ</span>' : ''}</div></td><td><span class="aw-people">${avatar(task.lead, 'sm')}${esc(name(task.lead))}${people.length ? `<span class="aw-faces" title="${esc(people.map(name).join(', '))}">${people.slice(0, 4).map(person => avatar(person, 'sm')).join('')}</span>` : ''}</span></td><td>${taskBadge(task)}${phaseOf(task) === 'executing' && number(task.progress_pct) != null ? progress(task) : ''}</td><td>${esc(task.result_label || stageName(task.stage))}</td><td>${esc(date(task.updated_at || task.created_at))}</td>${measured ? `<td>${esc(cost(task.cost_usd))}</td>` : ''}</tr>`;
-      }).join('')}</tbody></table></div>`;
+        : tasks.length ? `<div class="aw-calm"><span>Сейчас ничего не выполняется. Задачи, которые ждут вас, — в блоке рядом.</span></div>`
+          : smallEmpty('Задач пока нет. Напишите Управляющему, чтобы дать команде первое поручение.');
+      return `<div class="aw-work-queue"><div class="aw-column aw-column-work">${panel('Нужно ваше действие', queue, `<span class="aw-count">${count(stats.attention)}</span>`)}${panel(active.length ? 'Сейчас в работе' : 'Последние задачи', workBody)}</div>`
+        + `<div class="aw-column aw-column-results">${panel('Последние результаты', outcomes.length ? `<div class="aw-outcomes">${outcomes.map(outcomeCard).join('')}</div>` : smallEmpty('Результатов пока нет. Отчёты, снимки и ответы появятся здесь с указанием источника.'))}</div></div>`;
     }
     function renderWork() {
       const filters = { all: 'Все', attention: 'Нужно ваше действие', active: 'В работе', waiting: 'Ждут результата', review: 'Ждут решения', completed: 'Завершённые', failed: 'Ошибки' };
-      content.innerHTML = `<div class="aw-work-intro"><div><h2>Задачи</h2><p>Все поручения команды: кто выполняет, на каком этапе и что ждёт вас.</p></div><div class="aw-actions">${toolsRow('work')}</div></div><div class="aw-toolbar"><div class="aw-filters" aria-label="Фильтр задач">${Object.entries(filters).map(([key, label]) => `<button class="aw-filter" data-aw-filter="${key}" aria-pressed="${filter === key}">${label}</button>`).join('')}</div><input type="search" id="aw-task-search" class="aw-search" placeholder="Найти задачу или агента…" aria-label="Поиск задач" maxlength="160" value="${esc(query)}"></div><div id="aw-work-table">${taskTable(workRows.filter(task => taskMatches(task, filter, query)))}</div>${nextCursor ? '<div class="aw-pagination"><button class="btn" id="aw-load-more">Показать ещё</button></div>' : ''}${realWorkHint()}`;
+      // A separate view for what the five planned views do not cover: checking
+      // and accepting results, the full task list and the extra tools.
+      content.innerHTML = `<div class="aw-work-view"><div class="aw-work-intro"><div><h2>Задачи</h2><p>Отдельная вкладка: проверка и приём результатов, все поручения команды и инструменты, которых нет в основных вкладках.</p></div></div>`
+        + bcard('Инструменты', 'layers', 'gray', `<div class="aw-tools" aria-label="Инструменты">${toolsRow('work')}</div>`) + workQueue()
+        + `<div class="aw-toolbar"><div class="aw-filters" aria-label="Фильтр задач">${Object.entries(filters).map(([key, label]) => `<button class="aw-filter" data-aw-filter="${key}" aria-pressed="${filter === key}">${label}</button>`).join('')}</div><input type="search" id="aw-task-search" class="aw-search" placeholder="Найти задачу или агента…" aria-label="Поиск задач" maxlength="160" value="${esc(query)}"></div>`
+        + `<div id="aw-work-table">${taskTable(workRows.filter(task => taskMatches(task, filter, query)))}</div>${nextCursor ? '<div class="aw-pagination"><button class="btn" id="aw-load-more">Показать ещё</button></div>' : ''}${realWorkHint()}</div>`;
     }
-    function agentCard(agent) {
-      const evaluation = evaluationMeta(agent);
-      const score = evaluation.sample > 0
-        ? `<div class="aw-agent-score"><small>Результат проверок</small><strong>${esc(evaluation.label)}</strong><div class="aw-agent-meta"><span>Выборка: ${count(evaluation.sample)}</span><span>Уверенность: ${esc(evaluation.confidence)}</span></div></div>`
-        : `<div class="aw-agent-score aw-agent-score-empty"><small>Нет наблюдений · рейтинг появится после проверенных задач</small></div>`;
-      return `<article class="aw-agent-card"><div class="aw-agent-card-top">${avatar(agent)}<div><div class="aw-agent-name">${esc(name(agent))}</div><div class="aw-agent-role">${esc(role(agent))}</div></div></div>${agentState(agent)}${score}<div class="aw-agent-assignment">${esc(agent.current_task?.title || agent.current_task_title || 'Нет активной задачи')}</div><div class="aw-actions"><button class="aw-link-button" data-aw-agent="${esc(agentId(agent))}">Профиль →</button></div></article>`;
-    }
-    const intro = (title, text, tabKey) => `<div class="aw-work-intro"><div><h2>${esc(title)}</h2><p>${esc(text)}</p></div><div class="aw-actions">${toolsRow(tabKey)}</div></div>`;
-    const toolsRow = tabKey => (TAB_TOOLS[tabKey] || []).map(([key, label]) => `<button class="btn" data-aw-domain="${esc(key)}">${esc(label)}</button>`).join('');
-    const statTile = (label, value, note) => `<div class="aw-kpi aw-kpi-static"><span class="aw-kpi-label">${esc(label)}</span><span class="aw-kpi-value">${esc(String(value))}</span>${note ? `<span class="aw-kpi-note">${esc(note)}</span>` : ''}</div>`;
+    const toolsRow = tabKey => (TAB_TOOLS[tabKey] || []).map(([key, label]) => `<button class="btn sm${key === 'system' ? ' aw-diagnostics' : ''}" data-aw-domain="${esc(key)}">${esc(label)}</button>`).join('');
     const agentPhase = agent => {
       const status = String(agent?.status || '');
       if (BUSY_STATES.has(status) || agent?.current_task) return 'busy';
@@ -1019,7 +1114,8 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     const taskOutcome = task => { const state = String(task.display_status || task.status || ''); return OK_STATES.has(state) ? 'ok' : BAD_STATES.has(state) ? 'bad' : 'open'; };
     function taskStats(list) {
       const ok = list.filter(task => taskOutcome(task) === 'ok').length, bad = list.filter(task => taskOutcome(task) === 'bad').length;
-      return { total: list.length, ok, bad, rate: ok + bad ? ok / (ok + bad) : null };
+      const spent = list.reduce((sum, task) => sum + (number(task.cost_usd) || 0), 0), measured = list.some(task => number(task.cost_usd) != null);
+      return { total: list.length, ok, bad, rate: ok + bad ? ok / (ok + bad) : null, spent: measured ? spent : null };
     }
     function agentBreakdown(list) {
       const byAgent = new Map();
@@ -1028,8 +1124,13 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     }
     function modelGroupsFromTasks(tasks, connections) {
       const groups = new Map(), known = Array.isArray(connections);
-      const group = (id, provider) => { if (!groups.has(id)) groups.set(id, { id, provider: provider || '', connections: [], tasks: [] }); return groups.get(id); };
-      rows(connections).forEach(connection => { if (connection.model) group(String(connection.model), connection.provider).connections.push(connection); });
+      const group = (id, provider) => { if (!groups.has(id)) groups.set(id, { id, provider: provider || '', connections: [], connectionCount: 0, activeCount: 0, tasks: [] }); return groups.get(id); };
+      rows(connections).forEach(connection => {
+        if (!connection.model) return;
+        const entry = group(String(connection.model), connection.provider);
+        if (number(connection.connections) != null) { entry.connectionCount += number(connection.connections); entry.activeCount += number(connection.active) || 0; }
+        else { entry.connections.push(connection); entry.connectionCount += 1; entry.activeCount += connection.status === 'active' ? 1 : 0; }
+      });
       rows(tasks).forEach(task => {
         const id = task.model && String(task.model);
         if (id && !MODEL_EXCLUDED.has(id) && (!known || groups.has(id))) group(id, task.provider).tasks.push(task);
@@ -1043,144 +1144,267 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     function loadDomain(key) {
       if (domainReads.has(key)) return domainReads.get(key);
       const scope = domainScope();
-      const read = API.aiControlCenterDomain(key, { limit: 50 }, { signal })
+      // The owner's research catalogue belongs to the AI Lab; it is read only
+      // when the Исследования tab opens and only through the Lab's own route.
+      const request = key === 'lab_research'
+        ? (API.aiResearches ? API.aiResearches({ signal }) : Promise.reject({ status: 404 }))
+        : API.aiControlCenterDomain(key, { limit: 50 }, { signal });
+      const read = request
         .catch(error => { if (error?.name === 'AbortError') throw error; return { items: [], unavailable: error?.status || 'error' }; })
         .then(data => { domainCache.set(key, { scope, data }); return data; })
         .finally(() => domainReads.delete(key));
       domainReads.set(key, read);
       return read;
     }
-    function teamSlot(slot, agent) {
-      if (!agent) return `<button class="aw-slot aw-slot-empty" data-aw-domain="personas" title="Назначьте персону на эту роль в разделе «Персоны»"><span class="aw-slot-face" aria-hidden="true">+</span><span><strong>${esc(slot.title)}</strong><small>не назначен · назначить</small></span></button>`;
-      const phase = agentPhase(agent);
-      const state = phase === 'busy' ? ' · работает' : phase === 'waiting' ? ' · ждёт проверки' : '';
-      return `<button class="aw-slot${phase ? ' aw-slot-' + phase : ''}" data-aw-agent="${esc(agentId(agent))}" title="${esc(slot.title)}${slot.note ? ': ' + esc(slot.note) : ''}${state}">${avatar(agent)}<span><strong>${esc(name(agent))}</strong><small>${esc(slot.title)}</small></span></button>`;
+    // A task names its lead with a machine role; the team list has the words.
+    function roleOf(agent) {
+      const known = rows(overview?.agents).find(value => agentId(value) === agentId(agent));
+      const text = role(known || agent);
+      return machineKey(text) || text === 'Роль не указана' ? '' : text;
     }
-    function teamChart(agents) {
+    function teamPlacement(agents) {
       const used = new Set();
       const pick = slot => { const found = agents.find(agent => !used.has(agentId(agent)) && slot.match(agent)); if (found) used.add(agentId(found)); return found; };
       const placed = TEAM_SLOTS.map(slot => [slot, pick(slot)]);
+      return { placed, others: agents.filter(agent => !used.has(agentId(agent))) };
+    }
+    function teamSlot(slot, agent) {
+      if (!agent) return `<button class="aw-person aw-person-empty" data-aw-domain="personas" title="${esc(slot.title)} — ${esc(slot.note)}. Место свободно: назначьте персону в разделе «Персоны»"><span class="aw-person-face" aria-hidden="true">+</span><span><b>${esc(slot.title)}</b><small>не назначен</small></span></button>`;
+      const phase = agentPhase(agent);
+      const state = phase === 'busy' ? 'работает' : phase === 'waiting' ? 'ждёт проверки' : 'свободен';
+      return `<button class="aw-person${slot.lead ? ' aw-person-lead' : ''}${phase ? ' aw-person-' + phase : ''}" data-aw-agent-card="${esc(agentId(agent))}" title="${esc(name(agent))} · ${esc(slot.title)} · ${state}">${avatar(agent, 'sm')}<span><b>${esc(name(agent))}</b><small>${esc(slot.title)}</small></span></button>`;
+    }
+    function teamChart(agents) {
+      const { placed, others } = teamPlacement(agents);
       const slotsOf = dept => placed.filter(([slot]) => slot.dept === dept).map(([slot, agent]) => teamSlot(slot, agent)).join('');
-      const others = agents.filter(agent => !used.has(agentId(agent)));
-      return `<div class="aw-org"><div class="aw-org-row"><span class="aw-slot aw-slot-owner"><span class="aw-slot-face" aria-hidden="true">Вы</span><span><strong>Вы</strong><small>владелец</small></span></span></div>`
+      // A persona without a place in the scheme is not dropped: it is named
+      // here and has its own card below the hierarchy.
+      const outside = others.length ? `<p class="aw-org-others">Вне схемы: ${esc(plural(others.length, 'персона', 'персоны', 'персон'))} без роли в иерархии — ${esc(others.slice(0, 3).map(name).join(', '))}${others.length > 3 ? ' и другие' : ''}. Их карточки — ниже.</p>` : '';
+      return `<div class="aw-org"><div class="aw-org-row"><span class="aw-person aw-person-owner"><span class="aw-person-face" aria-hidden="true">${icon('users', 15)}</span><span><b>Вы</b><small>Владелец</small></span></span></div>`
         + `<div class="aw-org-line" aria-hidden="true"></div><div class="aw-org-row">${slotsOf('lead')}</div><div class="aw-org-line" aria-hidden="true"></div><div class="aw-org-row">${slotsOf('staff')}</div><div class="aw-org-line" aria-hidden="true"></div>`
-        + `<div class="aw-org-depts">${TEAM_DEPTS.map(([key, title, sub]) => `<div class="aw-org-dept aw-org-${key}"><h3>${esc(title)}</h3><p>${esc(sub)}</p><div class="aw-org-slots">${slotsOf(key)}</div></div>`).join('')}</div>`
-        + (others.length ? `<div class="aw-org-others"><h3>Другие персоны</h3><div class="aw-org-slots">${others.map(agent => teamSlot({ title: role(agent) }, agent)).join('')}</div></div>` : '') + '</div>';
+        + `<div class="aw-org-depts">${TEAM_DEPTS.map(([key, title, sub]) => `<div class="aw-org-dept aw-org-${key}"><h3>${esc(title)}</h3><p>${esc(sub)}</p><div class="aw-org-slots">${slotsOf(key)}</div></div>`).join('')}</div>${outside}</div>`;
+    }
+    function agentModels(agent) {
+      const id = agentId(agent);
+      const tasks = rows(overview?.tasks).filter(task => agentId(actor(task.lead)) === id);
+      return modelGroupsFromTasks(tasks).map(group => ({ model: group.id, ...group.stats }));
+    }
+    function acard(agent) {
+      const tasks = rows(overview?.tasks).filter(task => agentId(actor(task.lead)) === agentId(agent));
+      const stats = taskStats(tasks), models = agentModels(agent), phase = agentPhase(agent);
+      const model = models[0]?.model ? prettyModel(models[0].model) : agent.model ? prettyModel(agent.model) : 'модель не выбрана';
+      return `<button class="aw-acard${phase ? ' aw-acard-' + phase : ''}" data-aw-agent-card="${esc(agentId(agent))}">${avatar(agent)}<span class="aw-acard-main"><b>${esc(name(agent))}</b><small>${esc(role(agent))} · ${esc(model)}</small></span>`
+        + `<span class="aw-acard-r"><b class="aw-rate aw-rate-${rated(stats) ? rateTone(stats.rate) : 'none'}" title="${esc(rateTitle(stats))}">${rated(stats) ? esc(pct(stats.rate * 100)) : stats.ok + stats.bad ? 'NEW' : '—'}</b><small>${esc(plural(stats.total, 'задача', 'задачи', 'задач'))}</small></span></button>`;
     }
     function renderAgents() {
       const agents = rows(overview.agents);
-      const rated = agents.filter(agent => evaluationMeta(agent).sample > 0);
-      content.innerHTML = `<div class="aw-work-intro"><div><h2>Команда</h2><p>Агент — это персона (имя, голос, лицо) с ролью. Модель, на которой он работает, выбирается отдельно и не меняет его историю.</p></div><div class="aw-actions">${toolsRow('agents')}<button class="btn" data-aw-tab="models">Модели</button></div></div>`
-        + (agents.length ? panel('Иерархия', teamChart(agents), '<span class="aw-panel-hint">Вы общаетесь с Управляющим. Он передаёт задачи Заместителю, тот — отделам; спорное решают судьи.</span>')
-          + note('Схема отделов — из правил владельца. Пустое место означает, что роль ещё не назначена ни одной персоне. Передача задач по этой схеме включается на следующем этапе.')
-          + `<div class="aw-agent-grid">${agents.map(agentCard).join('')}</div>`
-          : empty('Команда пока пуста', 'Создайте персону и подключите модель — после этого агент сможет получать поручения.', '<button class="btn primary" data-aw-domain="personas">Создать персону</button>'))
-        + panel('Проверочный рейтинг', rated.length ? `<div class="aw-table-wrap"><table class="aw-table"><thead><tr><th>Агент / роль</th><th>Класс задачи</th><th>Наблюдения</th><th>Результат</th><th>Уверенность</th></tr></thead><tbody>${rated.map(agent => { const evaluation = evaluationMeta(agent); return `<tr><td><button class="aw-table-title" data-aw-agent="${esc(agentId(agent))}">${esc(name(agent))}</button><div class="aw-table-sub">${esc(role(agent))}</div></td><td>${esc(taskClass(agent.evaluation))}</td><td>n = ${count(evaluation.sample)}</td><td>${esc(evaluation.label)}</td><td>${esc(evaluation.confidence)}</td></tr>`; }).join('')}</tbody></table></div><p class="aw-rating-note">Рейтинг относится к конкретному классу задач. Тестовая проверка не оценивает качество LLM и не влияет на выбор исполнителя.</p>` : smallEmpty('Наблюдений пока нет: рейтинг появится после первых проверенных задач. Нулевая выборка не означает нулевое качество.'));
-      if (overview?.scope?.synthetic === false) content.insertAdjacentHTML('beforeend',
-        panel('Реальные задания · отдельные проверки исполнения', applicationTable(agents)));
+      const hint = '<span class="aw-bcard-hint">вы общаетесь только с Управляющим; он передаёт задачи Заместителю, тот — отделам, спорное уходит судьям</span>';
+      content.innerHTML = agents.length
+        ? bcard('Иерархия', 'users', 'green', teamChart(agents), hint) + `<div class="aw-agents">${agents.map(acard).join('')}</div>`
+        : bcard('Иерархия', 'users', 'green', empty('Команда пока пуста', 'Подключите модель и создайте персону — после этого появится команда.', '<button class="btn primary" data-aw-domain="personas">Создать персону</button>'), hint);
     }
-    function modelRow(group) {
-      const stats = group.stats, active = group.connections.filter(connection => connection.status === 'active').length;
-      const scored = group.byAgent.filter(row => row.rate != null);
-      const best = scored.slice().sort((a, b) => b.rate - a.rate)[0], worst = scored.slice().sort((a, b) => a.rate - b.rate)[0];
-      const where = best ? `лучше всего: ${name(best.agent)} ${pct(best.rate * 100)}${worst && worst !== best ? ` · хуже всего: ${name(worst.agent)} ${pct(worst.rate * 100)}` : ''}` : '';
-      return `<button class="aw-model-row" data-aw-model-group="${esc(group.id)}"><span class="aw-model-mark" aria-hidden="true">${esc(prettyModel(group.id).slice(0, 1))}</span>`
-        + `<span class="aw-model-main"><strong>${esc(prettyModel(group.id))}${stats.total ? '' : ' <span class="aw-status aw-info">новая · рейтинга нет</span>'}</strong>`
-        + `<small>${esc(providerLabel(group.provider))} · ${esc(plural(group.connections.length, 'подключение', 'подключения', 'подключений'))}, активных ${count(active)} · ${esc(plural(stats.total, 'задача', 'задачи', 'задач'))} · ${esc(plural(group.byAgent.length, 'агент', 'агента', 'агентов'))}</small>`
-        + (where ? `<small>${esc(where)}</small>` : '') + `</span><span class="aw-rate aw-rate-${rateTone(stats.rate)}">${stats.rate == null ? '—' : esc(pct(stats.rate * 100))}</span></button>`;
+    // The agent card is one element of the page: filled when a face or a card
+    // is clicked, emptied when it closes.
+    const agentPopOpen = () => { const pop = qs('#aw-agent-pop'); return Boolean(pop && !pop.hidden); };
+    function closeAgentCard() { const pop = qs('#aw-agent-pop'); if (pop && !pop.hidden) { pop.hidden = true; pop.innerHTML = ''; } }
+    function openAgentCard(id, anchor) {
+      const pop = qs('#aw-agent-pop'), agent = rows(overview?.agents).find(value => agentId(value) === id);
+      if (!pop || !agent) return;
+      const models = agentModels(agent), phase = agentPhase(agent), evaluation = evaluationMeta(agent);
+      const slot = teamPlacement(rows(overview?.agents)).placed.find(([, value]) => value && agentId(value) === id)?.[0];
+      const now = phase === 'busy' ? '<span class="aw-good-text">● работает</span>' : phase === 'waiting' ? '<span class="aw-review-text">● ждёт вашей проверки</span>' : 'свободен';
+      // A score is never shown without the class of check and the sample it
+      // was measured on; an empty sample reads as new, not as zero quality.
+      const checks = evaluation.sample > 0
+        ? [plural(evaluation.sample, 'наблюдение', 'наблюдения', 'наблюдений'), evaluation.insufficient ? 'NEW · мало данных' : evaluation.label, evaluation.classLabel, 'уверенность ' + evaluation.confidence, evaluation.origin].filter(Boolean).join(' · ')
+        : 'проверенных наблюдений пока нет';
+      const table = models.length ? `<table class="aw-mini-table"><thead><tr><th>Модель под агентом</th><th>Задач</th><th>Успех</th><th>Ошибок</th></tr></thead><tbody>${models.map(row => `<tr><td>${esc(prettyModel(row.model))}</td><td>${count(row.total)}</td><td class="aw-rate-${rateTone(row.rate)}">${row.rate == null ? '—' : esc(pct(row.rate * 100))}</td><td>${count(row.bad)}</td></tr>`).join('')}</tbody></table>` : smallEmpty('Задач с моделями у этого агента пока не было.');
+      pop.innerHTML = `<div class="aw-pop-head">${avatar(agent)}<div><b>${esc(name(agent))}</b><small>${esc(slot ? slot.title + ' · ' + slot.note : role(agent))}</small></div><button class="aw-pop-x" data-aw-pop-close aria-label="Закрыть">×</button></div>`
+        + `<p class="aw-pop-now"><span class="aw-muted">Сейчас:</span> ${now}${models[0] ? ` · <span class="aw-muted">модель</span> ${esc(prettyModel(models[0].model))}` : ''}</p>`
+        + `<div class="aw-pop-state">${agentState(agent)}</div>`
+        + `<p class="aw-pop-now"><span class="aw-muted">Проверки:</span> ${esc(checks)}</p>`
+        + (evaluation.sample > 0 ? '<p class="aw-pop-note">Рейтинг относится к конкретному классу задач: проверка не оценивает качество LLM в целом.</p>' : '') + table
+        + `<div class="aw-actions"><button class="btn sm" data-aw-domain="models">Сменить модель</button><button class="btn sm" data-aw-agent="${esc(id)}">Имя и фото</button></div>`;
+      pop.setAttribute('aria-label', 'Карточка агента ' + name(agent));
+      pop.hidden = false;
+      refreshFaces(pop);
+      // Opened above the face when there is no room below (the team strip sits
+      // at the bottom of the screen), and kept inside the window.
+      const box = anchor?.getBoundingClientRect?.(), width = root.innerWidth || 1280, height = root.innerHeight || 800;
+      if (box && pop.style) {
+        const tall = pop.offsetHeight || 280;
+        pop.style.left = Math.max(10, Math.min(box.left, width - 350)) + 'px';
+        pop.style.top = (box.bottom + 8 + tall > height ? Math.max(10, box.top - tall - 8) : box.bottom + 8) + 'px';
+      }
+      pop.querySelector?.('[data-aw-pop-close]')?.focus?.();
     }
     function renderModels() {
-      const head = intro('Модели', 'Модель — «мозг», на котором работает агент. Одну модель можно подключить нескольким агентам: здесь видно, под кем она работала и насколько успешно.', 'models');
       const data = cachedDomain('models');
-      if (!data) { content.innerHTML = head + loadingBlock('Загружаем подключённые модели…'); return; }
-      if (data.unavailable) { content.innerHTML = head + readError({ status: data.unavailable }); return; }
-      const groups = modelGroupsFromTasks(rows(overview.tasks), items(data));
-      content.innerHTML = head + (groups.length ? `<div class="aw-model-list">${groups.map(modelRow).join('')}</div>`
-        : empty('Моделей пока нет', 'Подключите модель по API: ключ проверится одним запросом, и модель сразу появится здесь.', '<button class="btn primary" data-aw-domain="models">Подключить модель</button>'))
-        + note('Успешность считается по задачам этого рабочего пространства: принятые и автоматически проверенные против отклонённых и ошибочных. Тарифы и лимиты расходов, автоматический список моделей провайдера и «поделиться со всеми» — в разработке.');
+      if (!data) { content.innerHTML = bcard('Подключённые модели', 'cpu', 'cyan', loadingBlock('Загружаем подключённые модели…')); return; }
+      if (data.unavailable) { content.innerHTML = bcard('Подключённые модели', 'cpu', 'cyan', readError({ status: data.unavailable })); return; }
+      content.innerHTML = bcard('Подключённые модели', 'cpu', 'cyan', modelRows(modelGroupsFromTasks(rows(overview.tasks), items(data))), '<button class="aw-link-button" data-aw-connect-model>+ подключить модель</button>')
+        + '<p class="aw-muted aw-hint-line">Нажмите на модель: расход, токены, рейтинг, под каким агентом работала лучше и хуже всего, «поделиться со всеми» и «выключить».</p>';
     }
     function openModelGroup(id) {
       const data = cachedDomain('models');
-      const group = modelGroupsFromTasks(rows(overview?.tasks), data && !data.unavailable ? items(data) : undefined).find(entry => entry.id === id);
+      const summary = overview?.summaries?.models;
+      const connections = data && !data.unavailable ? items(data) : summary && !summary.unavailable ? rows(summary.items) : undefined;
+      const group = modelGroupsFromTasks(rows(overview?.tasks), connections).find(entry => entry.id === id);
       if (!group) return;
       ++detailGeneration; detailKind = 'model_group'; actionForm = null;
-      const stats = group.stats;
-      const table = group.byAgent.length ? `<div class="aw-table-wrap"><table class="aw-table"><thead><tr><th>Под каким агентом</th><th>Задач</th><th>Успешно</th><th>Ошибок</th></tr></thead><tbody>${group.byAgent.map(row => `<tr><td><span class="aw-people">${avatar(row.agent, 'sm')}${esc(name(row.agent))}</span></td><td>${count(row.total)}</td><td>${row.rate == null ? '—' : esc(pct(row.rate * 100))}</td><td>${count(row.bad)}</td></tr>`).join('')}</tbody></table></div>`
-        : smallEmpty('Эта модель ещё не выполняла задач: рейтинга пока нет.');
-      const connections = group.connections.length ? `<div class="aw-stack">${group.connections.map(connection => `<div class="aw-conn-row"><span>${esc(connection.title || connection.label || 'Подключение')}</span>${badge(connection.status)}</div>`).join('')}</div>` : smallEmpty('Подключения не загружены. Откройте вкладку «Модели», чтобы увидеть их.');
-      openDrawer(prettyModel(group.id), `<p class="aw-muted">${esc(providerLabel(group.provider))} · <code>${esc(group.id)}</code></p><div class="aw-kpis aw-kpis-3">${statTile('Задач', count(stats.total))}${statTile('Успешно', stats.rate == null ? '—' : pct(stats.rate * 100))}${statTile('Подключений', count(group.connections.length))}</div>`
-        + `<h3 class="aw-subhead">Где работала</h3>${table}<h3 class="aw-subhead">Подключения</h3>${connections}<div class="aw-actions"><button class="btn" data-aw-domain="models">Подключения и проверка</button></div>`
-        + note('Тариф, лимиты расходов и «поделиться со всеми» — в разработке.'));
+      const stats = group.stats, scored = group.byAgent.filter(row => row.rate != null);
+      const best = scored.slice().sort((a, b) => b.rate - a.rate)[0], worst = scored.slice().sort((a, b) => a.rate - b.rate)[0];
+      const who = row => { const text = roleOf(row.agent); return `${esc(name(row.agent))}${text ? ` <span class="aw-muted">· ${esc(text)}</span>` : ''}`; };
+      const table = group.byAgent.length ? `<table class="aw-mini-table"><thead><tr><th>Под каким агентом</th><th>Задач</th><th>Успех</th><th>Ошибок</th></tr></thead><tbody>${group.byAgent.map(row => `<tr><td>${who(row)}</td><td>${count(row.total)}</td><td class="aw-rate-${rateTone(row.rate)}">${row.rate == null ? '—' : esc(pct(row.rate * 100))}</td><td>${count(row.bad)}</td></tr>`).join('')}</tbody></table>`
+        : '<p class="aw-muted">Новая модель: рейтинг появится после первых проверенных задач.</p>';
+      openDrawer(prettyModel(group.id), `<div class="aw-model-head"><span class="aw-icbox aw-t-cyan aw-icbox-lg">${esc(prettyModel(group.id).slice(0, 1))}</span><div><b>${esc(prettyModel(group.id))}</b><small>${esc(providerLabel(group.provider))} · ${esc(plural(group.connectionCount, 'подключение', 'подключения', 'подключений'))}, активных ${count(group.activeCount)}</small></div></div>`
+        + `<div class="aw-nums aw-nums-3">${bnum('Задач', stats.total ? count(stats.total) : '—')}${bnum('Токенов', '—')}${bnum('Рейтинг', rated(stats) ? pct(stats.rate * 100) : stats.ok + stats.bad ? 'NEW' : '—')}</div>`
+        + `<p class="aw-model-spend"><span class="aw-muted">Расход:</span> ${stats.spent == null ? 'не измерен' : esc(cost(stats.spent))} · <span class="aw-muted">токены и лимиты пока не учитываются</span></p>`
+        + (best ? `<p class="aw-model-best">Лучше всего: <b class="aw-rate-good">${esc(name(best.agent))} ${esc(pct(best.rate * 100))}</b>${worst && worst !== best ? ` · хуже всего: <b class="aw-rate-low">${esc(name(worst.agent))} ${esc(pct(worst.rate * 100))}</b>` : ''}</p>` : '')
+        + table
+        + `<label class="aw-switch-row" title="Появится вместе с общей моделью владельца"><input type="checkbox" disabled> Поделиться со всеми пользователями (только владелец) · в разработке</label>`
+        + `<label class="aw-switch-row" title="Включение и выключение — в подключениях модели"><input type="checkbox" disabled ${group.activeCount > 0 ? 'checked' : ''}> Модель включена</label>`
+        + `<div class="aw-actions"><button class="btn sm" data-aw-domain="models">Подключения и проверка</button><code class="aw-model-code">${esc(group.id)}</code></div>`, { size: 'card' });
     }
-    function researchRow(key) {
-      return item => `<button class="aw-research-row" data-aw-domain-open="${esc(key)}" data-aw-entity="${esc(recordId(item))}"><span><strong>${esc(item.title || item.name || 'Запись')}</strong>${item.summary ? `<small>${esc(item.summary)}</small>` : ''}</span>${badge(item.status)}</button>`;
+    const RESEARCH_STATUS = Object.freeze({ new: ['Новое', 'info'], active: ['Активное', 'good'], promising: ['Перспективное', 'good'], validated: ['Подтверждено', 'good'],
+      exhausted: ['Неактуально', 'neutral'], at_risk: ['Под вопросом', 'warning'], paused: ['Пауза', 'warning'], archived: ['Архив', 'neutral'] });
+    // Each family gets its own mark, like the prototype list.
+    const RESEARCH_MARKS = Object.freeze([['flask', 'violet'], ['gauge', 'green'], ['target', 'teal'], ['layers', 'amber']]);
+    let researchPick = 0;
+    const researchMeta = row => RESEARCH_STATUS[String(row?.evaluation?.status || row?.status || '')] || ['Статус не указан', 'neutral'];
+    const researchState = row => { const [label, tone] = researchMeta(row); return `<span class="aw-st aw-st-${tone}">● ${esc(label)}</span>`; };
+    const researchChip = row => { const [label, tone] = researchMeta(row); return `<span class="aw-chip aw-chip-${tone}">● ${esc(label)}</span>`; };
+    const researchWhere = row => { const window = row?.evaluation?.best_variant?.best_window || {}; return [row.family_name, window.instrument, window.timeframe].filter(value => value && value !== '—').join(' · '); };
+    const money = value => Number(value).toLocaleString('ru-RU', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+    const researchLink = row => 'ai-lab.html' + (row.research_id ? '?research=' + encodeURIComponent(row.research_id) : '');
+    function researchYears(window) {
+      const from = Date.parse(window?.from_utc || ''), to = Date.parse(window?.to_utc || '');
+      return Number.isFinite(from) && Number.isFinite(to) && to > from ? ((to - from) / (365.25 * 24 * 3600 * 1000)).toLocaleString('ru-RU', { maximumFractionDigits: 1 }) : '—';
     }
-    function domainList(data, key, emptyText, limit) {
-      if (data.unavailable) return smallEmpty('Раздел недоступен в этом рабочем пространстве.');
-      const list = items(data).slice(0, limit || 5);
-      return list.length ? `<div class="aw-stack">${list.map(researchRow(key)).join('')}</div>` : smallEmpty(emptyText);
+    function researchDetail(row, index) {
+      const evaluation = row.evaluation || {}, policy = row.evaluation_policy || {}, best = evaluation.best_variant, [mark, tone] = RESEARCH_MARKS[index % RESEARCH_MARKS.length];
+      const hypothesis = rows(row.hypotheses)[0] || row.summary || 'Гипотеза не записана.';
+      const goals = rows(row.objectives).length ? rows(row.objectives).slice(0, 6) : [
+        policy.min_profit_factor != null ? `PF ≥ ${policy.min_profit_factor}` : '', policy.min_trades != null ? `Минимум ${policy.min_trades} сделок` : '',
+        policy.min_years_tested != null ? `Минимум ${policy.min_years_tested} года истории` : '', policy.required_profitable_strategies != null ? `Прибыльных стратегий ≥ ${policy.required_profitable_strategies}` : ''].filter(Boolean);
+      const evaluated = number(evaluation.evaluated_strategies) || 0, passed = number(evaluation.profitable_strategies) || 0;
+      const params = best?.best_parameter_variant?.parameters && typeof best.best_parameter_variant.parameters === 'object' ? Object.entries(best.best_parameter_variant.parameters).slice(0, 8) : [];
+      const where = researchWhere(row), [label] = researchMeta(row);
+      const champion = best && best.qualifies === true;
+      return `<header class="aw-rd-head"><span class="aw-icbox aw-t-${tone}">${icon(mark)}</span><div><b>${esc(row.title || row.family_name || 'Исследование')}</b> ${researchChip(row)}<small>${esc(where)}${where && row.research_id ? ' · ' : ''}${row.research_id ? 'ID: ' + esc(row.research_id) : ''}</small></div><a class="btn sm" href="${esc(researchLink(row))}">Открыть в Лаборатории</a></header>`
+        + `<div class="aw-rd"><div class="aw-rd-col"><h3>Гипотеза</h3><p>${esc(hypothesis)}</p><h3>Цели исследования</h3>${goals.length ? `<ul class="aw-checks">${goals.map(goal => `<li>${icon('check', 14)}${esc(goal)}</li>`).join('')}</ul>` : smallEmpty('Цели не записаны.')}</div>`
+        + `<div class="aw-rd-col"><div class="aw-rd-stats"><div><small>Оценено стратегий</small><b>${count(evaluated)}</b>${number(policy.target_strategies) != null ? `<span class="aw-muted">цель ${count(policy.target_strategies)}</span>` : ''}</div><div><small>Прошли пороги</small><b>${count(passed)}</b><span class="aw-up">${evaluated ? esc(pct(passed / evaluated * 100)) : '—'}</span></div><div><small>Вариантов параметров</small><b>${count(evaluation.parameter_variants)}</b></div><div><small>Текущий статус</small><b class="aw-rd-status aw-st-${researchMeta(row)[1]}">● ${esc(label)}</b></div></div>`
+        + (evaluation.automatic_conclusion ? `<p class="aw-muted aw-rd-conclusion">${esc(evaluation.automatic_conclusion)}</p>` : '')
+        + (champion ? `<h3>Лучший вариант (чемпион) <span class="aw-chip aw-chip-champ">CHAMPION</span></h3><div class="aw-champ"><div><small>Вариант</small><b>${esc(best.class_name || best.experiment_id || '—')}</b></div><div><small>PF</small><b>${best.profit_factor == null ? '—' : esc(Number(best.profit_factor).toLocaleString('ru-RU', { maximumFractionDigits: 2 }))}</b></div><div><small>P&amp;L</small><b>${best.net_profit == null ? '—' : esc(money(best.net_profit))}</b></div><div><small>Max DD</small><b>${best.max_drawdown == null ? '—' : esc(money(best.max_drawdown))}</b></div><div><small>Годы теста</small><b>${esc(researchYears(best.best_window))}</b></div></div>`
+            + (params.length ? `<h3>Параметры</h3><div class="aw-params">${params.map(([key, value]) => `<span>${esc(key)} ${esc(typeof value === 'object' ? JSON.stringify(value) : String(value))}</span>`).join('')}</div>` : '')
+            + `<a class="aw-rd-open" href="${esc(researchLink(row))}">Открыть лучший вариант →</a>`
+          : '<p class="aw-muted">Чемпиона пока нет: ни одна стратегия не прошла пороги.</p>') + '</div></div>';
     }
     function renderResearch() {
-      const head = intro('Исследования', 'Проекты стратегий, спорные решения и сравнения моделей в этом рабочем пространстве.', 'research');
-      const projects = cachedDomain('projects'), decisions = cachedDomain('decisions'), experiments = cachedDomain('experiments');
-      if (!projects || !decisions || !experiments) { content.innerHTML = head + loadingBlock('Загружаем исследования…'); return; }
-      const all = items(decisions), proposals = all.filter(item => item.decision_type !== 'explicit_task_authorization');
-      content.innerHTML = head + `<div class="aw-kpis">${statTile('Проекты стратегий', count(items(projects).length))}${statTile('Решения Court', count(proposals.length))}${statTile('Разрешения на задачи', count(all.length - proposals.length), 'служебные записи')}${statTile('Сравнения моделей', count(items(experiments).length))}</div>`
-        + `<div class="aw-grid-2">${panel('Проекты стратегий', domainList(projects, 'projects', 'Проектов пока нет. Проект объединяет гипотезу, версии стратегии и результаты проверок.'), '<button class="aw-link-button" data-aw-domain="projects">Все проекты →</button>')}`
-        + `${panel('Решения · Court', decisions.unavailable ? smallEmpty('Раздел недоступен в этом рабочем пространстве.') : proposals.length ? `<div class="aw-stack">${proposals.slice(0, 5).map(researchRow('decisions')).join('')}</div>` : smallEmpty('Спорных решений пока не было.'), '<button class="aw-link-button" data-aw-domain="decisions">Все решения →</button>')}</div>`
-        + panel('Сравнения моделей', domainList(experiments, 'experiments', 'Сравнений пока нет. Одна задача, несколько моделей — результат виден рядом.'), '<button class="aw-link-button" data-aw-domain="experiments">Открыть →</button>')
-        + panel('Лаборатория AI', '<p class="aw-panel-text">Семейства исследований, эксперименты, кандидаты и чемпионы стратегий сейчас ведутся в Лаборатории AI. Она общая для приложения и в AI Центр пока не перенесена: здесь показываются только данные вашего рабочего пространства.</p>', '<a class="aw-link-button" href="ai-lab.html">Открыть Лабораторию AI →</a>');
+      const tiles = `<div class="aw-btiles">${researchTiles()}</div>`;
+      const data = cachedDomain('lab_research');
+      const more = '<a class="btn sm" href="ai-lab.html">+ Новое</a>';
+      if (!data) { content.innerHTML = tiles + bcard('Семейства исследований', '', '', loadingBlock('Загружаем исследования…')); return; }
+      const list = rows(data.researches);
+      if (data.unavailable || !list.length) {
+        content.innerHTML = tiles + bcard('Семейства исследований', '', '', data.unavailable
+          ? smallEmpty('Семейства исследований ведёт Лаборатория AI владельца; в этом рабочем пространстве они недоступны.')
+          : empty('Семейств исследований пока нет', 'Создайте исследование в Лаборатории AI: гипотеза, цели и пороги — дальше команда проверяет стратегии и выбирает чемпиона.'), data.unavailable ? '' : more);
+        return;
+      }
+      researchPick = Math.min(researchPick, list.length - 1);
+      const families = list.map((row, index) => { const [mark, tone] = RESEARCH_MARKS[index % RESEARCH_MARKS.length];
+        return `<button class="aw-fam${index === researchPick ? ' aw-fam-on' : ''}" data-aw-research="${index}"><span class="aw-icbox aw-t-${tone}">${icon(mark)}</span><span><b>${esc(row.title || row.family_name || 'Исследование')}</b><small>${esc(researchWhere(row) || '—')}</small><small>ID: ${esc(row.research_id || '—')}</small></span>${researchState(row)}</button>`; }).join('');
+      content.innerHTML = tiles + bcard('Семейства исследований', '', '', `<div class="aw-research"><div class="aw-famlist">${families}</div><div class="aw-famdetail">${researchDetail(list[researchPick], researchPick)}</div></div>`, more, 'aw-bcard-research');
     }
-    function memoryGraph(records) {
-      const list = records.slice(0, 14), W = 560, H = 190, cx = W / 2, cy = H / 2;
-      const nodes = list.map((record, index) => { const angle = (index / list.length) * Math.PI * 2 - Math.PI / 2; return { record, x: cx + Math.cos(angle) * 210, y: cy + Math.sin(angle) * 70 }; });
-      const linked = (a, b) => (a.record.verified_outcome_id && a.record.verified_outcome_id === b.record.verified_outcome_id) || rows(a.record.source_ids).some(id => rows(b.record.source_ids).includes(id));
-      const edges = [];
-      nodes.forEach((a, i) => nodes.slice(i + 1).forEach(b => { if (linked(a, b)) edges.push(`<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" class="aw-graph-link"/>`); }));
-      return `<svg class="aw-memory-graph" viewBox="0 0 ${W} ${H}" role="img" aria-label="Граф памяти: ${esc(plural(list.length, 'запись', 'записи', 'записей'))}">${nodes.map(node => `<line x1="${cx}" y1="${cy}" x2="${node.x}" y2="${node.y}" class="aw-graph-spoke"/>`).join('')}${edges.join('')}<circle cx="${cx}" cy="${cy}" r="9" class="aw-graph-core"/>${nodes.map(node => `<g><circle cx="${node.x}" cy="${node.y}" r="5" class="aw-graph-node aw-graph-${esc(node.record.memory_class || 'record')}"/><text x="${node.x}" y="${node.y + 17}" text-anchor="middle">${esc(String(node.record.title || 'Запись').slice(0, 26))}</text></g>`).join('')}</svg>`;
-    }
+    // A small knowledge graph from real records: memory fragments around the
+    // strategy they belong to (or one shared centre), linked to the sources
+    // they were taken from. Colours follow the prototype legend.
+    const MEMORY_TONE = Object.freeze({ verified_lesson: 'concept', workspace: 'rule', task: 'context', working: 'context', private: 'context' });
+    const MEMORY_GONE = new Set(['revoked', 'expired', 'archived', 'retired', 'superseded']);
+    let graphOpen = false;
     function renderMemory() {
-      const head = intro('Память', 'Что команда запомнила: проверенные уроки, их источник, видимость и срок хранения.', 'memory');
-      const memory = cachedDomain('memory'), publications = cachedDomain('publications');
-      if (!memory || !publications) { content.innerHTML = head + loadingBlock('Загружаем память…'); return; }
-      const records = items(memory), lessons = records.filter(record => record.memory_class === 'verified_lesson').length;
-      const shared = records.filter(record => record.visibility && record.visibility !== 'private').length;
-      const list = memory.unavailable ? smallEmpty('Раздел памяти недоступен в этом рабочем пространстве.') : records.length
-        ? `<div class="aw-stack">${records.slice(0, 8).map(record => `<button class="aw-research-row" data-aw-domain-open="memory" data-aw-entity="${esc(recordId(record))}"><span><strong>${esc(record.title || 'Запись')}</strong><small>${esc(MEMORY_CLASS[record.memory_class] || 'Запись')} · ${esc(record.visibility === 'private' ? 'личная' : 'общая')}${record.retention_until ? ' · хранится до ' + esc(date(record.retention_until)) : ''}</small></span>${badge(record.status)}</button>`).join('')}</div>`
-        : smallEmpty('Памяти пока нет. Проверенный результат задачи можно сохранить как урок.');
-      content.innerHTML = head + `<div class="aw-kpis">${statTile('Записей памяти', count(records.length))}${statTile('Проверенных уроков', count(lessons))}${statTile('Общих для пространства', count(shared))}${statTile('Публикаций', count(items(publications).length))}</div>`
-        + `<div class="aw-grid-2">${panel('Последние записи', list, '<button class="aw-link-button" data-aw-domain="memory">Вся память →</button>')}${panel('Граф знаний', records.length >= 3 ? memoryGraph(records) : smallEmpty('Граф знаний появится, когда в памяти накопится хотя бы три записи и связи между ними.'))}</div>`;
+      const memory = cachedDomain('memory');
+      const summary = overview?.summaries?.memory;
+      const all = '<button class="aw-link-button" data-aw-domain="memory">Все записи</button>';
+      const legend = '<div class="aw-graph-legend"><span class="aw-lg-strategy">● стратегии</span><span class="aw-lg-concept">● концепты</span><span class="aw-lg-rule">● правила и политика</span><span class="aw-lg-data">● данные и доказательства</span><span class="aw-lg-context">● контекст</span></div>';
+      if (!memory) { content.innerHTML = bcard('Память и уроки', 'brain', 'violet', memoryBody(summary), all) + bcard('Граф знаний', 'layers', 'cyan', loadingBlock('Загружаем память…')); return; }
+      const records = memory.unavailable ? [] : items(memory).filter(record => !MEMORY_GONE.has(String(record.status || '')));
+      const graph = records.length >= 3 ? memoryGraph(records, graphOpen) : smallEmpty('Граф знаний появится, когда в памяти накопится хотя бы три записи и связи между ними.');
+      content.innerHTML = bcard('Память и уроки', 'brain', 'violet', memoryBody(summary), all)
+        + bcard('Граф знаний', 'layers', 'cyan', graph + legend, records.length >= 3 ? `<button class="btn sm" data-aw-graph-toggle aria-pressed="${graphOpen}">${graphOpen ? 'Свернуть граф' : 'Раскрыть граф'}</button>` : '');
     }
+    function memoryGraph(records, open) {
+      const W = 720, H = open ? 420 : 260, cx = W / 2, cy = H / 2, rx = open ? 240 : 200, ry = open ? 160 : 90;
+      const list = records.slice(0, open ? 24 : 12);
+      const short = value => { const text = String(value); return text.length > 30 ? text.slice(0, 29).trimEnd() + '…' : text; };
+      const strategyOf = record => String(record.scope_binding?.strategy_project_id || record.strategy_project_id || '');
+      const strategies = [...new Set(list.map(strategyOf).filter(Boolean))].slice(0, 3);
+      const hubs = strategies.length
+        ? strategies.map((id, index) => ({ id, x: cx + (index - (strategies.length - 1) / 2) * 130, y: cy, label: 'Стратегия ' + id.slice(0, 8), tone: 'strategy', r: 7 }))
+        : [{ id: '', x: cx, y: cy, label: '', tone: 'hub', r: 3 }];
+      const hubOf = record => hubs.find(hub => hub.id === strategyOf(record)) || hubs[0];
+      const nodes = list.map((record, index) => { const angle = (index / list.length) * Math.PI * 2 - Math.PI / 2;
+        return { record, x: cx + Math.cos(angle) * rx, y: cy + Math.sin(angle) * ry, tone: MEMORY_TONE[record.memory_class] || 'context', r: 5, label: short(record.title || 'Запись') }; });
+      const sourcesOf = record => [...new Set([...rows(record.source_ids).map(String), ...rows(record.provenance).map(item => String(item?.artifact_id || ''))].filter(Boolean))];
+      const sources = new Map();
+      nodes.forEach(node => sourcesOf(node.record).forEach(id => { if (!sources.has(id)) sources.set(id, []); sources.get(id).push(node); }));
+      const sourceNodes = [...sources.entries()].slice(0, open ? 16 : 8).map(([id, linked]) => {
+        const x = linked.reduce((sum, node) => sum + node.x, 0) / linked.length, y = linked.reduce((sum, node) => sum + node.y, 0) / linked.length;
+        return { id, linked, x: Math.max(12, Math.min(W - 12, x)), y: Math.max(10, Math.min(H - 10, y + (y < cy ? -24 : 24))), tone: 'data', r: 3 };
+      });
+      const line = (a, b, extra) => `<line x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" class="aw-graph-link${extra || ''}"/>`;
+      const links = [...nodes.map(node => line(hubOf(node.record), node)), ...sourceNodes.flatMap(source => source.linked.map(node => line(node, source, ' aw-graph-link-soft')))];
+      nodes.forEach((a, i) => nodes.slice(i + 1).forEach(b => { if (a.record.verified_outcome_id && a.record.verified_outcome_id === b.record.verified_outcome_id) links.push(line(a, b)); }));
+      const dot = node => `<circle cx="${node.x.toFixed(1)}" cy="${node.y.toFixed(1)}" r="${node.r + 5}" class="aw-g-${node.tone} aw-graph-halo"/><circle cx="${node.x.toFixed(1)}" cy="${node.y.toFixed(1)}" r="${node.r}" class="aw-g-${node.tone}"/>`;
+      // Labels point away from the centre so the two sides do not collide.
+      const text = node => node.label ? `<text x="${(node.x < cx - 4 ? node.x - node.r - 7 : node.x + node.r + 7).toFixed(1)}" y="${(node.y + 4).toFixed(1)}" text-anchor="${node.x < cx - 4 ? 'end' : 'start'}">${esc(node.label)}</text>` : '';
+      const item = node => node.record ? `<g class="aw-graph-item" data-aw-graph-record="${esc(node.record.id || '')}"><title>${esc(String(node.record.title || 'Запись'))}</title>${dot(node)}${text(node)}</g>` : `<g>${dot(node)}${text(node)}</g>`;
+      return `<svg class="aw-memory-graph${open ? ' aw-graph-open' : ''}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Граф знаний: ${esc(plural(list.length, 'запись', 'записи', 'записей'))}">${links.join('')}`
+        + `${sourceNodes.map(source => `<g><title>Источник данных</title>${dot(source)}</g>`).join('')}${hubs.map(item).join('')}${nodes.map(item).join('')}</svg>`
+        + (records.length > list.length ? `<p class="aw-muted aw-graph-more">Показаны ${esc(plural(list.length, 'запись', 'записи', 'записей'))} из ${count(records.length)}${open ? '' : ' — «Раскрыть граф» покажет больше'}.</p>` : '');
+    }
+    // The corner and the dock are redrawn on every refresh; an unchanged block
+    // is left in place so faces do not reload and the log keeps its scroll.
+    const painted = new WeakMap();
+    const paint = (node, html) => { if (node && painted.get(node) !== html) { node.innerHTML = html; painted.set(node, html); } };
     function renderCorner() {
       const box = qs('#aw-corner');
       if (!box) return;
-      if (!overview?.enabled) { box.innerHTML = ''; return; }
-      const today = new Date().toDateString();
-      const todays = rows(overview.tasks).filter(task => { const when = new Date(task.updated_at || task.created_at); return !Number.isNaN(when.getTime()) && when.toDateString() === today; }).slice(0, 5);
-      const attention = number(overview.stats?.attention) || 0;
-      box.innerHTML = `<section class="aw-corner-card"><h2>Цель</h2><p class="aw-corner-empty">Цели и задача недели — в разработке. Прогресс будет считаться только по стратегиям, которые торгуют на демо-счёте.</p><button class="btn sm" disabled title="Появится на следующем этапе">+ Добавить цель</button></section>`
-        + `<section class="aw-corner-card"><h2>Сегодня</h2>${todays.length ? `<div class="aw-today">${todays.map(task => `<button class="aw-today-row" data-aw-task="${esc(taskId(task))}"><span>${esc(taskTitle(task))}</span>${taskBadge(task)}</button>`).join('')}</div>` : '<p class="aw-corner-empty">Сегодня задач ещё не было.</p>'}</section>`
-        + (attention ? `<button class="aw-corner-attention" data-aw-tab="work" data-aw-filter="attention"><strong>${count(attention)}</strong><span>ждут вашей проверки или решения →</span></button>` : '');
+      if (!overview?.enabled) { paint(box, ''); return; }
+      const todays = rows(overview.tasks).filter(task => { const when = new Date(task.updated_at || task.created_at); return !Number.isNaN(when.getTime()) && sameDay(when); }).slice(0, 5);
+      const done = task => taskOutcome(task) === 'ok';
+      paint(box, `<section class="aw-bcard aw-goal"><header class="aw-bcard-h"><span class="aw-icbox aw-t-green">${icon('goal')}</span><h2>Цель</h2><span class="aw-bcard-more aw-muted">срок не задан</span></header><div class="aw-bcard-b">`
+        + `<div class="aw-goal-title">Цель ещё не задана</div><div class="aw-goal-bar"><span style="width:0"></span></div><div class="aw-goal-row"><span><b>$0</b> <span class="aw-muted">из —</span></span><span class="aw-muted">0%</span></div>`
+        + `<p class="aw-goal-note">Считаются только стратегии на демо-счёте</p><h3>Задача на неделю</h3><div class="aw-goal-week">Появится после того, как вы добавите цель.</div>`
+        + `<h3>Сегодня</h3>${todays.length ? `<div class="aw-todo">${todays.map(task => `<button class="aw-todo-row${done(task) ? ' aw-todo-done' : ''}" data-aw-task="${esc(taskId(task))}"><i aria-hidden="true">${done(task) ? icon('check', 11) : ''}</i><span>${esc(taskTitle(task))}</span>${avatar(task.lead, 'xs')}</button>`).join('')}</div>` : '<p class="aw-goal-empty">Сегодня задач ещё не было.</p>'}`
+        + `<button class="btn sm aw-goal-add" aria-disabled="true" data-aw-soon="Цели появятся на следующем этапе: своя формулировка, срок и прогресс только по стратегиям на демо-счёте.">${icon('plus', 14)}Добавить цель</button></div></section>`);
     }
     function renderDock() {
       const strip = qs('#aw-strip'), body = qs('#aw-log-body');
       if (!strip || !body) return;
-      if (!overview?.enabled) { strip.innerHTML = ''; body.innerHTML = ''; return; }
-      strip.innerHTML = rows(overview.agents).map(agent => {
-        const phase = agentPhase(agent), state = phase === 'busy' ? ' · работает' : phase === 'waiting' ? ' · ждёт проверки' : '';
-        return `<button class="aw-strip-face${phase ? ' aw-strip-' + phase : ''}" data-aw-agent="${esc(agentId(agent))}" title="${esc(name(agent))} · ${esc(role(agent))}${state}" aria-label="${esc(name(agent))}${state}">${avatar(agent)}</button>`;
-      }).join('');
+      if (!overview?.enabled) { paint(strip, ''); paint(body, ''); return; }
+      const agents = rows(overview.agents), { placed, others } = teamPlacement(agents);
+      const face = agent => { const phase = agentPhase(agent), state = phase === 'busy' ? ' · работает' : phase === 'waiting' ? ' · ждёт проверки' : '';
+        return `<button class="aw-strip-face${phase ? ' aw-strip-' + phase : ''}" data-aw-agent-card="${esc(agentId(agent))}" title="${esc(name(agent))} · ${esc(role(agent))}${state}" aria-label="${esc(name(agent))}${state}">${avatar(agent, 'sm')}</button>`; };
+      const groups = [['lead', 'staff'], ['dev'], ['ops'], ['judges']].map(depts => placed.filter(([slot, agent]) => agent && depts.includes(slot.dept)).map(([, agent]) => face(agent)).join('')).filter(Boolean);
+      if (others.length) groups.push(others.map(face).join(''));
+      paint(strip, groups.join('<span class="aw-strip-sep" aria-hidden="true"></span>'));
+      const byTask = new Map(rows(overview.tasks).map(task => [taskId(task), task]));
       const events = rows(overview.activity);
-      body.innerHTML = events.length ? events.slice(0, 40).map(event => {
-        const when = event.time || event.timestamp || event.created_at;
-        const line = `<time datetime="${esc(when || '')}">${esc(date(when, true))}</time><span>${esc(event.summary || event.title || 'Событие')}</span>`;
+      paint(body, events.length ? events.slice(0, 40).map(event => {
+        const task = byTask.get(String(event.task_id || '')), lead = task ? actor(task.lead) : null, when = event.time || event.timestamp || event.created_at;
+        const who = lead ? name(lead) : 'Команда', raw = String(event.summary || event.title || 'Событие');
+        const text = raw.startsWith(who + ' · ') ? raw.slice(who.length + 3) : raw;
+        const model = task?.model && !MODEL_EXCLUDED.has(String(task.model)) ? ` <span class="aw-log-model">[${esc(prettyModel(task.model))}]</span>` : '';
+        const line = `<time datetime="${esc(when || '')}">${esc(logTime(when))}</time><span><span class="aw-log-who">${esc(who)}</span>${model}  ${esc(text)}</span>`;
         return event.task_id ? `<button class="aw-log-line" data-aw-task="${esc(event.task_id)}">${line}</button>` : `<div class="aw-log-line">${line}</div>`;
-      }).join('') : '<p class="aw-log-empty">Здесь появится ход работы: кто, что и с каким результатом сделал.</p>';
+      }).join('') : '<p class="aw-log-empty">Здесь появится ход работы: кто, через какую модель и что сделал.</p>');
     }
-    function toggleLog() {
+    function toggleLog(force) {
       const log = qs('#aw-log'), toggle = qs('#aw-log-toggle');
       if (!log || !toggle) return;
-      const open = !log.classList.contains('aw-log-open');
+      const open = typeof force === 'boolean' ? force : !log.classList.contains('aw-log-open');
       log.classList.toggle('aw-log-open', open);
       toggle.setAttribute('aria-expanded', String(open));
       const hint = qs('.aw-log-hint', toggle); if (hint) hint.textContent = open ? 'свернуть' : 'развернуть';
@@ -1200,13 +1424,15 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         ? `<span><strong>${count(stats.agents ?? rows(overview?.agents).length)}</strong> в команде</span><span><strong>${count(stats.active_tasks)}</strong> в работе</span><span class="${attention ? 'aw-pulse-attention' : ''}"><strong>${count(attention)}</strong> ждут вас</span>${failed ? `<span class="aw-pulse-error"><strong>${count(failed)}</strong> с ошибкой</span>` : ''}`
         : badge('disabled');
       const context = qs('#aw-context'), synthetic = Boolean(scope.synthetic || overview?.synthetic);
-      context.hidden = !overview?.enabled;
-      context.className = 'aw-env' + (synthetic ? ' aw-env-synthetic' : '');
-      context.textContent = synthetic ? 'Тестовые данные' : 'В разработке';
-      context.title = synthetic
-        ? 'Изолированная проверка: задачи выполняют локальные проверочные обработчики на тестовых данных. Платные модели и торговые действия не вызываются; рейтинг не оценивает качество моделей.'
-        : 'AI Центр ещё в разработке. Проверочные данные не заменяют ваши данные, а выключенные механизмы не меняют работу приложения.';
+      // The approved header has no status chip. Test data is still named, so an
+      // isolated check is never taken for the owner's real work.
+      context.hidden = !overview?.enabled || !synthetic;
+      context.className = 'aw-env aw-env-synthetic';
+      context.textContent = 'Тестовые данные';
+      context.title = 'Изолированная проверка: задачи выполняют локальные проверочные обработчики на тестовых данных. Платные модели и торговые действия не вызываются; рейтинг не оценивает качество моделей.';
       qs('#aw-updated').textContent = 'Обновлено ' + date(new Date().toISOString());
+      const badgeNode = qs('#aw-work-badge');
+      if (badgeNode) { badgeNode.hidden = !(attention > 0); badgeNode.textContent = attention > 0 ? count(attention) : ''; }
       renderCorner();
       renderDock();
     }
@@ -1423,7 +1649,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (!values.length) return smallEmpty('Оценок нет. Отсутствие наблюдений не означает провал.');
       return values.map(value => `<section class="aw-panel"><div class="aw-panel-body"><div class="aw-inline"><strong>${transportResponseOnly(value) ? 'Без оценки содержания' : esc(pct(value.score_pct ?? value.observed_score_pct))}</strong><span class="aw-muted">${transportResponseOnly(value) ? 'только техническая проверка' : 'проверенных критериев этого ответа'}</span></div>${transportVerificationNote(value)}<p class="aw-note">${esc(value.scope || value.rubric_key || 'Класс конкретной задачи')} · ${esc(value.verifier || value.evaluator || 'Источник проверки не указан')}</p><div class="aw-stack">${rows(value.rubric || value.checks).map(check => `<div class="aw-inline">${badge(check.passed === true ? 'passed' : check.passed === false ? 'failed' : 'pending')}<span class="aw-text">${esc(check.label || check.key || check.summary)}</span></div>`).join('')}</div>${value.summary ? `<p class="aw-text">${esc(value.summary)}</p>` : ''}${value.response_sha256 ? `<div class="aw-hash">RESPONSE SHA256 ${esc(value.response_sha256)}</div>` : ''}${value.input_sha256 ? `<div class="aw-hash">INPUT SHA256 ${esc(value.input_sha256)}</div>` : ''}<p class="aw-field-hint">Проверка одного ответа не является общей оценкой качества модели или торговой стратегии.</p></div></section>`).join('');
     }
-    function openDrawer(title, html) {
+    function openDrawer(title, html, options = {}) {
       if (quietDrawer && currentDrawer?.classList.contains('open') && currentDrawer.querySelector('.aw-inspector')) {
         // Refresh only the read-only inspector content: keep its width, scroll
         // and keyboard focus, and never interrupt SF Chat or a consent form.
@@ -1445,7 +1671,8 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         && currentDrawer.querySelector('.aw-inspector'));
       if (!inspectorOpen && active && active !== document.body && !currentDrawer?.contains(active)) returnFocus = active;
       currentDrawer = UI.drawer(`<h3>${esc(title)}</h3>`, `<div class="aw-inspector">${html}</div>`);
-      currentDrawer.classList.add('wide');
+      // A model card is narrow, as in the prototype; tools keep the wide panel.
+      currentDrawer.classList.add(options.size === 'card' ? 'aw-drawer-card' : 'wide');
       currentDrawer.setAttribute('role', 'dialog'); currentDrawer.setAttribute('aria-modal', 'true'); currentDrawer.setAttribute('aria-label', title); currentDrawer.tabIndex = -1;
       currentDrawer.focus();
       refreshFaces(currentDrawer);
@@ -1999,11 +2226,21 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     function click(event) {
       if (personaAudio?.activePersona() && (!currentDrawer?.querySelector('.aw-persona-presentation') || !currentDrawer.contains(event.target))) stopPersonaAudio();
       if (currentDrawer?.querySelector('.aw-inspector') && event.target.closest('.drawer-back, [data-close-drawer]')) { stopPersonaAudio(); ++detailGeneration; actionForm = null; restoreFocus(); return; }
+      if (agentPopOpen() && !event.target.closest?.('#aw-agent-pop') && !event.target.closest?.('[data-aw-agent-card]')) closeAgentCard();
+      const graphRecord = event.target.closest?.('[data-aw-graph-record]');
+      if (graphRecord && shell.contains(graphRecord) && graphRecord.dataset.awGraphRecord) { openDomain('memory').then(() => openDomainItem(graphRecord.dataset.awGraphRecord)); return; }
       const target = event.target.closest('button, a');
       if (!target) return;
       const inside = shell.contains(target) || (currentDrawer && currentDrawer.contains(target) && target.closest('.aw-inspector'));
       if (!inside) return;
       if (target.id === 'aw-log-toggle') { toggleLog(); return; }
+      if (target.hasAttribute('data-aw-pop-close')) { closeAgentCard(); return; }
+      if (target.dataset.awAgentCard) { openAgentCard(target.dataset.awAgentCard, target); return; }
+      if (target.hasAttribute('data-aw-connect-model')) { stopPersonaAudio(); openDomain('models').then(() => openDomainAction('connect', 'new')); return; }
+      if (target.dataset.awResearch) { researchPick = Number(target.dataset.awResearch) || 0; renderResearch(); return; }
+      if (target.hasAttribute('data-aw-open-log')) { toggleLog(true); qs('#aw-log-toggle')?.focus?.(); return; }
+      if (target.hasAttribute('data-aw-graph-toggle')) { graphOpen = !graphOpen; renderMemory(); return; }
+      if (target.dataset.awSoon) { announce(target.dataset.awSoon); return; }
       if (target.tagName === 'A' || target.dataset.awTaskChat || target.dataset.awFollowupChat || target.dataset.awChartChat || target.hasAttribute('data-aw-real-chat')) stopPersonaAudio();
       // A control may carry both: open the tab already narrowed to that filter.
       if (target.dataset.awTab) { if (target.dataset.awFilter) filter = target.dataset.awFilter; selectTab(target.dataset.awTab, true); }
@@ -2043,6 +2280,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       else if (target.id === 'aw-load-more') loadTab(true);
     }
     function keyboard(event) {
+      if (event.key === 'Escape' && agentPopOpen()) { closeAgentCard(); return; }
       const tabs = event.target.closest('.aw-tabs');
       if (tabs && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key) && (shell.contains(tabs) || tabs.closest('.aw-inspector'))) {
         const buttons = qsa('[role="tab"]:not([hidden])', tabs), index = buttons.indexOf(event.target);

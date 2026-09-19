@@ -6,39 +6,37 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
 <title>AI Центр — StratForge AI</title>
 <link rel="stylesheet" href="assets/theme.css?v=20260915-dark-system1">
-<link rel="stylesheet" href="assets/pages/ai-command-center.css?v=20260918-tabs-b1">
+<link rel="stylesheet" href="assets/pages/ai-command-center.css?v=20260918-tabs-b3">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 </head>
 <body data-page="ai" data-title="AI Центр" data-kicker="StratForge AI · Мир агентов">
 <div class="ai-command-center" id="aw-center">
-  <header class="aw-header">
-    <div class="aw-heading">
-      <div class="aw-title-row"><h1>AI Центр</h1><span class="aw-env" id="aw-context" hidden></span></div>
-      <div class="aw-pulse" id="aw-pulse" aria-live="polite"><span class="aw-status aw-neutral">Загружаем состояние команды…</span></div>
-    </div>
+  <header class="aw-header aw-bheader">
+    <div class="aw-title-row"><h1>AI Центр</h1><span class="aw-env" id="aw-context" hidden></span></div>
+    <nav class="aw-tabs" role="tablist" aria-label="Разделы AI Центра">
+      <button id="aw-tab-overview" role="tab" aria-selected="true" aria-controls="aw-content" tabindex="0" data-aw-tab="overview">Обзор</button>
+      <button id="aw-tab-agents" role="tab" aria-selected="false" aria-controls="aw-content" tabindex="-1" data-aw-tab="agents">Команда</button>
+      <button id="aw-tab-models" role="tab" aria-selected="false" aria-controls="aw-content" tabindex="-1" data-aw-tab="models">Модели</button>
+      <button id="aw-tab-research" role="tab" aria-selected="false" aria-controls="aw-content" tabindex="-1" data-aw-tab="research">Исследования</button>
+      <button id="aw-tab-memory" role="tab" aria-selected="false" aria-controls="aw-content" tabindex="-1" data-aw-tab="memory">Память</button>
+      <button id="aw-tab-work" class="aw-tab-extra" role="tab" aria-selected="false" aria-controls="aw-content" tabindex="-1" data-aw-tab="work">Задачи<span class="aw-tab-badge" id="aw-work-badge" hidden></span></button>
+    </nav>
     <div class="aw-header-actions">
-      <button class="btn ghost aw-diagnostics" data-aw-domain="system" title="Техническая диагностика: какие механизмы включены и отвечают">Диагностика</button>
-      <button class="btn icon ghost" id="aw-refresh" aria-label="Обновить данные" title="Обновить данные">↻</button>
-      <button class="btn" id="aw-run-demo" hidden>Запустить проверочные задачи</button>
-      <button class="btn primary" id="aw-open-chat" title="Откроется SF Chat: опишите задачу обычным текстом">Поручить задачу</button>
+      <button class="btn" data-aw-connect-model><svg class="aw-ic" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Подключить модель</button>
+      <button class="btn primary" id="aw-open-chat" title="Откроется SF Chat: напишите Управляющему обычным текстом">Написать Управляющему</button>
+      <button class="btn icon ghost" id="aw-refresh" aria-label="Обновить данные" title="Обновить данные" hidden>↻</button>
     </div>
   </header>
+  <div class="aw-pulse" id="aw-pulse" aria-live="polite" hidden></div>
   <div class="aw-notice" id="aw-notice" role="status" aria-live="polite" hidden></div>
-  <nav class="aw-tabs" role="tablist" aria-label="Разделы AI Центра">
-    <button id="aw-tab-overview" role="tab" aria-selected="true" aria-controls="aw-content" tabindex="0" data-aw-tab="overview">Обзор</button>
-    <button id="aw-tab-work" role="tab" aria-selected="false" aria-controls="aw-content" tabindex="-1" data-aw-tab="work">Задачи</button>
-    <button id="aw-tab-agents" role="tab" aria-selected="false" aria-controls="aw-content" tabindex="-1" data-aw-tab="agents">Команда</button>
-    <button id="aw-tab-models" role="tab" aria-selected="false" aria-controls="aw-content" tabindex="-1" data-aw-tab="models">Модели</button>
-    <button id="aw-tab-research" role="tab" aria-selected="false" aria-controls="aw-content" tabindex="-1" data-aw-tab="research">Исследования</button>
-    <button id="aw-tab-memory" role="tab" aria-selected="false" aria-controls="aw-content" tabindex="-1" data-aw-tab="memory">Память</button>
-  </nav>
   <div class="aw-layout">
     <div id="aw-content" class="aw-content" role="tabpanel" aria-labelledby="aw-tab-overview" aria-busy="true" tabindex="0">
       <div class="aw-skeleton-page" aria-label="Загрузка AI Центра"><div class="aw-skeleton aw-skeleton-strip"></div><div class="aw-skeleton-grid"><div class="aw-skeleton"></div><div class="aw-skeleton"></div><div class="aw-skeleton"></div></div></div>
     </div>
     <aside class="aw-corner" id="aw-corner" aria-label="Цель и задачи на сегодня"></aside>
   </div>
-  <footer class="aw-footer"><span>Все действия проверяет сервер: персона не расширяет права, а решения не исполняют сделки.</span><span id="aw-updated"></span></footer>
+  <div class="aw-pop" id="aw-agent-pop" role="dialog" aria-label="Карточка агента" hidden></div>
+  <footer class="aw-footer"><span>Все действия проверяет сервер: персона не расширяет права, а решения не исполняют сделки.</span><span class="aw-footer-tools"><button class="btn sm" id="aw-run-demo" hidden>Запустить проверочные задачи</button></span><span id="aw-updated"></span></footer>
   <div class="aw-dock" id="aw-dock">
     <div class="aw-strip" id="aw-strip" aria-label="Команда: кто сейчас работает"></div>
     <section class="aw-log" id="aw-log" aria-label="Ход работы">
@@ -53,6 +51,6 @@
 <script src="assets/ui.js?v=20260915-dark-default1"></script>
 <script src="assets/victor.js?v=20260718-contours2"></script>
 <script src="assets/persona-audio.js?v=20260908-agent-world-persona-chat1"></script>
-<script src="assets/pages/ai-command-center.js?v=20260918-tabs-b1"></script>
+<script src="assets/pages/ai-command-center.js?v=20260918-tabs-b3"></script>
 </body>
 </html>

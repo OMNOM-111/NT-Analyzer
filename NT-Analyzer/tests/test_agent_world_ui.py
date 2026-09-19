@@ -74,10 +74,12 @@ def test_six_main_views_keep_inspectors_on_the_same_page():
     parser = Tags()
     parser.feed(PAGE.read_text(encoding="utf-8"))
     tabs = [attrs for tag, attrs in parser.tags if tag == "button" and attrs.get("role") == "tab"]
-    # Owner-chosen variant B: Обзор / Задачи / Команда / Модели / Исследования / Память.
+    # Owner-approved variant B: five planned views, then Задачи — a separate
+    # view for everything the plan did not include.
     assert [tab["data-aw-tab"] for tab in tabs] == [
-        "overview", "work", "agents", "models", "research", "memory",
+        "overview", "agents", "models", "research", "memory", "work",
     ]
+    assert tabs[-1].get("class") == "aw-tab-extra"
     assert all(tab["aria-controls"] == "aw-content" for tab in tabs)
     assert [tab["tabindex"] for tab in tabs] == ["0", "-1", "-1", "-1", "-1", "-1"]
     assert all("hidden" not in tab for tab in tabs)
@@ -86,7 +88,7 @@ def test_six_main_views_keep_inspectors_on_the_same_page():
     assert "event.key === 'Tab'" in script
     assert "event.key === 'Escape'" in script
     assert "aria-modal" in script
-    assert "const TABS = ['overview', 'work', 'agents', 'models', 'research', 'memory']" in script
+    assert "const TABS = ['overview', 'agents', 'models', 'research', 'memory', 'work']" in script
     assert "currentDrawer = UI.drawer(" in script
     assert "root.location.href" not in script
 
@@ -109,15 +111,20 @@ def test_domain_tools_remain_accessible_on_one_page_and_load_only_on_request():
     parser = Tags()
     parser.feed(PAGE.read_text(encoding="utf-8"))
     launcher = [attrs["data-aw-domain"] for tag, attrs in parser.tags if "data-aw-domain" in attrs]
-    # Technical diagnostics stay one click away in the header, outside the
-    # everyday tools. Every other tool lives in the tab it belongs to; none is
-    # dropped, and an external agent stays its own tool, never folded into Модели.
-    assert launcher == ["system"]
+    # The five planned views carry no tool buttons. Every tool that is not part
+    # of the plan, technical diagnostics included, lives in the separate Задачи
+    # view; none is dropped, and an external agent stays its own tool, never
+    # folded into Модели.
+    assert launcher == []
     tools = script.split("const TAB_TOOLS = Object.freeze({", 1)[1].split("});", 1)[0]
-    for key in ["automation", "routines", "calendar", "decisions", "personas", "models", "router",
-                "external_agents", "experiments", "memory", "projects", "publications"]:
+    assert re.findall(r"^\s+(\w+): \[", tools, re.M) == ["work"]
+    for key in ["automation", "routines", "calendar", "decisions", "personas", "router",
+                "external_agents", "experiments", "projects", "publications", "system"]:
         assert f"['{key}', " in tools, key
-    assert 'class="btn ghost aw-diagnostics" data-aw-domain="system"' in PAGE.read_text(encoding="utf-8")
+    # Models and memory keep their own entry points inside their planned views.
+    assert "data-aw-connect-model" in PAGE.read_text(encoding="utf-8")
+    assert 'data-aw-domain="models"' in script and 'data-aw-domain="memory"' in script
+    assert "key === 'system' ? ' aw-diagnostics' : ''" in script
     assert "['', ['system']]" not in script
     assert "const DOMAIN_GROUPS = Object.freeze([" in script
     assert "DOMAIN_GROUPS.map(([label, keys])" in script
@@ -127,27 +134,34 @@ def test_domain_tools_remain_accessible_on_one_page_and_load_only_on_request():
     for method in ["Domain", "DomainItem", "DomainAction"]:
         assert f"API.aiControlCenter{method}(" in script
     assert "request !== overviewGeneration" in script
-    # The environment is stated once, in plain words, next to the page title.
-    assert "context.textContent = synthetic ? 'Тестовые данные' : 'В разработке';" in script
+    # The approved header has no status chip; isolated test data is still named there.
+    assert "context.hidden = !overview?.enabled || !synthetic;" in script
+    assert "context.textContent = 'Тестовые данные';" in script
     assert "IN DEVELOPMENT" not in script
 
 
-def test_overview_places_work_results_team_and_rating_together_without_sample_values():
+def test_overview_is_a_brief_of_every_view_and_the_queue_lives_in_tasks():
     script = SCRIPT.read_text(encoding="utf-8")
     overview = script.split("function renderOverview()", 1)[1].split("function taskTable", 1)[0]
-    assert 'aw-column-work' in overview
-    assert 'aw-column-results' in overview
-    assert 'aw-column-team' in overview
-    # One attention queue, the team and the latest results sit together.
-    assert "panel('Нужно ваше действие'" in overview
-    assert "panel('Команда'" in overview
-    assert "panel('Последние результаты'" in overview
-    assert 'overviewOutcomes(overview)' in overview
-    assert 'stats.active_tasks' in overview
-    assert 'stats.completed_tasks' in overview
-    assert 'attentionKnown && number(stats.attention) === 0' in overview
-    assert 'Отсутствие данных не означает' in overview
-    assert 'n = ${count(evaluation.sample)}' in script
+    # Prototype B, cell by cell: research tiles; activity, memory and problems
+    # side by side; then the models in brief. No tools and no task list here.
+    cells = ["researchTiles()", "bcard('Недавняя активность'", "bcard('Память и уроки'",
+             "bcard('Ошибки и предупреждения'", "bcard('Модели кратко'"]
+    assert [overview.index(cell) for cell in cells] == sorted(overview.index(cell) for cell in cells)
+    assert "toolsRow(" not in overview and "taskTable(" not in overview
+    # The attention queue and the latest results moved to Задачи unchanged.
+    queue = script.split("function workQueue()", 1)[1].split("function renderWork()", 1)[0]
+    assert 'aw-column-work' in queue and 'aw-column-results' in queue
+    assert "panel('Нужно ваше действие'" in queue
+    assert "panel('Последние результаты'" in queue
+    assert 'overviewOutcomes(overview)' in queue
+    assert 'attentionKnown && number(stats.attention) === 0' in queue
+    assert 'Отсутствие данных не означает' in queue
+    work = script.split("function renderWork()", 1)[1].split("const toolsRow", 1)[0]
+    assert "workQueue()" in work and "toolsRow('work')" in work
+    # A rating over fewer than three finished tasks is NEW, never a percentage.
+    assert "const rated = stats => stats.rate != null && stats.ok + stats.bad >= 3;" in script
+
 
 
 @pytest.mark.parametrize("value", [
@@ -236,19 +250,20 @@ def test_working_runtime_agent_alias_has_running_style_and_active_filter():
     assert result["active"] is True and result["waiting"] is False
 
 
-def test_compact_overview_boots_without_hidden_tab_nodes_or_extra_api_requests():
-    result = evaluate("""(async () => {
+def boot_page(hash="", agent=""):
+    """Boot the real page against a stubbed DOM; optionally open one agent card."""
+    return evaluate("""(async () => {
       const fs = require('node:fs'), vm = require('node:vm');
       let started, requests = 0;
-      const nodes = new Map();
-      const tabs = ['overview','work','agents'].map(key => ({dataset:{awTab:key},setAttribute(){}}));
+      const nodes = new Map(), listeners = {};
+      const tabs = ['overview','agents','models','research','memory','work'].map(key => ({dataset:{awTab:key},setAttribute(){}}));
       const node = key => {
         if (!nodes.has(key)) nodes.set(key,{innerHTML:'',textContent:'',hidden:false,
-          setAttribute(){},addEventListener(){},classList:{toggle(){}},contains(){return false;},
+          setAttribute(){},addEventListener(){},classList:{toggle(){}},contains(value){return Boolean(value && value.inPage);},
           querySelectorAll(selector){return selector.includes('[data-aw-tab]')?tabs:[];}});
         return nodes.get(key);
       };
-      const document = {querySelector:node,addEventListener(){},removeEventListener(){}};
+      const document = {querySelector:node,addEventListener(type,fn){listeners[type]=fn;},removeEventListener(){}};
       const data = {enabled:true,scope:{synthetic:false},capabilities:{can_run_demo:false},
         stats:{active_tasks:0,completed_tasks:1,agents:1,attention:0},attention:[],
         agents:[{id:'persona-1',display_name:'<Agent>',status:'idle',evaluation:{sample_size:1,score_pct:100}}],
@@ -256,28 +271,45 @@ def test_compact_overview_boots_without_hidden_tab_nodes_or_extra_api_requests()
         outcomes:[{title:'<script>unsafe()</script>',summary:'Recorded NT result',task_id:'task-2',synthetic:false,source_kind:'ninjatrader_report',source_job_id:'nt-2',status:'verified'},
           {title:'Actual Desktop capture',task_id:'task-3',synthetic:false,source_kind:'desktop_chart',artifact:{url:'/api/ops/runtime/snapshots/cs_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.jpg',title:'Recorded image',media_type:'image/jpeg'}}]};
       const window = {UI:{ready(fn){started=fn();},signal(){},onLeave(){},wireAgentFaces(){}},
-        API:{http:{async aiControlCenterOverview(){requests++;return data;}}},
-        location:{hash:'',search:''}};
+        API:{http:{async aiControlCenterOverview(){requests++;return data;},
+          async aiControlCenterTasks(){requests++;return {items:data.tasks,next_cursor:null};}}},
+        location:{hash:HASH,search:''}};
       const source = fs.readFileSync(require.resolve(PATH_TO_SCRIPT),'utf8');
       vm.runInNewContext(source,{window,document,URLSearchParams,Date});
       await started;
-      return {requests,html:node('#aw-content').innerHTML,pulse:node('#aw-pulse').innerHTML};
-    })()""".replace("PATH_TO_SCRIPT", json.dumps(str(SCRIPT))))
-    assert result["requests"] == 1
-    assert all(name in result["html"] for name in [
-        "aw-column-work", "aw-column-results", "aw-column-team",
-    ]), result["html"]
-    assert "NEW" in result["html"]
-    # The mini card leads with the observation count rather than "n = N";
-    # the claim it must keep making is that the sample size is visible.
-    assert "1 наблюдение" in result["html"]
-    assert "<script>unsafe()" not in result["html"]
-    assert "&lt;script&gt;unsafe()&lt;/script&gt;" in result["html"]
-    assert "/ui/backtesting.html?job=nt-2" in result["html"]
-    assert "Recorded NT result" in result["html"]
-    # The environment moved to the header chip; the overview leads with the queue.
-    assert "Нужно ваше действие" in result["html"]
-    assert '<img src="' + DESKTOP_ARTIFACT + '"' in result["html"]
+      const agent = AGENT;
+      if (agent) {
+        const target = {inPage:true,tagName:'BUTTON',dataset:{awAgentCard:agent},
+          hasAttribute(){return false;},closest(selector){return selector==='button, a'?target:null;}};
+        listeners.click({target});
+      }
+      return {requests,html:node('#aw-content').innerHTML,card:node('#aw-agent-pop').innerHTML,pulse:node('#aw-pulse').innerHTML};
+    })()""".replace("HASH", json.dumps(hash)).replace("AGENT", json.dumps(agent))
+           .replace("PATH_TO_SCRIPT", json.dumps(str(SCRIPT))))
+
+
+def test_compact_overview_boots_without_hidden_tab_nodes_or_extra_api_requests():
+    overview = boot_page()
+    # One read: the overview carries its own brief of every view.
+    assert overview["requests"] == 1
+    for cell in ["aw-btiles", "Недавняя активность", "Память и уроки", "Ошибки и предупреждения", "Модели кратко"]:
+        assert cell in overview["html"], cell
+
+    work = boot_page("#tab=work")
+    assert all(name in work["html"] for name in ["aw-work-view", "aw-column-work", "aw-column-results"]), work["html"]
+    assert "<script>unsafe()" not in work["html"]
+    assert "&lt;script&gt;unsafe()&lt;/script&gt;" in work["html"]
+    assert "/ui/backtesting.html?job=nt-2" in work["html"]
+    assert "Recorded NT result" in work["html"]
+    assert "Нужно ваше действие" in work["html"]
+    assert '<img src="' + DESKTOP_ARTIFACT + '"' in work["html"]
+
+    team = boot_page("#tab=agents", "persona-1")
+    assert "&lt;Agent&gt;" in team["html"] and "<Agent>" not in team["html"] + team["card"]
+    # An insufficient sample is NEW, and the sample size stays visible.
+    assert "NEW" in team["card"]
+    assert "1 наблюдение" in team["card"]
+
 
 
 @pytest.mark.parametrize("suffix", ["jpg", "png", "webp"])

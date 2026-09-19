@@ -2,7 +2,7 @@
 from uuid import UUID
 
 from .. import account_auth, permissions, workspaces
-from . import live_gateway as gateway, live_charts, domain_gateway, overview_snapshot
+from . import live_gateway as gateway, live_charts, domain_gateway, overview_snapshot, overview_summaries
 from .live_backtests import LiveBacktestService
 from .states import ContractError
 
@@ -83,7 +83,10 @@ def handle_get(handler, path, qs):
             handler._json(200, domain_gateway.history_projection(authorized, result, domain=parts[1]))
             return
         authorized = domain_gateway.from_handler(handler, read_only=True)
-        build = lambda: domain_gateway.enrich_overview(authorized, _base_overview(authorized))  # noqa: E731
+        # The overview is "кратко обо всём": the tab summaries come in the same
+        # response, each read through its own domain admission.
+        build = lambda: {**domain_gateway.enrich_overview(authorized, _base_overview(authorized)),  # noqa: E731
+                         "summaries": overview_summaries.build(authorized)}
         if route == "overview":
             # ?cached=1 asks for the previous overview of this exact
             # authorization for an immediate first paint; the page then reads

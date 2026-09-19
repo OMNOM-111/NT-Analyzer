@@ -473,6 +473,8 @@ def _strategy_node(exp: Dict[str, Any], policy: Dict[str, Any]) -> Dict[str, Any
         "qualifies": _qualifies(exp, policy),
         "profit_factor": pf,
         "net_profit": pnl,
+        # Deepest equity drop after commission, in account currency (negative).
+        "max_drawdown": _metric(exp, "dd_after_commission", "max_drawdown"),
         "variant_count": _variant_count(exp),
         "variants": variants,
         "best_parameter_variant": best_parameter_variant,
