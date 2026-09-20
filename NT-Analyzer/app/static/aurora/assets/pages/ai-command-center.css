@@ -588,7 +588,6 @@ div.aw-act { cursor: default; }
 .aw-todo-done span { text-decoration: line-through; }
 .aw-todo-done i { border-color: var(--pos); color: var(--pos); }
 .aw-goal-add { margin-top: 12px; display: inline-flex; align-items: center; gap: 6px; }
-.aw-goal-add[aria-disabled="true"] { opacity: .7; cursor: help; }
 .aw-corner .aw-bcard { margin-bottom: 0; }
 .aw-strip-sep { width: 1px; height: 26px; background: var(--line-2); margin: 0 4px; flex: none; }
 .aw-strip-face .aw-avatar { width: 30px; height: 30px; border-radius: 50%; }

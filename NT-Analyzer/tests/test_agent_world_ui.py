@@ -1091,3 +1091,14 @@ def test_memory_keeps_our_strategies_apart_from_the_public_reference_library():
     # The graph turns under the mouse and stops with its view.
     assert "function mountGraph3d()" in script and "pointermove" in script and "svg.isConnected" in script
 
+
+def test_the_goal_is_written_and_changed_from_the_corner():
+    script = SCRIPT.read_text(encoding="utf-8")
+    corner = script.split("function renderCorner()", 1)[1].split("function openGoal()", 1)[0]
+    assert "data-aw-goal" in corner and "Цель ещё не задана" in corner
+    assert "Считаются только стратегии на демо-счёте" in corner
+    save = script.split("async function saveGoal(form, clear)", 1)[1].split("function renderDock()", 1)[0]
+    assert "API.aiControlCenterGoalSave(clear ? { title: '' }" in save
+    # A date without a time is a calendar day, read in the owner's timezone.
+    assert "new Date(parts[0], parts[1] - 1, parts[2])" in script
+

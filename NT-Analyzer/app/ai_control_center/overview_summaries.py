@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from . import domain_gateway
+from . import domain_gateway, goals
 from .states import ContractError
 
 READ_LIMIT = 50
@@ -177,6 +177,7 @@ def _lab_models(authorized):
 
 def build(authorized):
     return {
+        "goal": _guard(lambda: goals.read(authorized)),
         "memory": _guard(lambda: _memory(authorized)),
         "models": _guard(lambda: _models(authorized)),
         "research": _guard(lambda: _research(authorized)),

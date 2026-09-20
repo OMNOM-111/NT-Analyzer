@@ -1786,17 +1786,61 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     // is left in place so faces do not reload and the log keeps its scroll.
     const painted = new WeakMap();
     const paint = (node, html) => { if (node && painted.get(node) !== html) { node.innerHTML = html; painted.set(node, html); } };
+    // The goal is the owner's own sentence: what it is, by when, for how much,
+    // and the task for this week. Progress counts only strategies trading on
+    // the demo account, so nothing else is added to it here.
+    const HORIZONS = Object.freeze([['', 'срок не задан'], ['month', 'Месяц'], ['quarter', 'Квартал'], ['year', 'Год']]);
+    function goalHeader(goal) {
+      // A date without a time is a calendar day, not an instant: build it in the
+      // reader's own timezone so it never slips to the day before.
+      const parts = String(goal.deadline || '').split('-').map(Number);
+      const deadline = parts.length === 3 && parts.every(Number.isFinite) ? new Date(parts[0], parts[1] - 1, parts[2]) : null;
+      const until = deadline && Number.isFinite(deadline.getTime()) ? ' · до ' + deadline.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }) : '';
+      return esc((goal.horizon_label || 'срок не задан') + (goal.title ? until : ''));
+    }
     function renderCorner() {
       const box = qs('#aw-corner');
       if (!box) return;
       if (!overview?.enabled) { paint(box, ''); return; }
       const todays = rows(overview.tasks).filter(task => { const when = new Date(task.updated_at || task.created_at); return !Number.isNaN(when.getTime()) && sameDay(when); }).slice(0, 5);
       const done = task => taskOutcome(task) === 'ok';
-      paint(box, `<section class="aw-bcard aw-goal"><header class="aw-bcard-h"><span class="aw-icbox aw-t-green">${icon('goal')}</span><h2>Цель</h2><span class="aw-bcard-more aw-muted">срок не задан</span></header><div class="aw-bcard-b">`
-        + `<div class="aw-goal-title">Цель ещё не задана</div><div class="aw-goal-bar"><span style="width:0"></span></div><div class="aw-goal-row"><span><b>$0</b> <span class="aw-muted">из —</span></span><span class="aw-muted">0%</span></div>`
-        + `<p class="aw-goal-note">Считаются только стратегии на демо-счёте</p><h3>Задача на неделю</h3><div class="aw-goal-week">Появится после того, как вы добавите цель.</div>`
+      const goal = overview?.summaries?.goal && !overview.summaries.goal.unavailable ? overview.summaries.goal : { title: '' };
+      const target = number(goal.target_usd) || 0, progress = number(goal.progress_usd) || 0;
+      const share = target > 0 ? Math.min(100, progress / target * 100) : 0;
+      paint(box, `<section class="aw-bcard aw-goal"><header class="aw-bcard-h"><span class="aw-icbox aw-t-green">${icon('goal')}</span><h2>Цель</h2><span class="aw-bcard-more aw-muted">${goalHeader(goal)}</span></header><div class="aw-bcard-b">`
+        + `<div class="aw-goal-title">${goal.title ? esc(goal.title) : 'Цель ещё не задана'}</div><div class="aw-goal-bar"><span style="width:${share.toFixed(1)}%"></span></div>`
+        + `<div class="aw-goal-row"><span><b>${esc(money(progress))}</b> <span class="aw-muted">из ${target > 0 ? esc(money(target)) : '—'}</span></span><span class="aw-muted">${target > 0 ? esc(pct(share)) : '0%'}</span></div>`
+        + `<p class="aw-goal-note">Считаются только стратегии на демо-счёте${goal.title && target > 0 ? '. Прогресс появится, когда стратегия начнёт торговать на демо-счёте.' : ''}</p>`
+        + `<h3>Задача на неделю</h3><div class="aw-goal-week">${goal.weekly_task ? esc(goal.weekly_task) : goal.title ? 'Задача на неделю не записана.' : 'Появится после того, как вы добавите цель.'}</div>`
         + `<h3>Сегодня</h3>${todays.length ? `<div class="aw-todo">${todays.map(task => `<button class="aw-todo-row${done(task) ? ' aw-todo-done' : ''}" data-aw-task="${esc(taskId(task))}"><i aria-hidden="true">${done(task) ? icon('check', 11) : ''}</i><span>${esc(taskTitle(task))}</span>${avatar(task.lead, 'xs')}</button>`).join('')}</div>` : '<p class="aw-goal-empty">Сегодня задач ещё не было.</p>'}`
-        + `<button class="btn sm aw-goal-add" aria-disabled="true" data-aw-soon="Цели появятся на следующем этапе: своя формулировка, срок и прогресс только по стратегиям на демо-счёте.">${icon('plus', 14)}Добавить цель</button></div></section>`);
+        + `<button class="btn sm aw-goal-add" data-aw-goal>${icon('plus', 14)}${goal.title ? 'Изменить цель' : 'Добавить цель'}</button></div></section>`);
+    }
+    function openGoal() {
+      const goal = overview?.summaries?.goal && !overview.summaries.goal.unavailable ? overview.summaries.goal : { title: '' };
+      ++detailGeneration; detailKind = 'goal'; actionForm = null;
+      openDrawer(goal.title ? 'Изменить цель' : 'Добавить цель', `<form id="aw-goal-form" class="aw-connect">`
+        + `<p class="aw-muted">Цель своими словами: что должно получиться. Прогресс считается только по стратегиям, которые торгуют на демо-счёте; бэктесты в него не входят.</p>`
+        + `<label>Цель<input name="title" maxlength="160" required value="${esc(goal.title || '')}" placeholder="например, Стратегии на демо-счёте приносят $3 000"></label>`
+        + `<label>Срок<select name="horizon">${HORIZONS.map(([key, label]) => `<option value="${key}"${key === (goal.horizon || '') ? ' selected' : ''}>${esc(label)}</option>`).join('')}</select></label>`
+        + `<label>Сумма цели, $<input name="target_usd" type="number" min="0" step="100" value="${esc(String(number(goal.target_usd) || 0))}"></label>`
+        + `<label>Задача на неделю<input name="weekly_task" maxlength="240" value="${esc(goal.weekly_task || '')}" placeholder="Одно предложение: что сделать за неделю"></label>`
+        + `<p class="aw-hire-error" hidden></p><div class="aw-actions"><button class="btn primary" type="submit">Сохранить</button>${goal.title ? '<button class="btn" type="button" data-aw-goal-clear>Убрать цель</button>' : ''}</div></form>`, { size: 'card' });
+      const form = currentDrawer && qs('#aw-goal-form', currentDrawer);
+      form?.addEventListener('submit', event => { event.preventDefault(); void saveGoal(form, false); });
+      qs('[data-aw-goal-clear]', form)?.addEventListener('click', () => { void saveGoal(form, true); });
+      form?.elements.title.focus();
+    }
+    async function saveGoal(form, clear) {
+      const values = Object.fromEntries(new FormData(form).entries()), error = qs('.aw-hire-error', form);
+      qsa('button, input, select', form).forEach(input => { input.disabled = true; });
+      try {
+        await API.aiControlCenterGoalSave(clear ? { title: '' } : { title: String(values.title || '').trim(), horizon: values.horizon || '',
+          target_usd: Number(values.target_usd) || 0, weekly_task: String(values.weekly_task || '').trim() });
+        UI.closeDrawer(); announce(clear ? 'Цель убрана.' : 'Цель сохранена.'); await refresh();
+      } catch (reason) {
+        error.textContent = reason?.message || 'Не удалось сохранить цель.'; error.hidden = false;
+        qsa('button, input, select', form).forEach(input => { input.disabled = false; });
+      }
     }
     function renderDock() {
       const strip = qs('#aw-strip'), body = qs('#aw-log-body');
@@ -2679,10 +2723,10 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (target.dataset.awRename) { openRename(target.dataset.awRename, target); return; }
       if (target.hasAttribute('data-aw-auto-team')) { void autoTeam(target); return; }
       if (target.hasAttribute('data-aw-new-research')) { openNewResearch(); return; }
+      if (target.hasAttribute('data-aw-goal')) { openGoal(); return; }
       if (target.dataset.awResearch) { researchPick = Number(target.dataset.awResearch) || 0; renderResearch(); return; }
       if (target.hasAttribute('data-aw-open-log')) { toggleLog(true); qs('#aw-log-toggle')?.focus?.(); return; }
       if (target.hasAttribute('data-aw-graph-toggle')) { graphOpen = !graphOpen; renderMemory(); return; }
-      if (target.dataset.awSoon) { announce(target.dataset.awSoon); return; }
       if (target.dataset.awAsk) { askManager(target.dataset.awAsk, target); return; }
       if (target.hasAttribute('data-aw-show-tests')) { showTests = !showTests; renderWork(); return; }
       if (target.tagName === 'A' || target.dataset.awTaskChat || target.dataset.awFollowupChat || target.dataset.awChartChat || target.hasAttribute('data-aw-real-chat')) stopPersonaAudio();

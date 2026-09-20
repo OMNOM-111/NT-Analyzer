@@ -2,7 +2,7 @@
 from uuid import UUID
 
 from .. import account_auth, permissions, workspaces
-from . import live_gateway as gateway, live_charts, domain_gateway, overview_snapshot, overview_summaries
+from . import live_gateway as gateway, live_charts, domain_gateway, goals, overview_snapshot, overview_summaries
 from .live_backtests import LiveBacktestService
 from .states import ContractError
 
@@ -98,6 +98,8 @@ def handle_get(handler, path, qs):
                                     "snapshot": {"cached": True, "computed_at": computed_at}})
             else:
                 handler._json(200, domain_gateway.history_projection(authorized, overview_snapshot.fresh(authorized, build)))
+        elif route == "goal":
+            handler._json(200, {"goal": goals.read(authorized)})
         elif route == "tasks":
             handler._json(200, domain_gateway.history_projection(authorized, {"items": overview_snapshot.fresh(authorized, build)["tasks"], "next_cursor": None, "read_limit": 200}, domain="tasks"))
         elif route.startswith("tasks/") and len(route.split("/")) == 2:
@@ -139,6 +141,10 @@ def handle_post(handler, path):
                     handler._err(409, "Озвучивание сейчас недоступно; текст и аватар сохранены.", code="persona_voice_unavailable")
                 return
             handler._json(200, domain_gateway.mutate(authorized, parts[1], parts[2], parts[3], body))
+            return
+        if route == "goal":
+            authorized = domain_gateway.from_handler(handler)
+            handler._json(200, {"goal": goals.save(authorized, body.get("goal") if isinstance(body.get("goal"), dict) else body)})
             return
         if route == "backtests":
             authorized = gateway.from_handler(handler)
