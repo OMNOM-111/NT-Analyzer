@@ -7,10 +7,10 @@ import pytest
 
 AURORA = Path(__file__).resolve().parents[1] / "app" / "static" / "aurora"
 # The screens kept only for сверка; nothing of the working path goes through them.
-ARCHIVED = ("ai-agents.html", "ai-lab.html", "documents.html")
+ARCHIVED = ("ai-agents.html", "ai-lab.html")
 WORKING = ("index.html", "backtesting.html", "trading.html", "desktop.html", "performance.html",
            "strategies.html", "news.html", "community.html", "topstep.html", "practice-trading.html",
-           "ai-command-center.html")
+           "ai-command-center.html", "documents.html")
 
 
 @pytest.mark.parametrize("page", WORKING)
@@ -46,8 +46,21 @@ def test_the_duty_panel_left_the_strategies_page_without_breaking_it():
 
 def test_the_old_entries_leave_the_rail_once_the_agent_world_is_on():
     ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
-    assert "const LEGACY_NAV_IDS = new Set(['agents', 'docs']);" in ui
+    assert "const LEGACY_NAV_IDS = new Set(['agents']);" in ui
     assert "if (worldEnabled && LEGACY_NAV_IDS.has(id)) {" in ui
+
+
+def test_the_documentation_section_stays_in_the_product():
+    """«Документы» is the product's own documentation base, not a legacy screen."""
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    nav = ui.split("const NAV = [", 1)[1].split("];", 1)[0]
+    lines = [line for line in nav.splitlines() if "data-nav" not in line and line.strip().startswith("{")]
+    ids = [line.split("id: '", 1)[1].split("'", 1)[0] for line in lines]
+    # Its own place in the rail, below TopStep, and nothing hides it.
+    assert ids[-2:] == ["topstep", "docs"]
+    assert "legacy-guard" not in (AURORA / "documents.html").read_text(encoding="utf-8")
+    page = (AURORA / "assets" / "pages" / "ai-command-center.js").read_text(encoding="utf-8")
+    assert "documents.html" not in page
 
 
 def test_the_ai_center_says_where_the_old_screens_went():
@@ -55,6 +68,8 @@ def test_the_ai_center_says_where_the_old_screens_went():
     listing = script.split("const LEGACY_SCREENS", 1)[1].split("function legacyCard()", 1)[0]
     for page in ARCHIVED:
         assert page in listing
+    # The documentation base is not among them; it is a section of its own.
+    assert "documents.html" not in listing
     assert "Убраны из рабочего пути" in script
 
 

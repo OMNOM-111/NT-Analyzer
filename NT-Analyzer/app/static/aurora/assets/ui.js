@@ -1966,7 +1966,9 @@
   // Screens of the previous architecture. Once the Agent World is on they
   // leave the rail: the working path runs through the AI Center, and these
   // stay reachable by their own address only, for сверка (owner, 20.09.2026).
-  const LEGACY_NAV_IDS = new Set(['agents', 'docs']);
+  // «Документы» is not one of them: it is the product's own documentation base
+  // - architecture, laws, rules, decisions, history - and keeps its place.
+  const LEGACY_NAV_IDS = new Set(['agents']);
 
   function isStudentContour(auth) {
     const source = auth || {};
