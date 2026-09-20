@@ -1122,12 +1122,69 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         + `<div class="aw-column aw-column-results">${panel('Последние результаты', outcomes.length ? `<div class="aw-outcomes">${outcomes.map(outcomeCard).join('')}</div>` : smallEmpty('Результатов пока нет. Отчёты, снимки и ответы появятся здесь с указанием источника.'))}</div></div>`;
     }
     let showTests = false;
+    const duty = () => cachedDomain('duty') || null;
+    function dutyQuestions() {
+      const state = duty();
+      const questions = rows(state?.questions);
+      if (!state || state.unavailable) return '';
+      if (!questions.length) return `<section class="aw-bcard aw-duty"><header class="aw-bcard-h"><span class="aw-icbox aw-t-green">${icon('check')}</span><h2>Решения</h2>`
+        + `<span class="aw-bcard-more aw-muted">${esc(state.mode === 'free' ? 'команда свободна' : state.message || '')}</span></header>`
+        + `<div class="aw-bcard-b"><div class="aw-calm"><span class="aw-clean-mark" aria-hidden="true">✓</span><span>Решений от вас сейчас не ждут. Заместитель принесёт вопрос сюда, как только он появится.</span></div></div></section>`;
+      return `<section class="aw-bcard aw-duty"><header class="aw-bcard-h"><span class="aw-icbox aw-t-red">${icon('alert')}</span><h2>Нужно ваше решение</h2>`
+        + `<span class="aw-bcard-more aw-muted">принёс Заместитель · ${count(state.question_count)}</span></header><div class="aw-bcard-b"><div class="aw-stack">`
+        + questions.map(dutyCard).join('') + '</div></div></section>';
+    }
+    function dutyCard(question) {
+      const buttons = question.kind === 'incident'
+        ? rows(question.decisions).map(choice => `<button class="btn sm${choice.value === 'create_task' ? ' primary' : ''}" data-aw-duty-decide="${esc(question.id)}" data-aw-decision="${esc(choice.value)}">${esc(choice.label)}</button>`).join('')
+        : `<button class="btn sm primary" data-aw-duty-answer="${esc(question.id)}">Ответить</button>`;
+      return `<article class="aw-duty-card aw-al-${esc(question.level || 'info')}"><div class="aw-duty-head"><strong>${esc(question.title)}</strong>`
+        + `<time>${esc(question.at_utc ? clock(question.at_utc) : '')}</time></div>`
+        + (question.detail ? `<p class="aw-duty-detail">${esc(String(question.detail).slice(0, 400))}</p>` : '')
+        + (question.recommendation ? `<p class="aw-muted">Предложение: ${esc(question.recommendation)}</p>` : '')
+        + `<div class="aw-actions">${buttons}</div></article>`;
+    }
+    async function dutyDecide(id, decision, button) {
+      if (button) button.disabled = true;
+      try {
+        await API.aiControlCenterDutyDecide(id, decision, '');
+        announce('Решение передано Заместителю.'); domainCache.delete('duty'); await refresh();
+      } catch (reason) { UI.toast(reason?.message || 'Заместитель не смог применить решение.'); if (button) button.disabled = false; }
+    }
+    async function dutyAnswer(id) {
+      const text = await UI.promptDialog?.({ title: 'Ответ Заместителю', label: 'Что ответить по этому поручению?', confirmText: 'Отправить' });
+      if (!text) return;
+      try {
+        await API.aiControlCenterDutyAnswer(id, String(text));
+        announce('Ответ передан.'); domainCache.delete('duty'); await refresh();
+      } catch (reason) { UI.toast(reason?.message || 'Ответ не принят.'); }
+    }
+    async function dutyControl(action, button) {
+      if (button) button.disabled = true;
+      try {
+        if (action === 'pause') await API.aiControlCenterDutyPause(60, 'Решение владельца');
+        else if (action === 'resume') await API.aiControlCenterDutyResume();
+        else await API.aiControlCenterDutyCheck();
+        announce(action === 'pause' ? 'Команда на паузе.' : action === 'resume' ? 'Команда вернулась к работе.' : 'Проверка запущена.');
+        domainCache.delete('duty'); await refresh();
+      } catch (reason) { UI.toast(reason?.message || 'Не удалось выполнить.'); } finally { if (button) button.disabled = false; }
+    }
+    function teamControl() {
+      const state = duty();
+      if (!state || state.unavailable) return '';
+      const resting = state.resting?.active;
+      const working = rows(state.working).filter(row => row.working);
+      return `<div class="aw-team-control"><span class="aw-team-state${resting ? ' aw-warn' : ''}">${resting ? 'Команда на паузе' : working.length ? `Сейчас работают: ${esc(working.map(row => row.name).join(', '))}` : 'Команда свободна'}</span>`
+        + `<span class="aw-team-buttons">${resting ? '<button class="btn sm primary" data-aw-duty="resume">Вернуть к работе</button>' : '<button class="btn sm" data-aw-duty="pause">Дать паузу на час</button>'}`
+        + `<button class="btn sm" data-aw-duty="check">Проверить сейчас</button></span></div>`;
+    }
     function renderWork() {
       const tests = workRows.filter(task => !ownerFacing(task)).length;
       const filters = { all: 'Все', attention: 'Нужно ваше действие', active: 'В работе', waiting: 'Ждут результата', review: 'Ждут решения', completed: 'Завершённые', failed: 'Ошибки' };
       // A separate view for what the five planned views do not cover: checking
       // and accepting results, the full task list and the extra tools.
       content.innerHTML = `<div class="aw-work-view"><div class="aw-work-intro"><div><h2>Задачи</h2><p>Вопросы к вам, результаты на приём и все поручения команды.</p></div></div>`
+        + dutyQuestions()
         + workQueue()
         + `<div class="aw-toolbar"><div class="aw-filters" aria-label="Фильтр задач">${Object.entries(filters).map(([key, label]) => `<button class="aw-filter" data-aw-filter="${key}" aria-pressed="${filter === key}">${label}</button>`).join('')}</div><input type="search" id="aw-task-search" class="aw-search" placeholder="Найти задачу или агента…" aria-label="Поиск задач" maxlength="160" value="${esc(query)}"></div>`
         + `<div id="aw-work-table">${taskTable(workRows.filter(task => (showTests || ownerFacing(task)) && taskMatches(task, filter, query)))}</div>`
@@ -1137,9 +1194,22 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     // Legacy / Архив: the old «AI агенты» registry, frozen and read-only. It is
     // kept here, outside the five planned views, because it is not part of the
     // working system: nothing routes, rates or executes from it any more.
+    // The screens of the previous architecture: out of the working path,
+    // readable by their own address for сверка, unable to change anything.
+    const LEGACY_SCREENS = Object.freeze([
+      ['ai-agents.html?legacy=1', 'AI Agents', 'старый реестр моделей, ключей и квот — теперь архив и вкладка «Модели»'],
+      ['ai-lab.html?legacy=1', 'AI Lab', 'прежний исследовательский контур — теперь вкладка «Исследования»'],
+      ['documents.html', 'Документы', 'прежний просмотр внутренних документов — теперь вкладка «Память»'],
+    ]);
+    function legacyScreens() {
+      return `<h3>Экраны прежней архитектуры</h3><p class="aw-muted">Убраны из рабочего пути. Открыть можно для сверки: смотреть — да, изменить оттуда что-либо — нет.</p>`
+        + `<ul class="aw-legacy-list">${LEGACY_SCREENS.map(([href, title, note]) => `<li><a href="${esc(href)}" target="_blank" rel="noopener">${esc(title)}</a> — ${esc(note)}</li>`).join('')}</ul>`;
+    }
     function legacyCard() {
       const legacy = overview?.summaries?.legacy;
-      if (!legacy || legacy.unavailable || !legacy.archived) return '';
+      if (!legacy || legacy.unavailable) return '';
+      if (!legacy.archived) return `<section class="aw-bcard aw-legacy"><header class="aw-bcard-h"><span class="aw-icbox aw-t-gray">${icon('archive')}</span><h2>Legacy / Архив</h2></header>`
+        + `<div class="aw-bcard-b">${legacyScreens()}</div></section>`;
       const when = legacy.frozen_at_utc ? clock(legacy.frozen_at_utc) : '';
       return `<section class="aw-bcard aw-legacy"><header class="aw-bcard-h"><span class="aw-icbox aw-t-gray">${icon('archive')}</span><h2>Legacy / Архив</h2>`
         + `<span class="aw-bcard-more aw-muted">старый реестр «AI агенты»${when ? ' · снят ' + esc(when) : ''}</span></header><div class="aw-bcard-b">`
@@ -1147,6 +1217,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         + `<div class="aw-legacy-nums"><span><b>${count(legacy.models)}</b> моделей</span><span><b>${count(legacy.calls)}</b> вызовов в истории</span>`
         + `<span class="${legacy.reconciled ? 'aw-ok' : 'aw-warn'}">${legacy.reconciled ? 'сверка сошлась' : 'сверка не сошлась'}</span></div>`
         + `<div class="aw-actions"><button class="btn sm" data-aw-legacy="agents">Как было устроено</button><button class="btn sm" data-aw-legacy="calls">История работ</button><button class="btn sm" data-aw-legacy="report">Отчёт сверки</button></div>`
+        + legacyScreens()
         + `</div></section>`;
     }
     const LEGACY_VIEWS = { agents: 'Старый реестр: как было устроено', calls: 'Старый реестр: история работ', report: 'Сверка: архив → миграция → новый реестр' };
@@ -1237,8 +1308,8 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const scope = domainScope();
       // The owner's research catalogue belongs to the AI Lab; it is read only
       // when the Исследования tab opens and only through the Lab's own route.
-      const lab = { lab_research: API.aiResearches, knowledge: API.aiKnowledgeBase }[key];
-      const request = key in { lab_research: 1, knowledge: 1 }
+      const lab = { lab_research: API.aiResearches, knowledge: API.aiKnowledgeBase, duty: API.aiControlCenterDuty }[key];
+      const request = key in { lab_research: 1, knowledge: 1, duty: 1 }
         ? (lab ? lab({ signal }) : Promise.reject({ status: 404 }))
         : API.aiControlCenterDomain(key, { limit: 50 }, { signal });
       const read = request
@@ -1363,7 +1434,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const agents = rows(overview.agents);
       const hint = '<span class="aw-bcard-hint">управляющий здесь вы: поручение идёт Заместителю, он распределяет работу, контролирует и возвращает итог; спорное — судьям, историю ведёт Секретарь</span>';
       content.innerHTML = agents.length
-        ? bcard('Иерархия', 'users', 'green', autoTeamButton(agents) + teamChart(agents), hint) + bcard('Персонал', 'users', 'blue', staffTable(agents))
+        ? bcard('Иерархия', 'users', 'green', teamControl() + autoTeamButton(agents) + teamChart(agents), hint) + bcard('Персонал', 'users', 'blue', staffTable(agents))
         : bcard('Иерархия', 'users', 'green', empty('Команда пока пуста', 'Сформируйте команду автоматически или нажмите на свободное место в схеме.', '<button class="btn primary" data-aw-auto-team>Сформировать команду автоматически</button>'), hint);
     }
     // The agent card is one element of the page: filled when a face or a card
@@ -2045,7 +2116,12 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       content.setAttribute('aria-busy', 'true');
       try {
         if (tab === 'overview') preserveView(content, renderOverview);
-        else if (tab === 'agents') preserveView(content, renderAgents);
+        else if (tab === 'agents') {
+          // The deputy's own state - who works, whether the team rests.
+          if (!cachedDomain('duty')) await loadDomain('duty');
+          if (request !== generation || disposed) return;
+          preserveView(content, renderAgents);
+        }
         else if (tab === 'work') {
           let result = options.workResult;
           if (!result) {
@@ -2057,6 +2133,9 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
           if (options.background && backgroundReadBlocked()) return;
           workRows = append ? workRows.concat(items(result)) : items(result);
           nextCursor = result?.next_cursor || null;
+          // The questions the deputy brings from the duty controller.
+          if (!cachedDomain('duty')) await loadDomain('duty');
+          if (request !== generation || disposed) return;
           preserveView(content, renderWork);
         }
         else if (TAB_DATA[tab]) {
@@ -2784,6 +2863,9 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (target.hasAttribute('data-aw-new-research')) { openNewResearch(); return; }
       if (target.hasAttribute('data-aw-goal')) { openGoal(); return; }
       if (target.hasAttribute('data-aw-legacy')) { void openLegacy(target.getAttribute('data-aw-legacy')); return; }
+      if (target.hasAttribute('data-aw-duty-decide')) { void dutyDecide(target.getAttribute('data-aw-duty-decide'), target.getAttribute('data-aw-decision'), target); return; }
+      if (target.hasAttribute('data-aw-duty-answer')) { void dutyAnswer(target.getAttribute('data-aw-duty-answer')); return; }
+      if (target.hasAttribute('data-aw-duty')) { void dutyControl(target.getAttribute('data-aw-duty'), target); return; }
       if (target.dataset.awResearch) { researchPick = Number(target.dataset.awResearch) || 0; renderResearch(); return; }
       if (target.hasAttribute('data-aw-open-log')) { toggleLog(true); qs('#aw-log-toggle')?.focus?.(); return; }
       if (target.hasAttribute('data-aw-graph-toggle')) { graphOpen = !graphOpen; renderMemory(); return; }

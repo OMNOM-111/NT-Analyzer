@@ -32,7 +32,7 @@ UI.ready(async function () {
   const SEVERITY_LABELS = { critical: 'критично', error: 'ошибка', warning: 'предупреждение', task: 'задача', info: 'информация' };
 
   function renderVitek() {
-    if (!vitekDoc) return;
+    if (!vitekDoc || !UI.qs('#vitek-panel')) return;
     const mode = vitekDoc.mode || 'free';
     const incidents = (vitekDoc.incidents || []).filter(row => OPEN_INCIDENTS.has(row.status) && row.owner_decision_required);
     const tasks = (vitekDoc.tasks || []).filter(row => ACTIVE_TASKS.has(row.status));
@@ -92,7 +92,7 @@ UI.ready(async function () {
   }
 
   async function loadVitek() {
-    if (vitekLoading) return;
+    if (vitekLoading || !UI.qs('#vitek-panel')) return;
     vitekLoading = true;
     try {
       [vitekDoc, timeWindows] = await Promise.all([API.http.vitekStatus(), API.http.vitekTimeWindows()]);
@@ -104,7 +104,7 @@ UI.ready(async function () {
   }
 
   async function refreshVitekStatus() {
-    if (vitekLoading || document.hidden) return;
+    if (vitekLoading || document.hidden || !UI.qs('#vitek-panel')) return;
     vitekLoading = true;
     try { vitekDoc = await API.http.vitekStatus(); renderVitek(); }
     catch (error) { /* initial loader shows connectivity errors; background refresh stays quiet */ }
@@ -320,7 +320,8 @@ UI.ready(async function () {
         finally { notesBtn.disabled = false; }
       };
       const victorBtn = UI.qs('#sd-assign-victor');
-      if (victorBtn) victorBtn.onclick = () => Victor.openAssignment({
+      if (victorBtn && typeof Victor === 'undefined') victorBtn.hidden = true;
+      else if (victorBtn) victorBtn.onclick = () => Victor.openAssignment({
         page: 'strategies', entity_type: 'strategy', entity_id: c.id,
         entity_label: c.name, url: location.pathname + location.search,
       }, { title: `Разобраться со стратегией «${c.name}»`, description: dec.reason || '' });
@@ -376,7 +377,8 @@ UI.ready(async function () {
        <h4 style="margin:16px 0 8px">История попыток по ячейке ${UI.esc(c.cell || '')}</h4><div id="ai-cell-hist"><div class="state-loading"><span class="spinner"></span>Загрузка…</div></div>`
     );
     const victorBtn = UI.qs('#ai-card-assign-victor');
-    if (victorBtn) victorBtn.onclick = () => Victor.openAssignment({
+    if (victorBtn && typeof Victor === 'undefined') victorBtn.hidden = true;
+    else if (victorBtn) victorBtn.onclick = () => Victor.openAssignment({
       page: 'strategies', entity_type: 'research', entity_id: c.experimentId || c.id,
       entity_label: c.name, url: location.pathname + location.search,
     }, { title: `Разобраться с исследованием «${c.name}»`, description: c.archiveReason || '' });

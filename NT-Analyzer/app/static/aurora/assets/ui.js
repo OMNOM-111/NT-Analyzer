@@ -1963,6 +1963,10 @@
     });
   }
   const STUDENT_NAV_IDS = new Set(['practice', 'community']);
+  // Screens of the previous architecture. Once the Agent World is on they
+  // leave the rail: the working path runs through the AI Center, and these
+  // stay reachable by their own address only, for сверка (owner, 20.09.2026).
+  const LEGACY_NAV_IDS = new Set(['agents', 'docs']);
 
   function isStudentContour(auth) {
     const source = auth || {};
@@ -2022,6 +2026,10 @@
     qsa('.rail-item[data-nav]').forEach(item => {
       const id = item.dataset.nav;
       item.removeEventListener('click', lockedNavClick);
+      if (worldEnabled && LEGACY_NAV_IDS.has(id)) {
+        item.hidden = true;
+        return;
+      }
       if (uxMode === 'beginner') {
         item.hidden = !STUDENT_NAV_IDS.has(id);
         item.classList.remove('rail-locked');
@@ -2050,7 +2058,11 @@
       // Match the actual legacy file, not data-page="ai" (also used by the
       // new center), so the canonical page can never redirect to itself.
       const legacyAIPage = /(?:^|\/)(ai-lab|ai-agents)\.html$/.exec(location.pathname || '');
-      if (legacyAIPage) {
+      // `?legacy=1` is the developer's way in for сверка: the screen opens as
+      // it was, read-only (assets/legacy-guard.js), and is never linked from
+      // the working path (owner, 20.09.2026).
+      const forArchive = /(?:^|[?&])legacy=1(?:&|$)/.test(location.search || '');
+      if (legacyAIPage && !forArchive) {
         location.replace('ai-command-center.html' + (location.search || '')
           + '#tab=' + (legacyAIPage[1] === 'ai-agents' ? 'agents' : 'overview'));
         return true;

@@ -700,3 +700,16 @@ div.aw-act { cursor: default; }
 .aw-legacy-list { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.7; }
 
 .aw-legacy-table td small { display: block; color: var(--muted); font-size: 11.5px; line-height: 1.45; margin-top: 2px; }
+
+/* The deputy's own items: decisions the owner owes, and the team's state. */
+.aw-duty { margin-bottom: 16px; }
+.aw-duty-card { border: 1px solid var(--line); border-left-width: 3px; border-radius: 12px; padding: 12px 14px; background: var(--card-2); }
+.aw-duty-card.aw-al-crit { border-left-color: var(--neg); }
+.aw-duty-card.aw-al-warn { border-left-color: var(--warn, #f59e0b); }
+.aw-duty-card.aw-al-info { border-left-color: var(--line); }
+.aw-duty-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.aw-duty-head time { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.aw-duty-detail { margin: 6px 0; font-size: 13px; line-height: 1.55; }
+.aw-team-control { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 13px; }
+.aw-team-buttons { display: flex; gap: 8px; }
+.aw-team-state { color: var(--muted); }
