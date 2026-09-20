@@ -10097,7 +10097,7 @@
     deliver_report: 'Доставка отчёта',
     vitek_task: 'Поручение Виктора',
     vitek_activate_task: 'Виктор принял поручение',
-    vitek_add_task: 'Поручение передано Управляющему',
+    vitek_add_task: 'Поручение передано Заместителю',
     vitek_create_incident_task: 'Поручение создано',
     vitek_set_plan: 'План сохранён',
     vitek_scan: 'Проверка системы',

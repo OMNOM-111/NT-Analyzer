@@ -36,9 +36,8 @@
   // `name` is the suggested name offered when hiring, from the owner's scheme.
   const placed = (key, extra) => agent => agent.team_role === key || Boolean(extra && extra(agent));
   const TEAM_SLOTS = Object.freeze([
-    { key: 'manager', dept: 'lead', lead: true, title: 'Управляющий', note: 'ваша правая рука', name: 'Витёк', match: agent => agent.main_assistant === true || ['vitek', 'manager'].includes(avatarKeyOf(agent)) },
-    { key: 'deputy', dept: 'staff', lead: true, title: 'Заместитель', note: 'курирует всех, докладывает', name: 'Олег', match: placed('deputy', agent => agent.role_key === 'deputy') },
-    { key: 'secretary', dept: 'staff', title: 'Секретарь', note: 'протокол, журнал', name: 'Лера', match: placed('secretary', agent => agent.role_key === 'secretary') },
+    { key: 'deputy', dept: 'lead', lead: true, title: 'Заместитель', note: 'ваша правая рука', name: 'Витёк', match: placed('deputy', agent => agent.main_assistant === true || agent.role_key === 'deputy' || ['vitek', 'manager'].includes(avatarKeyOf(agent))) },
+    { key: 'secretary', dept: 'staff', title: 'Секретарь', note: 'история и действия системы', name: 'Лера', match: placed('secretary', agent => agent.role_key === 'secretary') },
     { key: 'researcher', dept: 'dev', title: 'Исследователь', note: 'гипотезы, режимы рынка', name: 'Сева', match: placed('researcher', agent => agent.role_key === 'researcher') },
     { key: 'quant_analyst', dept: 'dev', title: 'Квант-аналитик', note: 'статистика, признаки', name: 'Толик', match: placed('quant_analyst', agent => agent.role_key === 'quant_analyst') },
     { key: 'ninjascript_coder', dept: 'dev', title: 'Кодер NinjaScript', note: 'код стратегии', name: 'Артём', match: placed('ninjascript_coder', agent => agent.role_key === 'ninjascript_coder') },
@@ -112,7 +111,7 @@
   const OPEN_PHASES = Object.freeze(['awaiting_review', 'awaiting_decision']);
   const ATTENTION_PHASES = Object.freeze(['awaiting_review', 'awaiting_decision', 'failed']);
   const AVATAR_KEYS = Object.freeze(['vitek', 'manager', 'marina', 'tolik', 'nikita', 'ivan']);
-  const AVATAR_LABELS = Object.freeze({ vitek: 'Виктор', manager: 'Управляющий', marina: 'Марина', tolik: 'Толик', nikita: 'Никита', ivan: 'Иван' });
+  const AVATAR_LABELS = Object.freeze({ vitek: 'Виктор', manager: 'Олег', marina: 'Марина', tolik: 'Толик', nikita: 'Никита', ivan: 'Иван' });
   const PERSONA_VOICE_PROFILES = Object.freeze({ ...AVATAR_LABELS, deputy: 'Заместитель', secretary: 'Секретарь' });
   const PERSONA_DEFAULTS = Object.freeze({ voice_profile_id: '', voice_mode: 'browser', voice_speed: 1, voice_language: 'ru-RU', animation_mode: 'auto', expression_preset: 'neutral', lip_sync_mode: 'auto' });
   const RUBRIC_LABELS = Object.freeze({ connection_exact: 'Проверка соединения', json_arithmetic: 'Арифметика · JSON', extract_facts: 'Извлечение фактов', assistant_response: 'Ответ помощника · ручная проверка', court_vote: 'Голос Court', backtest_spec: 'План бэктеста', chart_spec: 'План графика', application_execution: 'Соответствие результата приложения', decision_outcome: 'Исход одобренного решения', ninjatrader_historical_backtest: 'Исторический бэктест NinjaTrader', desktop_chart_snapshot: 'Снимок графика Рабочего стола' });
@@ -1047,9 +1046,9 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const when = task => task.updated_at || task.created_at || '';
       const ask = { crit: 'Не получилось', warn: 'Нужно ваше решение', info: 'Готов результат' };
       const list = levels.slice().sort(([a], [b]) => String(when(b)).localeCompare(String(when(a)))).slice(0, 5)
-        .map(([task, level]) => `<button class="aw-alert-line aw-al-${level}" data-aw-ask="${esc(taskId(task))}" title="${esc([taskTitle(task), task.reason, 'Нажмите — Управляющий обсудит это с вами в чате'].filter(Boolean).join('. '))}"><span aria-hidden="true">${level === 'warn' ? '▲' : '●'}</span><time>${esc(clock(when(task)))}</time><span class="aw-clamp">${esc(ask[level])}: ${esc(taskTitle(task))}${task.reason ? ` <span class="aw-muted">— ${esc(task.reason)}</span>` : ''}</span></button>`);
-      return `<div class="aw-sev"><div class="aw-sev-crit" title="Что-то пошло не так, Управляющему нужна ваша помощь"><small>Крити\u00ADческие</small><b>${count(total('crit'))}</b></div><div class="aw-sev-warn" title="Управляющий ждёт вашего решения"><small>Предупре\u00ADждения</small><b>${count(total('warn'))}</b></div><div class="aw-sev-info" title="Готов результат, который нужно посмотреть"><small>Информа\u00ADционные</small><b>${count(total('info'))}</b></div></div>`
-        + (list.length ? list.join('') : '<div class="aw-calm"><span class="aw-clean-mark" aria-hidden="true">✓</span><span>Вопросов к вам нет. Если Управляющему понадобится ваше решение или что-то пойдёт не так, вопрос появится здесь.</span></div>');
+        .map(([task, level]) => `<button class="aw-alert-line aw-al-${level}" data-aw-ask="${esc(taskId(task))}" title="${esc([taskTitle(task), task.reason, 'Нажмите — Заместитель обсудит это с вами в чате'].filter(Boolean).join('. '))}"><span aria-hidden="true">${level === 'warn' ? '▲' : '●'}</span><time>${esc(clock(when(task)))}</time><span class="aw-clamp">${esc(ask[level])}: ${esc(taskTitle(task))}${task.reason ? ` <span class="aw-muted">— ${esc(task.reason)}</span>` : ''}</span></button>`);
+      return `<div class="aw-sev"><div class="aw-sev-crit" title="Что-то пошло не так, Заместителю нужна ваша помощь"><small>Крити\u00ADческие</small><b>${count(total('crit'))}</b></div><div class="aw-sev-warn" title="Заместитель ждёт вашего решения"><small>Предупре\u00ADждения</small><b>${count(total('warn'))}</b></div><div class="aw-sev-info" title="Готов результат, который нужно посмотреть"><small>Информа\u00ADционные</small><b>${count(total('info'))}</b></div></div>`
+        + (list.length ? list.join('') : '<div class="aw-calm"><span class="aw-clean-mark" aria-hidden="true">✓</span><span>Вопросов к вам нет. Если Заместителю понадобится ваше решение или что-то пойдёт не так, вопрос появится здесь.</span></div>');
     }
     function modelSummaryGroups() {
       const summary = overview?.summaries?.models;
@@ -1118,7 +1117,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const shownWork = (active.length ? active : recent).slice(0, 5);
       const workBody = shownWork.length ? `<div class="aw-row-list">${shownWork.map(taskRow).join('')}</div>`
         : tasks.length ? `<div class="aw-calm"><span>Сейчас ничего не выполняется. Задачи, которые ждут вас, — в блоке рядом.</span></div>`
-          : smallEmpty('Задач пока нет. Напишите Управляющему, чтобы дать команде первое поручение.');
+          : smallEmpty('Задач пока нет. Напишите Заместителю, чтобы дать команде первое поручение.');
       return `<div class="aw-work-queue"><div class="aw-column aw-column-work">${panel('Нужно ваше действие', queue, `<span class="aw-count">${count(alerts.length)}</span>`)}${panel(active.length ? 'Сейчас в работе' : 'Последние задачи', workBody)}</div>`
         + `<div class="aw-column aw-column-results">${panel('Последние результаты', outcomes.length ? `<div class="aw-outcomes">${outcomes.map(outcomeCard).join('')}</div>` : smallEmpty('Результатов пока нет. Отчёты, снимки и ответы появятся здесь с указанием источника.'))}</div></div>`;
     }
@@ -1319,8 +1318,8 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       let hired = 0;
       try {
         for (const slot of free) {
-          const chosen = slot.key === 'manager' && !taken.has('Витёк') ? 'Витёк' : names.shift() || `${slot.title} ${hired + 1}`;
-          const payload = { name: chosen, avatar_key: slot.key === 'manager' ? 'vitek' : '', ...(slot.key === 'manager' ? { main_assistant: true } : { team_role: slot.key }) };
+          const chosen = slot.key === 'deputy' && !taken.has('Витёк') ? 'Витёк' : names.shift() || `${slot.title} ${hired + 1}`;
+          const payload = { name: chosen, avatar_key: slot.key === 'deputy' ? 'vitek' : '', team_role: slot.key };
           const created = await API.aiControlCenterDomainAction('personas', 'new', 'create', { payload, idempotency_key: root.crypto.randomUUID() });
           const item = created?.item;
           if (item?.id && rows(item.actions).includes('activate')) {
@@ -1362,7 +1361,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     }
     function renderAgents() {
       const agents = rows(overview.agents);
-      const hint = '<span class="aw-bcard-hint">вы общаетесь только с Управляющим; он передаёт задачи Заместителю, тот — отделам, спорное уходит судьям</span>';
+      const hint = '<span class="aw-bcard-hint">управляющий здесь вы: поручение идёт Заместителю, он распределяет по отделам, контролирует и возвращает вам итог; спорное уходит судьям, Секретарь ведёт историю</span>';
       content.innerHTML = agents.length
         ? bcard('Иерархия', 'users', 'green', autoTeamButton(agents) + teamChart(agents), hint) + bcard('Персонал', 'users', 'blue', staffTable(agents))
         : bcard('Иерархия', 'users', 'green', empty('Команда пока пуста', 'Сформируйте команду автоматически или нажмите на свободное место в схеме.', '<button class="btn primary" data-aw-auto-team>Сформировать команду автоматически</button>'), hint);
@@ -1405,7 +1404,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     function openHire(key, anchor) {
       const pop = qs('#aw-agent-pop'), slot = TEAM_SLOTS.find(value => value.key === key);
       if (!pop || !slot) return;
-      const faces = [['', 'Стандартное фото'], ...AVATAR_KEYS.filter(face => slot.key === 'manager' || !['vitek', 'manager'].includes(face)).map(face => [face, AVATAR_LABELS[face] || face])];
+      const faces = [['', 'Стандартное фото'], ...AVATAR_KEYS.filter(face => slot.key === 'deputy' || !['vitek', 'manager'].includes(face)).map(face => [face, AVATAR_LABELS[face] || face])];
       pop.innerHTML = `<form id="aw-hire-form" data-slot="${esc(slot.key)}"><div class="aw-pop-head"><div><b>${esc(slot.title)}</b><small>${esc(slot.note)} — обязанности уже заложены в должность</small></div><button type="button" class="aw-pop-x" data-aw-pop-close aria-label="Закрыть">×</button></div>`
         + `<p class="aw-pop-now">Выберите лицо и имя — больше ничего заполнять не нужно.</p>`
         + `<div class="aw-hire-faces" role="radiogroup" aria-label="Лицо агента">${faces.map(([face, label], index) => `<label class="aw-hire-face" title="${esc(label)}"><input type="radio" name="face" value="${esc(face)}"${index === 1 || (!face && faces.length === 1) ? ' checked' : ''}>${face && UI.agentAvatarHtml ? UI.agentAvatarHtml(face, { size: 'sm' }) : `<span class="aw-person-face">${standardFace()}</span>`}</label>`).join('')}</div>`
@@ -1426,7 +1425,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const slot = TEAM_SLOTS.find(value => value.key === form.dataset.slot), error = form.querySelector('.aw-hire-error');
       const chosen = String(form.elements.name.value || '').trim(), face = form.querySelector('input[name="face"]:checked')?.value || '';
       if (!slot || !chosen) { error.textContent = 'Введите имя.'; error.hidden = false; return; }
-      const payload = { name: chosen, avatar_key: face, ...(slot.key === 'manager' ? { main_assistant: true } : { team_role: slot.key }) };
+      const payload = { name: chosen, avatar_key: face, team_role: slot.key };
       form.querySelectorAll('button, input').forEach(input => { input.disabled = true; });
       try {
         const created = await API.aiControlCenterDomainAction('personas', 'new', 'create', { payload, idempotency_key: root.crypto.randomUUID() });
@@ -1445,7 +1444,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     }
     // The owner's model roster (the AI agents registry): what each model is
     // for, how often it works, how well, what it costs and how much quota is left.
-    const LAB_ROLES = Object.freeze({ orchestrator: 'Управляющий', chief_agent: 'Главный агент Лаборатории', backtest_analyst: 'Аналитик бэктестов',
+    const LAB_ROLES = Object.freeze({ orchestrator: 'Оркестратор (старая роль)', chief_agent: 'Главный агент Лаборатории', backtest_analyst: 'Аналитик бэктестов',
       strategy_analyst: 'Аналитик стратегий', coder: 'Кодер', optimizer: 'Оптимизатор', accountant: 'Бухгалтер', news: 'Новостной аналитик',
       telegram_assistant: 'Помощник в Telegram', embedding: 'Поиск по памяти', general: 'Общие запросы' });
     const labRole = key => LAB_ROLES[key] || (machineKey(key) ? 'Другое' : String(key || 'Общие запросы'));
@@ -1476,7 +1475,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     // Proposed distribution cycle (owner's confirmation pending, rules 3.3):
     // every text model tries every open job, jobs with responsibility take only
     // proven models, and special-purpose models stay in their own function.
-    const PLACE_COLUMNS = Object.freeze([['orchestrator', 'Управляющий', 'responsible'], ['strategy_analyst', 'Исследователь', 'open'], ['coder', 'Кодер', 'open'],
+    const PLACE_COLUMNS = Object.freeze([['orchestrator', 'Заместитель', 'responsible'], ['strategy_analyst', 'Исследователь', 'open'], ['coder', 'Кодер', 'open'],
       ['backtest_analyst', 'Бэктестер', 'open'], ['optimizer', 'Оптимизатор', 'open'], ['accountant', 'Бухгалтер', 'responsible'],
       ['news_analyst', 'Новости', 'open'], ['risk_manager', 'Судьи', 'responsible']]);
     const SPECIAL = model => /embedding|tts|whisper|dall|image/i.test(String(model.model || '')) || model.endpoint_type === 'embeddings';
@@ -1493,7 +1492,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       return `<ol class="aw-rules"><li><b>Закрепление важнее всего.</b> Если вы или пользователь закрепили модель за должностью, она работает только там. Роли из старого реестра «AI агенты» переведены в архив: это история, на распределение они не влияют.</li>`
         + `<li><b>Пробный круг.</b> Новая модель получает по 3 пробные задачи в каждой открытой должности: Исследователь, Кодер, Бэктестер, Оптимизатор, Новости.</li>`
         + `<li><b>Дальше — по рейтингу.</b> В должность идёт модель с лучшим успехом именно под этой должностью; 10% задач — на пробу других, чтобы рейтинг не застывал.</li>`
-        + `<li><b>Ответственные должности</b> — Управляющий, Бухгалтер, Судьи — только проверенные модели: от 20 вызовов и успех от 90%.</li>`
+        + `<li><b>Ответственные должности</b> — Заместитель, Бухгалтер, Судьи — только проверенные модели: от 20 вызовов и успех от 90%.</li>`
         + `<li><b>Специальные модели</b> (поиск по памяти, озвучка) в текстовые должности не попадают.</li></ol>`
         + `<p class="aw-muted aw-hint-line">Предложение правил — ждёт вашего утверждения. Ниже — как они ложатся на текущие модели: процент — успех под должностью (число вызовов), «проба» — будет пробовать, «после проверки» — пока не допущена.</p>`
         + `<div class="aw-table-wrap"><table class="aw-lab-table aw-place-table"><thead><tr><th>Модель</th>${PLACE_COLUMNS.map(([, title]) => `<th>${esc(title)}</th>`).join('')}</tr></thead>`
@@ -2729,7 +2728,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     // A question from the list opens the chat with the Manager: the task's own
     // dialogue when the server can build one, otherwise the Manager's chat with
     // a short brief typed in for the owner to finish and send.
-    async function askManager(id, button) {
+    async function askDeputy(id, button) {
       const task = rows(overview?.tasks).find(row => taskId(row) === id);
       if (button) button.disabled = true;
       try {
@@ -2788,7 +2787,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (target.dataset.awResearch) { researchPick = Number(target.dataset.awResearch) || 0; renderResearch(); return; }
       if (target.hasAttribute('data-aw-open-log')) { toggleLog(true); qs('#aw-log-toggle')?.focus?.(); return; }
       if (target.hasAttribute('data-aw-graph-toggle')) { graphOpen = !graphOpen; renderMemory(); return; }
-      if (target.dataset.awAsk) { askManager(target.dataset.awAsk, target); return; }
+      if (target.dataset.awAsk) { askDeputy(target.dataset.awAsk, target); return; }
       if (target.hasAttribute('data-aw-show-tests')) { showTests = !showTests; renderWork(); return; }
       if (target.tagName === 'A' || target.dataset.awTaskChat || target.dataset.awFollowupChat || target.dataset.awChartChat || target.hasAttribute('data-aw-real-chat')) stopPersonaAudio();
       // A control may carry both: open the tab already narrowed to that filter.

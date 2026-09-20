@@ -1022,14 +1022,14 @@ def test_publication_prepare_does_not_accept_memory_arbitrary_urls_or_invalid_id
     assert evaluate(f"(() => {{try {{ui.domainPayload('publications','prepare',{{source:{json.dumps(source)}}});return false;}}catch (_){{return true;}}}})()") is True
 
 
-def test_owner_questions_exclude_system_test_checks_and_open_the_managers_chat():
+def test_owner_questions_exclude_system_test_checks_and_open_the_deputys_chat():
     script = SCRIPT.read_text(encoding="utf-8")
     assert "const ownerFacing = task => task?.synthetic !== true && !DIAGNOSTIC_CLASSES.has(" in script
     problems = script.split("function problemsBody()", 1)[1].split("function modelSummaryGroups()", 1)[0]
     assert "rows(overview.tasks).filter(ownerFacing)" in problems
     assert 'data-aw-ask="' in problems and "Вопросов к вам нет" in problems
-    ask = script.split("async function askManager(", 1)[1].split("async function runDemo()", 1)[0]
-    # The task's own dialogue first; otherwise the Manager's chat with a brief to finish.
+    ask = script.split("async function askDeputy(", 1)[1].split("async function runDemo()", 1)[0]
+    # The task's own dialogue first; otherwise the deputy's chat with a brief to finish.
     assert "API.aiControlCenterTaskChat(id, {})" in ask and "UI.openSFChat({ conversationType: 'ai' })" in ask
     assert "input.value = " in ask and "send" not in ask.lower()
 
@@ -1037,7 +1037,7 @@ def test_owner_questions_exclude_system_test_checks_and_open_the_managers_chat()
 def test_hiring_asks_only_for_a_face_and_a_name():
     script = SCRIPT.read_text(encoding="utf-8")
     hire = script.split("async function hire(form)", 1)[1].split("function renderModels()", 1)[0]
-    assert "const payload = { name: chosen, avatar_key: face, ...(slot.key === 'manager' ? { main_assistant: true } : { team_role: slot.key }) };" in hire
+    assert "const payload = { name: chosen, avatar_key: face, team_role: slot.key };" in hire
     assert "API.aiControlCenterDomainAction('personas', 'new', 'create'" in hire
     assert "'activate'" in hire and "expected_revision: item.revision" in hire
     # A Persona hired into a place sits only there, whatever its face.
@@ -1062,7 +1062,7 @@ def test_team_forms_itself_and_lists_the_staff_in_one_table():
     auto = script.split("async function autoTeam(button)", 1)[1].split("function staffRow(", 1)[0]
     # Every free place, a random unused name and the standard face; confirmed first.
     assert "UI.confirmDialog" in auto and "root.crypto.getRandomValues" in auto
-    assert "avatar_key: slot.key === 'manager' ? 'vitek' : ''" in auto and "team_role: slot.key" in auto
+    assert "avatar_key: slot.key === 'deputy' ? 'vitek' : ''" in auto and "team_role: slot.key" in auto
     table = script.split("function staffTable(agents)", 1)[1].split("function renderAgents()", 1)[0]
     for column in ["Агент", "Задач", "Рейтинг", "Одобрено / отклонено", "Модели под агентом", "Последняя работа"]:
         assert f"<th>{column}</th>" in table, column
@@ -1123,3 +1123,18 @@ def test_the_goal_is_written_and_changed_from_the_corner():
     # A date without a time is a calendar day, read in the owner's timezone.
     assert "new Date(parts[0], parts[1] - 1, parts[2])" in script
 
+
+
+def test_the_owner_is_the_manager_and_speaks_to_their_deputy():
+    """Owner's decision of 20.09.2026: no agent stands between them and the team."""
+    script = SCRIPT.read_text(encoding="utf-8")
+    assert "Управляющ" not in script
+    slots = script.split("const TEAM_SLOTS = Object.freeze([", 1)[1].split("]);", 1)[0]
+    assert "key: 'manager'" not in slots
+    # The deputy is the lead place, the right hand, and the one the owner writes to.
+    lead = [line for line in slots.splitlines() if "key: 'deputy'" in line]
+    assert len(lead) == 1 and "lead: true" in lead[0] and "ваша правая рука" in lead[0]
+    assert "agent.main_assistant === true" in lead[0]
+    # The chain, stated once where the owner reads it.
+    assert "управляющий здесь вы: поручение идёт Заместителю" in script
+    assert "Секретарь ведёт историю" in script
