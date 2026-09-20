@@ -69,3 +69,35 @@ def test_a_changed_file_is_read_again(lab):
     rules.write_text("# Реестр\n\n## Готовые стратегии\nMNQ v1.\n", encoding="utf-8")
     # The registry of the owner's strategies is its own kind, not a rule.
     assert knowledge_base.snapshot()["registry"] == first + 1
+
+
+def test_the_owners_documents_are_found_beside_their_data_not_only_beside_the_code(tmp_path, monkeypatch):
+    """Local runs from a worktree; the owner's documents live next to their data."""
+    data = tmp_path / "Анализатор стратегий NinjaTrader" / "NT-Analyzer" / "data"
+    (data / "ai_lab").mkdir(parents=True)
+    docs = tmp_path / "Анализатор стратегий NinjaTrader" / "РАЗРАБОТКА СТРАТЕГИЙ"
+    docs.mkdir()
+    (docs / "Общие правила.md").write_text("# Правила\n\n## Комиссии\nRTC >= 1.90\n", encoding="utf-8")
+    monkeypatch.setattr(paths, "MUTABLE_AI_LAB_DIR", data / "ai_lab")
+    # The checkout is somewhere else entirely, as a worktree is.
+    monkeypatch.setattr(paths, "PROJECT_ROOT", tmp_path / "StratForge-worktrees" / "runtime" / "NT-Analyzer")
+    assert [path.name for path in knowledge_base.strategy_rules_dirs()] == ["РАЗРАБОТКА СТРАТЕГИЙ"]
+
+
+def test_the_owners_own_reports_are_part_of_the_memory(lab):
+    reports = Path(paths.MUTABLE_AI_LAB_DIR) / "registry" / "chief_reports"
+    (reports / "workspaces" / "ws_owner").mkdir(parents=True)
+    (reports / "daily-2026-08-04.json").write_text(json.dumps(
+        {"report_id": "R-1", "period": "day", "generated_at_utc": "2026-08-04T23:00:00Z",
+         "content": "Отчёт владельца за день. PnL -81.3, сделок 19."}, ensure_ascii=False), encoding="utf-8")
+    (reports / "workspaces" / "ws_owner" / "week-2026-08-08.json").write_text(json.dumps(
+        {"report_id": "R-2", "period": "week", "generated_at_utc": "2026-08-08T23:00:00Z",
+         "content": "Отчёт за неделю: три стратегии на проверке."}, ensure_ascii=False), encoding="utf-8")
+    knowledge_base._cache.update(key=None, value=None)
+    snapshot = knowledge_base.snapshot()
+    assert snapshot["reports"] == 2
+    kept = [item for item in snapshot["items"] if item["kind"] == knowledge_base.REPORT]
+    assert {item["title"] for item in kept} == {"Отчёт за день 2026-08-04", "Отчёт за неделю 2026-08-08"}
+    assert "PnL" in next(item["summary"] for item in kept if "день" in item["title"])
+    # They count as memory the owner can see, not as history that vanished.
+    assert snapshot["documents"] >= 2 and knowledge_base.brief()["reports"] == 2

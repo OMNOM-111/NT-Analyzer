@@ -32,24 +32,28 @@
   // The owner's team scheme (docs/product/AI_CENTER_OWNER_RULES.md, section 4). A slot
   // shows the persona explicitly assigned to that job; an empty slot stays empty.
   const avatarKeyOf = agent => String(agent?.avatar_key || '').toLowerCase();
+  // The application role the server actually sends. It used to be read as
+  // `role_key`, a field no projection produces, so an agent with a real role
+  // - the owner's Толик and Иван among them - sat outside the hierarchy.
+  const roleKeyOf = agent => String(agent?.application_role || agent?.role_key || '').toLowerCase();
   // `key` is the place a Persona is hired into (app/ai_control_center/team_roles.py);
   // `name` is the suggested name offered when hiring, from the owner's scheme.
   const placed = (key, extra) => agent => agent.team_role === key || Boolean(extra && extra(agent));
   const TEAM_SLOTS = Object.freeze([
-    { key: 'deputy', dept: 'lead', lead: true, title: 'Заместитель', note: 'ваша правая рука', name: 'Витёк', match: placed('deputy', agent => agent.main_assistant === true || agent.role_key === 'deputy' || ['vitek', 'manager'].includes(avatarKeyOf(agent))) },
-    { key: 'secretary', dept: 'staff', title: 'Секретарь', note: 'история и действия системы', name: 'Лера', match: placed('secretary', agent => agent.role_key === 'secretary') },
-    { key: 'researcher', dept: 'dev', title: 'Исследователь', note: 'гипотезы, режимы рынка', name: 'Сева', match: placed('researcher', agent => agent.role_key === 'researcher') },
-    { key: 'quant_analyst', dept: 'dev', title: 'Квант-аналитик', note: 'статистика, признаки', name: 'Толик', match: placed('quant_analyst', agent => agent.role_key === 'quant_analyst') },
-    { key: 'ninjascript_coder', dept: 'dev', title: 'Кодер NinjaScript', note: 'код стратегии', name: 'Артём', match: placed('ninjascript_coder', agent => agent.role_key === 'ninjascript_coder') },
-    { key: 'code_reviewer', dept: 'dev', title: 'Ревьюер кода', note: 'compile, качество', name: 'Дина', match: placed('code_reviewer', agent => agent.role_key === 'code_reviewer') },
-    { key: 'backtester', dept: 'dev', title: 'Бэктестер', note: 'Strategy Analyzer', name: 'Гоша', match: placed('backtester', agent => agent.role_key === 'backtest_researcher') },
-    { key: 'optimizer', dept: 'dev', title: 'Оптимизатор', note: 'walk-forward, стресс', name: 'Паша', match: placed('optimizer', agent => agent.role_key === 'optimizer') },
-    { key: 'accountant', dept: 'ops', title: 'Бухгалтер', note: 'P&L, комиссии, учёт', name: 'Марина', match: placed('accountant', agent => agent.role_key === 'accountant' || avatarKeyOf(agent) === 'marina') },
-    { key: 'news_analyst', dept: 'ops', title: 'Новостной аналитик', note: 'календарь, заголовки', name: 'Никита', match: placed('news_analyst', agent => agent.role_key === 'news_analyst' || avatarKeyOf(agent) === 'nikita') },
-    { key: 'chart_operator', dept: 'ops', title: 'Оператор графиков', note: 'рабочий стол, TopstepX', name: 'Иван', match: placed('chart_operator', agent => agent.role_key === 'chart_researcher' || avatarKeyOf(agent) === 'ivan') },
-    { key: 'judge_statistics', dept: 'judges', title: 'Судья статистики', note: 'оверфит, значимость', name: 'Судья статистики', match: placed('judge_statistics', agent => agent.role_key === 'judge_statistics') },
-    { key: 'judge_risk', dept: 'judges', title: 'Судья риска', note: 'просадка, лимиты', name: 'Судья риска', match: placed('judge_risk', agent => agent.role_key === 'judge_risk') },
-    { key: 'chief_arbiter', dept: 'judges', title: 'Главный арбитр', note: 'финальный вердикт', name: 'Главный арбитр', match: placed('chief_arbiter', agent => agent.role_key === 'chief_arbiter') },
+    { key: 'deputy', dept: 'lead', lead: true, title: 'Заместитель', note: 'ваша правая рука', name: 'Витёк', match: placed('deputy', agent => agent.main_assistant === true || roleKeyOf(agent) === 'deputy' || ['vitek', 'manager'].includes(avatarKeyOf(agent))) },
+    { key: 'secretary', dept: 'staff', title: 'Секретарь', note: 'история и действия системы', name: 'Лера', match: placed('secretary', agent => roleKeyOf(agent) === 'secretary') },
+    { key: 'researcher', dept: 'dev', title: 'Исследователь', note: 'гипотезы, режимы рынка', name: 'Сева', match: placed('researcher', agent => roleKeyOf(agent) === 'researcher') },
+    { key: 'quant_analyst', dept: 'dev', title: 'Квант-аналитик', note: 'статистика, признаки', name: 'Толик', match: placed('quant_analyst', agent => roleKeyOf(agent) === 'quant_analyst') },
+    { key: 'ninjascript_coder', dept: 'dev', title: 'Кодер NinjaScript', note: 'код стратегии', name: 'Артём', match: placed('ninjascript_coder', agent => roleKeyOf(agent) === 'ninjascript_coder') },
+    { key: 'code_reviewer', dept: 'dev', title: 'Ревьюер кода', note: 'compile, качество', name: 'Дина', match: placed('code_reviewer', agent => roleKeyOf(agent) === 'code_reviewer') },
+    { key: 'backtester', dept: 'dev', title: 'Бэктестер', note: 'Strategy Analyzer', name: 'Гоша', match: placed('backtester', agent => roleKeyOf(agent) === 'backtest_researcher') },
+    { key: 'optimizer', dept: 'dev', title: 'Оптимизатор', note: 'walk-forward, стресс', name: 'Паша', match: placed('optimizer', agent => roleKeyOf(agent) === 'optimizer') },
+    { key: 'accountant', dept: 'ops', title: 'Бухгалтер', note: 'P&L, комиссии, учёт', name: 'Марина', match: placed('accountant', agent => roleKeyOf(agent) === 'accountant' || avatarKeyOf(agent) === 'marina') },
+    { key: 'news_analyst', dept: 'ops', title: 'Новостной аналитик', note: 'календарь, заголовки', name: 'Никита', match: placed('news_analyst', agent => roleKeyOf(agent) === 'news_analyst' || avatarKeyOf(agent) === 'nikita') },
+    { key: 'chart_operator', dept: 'ops', title: 'Оператор графиков', note: 'рабочий стол, TopstepX', name: 'Иван', match: placed('chart_operator', agent => roleKeyOf(agent) === 'chart_researcher' || avatarKeyOf(agent) === 'ivan') },
+    { key: 'judge_statistics', dept: 'judges', title: 'Судья статистики', note: 'оверфит, значимость', name: 'Судья статистики', match: placed('judge_statistics', agent => roleKeyOf(agent) === 'judge_statistics') },
+    { key: 'judge_risk', dept: 'judges', title: 'Судья риска', note: 'просадка, лимиты', name: 'Судья риска', match: placed('judge_risk', agent => roleKeyOf(agent) === 'judge_risk') },
+    { key: 'chief_arbiter', dept: 'judges', title: 'Главный арбитр', note: 'финальный вердикт', name: 'Главный арбитр', match: placed('chief_arbiter', agent => roleKeyOf(agent) === 'chief_arbiter') },
   ]);
   // A retired or archived Persona has left the team.
   const RETIRED_PERSONA = new Set(['retired', 'archived']);
@@ -1029,7 +1033,8 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const lessons = [...rows(own.latest).filter(item => item.memory_class === 'verified_lesson').map(item => ({ id: item.id, title: item.title, when: item.created_at, record: true })),
         ...rows(base.latest).map(item => ({ title: item.title, when: item.updated_at, note: item.document }))].slice(0, 3);
       return `<div class="aw-nums">${bnum('Фрагменты памяти', count(sum(own.records, base.fragments)) + plus, day(own.records_day))}${bnum('Уроков извлечено', count(sum(own.verified_lessons, base.lessons)) + plus, day(own.lessons_day))}`
-        + `<span title="Наши разработанные стратегии из исследований; образцы эталонной библиотеки сюда не входят">${bnum('Стратегий в памяти', count(sum(own.strategies, research.unavailable ? 0 : research.experiments)))}</span>${bnum('Источники данных', count(sum(own.sources, base.documents)))}</div>`
+        + `<span title="Наши разработанные стратегии из исследований; образцы эталонной библиотеки сюда не входят">${bnum('Стратегий в памяти', count(sum(own.strategies, research.unavailable ? 0 : research.experiments)))}</span>${bnum('Источники данных', count(sum(own.sources, base.documents)))}`
+        + `${number(base.reports) > 0 ? `<span title="Ежедневные и недельные отчёты команды владельцу">${bnum('Отчётов команды', count(base.reports))}</span>` : ''}</div>`
         + `<div class="aw-subtle">Последние уроки</div>`
         + (lessons.length ? lessons.map(item => item.record
           ? `<button class="aw-lesson" data-aw-domain-open="memory" data-aw-entity="${esc(item.id || '')}"><time>${esc(clock(item.when))}</time><span class="aw-clamp">${esc(item.title || 'Запись')}</span></button>`
@@ -1817,13 +1822,14 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     const MEMORY_GONE = new Set(['revoked', 'expired', 'archived', 'retired', 'superseded']);
     let graphOpen = false;
     const KNOWLEDGE_GROUPS = Object.freeze([['rule', 'Правила разработки стратегий', 'rule'], ['registry', 'Реестр наших стратегий — история и статусы на июнь 2026', 'strategy'],
-      ['lesson', 'Уроки', 'concept'], ['reference', 'Эталонная библиотека — образцы из открытых источников, не наши стратегии', 'ref'], ['data', 'Материалы исследований', 'data']]);
-    const KNOWLEDGE_SHORT = Object.freeze({ rule: 'Правила', registry: 'Наши стратегии', lesson: 'Уроки', reference: 'Эталоны', data: 'Исследования', memory: 'Записи команды' });
+      ['lesson', 'Уроки', 'concept'], ['reference', 'Эталонная библиотека — образцы из открытых источников, не наши стратегии', 'ref'], ['data', 'Материалы исследований', 'data'],
+      ['report', 'Отчёты команды — что было сделано по дням и неделям', 'report']]);
+    const KNOWLEDGE_SHORT = Object.freeze({ rule: 'Правила', registry: 'Наши стратегии', lesson: 'Уроки', reference: 'Эталоны', data: 'Исследования', report: 'Отчёты', memory: 'Записи команды' });
     function renderMemory() {
       const memory = cachedDomain('memory'), knowledge = cachedDomain('knowledge');
       const summary = overview?.summaries?.memory, brief = overview?.summaries?.knowledge;
       const all = '';
-      const legend = '<div class="aw-graph-legend"><span class="aw-lg-rule">● правила</span><span class="aw-lg-strategy">● наши стратегии</span><span class="aw-lg-concept">● уроки</span><span class="aw-lg-ref">● эталоны (открытые источники)</span><span class="aw-lg-data">● материалы исследований</span><span class="aw-lg-context">● записи команды</span><span class="aw-muted">· потяните граф мышью, чтобы повернуть</span></div>';
+      const legend = '<div class="aw-graph-legend"><span class="aw-lg-rule">● правила</span><span class="aw-lg-strategy">● наши стратегии</span><span class="aw-lg-concept">● уроки</span><span class="aw-lg-ref">● эталоны (открытые источники)</span><span class="aw-lg-data">● материалы исследований</span><span class="aw-lg-report">● отчёты команды</span><span class="aw-lg-context">● записи команды</span><span class="aw-muted">· потяните граф мышью, чтобы повернуть</span></div>';
       if (!memory || !knowledge) { content.innerHTML = bcard('Память и уроки', 'brain', 'violet', memoryBody(summary, brief), all) + bcard('Граф знаний', 'layers', 'cyan', loadingBlock('Загружаем память…')); return; }
       const records = memory.unavailable ? [] : items(memory).filter(record => !MEMORY_GONE.has(String(record.status || '')));
       const base = knowledge.unavailable ? [] : rows(knowledge.items);

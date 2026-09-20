@@ -571,6 +571,7 @@ div.aw-act { cursor: default; }
 .aw-graph-halo { opacity: .12; }
 .aw-graph-item { cursor: pointer; }
 .aw-g-strategy { fill: #60a5fa; } .aw-g-concept { fill: #a78bfa; } .aw-g-rule { fill: #fbbf24; } .aw-g-data { fill: #2dd4bf; } .aw-g-context { fill: #34d399; } .aw-g-hub { fill: #94a3b8; }
+.aw-g-report { fill: #f472b6; } .aw-lg-report { color: #f472b6; }
 .aw-graph-more { margin: 6px 0 0; font-size: 11.5px; }
 .aw-goal-title { font-size: 14px; font-weight: 650; line-height: 1.35; }
 .aw-goal-bar { height: 6px; border-radius: 4px; background: var(--bg-3); overflow: hidden; margin-top: 9px; }

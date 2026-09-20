@@ -8,6 +8,7 @@ what the Lab reads.
 """
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,7 +20,7 @@ from .io_utils import iter_jsonl
 # Fragment kinds follow the AI Center legend. The registry is the history of
 # the owner's own strategies; the reference library holds public samples that
 # only compile and pass checks - neither is a proven strategy by itself.
-RULE, REGISTRY, LESSON, REFERENCE, DATA = "rule", "registry", "lesson", "reference", "data"
+RULE, REGISTRY, LESSON, REFERENCE, DATA, REPORT = "rule", "registry", "lesson", "reference", "data", "report"
 REGISTRY_DOCUMENT = "Реестр стратегий.md"
 _SECTION = re.compile(r"^##\s+(.+?)\s*$", re.M)
 _TITLE = re.compile(r"^#\s+(.+?)\s*$", re.M)
@@ -31,10 +32,16 @@ _cache: Dict[str, Any] = {"key": None, "value": None}
 def strategy_rules_dirs() -> List[Path]:
     """Where the owner's «РАЗРАБОТКА СТРАТЕГИЙ» documents live.
 
-    The data root copy comes first; the folder next to the project checkout is
-    the historical location and still read when present.
+    The data root copy comes first, then the folders beside the data root, then
+    the one beside the project checkout. The data-root ones matter: the code can
+    run from a separate worktree while the data - and the owner's documents next
+    to it - stay in their own place, and the rules must still be found there
+    instead of disappearing with the checkout.
     """
+    data = paths.MUTABLE_AI_LAB_DIR.parent
     candidates = [paths.MUTABLE_AI_LAB_DIR / "strategy_rules",
+                  data.parent.parent / "РАЗРАБОТКА СТРАТЕГИЙ",
+                  data.parent / "РАЗРАБОТКА СТРАТЕГИЙ",
                   paths.PROJECT_ROOT.parent / "РАЗРАБОТКА СТРАТЕГИЙ"]
     seen, found = set(), []
     for path in candidates:
@@ -59,6 +66,33 @@ def _sources() -> List[Tuple[str, Path]]:
     if research.is_dir():
         files.extend((DATA, path) for path in sorted(research.glob("*.md")))
     return files
+
+
+def _report_files() -> List[Path]:
+    """The chief agent's daily and weekly reports to the owner, newest first.
+
+    Resolved from the mutable lab directory, so it follows the data root rather
+    than the constant computed when the module was first imported.
+    """
+    root = paths.MUTABLE_AI_LAB_DIR / "registry" / "chief_reports"
+    if not root.is_dir():
+        return []
+    return sorted(root.rglob("*.json"), key=lambda path: path.name, reverse=True)
+
+
+def _report_fragment(path: Path) -> Dict[str, Any]:
+    try:
+        row = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        row = {}
+    period = str(row.get("period") or "").strip().lower()
+    label = {"day": "Отчёт за день", "daily": "Отчёт за день", "week": "Отчёт за неделю", "weekly": "Отчёт за неделю"}.get(period, "Отчёт")
+    stamp = str(row.get("generated_at_utc") or "")[:10] or path.stem.split("-", 1)[-1]
+    content = str(row.get("content") or "")
+    return {"kind": REPORT, "document": f"{label} {stamp}".strip(), "source": path.name,
+            "updated_at": str(row.get("generated_at_utc") or _stamp(path)),
+            "id": "report:" + path.name, "title": f"{label} {stamp}".strip(),
+            "summary": _plain(content)}
 
 
 def _plain(text: str, limit: int = 240) -> str:
@@ -113,15 +147,18 @@ def _logged_lessons() -> List[Dict[str, Any]]:
 def snapshot() -> Dict[str, Any]:
     """All fragments with their counts; re-read only when a source file changes."""
     files = _sources()
+    reports = _report_files()
     lesson_log = paths.LESSON_LOG_PATH
     key = tuple((str(path), path.stat().st_mtime_ns) for _, path in files) + (
-        (str(lesson_log), lesson_log.stat().st_mtime_ns) if lesson_log.exists() else ("", 0),)
+        (str(lesson_log), lesson_log.stat().st_mtime_ns) if lesson_log.exists() else ("", 0),
+    ) + tuple((str(path), path.stat().st_mtime_ns) for path in reports)
     if _cache["key"] == key:
         return _cache["value"]
     items: List[Dict[str, Any]] = []
     for kind, path in files:
         items.extend(_fragments(kind, path))
     items.extend(_logged_lessons())
+    items.extend(_report_fragment(path) for path in reports)
     count = lambda kind: sum(1 for item in items if item["kind"] == kind)  # noqa: E731
     value = {
         "items": items,
@@ -131,7 +168,8 @@ def snapshot() -> Dict[str, Any]:
         "lessons": count(LESSON),
         "references": count(REFERENCE),
         "materials": count(DATA),
-        "documents": len(files) + (1 if any(item["source"] == "lesson_log.jsonl" for item in items) else 0),
+        "reports": count(REPORT),
+        "documents": len(files) + len(reports) + (1 if any(item["source"] == "lesson_log.jsonl" for item in items) else 0),
         "rules_found": bool(strategy_rules_dirs()),
     }
     _cache.update(key=key, value=value)
@@ -143,6 +181,6 @@ def brief(limit: int = 3) -> Dict[str, Any]:
     value = snapshot()
     logged = [item for item in value["items"] if item["source"] == "lesson_log.jsonl"][::-1]
     lessons = (logged + [item for item in value["items"] if item["kind"] == LESSON and item not in logged])[:limit]
-    return {key: value[key] for key in ("fragments", "rules", "registry", "lessons", "references", "materials", "documents", "rules_found")} | {
+    return {key: value[key] for key in ("fragments", "rules", "registry", "lessons", "references", "materials", "reports", "documents", "rules_found")} | {
         "latest": [{"id": item["id"], "title": item["title"], "document": item["document"], "updated_at": item["updated_at"]} for item in lessons]}
 

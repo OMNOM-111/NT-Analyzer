@@ -1125,6 +1125,17 @@ def test_the_goal_is_written_and_changed_from_the_corner():
 
 
 
+def test_an_agent_with_a_real_role_stands_in_the_hierarchy():
+    """The projection sends `application_role`; reading `role_key` left the
+    owner's own agents outside the scheme, with every place looking free."""
+    script = SCRIPT.read_text(encoding="utf-8")
+    assert "const roleKeyOf = agent => String(agent?.application_role || agent?.role_key || '').toLowerCase();" in script
+    slots = script.split("const TEAM_SLOTS = Object.freeze([", 1)[1].split("]);", 1)[0]
+    assert "agent.role_key ===" not in slots
+    assert "roleKeyOf(agent) === 'backtest_researcher'" in slots
+    assert "roleKeyOf(agent) === 'chart_researcher'" in slots
+
+
 def test_the_owner_is_the_manager_and_speaks_to_their_deputy():
     """Owner's decision of 20.09.2026: no agent stands between them and the team."""
     script = SCRIPT.read_text(encoding="utf-8")
