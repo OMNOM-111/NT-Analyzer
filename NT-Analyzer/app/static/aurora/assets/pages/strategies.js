@@ -448,23 +448,27 @@ UI.ready(async function () {
     UI.qs('#rejected-btn').onclick = openArchiveDrawer;
     UI.qs('#add-root-btn').onclick = openAddRoot;
     UI.qs('#add-cell-btn').onclick = openAddCell;
-    UI.qs('#vitek-scan').onclick = async () => {
-      const button = UI.qs('#vitek-scan'); button.disabled = true;
-      try { await API.http.vitekScan(false); UI.toast('Витёк завершил проверку'); await loadVitek(); }
-      catch (error) { UI.reportError(error); }
-      finally { button.disabled = false; }
-    };
-    UI.qs('#vitek-rest').onclick = async () => {
-      const raw = prompt('На сколько часов дать Витьку отдых? Критические события всё равно будут сообщаться.', '2');
-      if (raw == null) return; const hours = Number(raw.replace(',', '.'));
-      if (!Number.isFinite(hours) || hours <= 0) { UI.toast('Укажите положительное количество часов'); return; }
-      try { await API.http.vitekRest({ duration_minutes: Math.round(hours * 60), reason: 'Отдых задан владельцем в приложении' }); UI.toast('Витёк перешёл в режим отдыха'); await loadVitek(); }
-      catch (error) { UI.reportError(error); }
-    };
-    UI.qs('#vitek-resume').onclick = async () => {
-      try { await API.http.vitekResume(); UI.toast('Витёк вернулся к работе'); await loadVitek(); }
-      catch (error) { UI.reportError(error); }
-    };
+    // The duty panel moved to the AI Center; these controls answer only
+    // while the old panel is on the page (see LEGACY_SURFACES_AUDIT.md).
+    if (UI.qs('#vitek-panel')) {
+      UI.qs('#vitek-scan').onclick = async () => {
+        const button = UI.qs('#vitek-scan'); button.disabled = true;
+        try { await API.http.vitekScan(false); UI.toast('Витёк завершил проверку'); await loadVitek(); }
+        catch (error) { UI.reportError(error); }
+        finally { button.disabled = false; }
+      };
+      UI.qs('#vitek-rest').onclick = async () => {
+        const raw = prompt('На сколько часов дать Витьку отдых? Критические события всё равно будут сообщаться.', '2');
+        if (raw == null) return; const hours = Number(raw.replace(',', '.'));
+        if (!Number.isFinite(hours) || hours <= 0) { UI.toast('Укажите положительное количество часов'); return; }
+        try { await API.http.vitekRest({ duration_minutes: Math.round(hours * 60), reason: 'Отдых задан владельцем в приложении' }); UI.toast('Витёк перешёл в режим отдыха'); await loadVitek(); }
+        catch (error) { UI.reportError(error); }
+      };
+      UI.qs('#vitek-resume').onclick = async () => {
+        try { await API.http.vitekResume(); UI.toast('Витёк вернулся к работе'); await loadVitek(); }
+        catch (error) { UI.reportError(error); }
+      };
+    }
     UI.qs('#time-window-root').onchange = event => { selectedWindowRoot = event.target.value; renderTimeWindows(); };
     UI.pageActions(`<button class="btn sm" id="pa-cleanup">${UI.icon('eraser')}Очистить NinjaTrader</button>`);
     const cb = UI.qs('#pa-cleanup'); if (cb) cb.onclick = ntCleanup;

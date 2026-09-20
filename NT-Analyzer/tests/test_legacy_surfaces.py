@@ -40,6 +40,8 @@ def test_the_duty_panel_left_the_strategies_page_without_breaking_it():
                   "if (vitekLoading || document.hidden || !UI.qs('#vitek-panel')) return;"):
         assert guard in script
     assert "typeof Victor === 'undefined'" in script
+    # The panel's own buttons are wired only while the panel exists.
+    assert "if (UI.qs('#vitek-panel')) {" in script
 
 
 def test_the_old_entries_leave_the_rail_once_the_agent_world_is_on():
