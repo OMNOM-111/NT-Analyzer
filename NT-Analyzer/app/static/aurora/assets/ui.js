@@ -9108,7 +9108,7 @@
   function orchPersonaOptions(personas, selected, error) {
     const people = Array.isArray(personas) ? personas : [];
     const main = people.filter(person => person.main_assistant === true);
-    const defaultLabel = main.length === 1 ? `Главный: ${main[0].title || main[0].name || 'Persona'}${main[0].status === 'active' ? '' : ' · приостановлен'}` : main.length > 1 ? 'Главный помощник: требуется уточнение' : 'Авто · главный помощник не назначен';
+    const defaultLabel = main.length === 1 ? `Заместитель: ${main[0].title || main[0].name || 'Persona'}${main[0].status === 'active' ? '' : ' · приостановлен'}` : main.length > 1 ? 'Правая рука: требуется уточнение' : 'Авто · заместитель не назначен';
     const options = [`<option value="">${esc(defaultLabel)}</option>`];
     people.forEach(person => {
       const id = String(person.id || '');

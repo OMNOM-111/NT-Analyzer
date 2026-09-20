@@ -285,7 +285,7 @@
     if (!['create', 'update'].includes(action)) return [];
     if (domain === 'personas') return [field('name', 'Имя персоны', 'text', { required: true, max: 160 }),
       field('aliases', 'Обращения по имени (до пяти)', 'aliases', { max: 405, optionalIfMissing: true, hint: 'Одно имя или прозвище на строку. В SF Chat можно написать «@Имя, задание». Уникальные обращения не дают новых прав и не меняют историю.' }),
-      field('main_assistant', 'Главный помощник', 'select', { optionalIfMissing: true, boolean: true, default: 'false', options: [['false', 'Нет — выбор в SF Chat или обращение по имени'], ['true', 'Да — когда другой помощник не выбран']], hint: 'Один главный помощник в вашем рабочем пространстве. Чтобы сменить его, сначала явно снимите этот выбор у прежней Persona и сохраните, затем назначьте новую. Приостановленный помощник не заменяется автоматически.' }),
+      field('main_assistant', 'Правая рука владельца', 'select', { optionalIfMissing: true, boolean: true, default: 'false', options: [['false', 'Нет — выбор в SF Chat или обращение по имени'], ['true', 'Да — когда другой помощник не выбран']], hint: 'Одна правая рука в вашем рабочем пространстве. Чтобы сменить его, сначала явно снимите этот выбор у прежней Persona и сохраните, затем назначьте новую. Приостановленный помощник не заменяется автоматически.' }),
       field('description', 'Назначение', 'textarea', { max: 4000 }), field('style', 'Стиль общения', 'textarea', { max: 1000 }), field('avatar_key', 'Лицо персоны', 'select', { sendEmpty: true, options: [['', 'Без изображения — буква имени'], ...AVATAR_KEYS.map(key => [key, AVATAR_LABELS[key]])], hint: 'Выбирается явно. Имя персоны — свободный текст и само по себе не выдаёт лицо другого агента. Смена модели сохраняет выбранное лицо.' }), field('application_role', 'Роль в приложении', 'select', { sendEmpty: true, options: [['', 'Не назначена'], ['backtest_researcher', 'Бэктестирование'], ['chart_researcher', 'Рабочий стол и графики']], hint: 'Явное назначение для команд SF Chat. Имя можно менять. Роль не выдаёт прав, ключей или торгового доступа. Одна активная / приостановленная Persona на роль.' }), ...personaVoiceFields(catalog)];
     const title = field('title', 'Название', 'text', { required: true, max: 160 });
     const description = field('description', 'Описание', 'textarea', { max: 4000, sendEmpty: true });
@@ -481,7 +481,7 @@
       persona_aliases_ambiguous: 'Обращения должны различаться, в том числе без учёта регистра.',
       persona_alias_repeats_name: 'Обращение повторяет имя Persona. Имя уже можно использовать без дополнительного alias.',
       persona_alias_already_assigned: 'Это обращение уже относится к другой вашей Persona. Измените его; существующие имена и история сохранены.',
-      persona_main_already_assigned: 'Главный помощник уже назначен. Сначала явно снимите этот выбор у прежней Persona и сохраните, затем назначьте новую.',
+      persona_main_already_assigned: 'Правая рука уже назначена. Сначала явно снимите этот выбор у прежней Persona и сохраните, затем назначьте новую.',
     };
     if (Object.prototype.hasOwnProperty.call(messages, code)) return messages[code];
     if (error?.status === 403 || error?.status === 401) return 'Сервер не разрешил действие в текущем рабочем пространстве. Права и бюджет не изменены.';
@@ -695,7 +695,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     const configured = personaCanSpeak(persona), staticFace = view.animation_mode === 'static' || !AVATAR_KEYS.includes(view.avatar_key);
     const fields = [
       ['Обращения в SF Chat', rows(persona.aliases).join(', ') || 'Имя Persona; дополнительных обращений нет'],
-      ['Главный помощник', persona.main_assistant === true ? 'Да · когда другая Persona не выбрана' : 'Нет'],
+      ['Правая рука владельца', persona.main_assistant === true ? 'Да · когда другая Persona не выбрана' : 'Нет'],
       ['Голосовой профиль', view.voice_label || 'Голос не выбран'],
       ['Запрошенный звук', view.voice_mode === 'existing_tts' ? 'Существующий серверный TTS, если разрешён; иначе голос устройства' : 'Локальный голос устройства'],
       ['Язык / скорость', (view.voice_language === 'en-US' ? 'English' : 'Русский') + ' · ×' + (number(view.voice_speed) ?? 1)],
@@ -1605,7 +1605,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         + `<p class="aw-model-spend"><span class="aw-muted">Квота:</span> ${esc(left.text)}${model.credit_expires_at_utc ? ` · <span class="aw-muted">грант до</span> ${esc(date(model.credit_expires_at_utc))}` : ''}</p>${left.used == null ? '' : `<span class="aw-use aw-use-lg"><span style="width:${Math.round(left.used)}%"></span></span>`}`
         + `<p class="aw-model-spend"><span class="aw-muted">Тариф:</span> ${number(model.input_price_usd_per_m) || number(model.output_price_usd_per_m) ? `${esc(usd(model.input_price_usd_per_m))} за 1 млн входных токенов, ${esc(usd(model.output_price_usd_per_m))} за 1 млн выходных` : model.billing_mode === 'free_tier' ? 'бесплатный доступ' : 'не указан'}</p>`
         + byRole + recent
-        + `<div class="aw-actions"><a class="btn sm" href="ai-agents.html">Ключи и настройки — «AI агенты»</a></div>`, { size: 'model' });
+        + `<div class="aw-actions"><button class="btn sm" data-aw-connect-model>Подключить ещё модель</button></div>`, { size: 'model' });
     }
     // Connecting a model: provider, model, key and how it is paid for. The key
     // goes straight to the encrypted store; the model then checks itself with
@@ -1832,9 +1832,10 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (!memory || !knowledge) { content.innerHTML = bcard('Память и уроки', 'brain', 'violet', memoryBody(summary, brief), all) + bcard('Граф знаний', 'layers', 'cyan', loadingBlock('Загружаем память…')); return; }
       const records = memory.unavailable ? [] : items(memory).filter(record => !MEMORY_GONE.has(String(record.status || '')));
       const base = knowledge.unavailable ? [] : rows(knowledge.items);
-      const graph = records.length + base.length >= 3 ? knowledgeGraph(base, records, graphOpen) : smallEmpty('Граф знаний появится, когда в памяти накопится хотя бы три записи и связи между ними.');
+      const drawn = records.length + base.length >= 3;
+      const graph = drawn ? knowledgeGraph(base, records, graphOpen) : smallEmpty('Граф знаний появится, когда в памяти накопится хотя бы три записи и связи между ними.');
       content.innerHTML = bcard('Память и уроки', 'brain', 'violet', memoryBody(summary, brief), all)
-        + bcard('Граф знаний', 'layers', 'cyan', graph + legend, records.length + base.length >= 3 ? `<button class="btn sm" data-aw-graph-toggle aria-pressed="${graphOpen}">${graphOpen ? 'Свернуть граф' : 'Раскрыть граф'}</button>` : '')
+        + bcard('Граф знаний', 'layers', 'cyan', graph + (drawn ? legend : ''), drawn ? `<button class="btn sm" data-aw-graph-toggle aria-pressed="${graphOpen}">${graphOpen ? 'Свернуть граф' : 'Раскрыть граф'}</button>` : '')
         + (base.length ? bcard('База знаний', 'archive', 'gray', knowledgeList(base)) : knowledge.unavailable ? '' : bcard('База знаний', 'archive', 'gray', smallEmpty('Документов базы знаний пока нет.')));
       mountGraph3d();
     }
@@ -2115,7 +2116,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     async function loadTab(append, options = {}) {
       const request = ++generation;
       if (!overview?.enabled) {
-        content.innerHTML = empty('AI Центр пока выключен', 'Новый интерфейс включается сервером для конкретного окружения и рабочего пространства. Текущие AI Lab и подключения остаются доступны.', '<a class="btn" href="ai-lab.html">Исследования</a><a class="btn" href="ai-agents.html">Подключения и модели</a>');
+        content.innerHTML = empty('AI Центр пока выключен', 'Новый интерфейс включается сервером для конкретного окружения и рабочего пространства. Как только он включится, здесь появятся ваши модели, задачи и память.');
         content.setAttribute('aria-busy', 'false'); return;
       }
       content.setAttribute('aria-busy', 'true');

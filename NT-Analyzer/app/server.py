@@ -396,6 +396,20 @@ _OWNER_ONLY_API_PREFIXES = (
     "/api/ai-lab/cloud-agents",
 )
 
+# The Lab itself is one workspace's work: its catalogue, its knowledge base, its
+# statistics, its matrix and its runs belong to the owner and are not shared
+# product data. Only the surfaces that are per-user stay open to everyone - the
+# chat and its agents, the local model bootstrap, voices, and the rating a
+# person gives an answer of their own.
+_SHARED_AI_LAB_PREFIXES = (
+    "/api/ai-lab/orchestrator",
+    "/api/ai-lab/domain-agents",
+    "/api/ai-lab/bootstrap",
+    "/api/ai-lab/lm-studio",
+    "/api/ai-lab/ratings",
+    "/api/ai-lab/tts",
+)
+
 
 def _is_owner_only_api_path(path: str, method: str = "GET") -> bool:
     value = str(path or "")
@@ -404,6 +418,8 @@ def _is_owner_only_api_path(path: str, method: str = "GET") -> bool:
     # prefixes remains owner-only.
     if permissions.required_admin_capability(value, method):
         return False
+    if value.startswith("/api/ai-lab/") and not value.startswith(_SHARED_AI_LAB_PREFIXES):
+        return True
     return value == "/api/server/restart" or value.startswith(_OWNER_ONLY_API_PREFIXES)
 
 

@@ -63,6 +63,17 @@ def test_the_documentation_section_stays_in_the_product():
     assert "documents.html" not in page
 
 
+def test_no_working_view_sends_anyone_to_an_archived_screen():
+    """A link into the archive from a working view is a legacy dependency."""
+    for name in ("assets/pages/ai-command-center.js", "assets/pages/strategies.js",
+                 "assets/pages/documents.js", "assets/pages/desktop.js"):
+        text = (AURORA / name).read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if "ai-lab.html" in line or "ai-agents.html" in line:
+                # Only the archive listing may name them, and only with ?legacy=1.
+                assert "legacy=1" in line, f"{name}: {line.strip()[:90]}"
+
+
 def test_the_ai_center_says_where_the_old_screens_went():
     script = (AURORA / "assets" / "pages" / "ai-command-center.js").read_text(encoding="utf-8")
     listing = script.split("const LEGACY_SCREENS", 1)[1].split("function legacyCard()", 1)[0]

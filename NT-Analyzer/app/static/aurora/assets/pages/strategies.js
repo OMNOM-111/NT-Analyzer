@@ -373,7 +373,7 @@ UI.ready(async function () {
       `<div class="tb-title"><span class="tb-kicker">${UI.esc([c.cell, c.instrument, c.originLabel].filter(Boolean).join(' · '))}</span><span class="tb-h1">${UI.esc(c.name)}</span></div>`,
       `<div class="flex wrap gap-sm"><span class="badge ai-origin-badge">${UI.icon('ai')}AI</span>${statusBadge(c)}${c.lifecycleLabel ? `<span class="tag">${UI.esc(c.lifecycleLabel)}</span>` : ''}<span class="tag">попыток: ${c.attempts || 1}</span></div>
        ${c.archiveReason ? `<p class="muted" style="margin-top:12px;font-size:12.5px"><strong>Причина архива:</strong> ${UI.esc(c.archiveReason)}</p>` : ''}
-       <div class="flex wrap gap-sm" style="margin-top:12px"><a class="btn primary" href="ai-lab.html?exp=${encodeURIComponent(c.experimentId || '')}">${UI.icon('ai')}Открыть в AI Lab</a><button class="btn" id="ai-card-assign-victor">Поручить Виктору разобраться</button></div>
+       <div class="flex wrap gap-sm" style="margin-top:12px"><a class="btn primary" href="ai-command-center.html#tab=research">${UI.icon('ai')}Открыть в AI Центре</a><button class="btn" id="ai-card-assign-victor">Поручить Виктору разобраться</button></div>
        <h4 style="margin:16px 0 8px">История попыток по ячейке ${UI.esc(c.cell || '')}</h4><div id="ai-cell-hist"><div class="state-loading"><span class="spinner"></span>Загрузка…</div></div>`
     );
     const victorBtn = UI.qs('#ai-card-assign-victor');
