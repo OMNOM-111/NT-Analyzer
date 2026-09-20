@@ -1137,4 +1137,7 @@ def test_the_owner_is_the_manager_and_speaks_to_their_deputy():
     assert "agent.main_assistant === true" in lead[0]
     # The chain, stated once where the owner reads it.
     assert "управляющий здесь вы: поручение идёт Заместителю" in script
-    assert "Секретарь ведёт историю" in script
+    assert "историю ведёт Секретарь" in script
+    # The page's own entry to the chat names the right hand, not a manager.
+    page = PAGE.read_text(encoding="utf-8")
+    assert "Написать Заместителю" in page and "Управляющ" not in page

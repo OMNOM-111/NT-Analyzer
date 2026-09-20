@@ -1361,7 +1361,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     }
     function renderAgents() {
       const agents = rows(overview.agents);
-      const hint = '<span class="aw-bcard-hint">управляющий здесь вы: поручение идёт Заместителю, он распределяет по отделам, контролирует и возвращает вам итог; спорное уходит судьям, Секретарь ведёт историю</span>';
+      const hint = '<span class="aw-bcard-hint">управляющий здесь вы: поручение идёт Заместителю, он распределяет работу, контролирует и возвращает итог; спорное — судьям, историю ведёт Секретарь</span>';
       content.innerHTML = agents.length
         ? bcard('Иерархия', 'users', 'green', autoTeamButton(agents) + teamChart(agents), hint) + bcard('Персонал', 'users', 'blue', staffTable(agents))
         : bcard('Иерархия', 'users', 'green', empty('Команда пока пуста', 'Сформируйте команду автоматически или нажмите на свободное место в схеме.', '<button class="btn primary" data-aw-auto-team>Сформировать команду автоматически</button>'), hint);
