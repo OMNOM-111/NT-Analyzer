@@ -1133,7 +1133,68 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         + `<div class="aw-toolbar"><div class="aw-filters" aria-label="Фильтр задач">${Object.entries(filters).map(([key, label]) => `<button class="aw-filter" data-aw-filter="${key}" aria-pressed="${filter === key}">${label}</button>`).join('')}</div><input type="search" id="aw-task-search" class="aw-search" placeholder="Найти задачу или агента…" aria-label="Поиск задач" maxlength="160" value="${esc(query)}"></div>`
         + `<div id="aw-work-table">${taskTable(workRows.filter(task => (showTests || ownerFacing(task)) && taskMatches(task, filter, query)))}</div>`
         + (tests ? `<p class="aw-tests-toggle"><button class="aw-link-button" data-aw-show-tests aria-pressed="${showTests}">${showTests ? 'Скрыть тестовые проверки системы' : `Показать тестовые проверки системы (${count(tests)})`}</button> <span class="aw-muted">— они выполняются сами и не требуют вашего участия.</span></p>` : '')
-        + `${nextCursor ? '<div class="aw-pagination"><button class="btn" id="aw-load-more">Показать ещё</button></div>' : ''}${realWorkHint()}</div>`;
+        + `${nextCursor ? '<div class="aw-pagination"><button class="btn" id="aw-load-more">Показать ещё</button></div>' : ''}${realWorkHint()}${legacyCard()}</div>`;
+    }
+    // Legacy / Архив: the old «AI агенты» registry, frozen and read-only. It is
+    // kept here, outside the five planned views, because it is not part of the
+    // working system: nothing routes, rates or executes from it any more.
+    function legacyCard() {
+      const legacy = overview?.summaries?.legacy;
+      if (!legacy || legacy.unavailable || !legacy.archived) return '';
+      const when = legacy.frozen_at_utc ? clock(legacy.frozen_at_utc) : '';
+      return `<section class="aw-bcard aw-legacy"><header class="aw-bcard-h"><span class="aw-icbox aw-t-gray">${icon('archive')}</span><h2>Legacy / Архив</h2>`
+        + `<span class="aw-bcard-more aw-muted">старый реестр «AI агенты»${when ? ' · снят ' + esc(when) : ''}</span></header><div class="aw-bcard-b">`
+        + `<p class="aw-muted">Только для чтения. Ни маршрутизация, ни рейтинги текущих назначений, ни исполнение задач его не читают.</p>`
+        + `<div class="aw-legacy-nums"><span><b>${count(legacy.models)}</b> моделей</span><span><b>${count(legacy.calls)}</b> вызовов в истории</span>`
+        + `<span class="${legacy.reconciled ? 'aw-ok' : 'aw-warn'}">${legacy.reconciled ? 'сверка сошлась' : 'сверка не сошлась'}</span></div>`
+        + `<div class="aw-actions"><button class="btn sm" data-aw-legacy="agents">Как было устроено</button><button class="btn sm" data-aw-legacy="calls">История работ</button><button class="btn sm" data-aw-legacy="report">Отчёт сверки</button></div>`
+        + `</div></section>`;
+    }
+    const LEGACY_VIEWS = { agents: 'Старый реестр: как было устроено', calls: 'Старый реестр: история работ', report: 'Сверка: архив → миграция → новый реестр' };
+    async function openLegacy(view) {
+      ++detailGeneration; detailKind = 'legacy'; actionForm = null;
+      const mine = detailGeneration;
+      openDrawer(LEGACY_VIEWS[view] || 'Legacy / Архив', '<div class="aw-skeleton-lines"></div>', { size: 'wide' });
+      let data = null, failed = '';
+      try {
+        data = view === 'agents' ? await API.aiControlCenterLegacyAgents() : view === 'calls' ? await API.aiControlCenterLegacyCalls() : await API.aiControlCenterLegacyReport();
+      } catch (reason) { failed = reason?.message || 'Архив сейчас недоступен.'; }
+      if (mine !== detailGeneration || !currentDrawer) return;
+      const body = qs('.drawer-b', currentDrawer);
+      if (!body) return;
+      const inner = failed ? `<p class="aw-empty">${esc(failed)}</p>`
+        : `<p class="aw-muted aw-legacy-note">Архив, только для чтения. Старые должности и назначения здесь — история; в работающей системе они не действуют.</p>` + legacyBody(view, data);
+      body.innerHTML = `<div class="aw-inspector">${inner}</div>`;
+    }
+    function legacyBody(view, data) {
+      if (view === 'agents') {
+        const items = rows(data?.items);
+        if (!items.length) return smallEmpty('В архиве нет записей о моделях.');
+        return `<div class="aw-table-wrap"><table class="aw-lab-table aw-legacy-table"><thead><tr><th>Модель</th><th>Старая должность</th><th>Порядок</th><th>Группа ротации</th><th>Состояние тогда</th><th>Перенесена как факт</th></tr></thead><tbody>`
+          + items.map(row => `<tr><td><strong>${esc(row.name || row.model || '—')}</strong><small>${esc(providerLabel(row.provider))} · ${esc(row.model || '')}</small></td>`
+            + `<td>${esc(labRole(row.role) || '—')}${row.purpose ? `<small>${esc(row.purpose)}</small>` : ''}</td><td class="aw-num-cell">${row.priority == null ? '—' : count(row.priority)}</td>`
+            + `<td>${esc(row.rotation_group || '—')}</td><td>${row.enabled ? 'включена' : 'выключена'}${row.disabled_reason ? `<small>${esc(row.disabled_reason)}</small>` : ''}</td>`
+            + `<td>${row.migrated_as_fact ? 'да' : '<span class="aw-muted">нет</span>'}</td></tr>`).join('') + '</tbody></table></div>';
+      }
+      if (view === 'calls') {
+        const items = rows(data?.items);
+        if (!items.length) return smallEmpty('В истории архива нет вызовов.');
+        return `<div class="aw-table-wrap"><table class="aw-lab-table aw-legacy-table"><thead><tr><th>Когда</th><th>Модель</th><th>Под какой ролью</th><th>Задача</th><th>Итог</th><th>Токенов</th><th>Стоимость</th></tr></thead><tbody>`
+          + items.map(row => `<tr><td>${esc(row.at_utc ? clock(row.at_utc) : '—')}</td><td>${esc(row.model_name_at_the_time || row.model || '—')}${row.orphan ? '<small>модели уже нет в реестре</small>' : ''}</td>`
+            + `<td>${esc(labRole(row.legacy_role) || '—')}</td><td>${esc(row.purpose || '—')}</td>`
+            + `<td class="${row.status === 'success' ? 'aw-ok' : 'aw-warn'}">${esc(row.status || '—')}${row.error ? `<small>${esc(String(row.error).slice(0, 80))}</small>` : ''}</td>`
+            + `<td class="aw-num-cell">${count(row.total_tokens)}</td><td class="aw-num-cell">${esc(usd(row.cost_usd))}</td></tr>`).join('') + '</tbody></table></div>';
+      }
+      const report = data?.report;
+      if (!report) return smallEmpty('Отчёт сверки ещё не построен.');
+      const pair = (label, value) => `<div class="aw-legacy-pair"><span>${esc(label)}</span><b>${esc(String(value))}</b></div>`;
+      return `<div class="aw-legacy-report">`
+        + `<h3>Было в старой системе</h3><div class="aw-legacy-grid">${pair('моделей', report.archive.agents)}${pair('записей о работе', report.archive.usage_rows)}${pair('оценок', report.archive.rating_entries)}${pair('архив сходится', report.archive.verified ? 'да' : 'нет')}</div>`
+        + `<h3>Перенесено как история</h3><div class="aw-legacy-grid">${pair('моделей', report.migrated_as_history.models)}${pair('вызовов', report.migrated_as_history.calls)}${pair('связей «модель ↔ старая роль»', report.migrated_as_history.provenance_links)}${pair('оценок', report.migrated_as_history.ratings)}</div>`
+        + `<h3>Сознательно не перенесено</h3><ul class="aw-legacy-list">${rows(report.not_migrated_on_purpose).map(row => `<li><b>${esc(row.field)}</b> — ${esc(row.reason)}${row.count ? ` (${count(row.count)})` : ''}</li>`).join('')}</ul>`
+        + `<h3>Создано в новой системе</h3><div class="aw-legacy-grid">${pair('файлов реестра', report.new_entities.registry_files)}${pair('новых должностей', report.new_entities.agent_roles_created)}${pair('закреплений моделей', report.new_entities.model_pins_created)}</div>`
+        + `<h3>Потери и ошибочные закрепления</h3><div class="aw-legacy-grid">${pair('моделей потеряно', rows(report.losses.models_missing).length)}${pair('вызовов потеряно', report.losses.calls_missing)}${pair('вызовов без модели', report.losses.orphan_calls)}${pair('моделей с должностью', rows(report.wrong_pins.models_with_a_position).length)}${pair('действующих старых связей', report.wrong_pins.active_legacy_links)}</div>`
+        + `<p class="${report.ok ? 'aw-ok' : 'aw-warn'}">${report.ok ? 'Сверка сошлась: новый реестр — единственный рабочий.' : 'Сверка не сошлась: новый реестр рабочим не считается.'}</p></div>`;
     }
     const agentPhase = agent => {
       const status = String(agent?.status || '');
@@ -1409,16 +1470,16 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (model.billing_mode === 'free_tier') return { used: null, text: `бесплатно · ${count(model.requests_today)} запросов сегодня` };
       return { used: null, text: 'лимит не задан' };
     }
-    // The old AI agents registry carries a role per model. It is shown as such,
-    // not as a pin: a pin is the owner's own decision, not yet recorded anywhere.
-    const pinnedRole = model => ['general', '', undefined, null].includes(model.role) ? '' : model.role;
+    // The old registry's roles were archived: they are history, readable in
+    // Legacy / Архив, and never shown here as a pinning. What a model actually
+    // did - "где работала" - comes from the usage log, which is a fact.
     // Proposed distribution cycle (owner's confirmation pending, rules 3.3):
     // every text model tries every open job, jobs with responsibility take only
     // proven models, and special-purpose models stay in their own function.
     const PLACE_COLUMNS = Object.freeze([['orchestrator', 'Управляющий', 'responsible'], ['strategy_analyst', 'Исследователь', 'open'], ['coder', 'Кодер', 'open'],
       ['backtest_analyst', 'Бэктестер', 'open'], ['optimizer', 'Оптимизатор', 'open'], ['accountant', 'Бухгалтер', 'responsible'],
       ['news_analyst', 'Новости', 'open'], ['risk_manager', 'Судьи', 'responsible']]);
-    const SPECIAL = model => /embedding|tts|whisper|dall|image/i.test(String(model.model || '')) || model.role === 'embedding';
+    const SPECIAL = model => /embedding|tts|whisper|dall|image/i.test(String(model.model || '')) || model.endpoint_type === 'embeddings';
     const proven = model => model.requests >= 20 && model.ok / model.requests >= 0.9;
     function placeCell(model, [role, , kind]) {
       const row = rows(model.by_role).find(value => value.role === role || (role === 'news_analyst' && value.role === 'news'));
@@ -1429,7 +1490,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     }
     function distribution(models) {
       const live = models.filter(model => model.enabled);
-      return `<ol class="aw-rules"><li><b>Закрепление важнее всего.</b> Если вы или пользователь закрепили модель за должностью, она работает только там. Роли из старого реестра «AI агенты» пока закреплением не считаются — оставить их или снять, решите вы.</li>`
+      return `<ol class="aw-rules"><li><b>Закрепление важнее всего.</b> Если вы или пользователь закрепили модель за должностью, она работает только там. Роли из старого реестра «AI агенты» переведены в архив: это история, на распределение они не влияют.</li>`
         + `<li><b>Пробный круг.</b> Новая модель получает по 3 пробные задачи в каждой открытой должности: Исследователь, Кодер, Бэктестер, Оптимизатор, Новости.</li>`
         + `<li><b>Дальше — по рейтингу.</b> В должность идёт модель с лучшим успехом именно под этой должностью; 10% задач — на пробу других, чтобы рейтинг не застывал.</li>`
         + `<li><b>Ответственные должности</b> — Управляющий, Бухгалтер, Судьи — только проверенные модели: от 20 вызовов и успех от 90%.</li>`
@@ -1441,10 +1502,9 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     function labModelRow(model) {
       const rate = labRate(model), left = quota(model);
       const worked = rows(model.by_role).slice(0, 3).map(row => `${labRole(row.role)} ${row.requests >= 3 ? pct(row.ok / row.requests * 100) : 'NEW'} (${count(row.requests)})`);
-      const pin = pinnedRole(model);
       return `<tr class="aw-lab-row${model.enabled ? '' : ' aw-lab-off'}" data-aw-lab-model="${esc(model.id)}" tabindex="0">`
         + `<td><div class="aw-lab-name"><span class="aw-icbox aw-t-cyan">${esc(String(model.name || model.model || '?').slice(0, 1).toUpperCase())}</span><span><strong>${esc(model.name || model.model)}</strong><small>${esc(providerLabel(model.provider))} · ${esc(model.model || '')}${model.enabled ? '' : ' · выключена'}</small></span></div></td>`
-        + `<td>${worked.length ? esc(worked.join(', ')) : '<span class="aw-muted">ещё не работала</span>'}${pin ? `<small class="aw-pin" title="Роль, записанная в старом реестре «AI агенты»; закреплением её считать нельзя, пока вы не подтвердите">роль в старом реестре: ${esc(labRole(pin))}</small>` : ''}</td>`
+        + `<td>${worked.length ? esc(worked.join(', ')) : '<span class="aw-muted">ещё не работала</span>'}</td>`
         + `<td class="aw-num-cell">${count(model.requests_month)}<small>всего ${count(model.requests)}</small></td>`
         + `<td class="aw-num-cell"><b class="aw-rate aw-rate-${rateTone(rate)}" title="${esc(model.requests ? `Успешно ${model.ok} из ${model.requests} вызовов` : 'Вызовов ещё не было')}">${rate == null ? (model.requests ? 'NEW' : '—') : esc(pct(rate * 100))}</b>${model.errors ? `<small>ошибок ${count(model.errors)}</small>` : ''}</td>`
         + `<td class="aw-num-cell">${esc(usd(model.spend_month_usd))}<small>всего ${esc(usd(model.spend_all_time_usd))}</small></td>`
@@ -2724,6 +2784,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (target.hasAttribute('data-aw-auto-team')) { void autoTeam(target); return; }
       if (target.hasAttribute('data-aw-new-research')) { openNewResearch(); return; }
       if (target.hasAttribute('data-aw-goal')) { openGoal(); return; }
+      if (target.hasAttribute('data-aw-legacy')) { void openLegacy(target.getAttribute('data-aw-legacy')); return; }
       if (target.dataset.awResearch) { researchPick = Number(target.dataset.awResearch) || 0; renderResearch(); return; }
       if (target.hasAttribute('data-aw-open-log')) { toggleLog(true); qs('#aw-log-toggle')?.focus?.(); return; }
       if (target.hasAttribute('data-aw-graph-toggle')) { graphOpen = !graphOpen; renderMemory(); return; }

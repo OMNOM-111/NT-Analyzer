@@ -1069,12 +1069,33 @@ def test_team_forms_itself_and_lists_the_staff_in_one_table():
     assert "const standardFace = () =>" in script
 
 
-def test_models_show_where_they_worked_and_registry_roles_are_not_pins():
+def test_models_show_where_they_worked_and_never_an_old_registry_role():
+    """The old positions were archived: the working view shows facts, not them."""
     script = SCRIPT.read_text(encoding="utf-8")
-    assert "роль в старом реестре" in script and "закреплена: " not in script
+    assert "роль в старом реестре" not in script and "закреплена: " not in script
+    table = script.split("function labModelRow(", 1)[1].split("function labModelTable(", 1)[0]
+    assert "model.by_role" in table and "model.role" not in table
     rules = script.split("function distribution(models)", 1)[1].split("function labModelRow(", 1)[0]
+    assert "переведены в архив" in rules
     assert "Предложение правил — ждёт вашего утверждения" in rules
     assert "только проверенные модели" in rules
+
+
+def test_the_legacy_archive_is_read_only_and_apart_from_the_working_views():
+    script = SCRIPT.read_text(encoding="utf-8")
+    # It lives in the separate tab, never among the five planned views.
+    assert "function legacyCard()" in script and "legacyCard()}</div>`;" in script
+    card = script.split("function legacyCard()", 1)[1].split("const LEGACY_VIEWS", 1)[0]
+    assert "Legacy / Архив" in card and "Только для чтения" in card
+    assert "ни рейтинги текущих назначений, ни исполнение задач его не читают" in card
+    body = script.split("function legacyBody(", 1)[1].split("function agentPhase", 1)[0]
+    # The old position is readable here, and stated as history.
+    assert "Старая должность" in body and "Сознательно не перенесено" in body
+    assert "API.aiControlCenterLegacyReport(" in script and "data-aw-legacy" in script
+
+    # The panel paints into the shared drawer body, or it would stay a skeleton.
+    opener = script.split("async function openLegacy(", 1)[1].split("function legacyBody(", 1)[0]
+    assert "qs('.drawer-b', currentDrawer)" in opener and "aw-inspector" in opener
 
 
 def test_research_shows_the_lab_in_place_without_links_out():

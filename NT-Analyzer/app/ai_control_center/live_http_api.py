@@ -2,7 +2,7 @@
 from uuid import UUID
 
 from .. import account_auth, permissions, workspaces
-from . import live_gateway as gateway, live_charts, domain_gateway, goals, overview_snapshot, overview_summaries
+from . import live_gateway as gateway, live_charts, domain_gateway, goals, legacy_view, overview_snapshot, overview_summaries
 from .live_backtests import LiveBacktestService
 from .states import ContractError
 
@@ -100,6 +100,20 @@ def handle_get(handler, path, qs):
                 handler._json(200, domain_gateway.history_projection(authorized, overview_snapshot.fresh(authorized, build)))
         elif route == "goal":
             handler._json(200, {"goal": goals.read(authorized)})
+        elif route.startswith("legacy"):
+            # The frozen old registry, read-only: what was there, whether the
+            # archive still matches its checksums, and where the migration stands.
+            limit = int((qs.get("limit") or ["100"])[0])
+            if route == "legacy":
+                handler._json(200, legacy_view.overview(authorized))
+            elif route == "legacy/agents":
+                handler._json(200, legacy_view.agents(authorized, (qs.get("archive") or [None])[0], limit))
+            elif route == "legacy/calls":
+                handler._json(200, legacy_view.calls(authorized, limit))
+            elif route == "legacy/report":
+                handler._json(200, legacy_view.report(authorized))
+            else:
+                handler._err(404, "Раздел архива не найден.", code="legacy_route_not_found")
         elif route == "tasks":
             handler._json(200, domain_gateway.history_projection(authorized, {"items": overview_snapshot.fresh(authorized, build)["tasks"], "next_cursor": None, "read_limit": 200}, domain="tasks"))
         elif route.startswith("tasks/") and len(route.split("/")) == 2:

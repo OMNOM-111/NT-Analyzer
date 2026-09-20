@@ -138,10 +138,13 @@ def _knowledge(authorized):
 
 
 def _lab_models(authorized):
-    """The owner's model roster from the AI agents registry, with its own usage.
+    """The owner's model roster: what each model is, and what it actually did.
 
     Secrets never leave the registry: only names, tariffs, budgets and the
-    usage log's counts are returned.
+    usage log's counts are returned. The old registry's own configuration -
+    the position a model held, its routing priority and rotation group - is
+    not read here at all: it was archived, and a model holds a place only
+    when a person puts it there (legacy_migration, rule 3.4).
     """
     if not _owner_runtime(authorized):
         return {"unavailable": "owner_lab_only"}
@@ -160,7 +163,7 @@ def _lab_models(authorized):
             role["last_at"] = max(role["last_at"], str(row.get("timestamp_utc") or ""))
         rows.append({
             **{key: agent.get(key) for key in (
-                "id", "name", "provider", "model", "enabled", "disabled_reason", "billing_mode", "role", "purpose", "priority",
+                "id", "name", "provider", "model", "enabled", "disabled_reason", "billing_mode", "endpoint_type",
                 "input_price_usd_per_m", "output_price_usd_per_m", "daily_budget_usd", "monthly_budget_usd",
                 "spend_today_usd", "spend_month_usd", "spend_all_time_usd", "remaining_daily_budget_usd",
                 "remaining_monthly_budget_usd", "credit_total_usd", "credit_used_pct", "credit_remaining_estimated_usd",
@@ -175,6 +178,21 @@ def _lab_models(authorized):
     return {"items": sorted(rows, key=lambda row: (-row["requests"], not row["enabled"], str(row["name"] or "")))}
 
 
+def _legacy(authorized):
+    """Where the old registry stands: archived, migrated, reconciled - or not yet."""
+    if not _owner_runtime(authorized):
+        return {"unavailable": "owner_lab_only"}
+    from . import legacy_migration
+    state = legacy_migration.state()
+    report = state.get("report") or {}
+    return {"archived": bool(state.get("archive_id")), "authoritative": bool(state.get("authoritative")),
+            "archive_id": state.get("archive_id"), "frozen_at_utc": state.get("frozen_at_utc"),
+            "migrated_at_utc": state.get("migrated_at_utc"),
+            "models": (report.get("migrated_as_history") or {}).get("models") or 0,
+            "calls": (report.get("migrated_as_history") or {}).get("calls") or 0,
+            "reconciled": bool(report.get("ok"))}
+
+
 def build(authorized):
     return {
         "goal": _guard(lambda: goals.read(authorized)),
@@ -183,4 +201,5 @@ def build(authorized):
         "research": _guard(lambda: _research(authorized)),
         "knowledge": _guard(lambda: _knowledge(authorized)),
         "lab_models": _guard(lambda: _lab_models(authorized)),
+        "legacy": _guard(lambda: _legacy(authorized)),
     }
