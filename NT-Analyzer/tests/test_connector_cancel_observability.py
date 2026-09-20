@@ -150,6 +150,12 @@ def test_cancelling_twice_reports_the_same_thing_twice(monkeypatch):
 def test_a_cancel_result_never_moves_the_canonical_job(monkeypatch, tmp_path):
     """Only the run's own terminal result may change the job's state."""
     moved = []
+    command = {"command_id": "cancel-observability-unit", "idempotency_key": "cancel-backtest:ui_1"}
+    validated = []
+    # This unit isolates cancel observability after the authenticated binding.
+    # The complete saved cancel-dispatch guard is exercised by the HTTP test
+    # test_cancel_receipt_requires_its_own_saved_dispatch_and_preserves_run.
+    monkeypatch.setattr(server_mod, "_validate_connector_backtest_binding", lambda value: validated.append(value))
     monkeypatch.setattr(connector_backtest, "settle",
                         lambda *a, **k: moved.append(a) or {"action": "x"})
     monkeypatch.setattr(server_mod.observability, "event", lambda *a, **k: None)
@@ -157,7 +163,8 @@ def test_a_cancel_result_never_moves_the_canonical_job(monkeypatch, tmp_path):
         "idempotency_key": "cancel-backtest:ui_1",
         "status": "completed",
         "safe_result": {"active_run_found": True, "cancellation_requested": True},
-    })
+    }, command=command)
+    assert validated == [command]
     assert moved == [], "a cancel ack is not an outcome for the run"
 
 

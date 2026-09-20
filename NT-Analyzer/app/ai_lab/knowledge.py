@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 from .. import governance
-from . import errors, lessons, operator_notes, paths, registry, user_research
+from . import errors, knowledge_base, lessons, operator_notes, paths, registry, user_research
 from .io_utils import write_json_atomic
 
 TEXT_EXTS = {".md", ".markdown", ".txt", ".json", ".jsonl", ".csv"}
@@ -60,9 +60,16 @@ def _iter_existing(paths_in: Iterable[Path]) -> Iterable[Path]:
             yield p
 
 
+RULE_DOCUMENTS = (
+    "Общие правила разработки стратегий.md",
+    "Реестр стратегий.md",
+    "Двухэтапный цикл Research Hub и Deploy.md",
+    "План перехода стратегий в семьи и новый цикл.md",
+)
+
+
 def _project_docs() -> List[Path]:
     governance.ensure_governance_files()
-    legacy_root = paths.PROJECT_ROOT.parent / "РАЗРАБОТКА СТРАТЕГИЙ"
     candidates = [
         paths.PROJECT_ROOT / "docs" / "governance" / "CHARTER.md",
         paths.PROJECT_ROOT / "docs" / "governance" / "NORTH_STAR_2026.md",
@@ -74,11 +81,11 @@ def _project_docs() -> List[Path]:
         paths.PROJECT_ROOT / "docs" / "risk-profile.md",
         paths.PROJECT_ROOT / "docs" / "AI_STRATEGY_LAB_RUN_CONTROLS.md",
         paths.PROJECT_ROOT / "docs" / "AI_STRATEGY_LAB_QUALITY.md",
-        legacy_root / "Общие правила разработки стратегий.md",
-        legacy_root / "Реестр стратегий.md",
-        legacy_root / "Двухэтапный цикл Research Hub и Deploy.md",
-        legacy_root / "План перехода стратегий в семьи и новый цикл.md",
     ]
+    # The owner's strategy-development rules: the data-root copy or the
+    # historical folder next to the checkout (a worktree has none there).
+    for folder in knowledge_base.strategy_rules_dirs():
+        candidates.extend(folder / name for name in RULE_DOCUMENTS)
     return list(_iter_existing(candidates))
 
 

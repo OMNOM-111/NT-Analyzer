@@ -73,6 +73,28 @@ def test_launch_enables_remote_and_starts_tunnel(isolated, monkeypatch) -> None:
     assert stored["remote_enabled"] is True
 
 
+def test_pid_liveness_probe_never_signals_and_sees_finished_processes(monkeypatch) -> None:
+    # On Windows signal 0 is CTRL_C_EVENT: the old probe answered "running"
+    # for a finished process and sent Ctrl+C to the console it shares with
+    # other local servers.
+    import os
+    import subprocess
+    import sys
+
+    if os.name == "nt":
+        def refuse(*_args, **_kwargs):
+            raise AssertionError("os.kill must not be used to probe pid liveness")
+
+        monkeypatch.setattr(tunnel_manager.os, "kill", refuse)
+    finished = subprocess.Popen([sys.executable, "-c", "pass"])
+    finished.wait()
+    assert tunnel_manager._pid_alive(os.getpid()) is True
+    assert tunnel_manager._pid_alive(finished.pid) is False
+    assert tunnel_manager._pid_alive(0) is False
+    assert tunnel_manager._pid_alive(-1) is False
+    assert tunnel_manager._pid_alive(4_000_000_000_000) is False
+
+
 def test_stop_clears_state(isolated, monkeypatch) -> None:
     tunnel_manager._write_state({"pid": 99999, "tunnel": "test-tunnel-id"})
     monkeypatch.setattr(tunnel_manager, "_pid_alive", lambda pid: pid == 99999)

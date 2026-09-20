@@ -23,7 +23,7 @@ import secrets
 import threading
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, Mapping, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Tuple
 import urllib.parse
 
 from cryptography.exceptions import InvalidSignature
@@ -2684,7 +2684,8 @@ def _safe_result(value: Any) -> Any:
     return clean
 
 
-def submit_result(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
+def submit_result(token: Any, payload: Mapping[str, Any], *,
+                  validate_command: Optional[Callable[[Mapping[str, Any]], None]] = None) -> Dict[str, Any]:
     allowed = {
         "command_id", "idempotency_key", "status", "connector_sequence",
         "safe_result", "error_class", "extensions",
@@ -2738,6 +2739,11 @@ def submit_result(token: Any, payload: Mapping[str, Any]) -> Dict[str, Any]:
             raise ConnectorProtocolError(
                 "Command idempotency mismatch.", 409, "idempotency_conflict",
             )
+        # The HTTP application may attach a canonical-job boundary. It sees
+        # the authenticated STORED command, never caller-supplied scope or
+        # payload, before any result is persisted (including replay).
+        if validate_command is not None:
+            validate_command(copy.deepcopy(command))
         result_hash = hashlib.sha256(_canonical_json({
             "status": status,
             "safe_result": result,

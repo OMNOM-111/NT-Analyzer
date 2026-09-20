@@ -58,6 +58,7 @@ def _result(research_id: str, index: int, *, profitable: bool = False) -> dict:
             "trades_total": 150,
             "years_tested": 3,
             "net_profit_after_commission": 500 if profitable else -200,
+            "dd_after_commission": -120.5,
         },
         "iteration_history": [{"iteration": n} for n in range(1, 4)],
         "backtests": [{
@@ -102,6 +103,7 @@ def test_profitable_family_is_validated_only_after_minimum_sample() -> None:
     assert final["status"] == "validated"
     assert final["best_variant"]["class_name"] == "Strategy0"
     assert final["best_variant"]["best_window"]["timeframe"] == "5m"
+    assert final["best_variant"]["max_drawdown"] == -120.5
 
 
 def test_technical_failures_do_not_make_research_unprofitable() -> None:

@@ -58,6 +58,8 @@ STRATEGY_FIELDS = ("class_name", "parameters")
 # through its own whitelist, so this is the outer of two gates rather than the
 # only one.
 _CLASS_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{2,63}$")
+_JOB_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
+_JOB_STATES = ("running", "cancel_requested", "pending", "done", "failed", "cancelled")
 
 MAX_PARAMETERS = 200
 MAX_PARAMETER_NAME = 64
@@ -383,7 +385,8 @@ def write_cancelled_marker(job_dir: Path, reason: str) -> None:
 
 
 def record_dispatch(job_dir: Path, *, command_id: str, connection_id: str,
-                    idempotency_key: str, queued_at_utc: str) -> None:
+                    idempotency_key: str, queued_at_utc: str,
+                    workspace_id: str = "", origin_workspace_id: str = "", cancel: bool = False) -> None:
     """Leave proof beside the job that it was handed to a device.
 
     Without it a job sitting in pending is ambiguous: it may be waiting for a
@@ -391,13 +394,15 @@ def record_dispatch(job_dir: Path, *, command_id: str, connection_id: str,
     nothing. That difference decides whether an operator should keep waiting.
     """
     try:
-        (job_dir / "dispatch.json").write_text(
+        (job_dir / ("cancel_dispatch.json" if cancel else "dispatch.json")).write_text(
             json.dumps({
                 "transport": "production_connector",
                 "command_id": command_id,
                 "connection_id": connection_id,
                 "idempotency_key": idempotency_key,
                 "queued_at_utc": queued_at_utc,
+                "workspace_id": workspace_id,
+                "origin_workspace_id": origin_workspace_id,
             }, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
@@ -405,9 +410,12 @@ def record_dispatch(job_dir: Path, *, command_id: str, connection_id: str,
         pass
 
 
-def dispatch_record(job_dir: Path) -> Dict[str, Any]:
+def dispatch_record(job_dir: Path, *, cancel: bool = False) -> Dict[str, Any]:
     try:
-        return json.loads((job_dir / "dispatch.json").read_text(encoding="utf-8"))
+        target = job_dir / ("cancel_dispatch.json" if cancel else "dispatch.json")
+        if target.is_symlink() or target.resolve().parent != job_dir.resolve():
+            return {}
+        return json.loads(target.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
@@ -482,6 +490,16 @@ def move_job(job_dir: Path, jobs_root: Path, status: str) -> Path:
     if status not in {"pending", "running", "cancel_requested",
                       "done", "failed", "cancelled"}:
         raise BacktestDispatchError(f"Недопустимый статус задачи: {status}")
+    # Validate both resolved targets before any unlink, mkdir or move. A job
+    # identifier is a name, never a path; canonical state roots cannot redirect.
+    if (not _JOB_ID_RE.fullmatch(job_dir.name)
+            or job_dir.parent.name not in _JOB_STATES
+            or job_dir.resolve() != _job_path(jobs_root, job_dir.parent.name, job_dir.name)
+            or job_dir.is_symlink()):
+        raise BacktestDispatchError("Недопустимый каталог задачи.")
+    destination = _job_path(jobs_root, status, job_dir.name)
+    if destination != job_dir.resolve() and destination.exists():
+        raise ConflictingResultError("Каталог результата уже существует; история сохранена.")
     if status in {"done", "failed", "cancelled"}:
         # cancel.flag is how a *local* AddOn is asked to stop; it means nothing
         # once the job is over. Leaving it behind makes a finished report look
@@ -494,13 +512,10 @@ def move_job(job_dir: Path, jobs_root: Path, status: str) -> Path:
                 pass
             except OSError:
                 pass
-    target_parent = jobs_root / status
+    target_parent = destination.parent
     target_parent.mkdir(parents=True, exist_ok=True)
-    destination = target_parent / job_dir.name
     if destination.resolve() == job_dir.resolve():
         return job_dir
-    if destination.exists():
-        shutil.rmtree(destination, ignore_errors=True)
     shutil.move(str(job_dir), str(destination))
     return destination
 
@@ -535,15 +550,27 @@ def fail_job(jobs_root: Path, job_id: str, reason: str) -> Optional[Path]:
 
 def read_job_document(job_dir: Path) -> Dict[str, Any]:
     try:
-        return json.loads((job_dir / "job.json").read_text(encoding="utf-8"))
+        target = job_dir / "job.json"
+        if target.is_symlink() or target.resolve().parent != job_dir.resolve():
+            return {}
+        return json.loads(target.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
 
+def _job_path(jobs_root: Path, status: str, job_id: str) -> Path:
+    if not isinstance(job_id, str) or not _JOB_ID_RE.fullmatch(job_id) or status not in _JOB_STATES:
+        raise BacktestDispatchError("Недопустимый идентификатор задачи.")
+    root = jobs_root.resolve()
+    candidate = root / status / job_id
+    if candidate.resolve() != candidate or (root / status).is_symlink() or candidate.is_symlink():
+        raise BacktestDispatchError("Недопустимый каталог задачи.")
+    return candidate
+
+
 def locate(jobs_root: Path, job_id: str) -> Optional[Tuple[str, Path]]:
-    for status in ("running", "cancel_requested", "pending",
-                   "done", "failed", "cancelled"):
-        candidate = jobs_root / status / job_id
+    for status in _JOB_STATES:
+        candidate = _job_path(jobs_root, status, job_id)
         if candidate.is_dir():
             return status, candidate
     return None

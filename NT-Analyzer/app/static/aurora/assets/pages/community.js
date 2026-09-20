@@ -215,7 +215,7 @@
     const attested = object.attestation && String(object.attestation.algorithm || '').toLowerCase() === 'sha256';
     const source = [object.instrument, object.timeframe].filter(Boolean).map(esc).join(' · ');
     return `<section class="community-object-card community-object-type-${esc(type.key)}" data-community-rich-object="${esc(type.key)}">
-      <header class="community-object-head"><span class="community-object-icon" aria-hidden="true">${esc(type.icon)}</span><div><span class="community-object-kind">${esc(type.label)}</span><h4>${esc(object.title || 'Объект StratForge')}</h4></div>${attested ? '<span class="community-attested" title="Server-attested SHA-256 snapshot">✓ подтверждено</span>' : ''}</header>
+      <header class="community-object-head"><span class="community-object-icon" aria-hidden="true">${esc(type.icon)}</span><div><span class="community-object-kind">${esc(type.label)}</span><h4>${esc(object.title || 'Объект StratForge')}</h4></div>${object.synthetic === true ? '<span class="community-attested" title="Диагностика механизма, не оценка качества модели">SYNTHETIC · диагностика</span>' : attested ? '<span class="community-attested" title="Server-attested SHA-256 snapshot">✓ подтверждено</span>' : ''}</header>
       ${object.summary ? `<p class="community-object-summary">${esc(object.summary)}</p>` : ''}${source ? `<p class="community-object-source">${source}</p>` : ''}
       ${objectChart(object)}
       ${metrics ? `<div class="community-object-metrics">${metrics}</div>` : ''}
@@ -597,7 +597,7 @@
       UI.toast(wasCorrection
         ? 'Исправление опубликовано; прежняя запись осталась на месте'
         : (composerVisibility() === 'network'
-          ? 'Опубликовано на вашей стене и в SF Chat'
+          ? 'Опубликовано на вашей стене и в SF Social'
           : 'Опубликовано только на вашей стене'));
     } catch (error) { UI.reportError(error); }
     finally { if (submit) submit.disabled = false; }

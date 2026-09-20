@@ -37,6 +37,37 @@ ENTITLEMENT_STORE_VERSION = 3
 INITIAL_TRIAL_DAYS = 7
 TRIAL_PLAN_ID = "trial_full"
 
+
+def trial_active_seconds_limit() -> int:
+    """How much *active* product use a new account gets, in seconds.
+
+    The starting grant is measured in time actually spent using StratForge,
+    not in calendar time since registration: an account left untouched for a
+    week must still have its hours. The value is configuration, not a constant
+    baked into screens, so it can be changed without reworking anything.
+    """
+    raw = str(os.environ.get("STRATFORGE_TRIAL_ACTIVE_SECONDS") or "").strip()
+    try:
+        configured = int(raw)
+    except ValueError:
+        configured = 0
+    if 60 <= configured <= 365 * 24 * 3600:
+        return configured
+    return TRIAL_ACTIVE_SECONDS_DEFAULT
+
+
+# Five hours of real use. A gap longer than the idle cutoff is somebody who
+# walked away, so it is not charged against the grant.
+TRIAL_ACTIVE_SECONDS_DEFAULT = 5 * 3600
+TRIAL_IDLE_CUTOFF_SEC = 120
+# Usage is persisted at most this often; between writes it is still counted
+# from the stored anchor, so nothing is lost by not writing on every request.
+TRIAL_USAGE_WRITE_INTERVAL_SEC = 20
+# The starting grant is bounded by active use, so its calendar expiry is only
+# an outer guard: an account that never signs in must not silently lose hours
+# it never spent.
+TRIAL_CALENDAR_BOUND_DAYS = 365
+
 # Canonical subscription privilege catalog. Owner edits the plan matrix over
 # these ids; each plan enables a subset. Ordered for display.
 PLAN_FEATURES: Tuple[Dict[str, str], ...] = (
@@ -46,6 +77,7 @@ PLAN_FEATURES: Tuple[Dict[str, str], ...] = (
     {"id": "charts_realtime", "label": "Онлайн-графики (реалтайм)", "hint": "Дорогой ресурс рыночных данных"},
     {"id": "ai_lab",          "label": "AI Lab (исследования)"},
     {"id": "ai_pro_models",   "label": "Pro-модели ИИ", "hint": "Дорогие облачные модели"},
+    {"id": "ai_automation",   "label": "Ограниченная фоновая работа агентов", "hint": "По отдельному разрешению; план и срок подтверждаются отдельно"},
     {"id": "news",            "label": "Новости и календарь"},
     {"id": "documents",       "label": "Документы"},
     {"id": "personal_nt",     "label": "Свой NinjaTrader"},
@@ -68,7 +100,9 @@ def _feat(*enabled: str) -> Dict[str, bool]:
 
 
 def _feat_all() -> Dict[str, bool]:
-    return {fid: True for fid in _ALL_FEATURE_IDS}
+    # New autonomous work is never silently granted by a legacy all-features
+    # plan, a trial, or owner identity. Existing explicit overrides still apply.
+    return {fid: fid != "ai_automation" for fid in _ALL_FEATURE_IDS}
 
 
 PLANS: Dict[str, Dict[str, Any]] = {
@@ -982,9 +1016,111 @@ def trial_access_for_user(user_id: Any, *, include_history: bool = True) -> Dict
         )
 
 
+def _usage_payload(row: Optional[Dict[str, Any]], *, other_access: bool) -> Dict[str, Any]:
+    limit = trial_active_seconds_limit()
+    used = 0
+    if isinstance(row, dict):
+        try:
+            used = max(0, int(row.get("active_seconds_used") or 0))
+        except (TypeError, ValueError):
+            used = 0
+    used = min(used, limit)
+    remaining = max(0, limit - used)
+    return {
+        "kind": "active_usage",
+        "limit_sec": limit,
+        "used_sec": used,
+        "remaining_sec": remaining,
+        "percent_remaining": int(round(remaining * 100 / limit)) if limit else 0,
+        "idle_cutoff_sec": TRIAL_IDLE_CUTOFF_SEC,
+        # A promo or paid entitlement replaces the starting grant entirely;
+        # while one is active the trial clock is not what governs access.
+        "granted_elsewhere": bool(other_access),
+        "expired": bool(row is not None and remaining <= 0 and not other_access),
+        "started": bool(row is not None and used > 0),
+    }
+
+
+def _non_trial_access_active(doc: Dict[str, Any], *, user_id: int, user_uuid: str) -> bool:
+    for row in doc.get("entitlements") or []:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("access_kind") or "") == "initial_trial":
+            continue
+        same_user = int(row.get("user_id") or 0) == user_id
+        same_uuid = bool(user_uuid) and str(row.get("user_uuid") or "") == user_uuid
+        if (same_user or same_uuid) and _entitlement_active(row):
+            return True
+    return False
+
+
+def trial_usage_for_user(user_id: Any) -> Dict[str, Any]:
+    """How much of the starting grant is left, without changing anything."""
+    try:
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        uid = 0
+    if uid <= 0:
+        return _usage_payload(None, other_access=False)
+    canonical = _canonical_user_uuid(uid)
+    with _LOCK:
+        doc = _read_doc_reference()
+        row = _trial_row(doc, user_id=uid, user_uuid=canonical)
+        other = _non_trial_access_active(doc, user_id=uid, user_uuid=canonical)
+    return _usage_payload(row, other_access=other)
+
+
+def record_active_usage(user_id: Any, *, now: Optional[float] = None) -> Dict[str, Any]:
+    """Charge the time actually spent in the product against the grant.
+
+    Called from the authenticated request path. The charge is the gap since the
+    previous sighting, capped at the idle cutoff, so a session left open
+    overnight costs one cutoff, not eight hours.
+    """
+    try:
+        uid = int(user_id or 0)
+    except (TypeError, ValueError):
+        uid = 0
+    if uid <= 0:
+        return _usage_payload(None, other_access=False)
+    stamp = float(now if now is not None else time.time())
+    canonical = _canonical_user_uuid(uid)
+    with _LOCK:
+        doc = _read_doc()
+        row = _trial_row(doc, user_id=uid, user_uuid=canonical)
+        other = _non_trial_access_active(doc, user_id=uid, user_uuid=canonical)
+        if row is None:
+            return _usage_payload(None, other_access=other)
+        limit = trial_active_seconds_limit()
+        try:
+            used = max(0, int(row.get("active_seconds_used") or 0))
+        except (TypeError, ValueError):
+            used = 0
+        try:
+            last = float(row.get("last_active_at") or 0)
+        except (TypeError, ValueError):
+            last = 0.0
+        gap = 0.0 if last <= 0 else max(0.0, stamp - last)
+        charge = min(gap, float(TRIAL_IDLE_CUTOFF_SEC))
+        pending = used + int(charge)
+        write_due = last <= 0 or (stamp - last) >= TRIAL_USAGE_WRITE_INTERVAL_SEC
+        if write_due:
+            row["active_seconds_used"] = min(pending, limit)
+            row["last_active_at"] = stamp
+            row["last_active_at_utc"] = _now_iso()
+            row["updated_at_utc"] = _now_iso()
+            _write_doc(doc)
+            snapshot = row
+        else:
+            # Not written yet, but the caller still sees the true number.
+            snapshot = dict(row)
+            snapshot["active_seconds_used"] = min(pending, limit)
+        return _usage_payload(snapshot, other_access=other)
+
+
 def ensure_initial_trial(
     user_id: Any, *, user_uuid: Any = "", source: str = "verified_registration",
-    duration_days: Any = INITIAL_TRIAL_DAYS,
+    duration_days: Any = TRIAL_CALENDAR_BOUND_DAYS,
 ) -> Dict[str, Any]:
     """Mint the one non-renewing full trial for a verified human account.
 
@@ -1035,6 +1171,12 @@ def ensure_initial_trial(
             "source_voucher_id": "", "note": "Automatic initial full trial",
             "access_kind": "initial_trial", "trial_days": days,
             "starts_at_utc": now_iso, "expires_at_utc": expiry,
+            # The grant is spent in active use, not in calendar time; the
+            # calendar expiry above stays only as an outer bound.
+            "active_seconds_used": 0,
+            "active_seconds_limit": trial_active_seconds_limit(),
+            "last_active_at": 0,
+            "last_active_at_utc": "",
             "created_at_utc": now_iso, "updated_at_utc": now_iso,
         }
         doc["entitlements"].append(entitlement)

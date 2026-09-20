@@ -1,10 +1,48 @@
 # 05. Auth, Users and Security
 
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
-- Last verified UTC: 2026-08-31T00:00:00Z
+- Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
+- Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
+- Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
+- Active scope: verified integrated Local, result presentation, same-input Consensus and three-model Court; full program and owner-dependent acceptance remain open
+- Unified Local base: `0.10.0-beta.96`, PR #280; no Canary/Production promotion
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: PARTIAL
+
+## Previous verified model/domain checkpoint — aa54c294
+
+At that previous checkpoint, clean Local 8765 ran `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96,
+build `dev-0.10.0-beta.96-aa54c2940150`, original owner data, Preview=false,
+live orders=false. The code is committed/pushed to draft PR #282; #280/#281
+remain unmerged. Operational documentation may be newer than active runtime code.
+
+Final full **3977 passed / 44 skipped**, 954.04 s; final focused **319 PASS**,
+presentation focused **610 PASS**, legacy **13/13 suites**, root/static/context/
+diff and exact staged/runtime **533-file bundles PASS**.
+[Exact-code CI 33965039490](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/33965039490)
+passed Windows, Ubuntu and static, 3/3. No main-target or release PASS is inferred.
+
+Actual browser acceptance on this SHA: stored application Outcome and original
+report links in Inspector/SF Chat; same 64-trade NT report; genuine Desktop PNG
+140/800 historical bars; preserved chats (5/13 messages); three Personas and
+n=3 arithmetic observations for Tolik/Ivan, NEW for Anna. Consensus proposal
+cf1464ab uses two accepted same-input contributions. Fresh Court ae0e5e45
+received three real valid isolated votes (DeepSeek/Gemini/Azure) and approve;
+old case 86a650ab retains its one vote and invalid Gemini response. No validator
+was weakened and a verdict does not execute actions.
+SF Social read-only preview e4853566… has net -969.7 and PF 0.7252 explicitly
+after commission; no post or permanent confirmation was created.
+
+`LOCAL VISUAL REVIEW AVAILABLE: YES`; the full program stays IN DEVELOPMENT.
+Ordinary registration/device/key, real multi-user sharing/revocation, permanent
+Social publication and owner design acceptance remain separate. New Router,
+Execution V2, autonomous routines and an Agent World PG adapter are not implemented.
+All ten flags default OFF; exact admitted Local workspace has eight paths ON,
+Router/Execution V2 OFF. Preview has separate synthetic flags, no real side effects.
+The earlier 93bb1298/other-SHA test and provider history is preserved in the
+[canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
+[integrated changelog](../changelog/2026-09-05-agent-world-integrated-local.md).
 
 ## Identity model
 
@@ -19,9 +57,14 @@
 
 | Provider | Status | Current state |
 | --- | --- | --- |
-| Telegram | `DONE` | Existing owner login/session works in isolated Canary and Production on beta.29. Canary reuses the existing bot through `[CANARY]` shared-webhook forwarding and its own queue/session state; no separate Canary bot is required. |
-| Google | `EXTERNAL BLOCKED` | code path exists, but Production OAuth client/provider configuration is not accepted live yet |
-| Email | `EXTERNAL BLOCKED` | code path exists, but Production transactional email provider is not accepted live yet; DEV test auth is not Production email acceptance |
+| Telegram | `BETA` in Unified Local | staged registration and existing shared-bot routing; contextual synthetic Preview passed. Earlier deployed owner-login evidence is historical, not repeated here |
+| Google | `BETA` in Unified Local | staged registration and contextual synthetic Preview passed; real-provider acceptance of the beta.96 build is separate |
+| Email | `BETA` in Unified Local | normal OTP state flow with Preview-only delivery passed; synthetic acceptance does not certify external delivery |
+
+Historical beta.79 records include Google/Resend post-rotation smoke. Earlier
+claims that Production has no provider configuration are stale. This slice
+does not inspect live credentials or repeat provider acceptance; use the
+environment's current release evidence before asserting live readiness.
 
 ## Account linking rules
 
@@ -51,7 +94,7 @@ Key admin capability names already in the contract: `admin.view`,
 `releases.rollback_production`, `environment.switch`, `docs.manage_global`,
 `docs.manage_workspace`.
 
-## Development candidate: registration and one trial clock
+## Unified Local beta.96: registration and active-use access
 
 - Anonymous visitors receive only the protected sign-in/registration surface;
   the former blurred application shell and "watch without sign-in" path are
@@ -59,14 +102,17 @@ Key admin capability names already in the contract: `admin.view`,
 - A new human account activates only after an identity provider has verified
   the subject, the required profile is complete and terms are accepted.
 - The verified account receives `full_control`, professional UX and exactly one
-  `trial_full` entitlement for seven days. Linking another identity or signing
-  in on another browser/device returns the existing clock and never restarts it.
+  `trial_full` starting grant of five hours of active use by default. Idle time
+  is not charged. Linking another identity or signing in on another client
+  preserves the same grant and consumption. Legacy calendar fields do not
+  define the active-use allowance.
 - Revoked, denied, blocked, deleted, owner and service accounts never receive
   an automatic trial through this path.
 - Trial expiry does not revoke the identity or sessions. Authorization falls
   back to the authenticated account baseline; provider setup remains reachable.
-- Owner-only `POST /api/owner/trial/extend` extends by whole days or an exact
-  future UTC date. Every grant/extension records actor, source, reason and
+- Owner-only `POST /api/owner/trial/extend` retains its calendar-extension
+  compatibility contract; it must not be confused with replenishing active-use
+  seconds. Every grant/extension records actor, source, reason and
   compact `before -> after` access history shown in the Admin user card.
 - Account activation and subscription persistence use an idempotent outbox
   marker. If the entitlement store is unavailable, session creation fails
@@ -74,21 +120,61 @@ Key admin capability names already in the contract: `admin.view`,
 
 ## Sessions, trusted devices and step-up
 
-- Device identity is not IP-based.
-- Trusted devices use lifecycle `pending -> trusted -> revoked|expired`.
-- Security challenges are single-use, environment-bound and hashed at rest.
-- Step-up is the intended gate for linking identities, trusting a device,
+- The Development device-confirmation model is explicitly
+  `Machine -> Client -> Session`. A Machine exists only after hardware-bound
+  Connector identity or attested pairing. IP, hostname, User-Agent, browser
+  version, VPN and approximate location are audit metadata, never proof of a
+  machine or a grouping key.
+- A new unknown human Client creates a server-side pending Session with a
+  two-minute deadline. Before confirmation, the global protected-route
+  guard exposes only auth status, challenge/confirm/approve/resend/reject and
+  logout; all other protected requests fail with
+  `403 DEVICE_CONFIRMATION_REQUIRED`. Timeout invalidates the Session.
+- Device confirmation uses a single-use six-digit challenge, hashed at rest
+  and bound to user, environment, Client, current Session, purpose and selected
+  mode. Delivery choices are confirmed Telegram and verified email only.
+- A first device immediately after registration may consume the single-use
+  login proof, at most fifteen minutes old, for that same client/session.
+  The owner/user still chooses trust and confirms manually. Later unknown
+  clients and expired/replayed proof require normal OTP.
+- `permanent` trusts the Client until explicit revoke. `session` activates only
+  the current auth Session, keeps the Client pending and uses a non-persistent
+  browser cookie. There is no fixed 24-hour trust mode.
+- Ending a Session, revoking a Client and revoking a Machine are distinct
+  scopes. Machine revoke cascades only through Clients with a proven binding.
+- Fresh step-up remains the intended separate gate for linking identities,
   personal NinjaTrader pairing, Connector revoke and release approvals.
 
 ## Operational auth snapshot
+
+The following Production/Canary facts are historical deployment evidence, not a
+fresh environment check. The shared deployed anchor
+`8f42158661e8247832c90bea8fc4d9f0071e647b` is unchanged. Local `8765` now serves
+the clean `95912cbf` beta.96 runtime with original owner data/settings and the
+scoped delivery/role/private-container changes active. Earlier `fc78677`
+owner-review notes remain history. Ordinary-user registration/device/key and
+real multi-user revocation are still pending; the documented owner-provider
+and result/Court browser scenarios pass on aa54c294.
+Native Azure binding compatibility permits only the canonical HTTPS api-version
+query from the already approved owner registry. Query credentials, extra or
+duplicate parameters, userinfo/fragments and non-Azure queries remain rejected;
+ordinary private transports receive no exception or copied owner credential.
+
+Development `POST /api/account/workspace/personal` creates/selects only the
+confirmed authenticated human's own empty container. It rejects Preview,
+non-Development, service/local-bypass/impersonated and unconfirmed/revoked
+sessions, foreign caller scope and invalid Origin/CSRF. It grants no NT, key,
+budget or AI opt-in. Original NT routes retain dual authentication. Ordinary
+test registration is at final Terms; owner must confirm and enter a separate
+OpenRouter key in the private wizard. Existing owner keys are never copied.
 
 - Production browser serves Sign in/Register and existing owner login is
   operational; authenticated beta.29 owner acceptance passed.
 - Canary owner login is operational through the existing shared bot routing,
   while Canary DB, queue, sessions, cookies and browser storage stay isolated.
 - No separate Canary bot or second auth architecture is required.
-- Google and email must remain `EXTERNAL BLOCKED` in Production until their
-  external provider configurations exist.
+- Current live delivery was not re-verified in this task. Baseline synthetic
+  Preview evidence does not replace acceptance of the real target providers.
 
 ## Personal NinjaTrader security requirements
 
@@ -100,15 +186,15 @@ Key admin capability names already in the contract: `admin.view`,
 
 ## Current EXTERNAL BLOCKED / incomplete areas
 
-- Treat Production email login as incomplete until a real transactional backend is
-  clearly configured and accepted for the target environment.
-- Treat Production Google login as blocked until the real external OAuth client,
-  secret and callback configuration are accepted for Production.
-- Treat trusted-device hard enforcement for every release-critical action as
-  incomplete until the step-up workflow is fully rolled out across those paths.
+- Treat acceptance of real Google/email delivery for the new beta.96 build as
+  a separate environment gate; no current credentials were read by this task.
+- General new-login device confirmation and its protected-route guard are
+  integrated and browser-verified in Unified Local beta.96. Treat fresh action-specific
+  step-up for every release-critical mutation as incomplete until that separate
+  workflow is fully rolled out.
 - Treat wide public personal-NT onboarding as incomplete even though the model,
   endpoints and schema are already present.
-- Treat the new automatic-trial UX as Development-only until its PR/CI and
+- Treat the new active-use access UX as Development-only until its PR/CI and
   immutable Canary acceptance complete.
 
 ## Threat-model summary
@@ -118,12 +204,87 @@ Key admin capability names already in the contract: `admin.view`,
 - Global governance mutation is separated from workspace/strategy documents.
 - Per-environment cookies, CSRF keys, storage namespaces, bots and connector
   sessions are part of the isolation model.
+- The owner Preview sandbox (Development only) is a separate loopback process
+  with its own data root, cookie name and synthetic non-owner identity. It has
+  no localhost-owner bypass, cannot open outbound connections, and is rejected
+  fail-closed in Canary and Production.
+- Agent World reuses this identity, permission and device context. Its new
+  scoped flags do not grant capabilities, bypass pending-device access or
+  authorize provider/command use. The historical stages 0–1 made no auth/security
+  changes; the current integration adds only the read-only session-lease helper
+  and narrow history-entitlement behavior described below, not another login flow.
+
+## Agent World integration boundary
+
+The Preview owner-review facade reuses existing session, permanent/session device,
+membership, role, ai_lab capability, trial, CSRF and zero-cost budget checks;
+synthetic identity does not receive owner privileges. New routes additionally
+require trusted Preview control and scoped default-off flags. Mutation checkpoints
+refresh access rather than trusting stale UI capabilities. Reset is serialized
+with the new SQLite operations before it wipes only synthetic state.
+See [ADR-0010](../adr/0010-agent-world-owner-review.md). Auth/provider registration
+logic, real credentials and the ordinary Local owner runtime are not replaced.
+
+The real Local adapter is independent: Development only, Preview forbidden,
+`STRATFORGE_AGENT_WORLD_LOCAL_WORKSPACES` is an exact server-owned allowlist
+(default empty; wildcard/invalid entries deny). Existing authenticated Local
+owner entry or confirmed owner browser session is required; active owner identity,
+UUID, owner workspace/membership and existing permissions/budget are rechecked.
+The earlier clean adapter activated read/UI/tasks only. The new uncommitted
+composition enables eight exact-workspace gates: read/UI/tasks/evaluation/memory/
+consensus/Court/social. Router shadow and Execution V2 remain OFF; every flag still
+defaults OFF globally. No synthetic identity,
+master code, client-supplied owner/scope grant or new permissions catalog exists.
+The durable chat worker uses its server-issued scope and fresh actor/membership
+admission; this is not a claim that a persisted job carries a live browser cookie.
+Neither pending devices nor other users/Canary/Production gain this access.
+
+The added domain facade admits ordinary authenticated users only through fresh
+active identity/UUID, current workspace membership, confirmed session and existing
+capabilities. Own-workspace owner mutations require `ai_lab`; real model calls
+also require `ai_pro_models` and the existing budget checks. Cross-user mutation,
+client-supplied actor/workspace/caps, Preview identities and non-DEV access fail
+closed. Current workspace members may read explicitly published same-workspace
+Memory; private records/artifacts are not made public by that membership.
+
+`account_auth.local_session_is_active` is a Development-only read of an already
+admitted session ID/user pair. It checks active user, unrevoked/unexpired Session
+and active Device Confirmation without creating a session, refreshing cookies or
+persisting bearer tokens in jobs. Session revoke/expiry is rechecked before later
+worker/provider actions; the helper is not a new authenticator or PG fallback.
+
+After trial/entitlement expiry, authenticated professional users can still read
+their scoped history/evidence and open an existing task's SF Chat conversation.
+The legacy chat-link POST accepts only an empty body and appends nothing. This
+history exception grants no new model call, job, domain mutation or social
+publication; action controls are removed and POST admission remains independent.
+Revoked sessions and foreign workspaces never gain history access.
+
+Private model credentials stay in the existing DPAPI store, referenced by opaque
+scoped IDs, never by browser-visible secret values. Private provider traffic uses
+the existing model client through an exact registry scope and HTTPS guard: public
+resolved IP, pinned connection with hostname TLS verification, bounded paths/body,
+no redirects/proxy/private-address fallback. It cannot enumerate or fall back to
+the owner registry. An explicit owner-only binding may reuse an existing owner
+connection and its existing budget caps without copying keys or increasing limits.
+New paid private connections remain blocked without an approved budget; provider
+availability and live acceptance must not be inferred from configured records.
+
+Social publishing requires the existing `community` capability plus its scoped
+Agent World gate, exact reviewed snapshot hash/revision and explicit human
+permanent-publication consent. Fresh admission precedes the Community write;
+actor and requester remain separate in a private approval artifact. No implicit
+publication from GET, completion, Court or shared Memory is permitted.
 
 ## Canonical evidence
 
+- [Current Agent World baseline](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md)
+- [Historical pre-foundation context](../archive/AGENT_WORLD_PRE_FOUNDATION_CONTEXT_2026-09-04.md)
 - [../adr/0002-unified-identity.md](../adr/0002-unified-identity.md)
 - [../adr/0003-trusted-devices-and-step-up.md](../adr/0003-trusted-devices-and-step-up.md)
 - [../adr/0004-admin-panel-and-capabilities.md](../adr/0004-admin-panel-and-capabilities.md)
+- [Device Confirmation Development record](../changelog/2026-09-02-device-confirmation-trusted-access.md)
+- [Owner Preview sandbox Development record](../changelog/2026-09-03-owner-preview-synthetic-sandbox.md)
 - `app/account_auth.py`
 - `app/auth_identity.py`
 - `app/security_devices.py`

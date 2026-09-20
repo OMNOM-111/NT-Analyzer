@@ -27,6 +27,13 @@ _SUPERVISOR: Optional[threading.Thread] = None
 _SUPERVISOR_STOP = threading.Event()
 _WORKER_ID = "api-" + secrets.token_hex(4)
 DEFAULT_INTERVAL_SEC = 2.0
+_MODEL_RECOVERY_LOCK = threading.Lock()
+_MODEL_RECOVERY_STATE = {"root": "", "at": 0.0, "after_id": ""}
+_SCHEDULE_SCAN_LOCK = threading.Lock()
+_SCHEDULE_SCAN_STATE = {"root": "", "at": 0.0, "after_id": ""}
+_SCHEDULE_SCAN_INTERVAL_SEC = 30.0
+_MODEL_RECOVERY_INTERVAL_SEC = 30.0
+_MODEL_RECOVERY_LIMIT = 100
 
 
 class WorkerCancelled(RuntimeError):
@@ -92,6 +99,8 @@ def enqueue_ai_message(
     conversation_id: str,
     agent: str,
     scope: Dict[str, Any],
+    persona_id: Optional[str] = None,
+    selected_model_id: Optional[str] = None,
     mirror_to_telegram: bool = True,
     source: str = "app",
     timeout_sec: int = 600,
@@ -120,6 +129,15 @@ def enqueue_ai_message(
         "mirror_to_telegram": bool(mirror_to_telegram),
         "scope": clean_scope,
     }
+    if persona_id is not None:
+        from .ai_control_center.persona_identity import _identity
+        payload["persona_id"] = _identity(persona_id)
+    if selected_model_id is not None:
+        from .ai_control_center.persona_identity import _identity
+        from .ai_control_center.states import ContractError
+        if persona_id is None:
+            raise ContractError("persona_model_selection_unavailable")
+        payload["selected_model_id"] = _identity(selected_model_id)
     try:
         return enqueue(
             "ai_orchestrator", payload,
@@ -134,6 +152,10 @@ def enqueue_ai_message(
                 or str(existing.get("user_id") or "") != user_id
                 or str((existing.get("payload") or {}).get("request_id") or "") != rid):
             raise
+        saved = existing.get("payload") or {}
+        if ("persona_id" in payload or "persona_id" in saved) and any(
+                saved.get(field) != payload.get(field) for field in ("persona_id", "selected_model_id", "message", "conversation_id")):
+            raise ValueError("persona_request_id_conflict") from None
         return existing
 
 
@@ -224,6 +246,9 @@ def _execute(job: Dict[str, Any], *, heartbeat=None, cancelled=None) -> Dict[str
             path = runtime_env.data_path("runtime", name, project_root=root)
             indexed.append(durable.record_telemetry_file(root, name=name, path=path, updated_at_utc=_now_iso()))
         return {"ok": bool(rotation.get("ok", True)), "rotation": rotation, "indexed": indexed}
+    if kind in {"agent_world_model", "agent_world_followup", "agent_world_external"}:
+        from .ai_control_center.domain_gateway import execute_worker
+        return execute_worker(job, cancelled, heartbeat)
     if kind == "ai_orchestrator":
         scope = payload.get("scope") if isinstance(payload.get("scope"), dict) else {}
         if (str(scope.get("workspace_id") or "") != str(job.get("workspace_id") or "")
@@ -247,6 +272,8 @@ def _execute(job: Dict[str, Any], *, heartbeat=None, cancelled=None) -> Dict[str
             on_thinking=on_thinking,
             scope=scope,
             request_id=str(payload.get("request_id") or ""),
+            **({"persona_id": payload["persona_id"]} if "persona_id" in payload else {}),
+            **({"selected_model_id": payload["selected_model_id"]} if "selected_model_id" in payload else {}),
         )
         heartbeat()
         return result
@@ -315,10 +342,66 @@ def _execute(job: Dict[str, Any], *, heartbeat=None, cancelled=None) -> Dict[str
     raise RuntimeError(f"unknown worker job kind: {kind}")
 
 
+def _recover_model_deliveries(root: Path) -> None:
+    """Throttled keyset read of the existing queue, never a second worker."""
+    from .ai_control_center import domain_gateway
+    if not domain_gateway.live_gateway.configured():
+        return
+    if not _MODEL_RECOVERY_LOCK.acquire(blocking=False):
+        return
+    try:
+        identity, now = str(durable.db_path(root)), time.monotonic()
+        state = _MODEL_RECOVERY_STATE
+        if state["root"] != identity:
+            state.update(root=identity, at=0.0, after_id="")
+        if state["at"] and now - state["at"] < _MODEL_RECOVERY_INTERVAL_SEC:
+            return
+        state["at"] = now
+        rows = durable.list_worker_jobs(root, kind="agent_world_model", after_id=state["after_id"],
+                                        limit=_MODEL_RECOVERY_LIMIT)
+        state["after_id"] = str(rows[-1]["worker_job_id"]) if len(rows) == _MODEL_RECOVERY_LIMIT else ""
+        domain_gateway.reconcile_model_deliveries(rows)
+    except Exception:
+        # Recovery must not stop unrelated queued work. The cursor wraps, and
+        # existing source/failed-delivery records remain inspectable.
+        pass
+    finally:
+        _MODEL_RECOVERY_LOCK.release()
+
+
+def _scan_due_schedules(root: Path) -> None:
+    """Throttled keyset read of the existing queue, never a second scheduler."""
+    from .ai_control_center import domain_gateway
+    if not domain_gateway.live_gateway.configured():
+        return
+    if not _SCHEDULE_SCAN_LOCK.acquire(blocking=False):
+        return
+    try:
+        identity, now = str(durable.db_path(root)), time.monotonic()
+        state = _SCHEDULE_SCAN_STATE
+        if state["root"] != identity:
+            state.update(root=identity, at=0.0, after_id="")
+        if state["at"] and now - state["at"] < _SCHEDULE_SCAN_INTERVAL_SEC:
+            return
+        state["at"] = now
+        rows = durable.list_worker_jobs(root, kind="agent_world_followup", after_id=state["after_id"],
+                                        limit=_MODEL_RECOVERY_LIMIT)
+        state["after_id"] = str(rows[-1]["worker_job_id"]) if len(rows) == _MODEL_RECOVERY_LIMIT else ""
+        domain_gateway.reconcile_schedules(rows)
+    except Exception:
+        # A due schedule that cannot be scanned must not stop unrelated queued
+        # work. The cursor wraps and the controller stays inspectable.
+        pass
+    finally:
+        _SCHEDULE_SCAN_LOCK.release()
+
+
 def run_once(*, worker_id: str = "") -> Optional[Dict[str, Any]]:
     root = _root()
     active_worker_id = worker_id or _WORKER_ID
     durable.sweep_stale_worker_jobs(root)
+    _recover_model_deliveries(root)
+    _scan_due_schedules(root)
     job = durable.claim_worker_job(root, worker_id=active_worker_id)
     if not job:
         return None

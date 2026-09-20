@@ -2295,18 +2295,63 @@ UI.ready(async function () {
     });
   }
   function nextFrame() { return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); }
+  function agentWorldCaptureMeta(rec) {
+    if (!rec.hasBars || !rec.chart || !wins.has(rec.model.id)) throw new Error('Нет отображаемых баров для снимка рабочего стола.');
+    const bars = typeof rec.chart.getData === 'function' ? rec.chart.getData() : [];
+    // Read the existing renderer's range; do not duplicate chart/viewport maths.
+    const range = typeof rec.chart._visibleRange === 'function' ? rec.chart._visibleRange() : null;
+    if (!Array.isArray(bars) || !bars.length || !range || !Number.isFinite(range.start) || !Number.isFinite(range.end)) throw new Error('Не удалось подтвердить отображаемый диапазон графика.');
+    const visible = bars.slice(range.start, range.end);
+    if (!visible.length) throw new Error('В текущем виде графика нет отображаемых баров.');
+    const time = bar => {
+      const raw = bar && (bar.t || bar.time_utc || bar.time || bar.timestamp);
+      const parsed = raw == null ? NaN : Date.parse(raw);
+      return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+    };
+    const dataset = rec.node && rec.node.dataset || {};
+    const hash = rec._diagnostics && rec._diagnostics.series_hash;
+    return {
+      surface: 'desktop_chart', window_id: rec.model.id,
+      instrument: rec.model.config.instrument, timeframe: rec.model.config.timeframe,
+      view_preserved: true, captured_at_utc: new Date().toISOString(),
+      rendered_bar_count: visible.length, total_bar_count: bars.length,
+      first_bar_time_utc: time(visible[0]), last_bar_time_utc: time(visible[visible.length - 1]),
+      series_hash: typeof hash === 'string' && hash ? hash : null,
+      price_marker_live: dataset.priceMarkerLive === 'true' ? true : dataset.priceMarkerLive === 'false' ? false : null,
+      provider_connection_state: dataset.providerConnectionState || null,
+      history_status: dataset.historyStatus || null, transport: rec._transport || null,
+    };
+  }
   async function captureAndReport(rec, cmd, outcome, text) {
-    const fit = !cmd.payload || cmd.payload.fit !== false;
+    const agentWorld = cmd.payload && cmd.payload.agent_world === true;
+    if (agentWorld && (!cmd.id || !cmd.conversation_id)) throw new Error('Снимок Agent World требует команду и исходный диалог.');
+    const fit = !agentWorld && (!cmd.payload || cmd.payload.fit !== false);
     if (fit && rec.chart && rec.chart.fitView) rec.chart.fitView();
     await nextFrame();
+    const capture = agentWorld ? agentWorldCaptureMeta(rec) : null;
     const inst = rec.model.config.instrument;
-    const image = rec.chart ? rec.chart.toImage({ maxWidth: 1600, quality: 0.9 }) : '';
-    await API.http.chartSnapshot({
+    const image = rec.chart ? rec.chart.toImage(agentWorld ? { type: 'image/png', maxWidth: 1200 } : { maxWidth: 1600, quality: 0.9 }) : '';
+    if (agentWorld && !/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(String(image || ''))) throw new Error('Не удалось получить PNG-изображение текущего графика.');
+    if (agentWorld && image.length > 350000) throw new Error('PNG-снимок превышает 256 KiB. Уменьшите окно графика и повторите команду.');
+    const body = {
       image: image || undefined, conversation_id: cmd.conversation_id || currentConversationId(),
       instrument: inst, timeframe: rec.model.config.timeframe,
       outcome: outcome || 'manual', text: text || `Снимок графика ${inst} (${rec.model.config.timeframe}).`,
       caption: `${inst} · ${rec.model.config.timeframe}`,
-    });
+    };
+    if (agentWorld) Object.assign(body, { agent_world: true, command_id: cmd.id, mirror_to_telegram: false, capture });
+    const result = await API.http.chartSnapshot(body);
+    if (agentWorld) {
+      const snapshot = result && result.snapshot;
+      const validSnapshot = snapshot && /^cs_[0-9a-f]{32}$/.test(String(snapshot.id || ''))
+        && new RegExp('^' + snapshot.id + '\\.(?:png|jpg|webp)$').test(String(snapshot.file || ''))
+        && snapshot.url === '/api/ops/runtime/snapshots/' + snapshot.file;
+      if (result?.ok !== true || result.command_id !== cmd.id || !validSnapshot) throw new Error('Сервер не подтвердил сохранение снимка для этой команды.');
+      if (result.report?.ok !== true) throw new Error('Снимок сохранён, но SF Chat не подтвердил получение результата.');
+      return { ok: true, window_id: rec.model.id, command_id: cmd.id, snapshot_id: snapshot.id,
+        snapshot_file: snapshot.file, snapshot_url: snapshot.url, capture, report_ok: true };
+    }
+    return result;
   }
   async function applyChartCommand(cmd) {
     const type = cmd && cmd.type;
@@ -2351,12 +2396,15 @@ UI.ready(async function () {
       return { ok: true, drawing_id: drawing.id, window_id: rec.model.id };
     }
     if (type === 'snapshot') {
+      const agentWorld = cmd.payload && cmd.payload.agent_world === true;
       let rec = cmd.instrument ? await ensureWindowForRoot(cmd.instrument, cmd.timeframe) : activeRec();
       if (!rec && !cmd.instrument) rec = await ensureAnyWindow(cmd.timeframe);
       if (!rec) return { ok: false, error: 'нет открытого графика' };
       bringToFront(rec);
       if (!rec.hasBars) await waitForBars(rec, 6000);
-      await captureAndReport(rec, cmd, 'manual');
+      if (agentWorld && (!wins.has(rec.model.id) || !rec.hasBars)) return { ok: false, error: 'Нет баров после ожидания данных; снимок не создан.' };
+      const receipt = await captureAndReport(rec, cmd, 'manual');
+      if (agentWorld) return receipt;
       return { ok: true, window_id: rec.model.id };
     }
     if (type === 'open') {

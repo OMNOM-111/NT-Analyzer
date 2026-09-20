@@ -53,10 +53,20 @@ def test_initial_trial_is_full_seven_days_and_never_restarts(trial_store) -> Non
     assert first["created"] is True
     assert first["entitlement"]["plan_id"] == subscriptions.TRIAL_PLAN_ID
     assert first["entitlement"]["access_kind"] == "initial_trial"
-    assert all(first["entitlement"]["plan"]["features"].values())
+    # ai_automation is granted separately, never by being the owner: it is what
+    # background agent work checks before it may write. Asserted explicitly so
+    # the deliberate exclusion cannot be quietly removed.
+    features = first["entitlement"]["plan"]["features"]
+    assert features["ai_automation"] is False
+    assert all(value for key, value in features.items() if key != "ai_automation")
     starts = datetime.fromisoformat(first["access"]["starts_at_utc"].replace("Z", "+00:00"))
     expires = datetime.fromisoformat(first["access"]["expires_at_utc"].replace("Z", "+00:00"))
-    assert expires - starts == timedelta(days=7)
+    # The grant is spent in active use; the calendar expiry is only an outer
+    # bound so an untouched account keeps the hours it never used.
+    assert expires - starts == timedelta(days=subscriptions.TRIAL_CALENDAR_BOUND_DAYS)
+    usage = subscriptions.trial_usage_for_user(42)
+    assert usage["limit_sec"] == subscriptions.trial_active_seconds_limit()
+    assert usage["expired"] is False
 
     second = subscriptions.ensure_initial_trial(
         42, user_uuid=user_uuid, source="google_verified_registration",

@@ -1073,7 +1073,7 @@ def _sync_telegram_topic_title_async(conversation_id: str, title: str) -> None:
 
 def _touch_conversation(conversation_id: str, *, title_hint: str = "",
                         message_count: Optional[int] = None,
-                        scope: Optional[Dict[str, Any]] = None) -> None:
+                        scope: Optional[Dict[str, Any]] = None, mirror_to_telegram: bool = True) -> None:
     """Update metadata and permanently derive the title from the first request."""
     cid = _safe_conversation_id(conversation_id)
     if cid == DEFAULT_CONVERSATION_ID:
@@ -1152,7 +1152,7 @@ def _touch_conversation(conversation_id: str, *, title_hint: str = "",
         _write_index(index, scope=scope)
     if durable_row:
         _record_conversation_durable_best_effort(durable_row, scope)
-    if title_changed and _can_mirror_to_telegram(scope_info):
+    if title_changed and mirror_to_telegram and _can_mirror_to_telegram(scope_info):
         _sync_telegram_topic_title_async(cid, synced_title)
 
 
@@ -1167,7 +1167,7 @@ _INFORMATIONAL_RATING_WEIGHT = 0.0001  # one hundredth of one percent
 _FULFILLMENT_AUTO_HOURS = 24
 _OPEN_ACTION_STATUSES = {
     "queued", "running", "in_progress", "approval_required",
-    "needs_input", "waiting_review",
+    "needs_input", "waiting_review", "awaiting_review",
 }
 _FAILED_ACTION_STATUSES = {"error", "blocked"}
 _TASK_ACTION_NAMES = {
@@ -1185,6 +1185,14 @@ def _agent_public_profile(agent_name: str = "", agent_id: str = "") -> Dict[str,
     """Resolve a visible job title for the message footer / participation chain."""
     from . import domain_agents
     key = str(agent_id or "").strip().lower()
+    try:
+        persona_id = str(uuid.UUID(key))
+    except (ValueError, TypeError, AttributeError):
+        persona_id = ""
+    if persona_id:
+        # A persisted Persona identity cannot be replaced by a legacy alias
+        # just because its owner chose the same visible name.
+        return {"agent_id": persona_id, "agent_name": str(agent_name or "").strip(), "title": ""}
     if key in domain_agents.PERSONAS:
         profile = domain_agents.PERSONAS[key]
         return {
@@ -1547,6 +1555,36 @@ def conversation_messages(conversation_id: str, limit: int = 200,
     return _read_conversation(limit, path=path, scope=scope)
 
 
+def conversation_message_for_speech(conversation_id: str, message_id: str,
+                                    *, scope: Dict[str, Any]) -> Dict[str, Any]:
+    """Read one saved assistant message without migration, ratings or writes.
+
+    The caller supplies an authenticated scope and validates its Persona/voice
+    authority. Speech never takes replacement text from the browser.
+    """
+    import copy
+    info = _normalize_conversation_scope(scope)
+    cid = _safe_conversation_id(conversation_id)
+    if (not info or not isinstance(conversation_id, str) or cid != conversation_id
+            or not isinstance(message_id, str) or not message_id or len(message_id) > 128):
+        raise ChiefAgentError("Сообщение для озвучивания не найдено.")
+    base = _conversations_index_path().parent
+    private_root = base / "orchestrator_scopes" / str(info["scope_id"])
+    if cid == DEFAULT_CONVERSATION_ID:
+        path = base / "orchestrator_workspace_system" / str(info["workspace_id"]) / "default.jsonl"
+        if not path.is_file():
+            path = private_root / "default.jsonl"
+    else:
+        path = private_root / "conversations" / f"{cid}.jsonl"
+    with _LOCK:
+        if path.is_symlink() or path.resolve() != path.absolute():
+            raise ChiefAgentError("Сообщение для озвучивания не найдено.")
+        rows = [row for row in read_jsonl(path) if row.get("message_id") == message_id]
+        if len(rows) != 1 or rows[0].get("role") != "assistant":
+            raise ChiefAgentError("Сообщение для озвучивания не найдено.")
+        return copy.deepcopy(rows[0])
+
+
 _RATING_ROLE_ALIASES = {
     "management": "chief_agent", "manager": "chief_agent",
     "secretary": "chief_agent", "deputy": "chief_agent",
@@ -1575,6 +1613,14 @@ def _rating_event_id(row: Dict[str, Any]) -> str:
     return f"message_rating:{workspace}:{message}"[:300]
 
 
+def _is_agent_world_message(row: Dict[str, Any]) -> bool:
+    """Ledger projections never acquire a second review or rating authority."""
+    return (str(row.get("source") or "").startswith("agent_world_") or any(
+        isinstance(action, dict) and str(action.get("name") or action.get("action") or "").startswith("agent_world_")
+        for action in (row.get("actions") or [])
+    ))
+
+
 def _record_message_rating(
     row: Dict[str, Any],
     score: int,
@@ -1582,6 +1628,8 @@ def _record_message_rating(
     source: str,
     weight: float = 1.0,
 ) -> None:
+    if _is_agent_world_message(row):
+        return
     from . import ai_ratings
 
     event_id = _rating_event_id(row)
@@ -1610,6 +1658,8 @@ def _record_message_rating(
 
 def _apply_fulfillment_side_effects(row: Dict[str, Any], fulfillment: str) -> None:
     """Slightly lower the visible rating when a task auto-fails without owner marks."""
+    if _is_agent_world_message(row):
+        return
     if fulfillment != "failed":
         return
     if row.get("feedback_source") == "owner" and row.get("rating") in {1, 2, 3}:
@@ -1641,6 +1691,9 @@ def _apply_auto_fulfillment(path: Path) -> None:
         changed = False
         for row in rows:
             if not isinstance(row, dict) or row.get("role") != "assistant":
+                continue
+            if _is_agent_world_message(row):
+                # Elapsed time is not a Task/Evaluation/human-review event.
                 continue
             fulfillment = str(row.get("fulfillment") or "unset")
             if fulfillment not in {"", "unset"}:
@@ -1694,6 +1747,8 @@ def set_message_fulfillment(conversation_id: str, message_id: str, fulfillment: 
                 continue
             if row.get("role") != "assistant":
                 raise ChiefAgentError("Отмечать можно только ответы Orchestrator.")
+            if _is_agent_world_message(row):
+                raise ChiefAgentError("Результат Agent World проверяется в карточке задачи. Отметка чата не заменяет проверку.")
             if str(row.get("message_kind") or "") == "informational":
                 raise ChiefAgentError("Информационные уведомления подтверждаются автоматически.")
             row["fulfillment"] = clean
@@ -1901,6 +1956,215 @@ def report_task_update(*, conversation_id: str, text: str,
     return {"ok": True, "conversation_id": cid, "message": message}
 
 
+def report_local_preview_result(*, conversation_id: str, title: str, text: str,
+                                request_id: str, agent_id: str, agent_name: str,
+                                attachments: Optional[List[Dict[str, Any]]] = None,
+                                scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Idempotent projection into the existing AI chat; no Telegram or ratings.
+
+    The caller must authorize the Preview task/artifacts before this adapter.
+    The task ledger stays authoritative. Human DM storage is not involved.
+    """
+    from .. import preview_sandbox
+    preview_sandbox.require_enabled()
+    info = _normalize_conversation_scope(scope)
+    if not info or info.get("is_owner") or info.get("uses_owner_runtime"):
+        raise ChiefAgentError("Preview result requires an isolated non-owner chat.")
+    cid = _safe_conversation_id(conversation_id)
+    with _LOCK:
+        create_conversation(title, conversation_id=cid, scope=scope)
+        path = _conversation_file(cid, scope=scope)
+        projection_rows = read_jsonl(path)
+        existing = next((row for row in projection_rows
+                         if row.get("request_id") == request_id), None)
+        if existing:
+            # Recover a crash between the append-only message and its index
+            # projection; retry repairs metadata without appending again.
+            _touch_conversation(cid, message_count=len(projection_rows), scope=scope)
+            _set_conversation_work_state(cid, "completed", "Synthetic result verified; owner review pending", scope=scope)
+            return {"ok": True, "conversation_id": cid, "replayed": True}
+        _append_conversation(
+            "assistant", text, source="agent_world_preview", request_id=request_id,
+            agent_id=agent_id, agent_name=agent_name,
+            model="local deterministic checks v1", provider="local synthetic",
+            message_kind="report", fulfillment="done", attachments=attachments,
+            actions=[{"name": "agent_world_preview", "status": "completed"}],
+            participation_chain=[], path=path, scope=scope,
+        )
+        _touch_conversation(cid, message_count=len(projection_rows) + 1, scope=scope)
+        _set_conversation_work_state(cid, "completed", "Synthetic result verified; owner review pending", scope=scope)
+    return {"ok": True, "conversation_id": cid, "replayed": False}
+
+
+def _agent_world_request_key(value: str) -> str:
+    # Existing chat storage bounds request IDs to 120 chars. Hash the COMPLETE
+    # source identity before that boundary, so report revisions cannot collide.
+    import hashlib
+    if not isinstance(value, str) or not value or len(value) > 512:
+        raise ChiefAgentError("Agent World request_id обязателен.")
+    return "aw.live." + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery: bool = False,
+                                 _delivery_job: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Append/recover a scoped real-result projection; never send Telegram.
+
+    The existing jobs or Desktop receipts remain authoritative. No implicit
+    quality rating, conversation closing, owner consent or trade is performed.
+    """
+    from ..ai_control_center import live_gateway, domain_gateway, model_chat, coordinator
+    source_kind = envelope.get("source_kind")
+    if _delivery_job is not None and not history_delivery:
+        raise ChiefAgentError("Доставка требует сохранённый результат и активное задание очереди.")
+    if history_delivery or source_kind in {"synthetic_model_response", "bounded_delegation_result", "external_agent_task_v1"}:
+        if source_kind not in {"real_model_response", "synthetic_model_response", "bounded_delegation_result", "external_agent_task_v1"}:
+            raise ChiefAgentError("История требует сохранённый результат модели.")
+        authorized = (domain_gateway.history_delivery_authority(_delivery_job) if _delivery_job is not None
+            else domain_gateway.access(envelope.get("scope"), read_only=True))
+        if source_kind == "external_agent_task_v1":
+            from ..ai_control_center import external_agent_chat
+            saved = external_agent_chat.validate(authorized, envelope)
+        elif source_kind == "bounded_delegation_result":
+            saved = coordinator.validate_history_envelope(authorized, envelope)
+        elif source_kind == "synthetic_model_response":
+            saved = model_chat.validate_synthetic_envelope(authorized, envelope)
+        else:
+            saved = model_chat.validate_history_envelope(authorized, envelope)
+        if _delivery_job is not None:
+            payload = _delivery_job["payload"]
+            if (any(payload.get(key) != saved[key] for key in ("task_id", "event_id", "checkpoint_sha256"))
+                    or (source_kind == "bounded_delegation_result") != (payload["phase"] == "coordinator_delivery")):
+                raise ChiefAgentError("Сохранённый результат не соответствует заданию доставки.")
+    else:
+        authorized = (domain_gateway if source_kind == "real_model_response" else live_gateway).access(envelope.get("scope"))
+    scope = authorized["chat_scope"]
+    cid = _safe_conversation_id(envelope.get("conversation_id"))
+    key = _agent_world_request_key(envelope.get("request_id"))
+    verification = envelope.get("verification") or {}
+    status = str(envelope.get("status") or ("completed" if verification.get("passed") is True else "blocked"))
+    sealed_kind = source_kind in {"synthetic_model_response", "bounded_delegation_result", "external_agent_task_v1"}
+    origin_correction = source_kind == "ninjatrader_report" and envelope.get("synthetic") is True
+    if origin_correction:
+        from ..ai_control_center.live_backtests import validate_rejected_envelope
+        from ..ai_control_center.states import ContractError
+        try:
+            validate_rejected_envelope(authorized, envelope)
+        except ContractError:
+            raise ChiefAgentError("Отклонённый отчёт не соответствует сохранённому источнику.") from None
+    if not sealed_kind and not origin_correction and (envelope.get("synthetic") is not False or source_kind not in {"ninjatrader_report", "desktop_chart", "real_model_response"}):
+        raise ChiefAgentError("Требуется реальный источник Agent World.")
+    if status in {"completed", "verified_automatically"} and verification.get("passed") is not True:
+        raise ChiefAgentError("Результат ещё не проверен.")
+    pending = status in {"queued", "running"}
+    awaiting_review = status == "awaiting_review"
+    automatic = status == "verified_automatically"
+    state = "in_progress" if pending else "awaiting_owner" if awaiting_review else "completed" if status == "completed" or automatic else "blocked"
+    with _LOCK:
+        path = _conversation_file(cid, scope=scope)
+        projection_rows = read_jsonl(path)
+        message = next((row for row in projection_rows if row.get("request_id") == key and row.get("role") == "assistant"), None)
+        replayed = message is not None
+        if message is None:
+            authorized["admit"]()
+            message = _append_conversation(
+                "assistant", str(envelope.get("text") or ""), source="agent_world_local", request_id=key,
+                agent_id=str(envelope.get("agent_id") or ""), agent_name=str(envelope.get("agent_name") or ""),
+                model=(str(envelope.get("actual_model") or "model pending") if source_kind in {"real_model_response", "synthetic_model_response"} else
+                       "unknown / externally managed" if source_kind == "external_agent_task_v1" else
+                       "Проверенная передача фактов · не оценка модели" if source_kind == "bounded_delegation_result" else
+                       "Отклонённый отчёт · источник не подтверждён" if origin_correction else
+                       "NinjaTrader historical backtest" if envelope["source_kind"] == "ninjatrader_report" else "Desktop chart capture"),
+                provider=str(envelope.get("provider") or "local execution"), message_kind="task" if pending else "report",
+                fulfillment="unset" if pending or awaiting_review else "done" if status == "completed" or automatic else "failed",
+                actions=[{"name": envelope["source_kind"], "status": status, "task_id": envelope.get("task_id"),
+                          "source_job_id": envelope.get("source_job_id"), "command_id": envelope.get("command_id"),
+                          "source_kind": envelope["source_kind"], "synthetic": envelope.get("synthetic") is True,
+                          "verification": verification,
+                          **{field: envelope[field] for field in ("verification_scope", "task_class") if field in envelope},
+                          **{field: envelope[field] for field in ("executor", "external_call", "provenance", "source_confirmed") if field in envelope},
+                          **{field: envelope[field] for field in ("intent_id", "model_id", "contribution_id", "execution_id", "outcome_id", "evaluation_id", "correlation_id",
+                              "plan_evaluation_id", "plan_execution_id", "plan_outcome_id", "application_evaluation_id", "application_execution_id", "application_outcome_id", "report_url") if envelope.get(field)}}],
+                attachments=envelope.get("attachments"), participation_chain=envelope.get("participation_chain", []), path=path, scope=scope,
+            )
+            projection_rows.append(message)
+        # Repair an interrupted append/index update on retry as well.
+        authorized["admit"]()
+        _touch_conversation(cid, message_count=len(projection_rows), scope=scope)
+        latest_tasks = {}
+        for row in projection_rows:
+            if row.get("source") == "agent_world_local":
+                for action in row.get("actions") or []:
+                    identity = action.get("task_id") or action.get("source_job_id") or action.get("command_id")
+                    if identity:
+                        latest_tasks[identity] = action.get("status")
+        if any(value in {"queued", "running"} for value in latest_tasks.values()):
+            state = "in_progress"
+        elif any(value == "awaiting_review" for value in latest_tasks.values()):
+            state = "awaiting_owner"
+        authorized["admit"]()
+        _set_conversation_work_state(cid, state, str(message.get("content") or "")[:300], scope=scope)
+    return {"ok": True, "conversation_id": cid, "message": message, "reply": message["content"],
+            "agent": message["agent_id"], "model": message["model"], "provider": message["provider"],
+            "actions": message["actions"], "idempotent_replay": replayed}
+
+
+def run_agent_world_live_request(*, message: str, request_id: str, conversation_id: str,
+                                 scope: Dict[str, Any], execute: Callable[..., Dict[str, Any]],
+                                 domain_request: bool = False, include_message_identity: bool = False) -> Dict[str, Any]:
+    """A narrow same-store ingress; callback admission/queue remain external."""
+    from ..ai_control_center import live_gateway, domain_gateway
+    authorized = (domain_gateway if domain_request else live_gateway).access(scope)
+    scope = authorized["chat_scope"]
+    cid = _safe_conversation_id(conversation_id)
+    key = _agent_world_request_key(request_id)
+    with _LOCK:
+        path = _conversation_file(cid, scope=scope)
+        rows = read_jsonl(path)
+        existing = next((row for row in rows if row.get("request_id") == key and row.get("role") == "assistant"), None)
+        if existing:
+            _touch_conversation(cid, message_count=len(rows), scope=scope)
+            task_states = {}
+            for row in rows:
+                if row.get("source") == "agent_world_local":
+                    for action in row.get("actions") or []:
+                        identity = action.get("task_id") or action.get("source_job_id") or action.get("command_id") or row.get("request_id")
+                        task_states[identity] = action.get("status")
+            values = list(task_states.values())
+            state = ("in_progress" if any(value in {"queued", "running"} for value in values) else
+                     "awaiting_owner" if "awaiting_review" in values else "blocked" if values and values[-1] not in {"completed", "verified_automatically"} else "completed")
+            _set_conversation_work_state(cid, state, str(existing.get("content") or "")[:300], scope=scope)
+            return {"ok": True, "conversation_id": cid, "message": existing, "reply": existing["content"],
+                    "agent": existing["agent_id"], "actions": existing["actions"], "idempotent_replay": True}
+        if _conversation_is_closed(cid, scope=scope):
+            raise ChiefAgentError("Тема закрыта. Переоткройте её перед новым сообщением.")
+        user_message = next((row for row in rows if row.get("request_id") == key and row.get("role") == "user"), None)
+        if user_message is None:
+            user_message = _append_conversation("user", message, source="app", request_id=key, path=path, scope=scope)
+            _touch_conversation(cid, title_hint=message, scope=scope, mirror_to_telegram=False)
+        authorized["admit"]()
+        return report_agent_world_live_update(execute(user_message["message_id"]) if include_message_identity else execute())
+
+
+def agent_world_live_messages(*, scope: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Read existing scoped receipts without migration, rating or publication."""
+    info = _normalize_conversation_scope(scope)
+    if not info or not info.get("is_owner") or not info.get("uses_owner_runtime"):
+        raise ChiefAgentError("Требуется рабочая область владельца.")
+    index = read_json(_index_path(scope), default={})
+    ids = [DEFAULT_CONVERSATION_ID] + [row.get("conversation_id") for row in (index.get("conversations") or [])
+                                      if isinstance(row, dict)]
+    messages = []
+    for cid in dict.fromkeys(_safe_conversation_id(value) for value in ids):
+        # Avoid the ordinary conversation getter's legacy migration on a GET.
+        path = (_workspace_system_root(scope) / "default.jsonl" if cid == DEFAULT_CONVERSATION_ID
+                else _scoped_conversation_root(scope) / "conversations" / (cid + ".jsonl"))
+        for row in read_jsonl(path):
+            if (row.get("source") == "agent_world_local" and row.get("role") == "assistant"
+                    and row.get("user_uuid") == info.get("user_uuid") and row.get("workspace_id") == info["workspace_id"]):
+                messages.append({**row, "conversation_id": cid})
+    return messages
+
+
 def report_user_screenshot(*, conversation_id: str, text: str,
                            image_url: str, caption: str = "",
                            scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -1952,6 +2216,8 @@ def rate_message(conversation_id: str, message_id: str, rating: Any,
                 continue
             if row.get("role") != "assistant":
                 raise ChiefAgentError("Оценивать можно только ответы Orchestrator.")
+            if _is_agent_world_message(row):
+                raise ChiefAgentError("Оцените результат Agent World в карточке задачи: источник, класс работы и проверка сохраняются отдельно.")
             if str(row.get("message_kind") or "") == "informational":
                 raise ChiefAgentError("Информационные уведомления не требуют ручной оценки.")
             row["rating"] = score
@@ -1988,6 +2254,8 @@ def rate_message(conversation_id: str, message_id: str, rating: Any,
 
 def _record_informational_auto_rating(row: Dict[str, Any]) -> None:
     """Give completed operational notices a negligible positive routing signal once."""
+    if _is_agent_world_message(row):
+        return
     if row.get("informational_rating_recorded"):
         return
     try:
@@ -4351,6 +4619,8 @@ def _gateway_envelope(result: Dict[str, Any], *, source: str) -> Dict[str, Any]:
 
 def handle_message(message: str, *, source: str = "app", mirror_to_telegram: bool = True,
                    conversation_id: str = DEFAULT_CONVERSATION_ID, agent: str = "",
+                   persona_id: Optional[str] = None,
+                   selected_model_id: Optional[str] = None,
                    on_thinking: Optional[Callable[[str], None]] = None,
                    scope: Optional[Dict[str, Any]] = None,
                    request_id: str = "") -> Dict[str, Any]:
@@ -4390,12 +4660,16 @@ def handle_message(message: str, *, source: str = "app", mirror_to_telegram: boo
                     message, source=source, mirror_to_telegram=mirror_to_telegram,
                     conversation_id=conversation_id, agent=agent,
                     on_thinking=on_thinking, scope=scope, request_id=request_id,
+                    **({"persona_id": persona_id} if persona_id is not None else {}),
+                    **({"selected_model_id": selected_model_id} if selected_model_id is not None else {}),
                 )
             return _gateway_envelope(result, source=source)
         result = _handle_message_impl(
                 message, source=source, mirror_to_telegram=mirror_to_telegram,
                 conversation_id=conversation_id, agent=agent,
                 on_thinking=on_thinking, scope=scope, request_id=request_id,
+                **({"persona_id": persona_id} if persona_id is not None else {}),
+                **({"selected_model_id": selected_model_id} if selected_model_id is not None else {}),
             )
         return _gateway_envelope(result, source=source)
 
@@ -4722,6 +4996,8 @@ def _vitek_gateway_turn(clean: str, *, source: str, mirror_to_telegram: bool,
 
 def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegram: bool = True,
                          conversation_id: str = DEFAULT_CONVERSATION_ID, agent: str = "",
+                         persona_id: Optional[str] = None,
+                         selected_model_id: Optional[str] = None,
                          on_thinking: Optional[Callable[[str], None]] = None,
                          scope: Optional[Dict[str, Any]] = None,
                          request_id: str = "") -> Dict[str, Any]:
@@ -4759,6 +5035,20 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
             progress_emitted = True
             on_thinking("Анализирую задачу…")
     scope_info = _normalize_conversation_scope(scope)
+    from ..ai_control_center import live_gateway, coordinator, persona_identity
+    coordinated_turn = coordinator.try_chat(clean, scope=scope, conversation_id=conversation_id,
+                                            request_id=request_key, source=source)
+    if coordinated_turn is not None:
+        return coordinated_turn
+    persona_turn = persona_identity.try_chat(clean, scope=scope, conversation_id=conversation_id,
+        request_id=request_key, source=source, persona_id=persona_id,
+        **({"selected_model_id": selected_model_id} if selected_model_id is not None else {}))
+    if persona_turn is not None:
+        return persona_turn
+    live_turn = live_gateway.try_chat(clean, scope=scope, conversation_id=conversation_id,
+                                      request_id=request_key, source=source)
+    if live_turn is not None:
+        return live_turn
     shared_memory = _shared_memory_bundle(scope)
     if scope_info:
         scope_info["preferred_address"] = _preferred_address(scope)
@@ -6457,6 +6747,15 @@ def _event_queue_tick() -> None:
 
 
 def poll_once() -> Dict[str, Any]:
+    from ..ai_control_center import live_gateway
+    # Default-off, reuses this coordinator and the existing job/chat stores.
+    # No second execution worker is started by Agent World.
+    try:
+        live_gateway.poll_once()
+    except Exception:
+        # A failed read/publication is retried by the existing coordinator.
+        # It must not stop unrelated scheduled work or produce a success report.
+        pass
     _mission_tick()
     _scheduled_audit_tick()
     _scheduled_reports_tick()

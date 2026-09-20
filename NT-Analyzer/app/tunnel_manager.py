@@ -119,14 +119,41 @@ def _parse_tunnel_ref(config_text: str) -> str:
     raise TunnelManagerError("В config.yml не найден ключ tunnel.", 400)
 
 
+def _pid_alive_windows(pid: int) -> bool:
+    """Probe liveness with OpenProcess, never with a signal.
+
+    On Windows ``os.kill(pid, 0)`` is ``CTRL_C_EVENT``: it reported a finished
+    process as running and delivered Ctrl+C to the console the caller shares
+    with other processes (reproduced: the probing process exited 0xC000013A).
+    """
+    import ctypes
+
+    process_query_limited_information = 0x1000
+    error_access_denied = 5
+    still_active = 259
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
+    handle = kernel32.OpenProcess(process_query_limited_information, False, int(pid))
+    if not handle:
+        return ctypes.get_last_error() == error_access_denied
+    try:
+        code = ctypes.c_ulong()
+        if kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return int(code.value) == still_active
+        return True
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _pid_alive(pid: int) -> bool:
-    if pid <= 0:
+    if int(pid or 0) <= 0 or int(pid) > 0xFFFFFFFF:
         return False
+    if os.name == "nt":
+        return _pid_alive_windows(int(pid))
     try:
         os.kill(pid, 0)
+    except PermissionError:
+        return True
     except (OSError, SystemError):
-        # OSError is the documented exception; SystemError can also occur on
-        # Windows when the process is in a transitional state (WinError 87).
         return False
     return True
 

@@ -60,6 +60,7 @@
   const APP_KICKER = 'StratForge AI · NTA Edition';
   let CURRENT_AUTH = null;
   let BUILD_IDENTITY = null;
+  let PREVIEW_CONTEXT = { enabled: false };
 
   // ---- per-environment localStorage namespace --------------------------------
   // Each environment prefixes its persisted UI state so no two contours share
@@ -121,6 +122,12 @@
     const source = payload || {};
     const deployment = source.deployment && typeof source.deployment === 'object'
       ? source.deployment : source;
+    const preview = source.preview_sandbox && typeof source.preview_sandbox === 'object'
+      ? source.preview_sandbox
+      : (deployment.preview_sandbox && typeof deployment.preview_sandbox === 'object'
+        ? deployment.preview_sandbox : { enabled: false });
+    PREVIEW_CONTEXT = Object.assign({ enabled: false }, preview);
+    document.documentElement.classList.toggle('preview-sandbox', !!PREVIEW_CONTEXT.enabled);
     const environment = String(deployment.deployment_environment || deployment.environment || source.deployment_environment || '').toLowerCase();
     const channel = String(deployment.release_channel || '').toLowerCase();
     const version = String(deployment.app_version || deployment.build_version || '').trim();
@@ -130,12 +137,16 @@
     const artifactSha = String(deployment.artifact_sha256 || '').trim();
     const dirty = deployment.dirty === true;
     const label = releasePresentation(environment, channel);
-    if (!version || !timestamp || !gitSha || !label) return;
+    if (!version || !timestamp || !gitSha || !label) {
+      renderDevPreviewBanner();
+      return;
+    }
     const shortSha = gitSha.slice(0, 7);
     const visibleParts = [`v${version}`, shortSha];
     if (dirty) visibleParts.push('dirty');
     BUILD_IDENTITY = {
       environment, channel, version, timestamp, buildId, gitSha, artifactSha, dirty, label,
+      preview_sandbox: PREVIEW_CONTEXT,
     };
     document.documentElement.dataset.deploymentEnvironment = environment;
     document.documentElement.dataset.releaseChannel = channel;
@@ -162,10 +173,10 @@
     applyReleaseIcon(label.icon);
     const baseTitle = String(document.title || APP_NAME).replace(/^\[(DEV|CANARY|BETA|STABLE)\]\s*/, '');
     document.title = label.short ? `[${label.short}] ${baseTitle}` : baseTitle;
+    renderDevPreviewBanner();
     if (CURRENT_AUTH) {
       wireAdminEnvironmentButton();
       wireDevPreviewButton();
-      renderDevPreviewBanner();
     }
   }
 
@@ -178,7 +189,8 @@
 
   // ---- app theme (auto / dark / light) ---------------------------------------
   const THEME_KEY = lsKey('app.theme');
-  function loadTheme() { try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) { return 'auto'; } }
+  // Dark is the product default; an explicit "Светлая" or "Как в системе" choice is kept.
+  function loadTheme() { try { return localStorage.getItem(THEME_KEY) || 'dark'; } catch (e) { return 'dark'; } }
   function applyTheme(mode) {
     const m = (mode === 'dark' || mode === 'light') ? mode : 'auto';
     if (document.documentElement) document.documentElement.setAttribute('data-theme', m);
@@ -211,7 +223,7 @@
 
   const BRAND_MARK = 'brand/stratforge-mark.png';
   // Staff faces: one webm per agent. Paused frame = avatar; hover/typing = play.
-  // Orchestrator message faces also TTS the message body (see agentSpeakFromFace).
+  // Chat speech is an explicit message action; hovering never starts audio.
   // Masters: `/Agents/<Имя>/`; served: `assets/agents/<id>/speaking.webm`.
   // Crop tuned per source framing (verified via tools/_avatar_preview.py).
   const AGENT_AVATAR_IDS = {
@@ -263,15 +275,28 @@
     const loop = !!(opts && opts.loop) || face.classList.contains('speaking');
     video.loop = loop;
     face.classList.add('playing');
-    const start = () => { video.play().catch(() => {}); };
+    const start = () => {
+      if (!face.isConnected || agentFaceReduceMotion()
+          || (!face.classList.contains('playing') && !face.classList.contains('speaking'))) return;
+      video.play().catch(() => {});
+    };
     if (video.readyState >= 2) start();
     else video.addEventListener('loadeddata', start, { once: true });
   }
-  // Hover TTS for Orchestrator message faces: loop webm while reading the
-  // message body via OpenAI Speech (or browser speechSynthesis fallback).
+  // Legacy transport helpers remain compatible; SF Chat binds only the
+  // explicit, scoped PersonaAudio action below, never this old hover path.
   const AGENT_SPEAK = { gen: 0, timer: null, audio: null, url: null, face: null, utter: null };
   const AGENT_SPEAK_HOVER_MS = 350;
+  const ORCH_SPEECH = { generation: 0, controller: null, module: null, message: '', button: null, status: null };
   function agentSpeakStop() {
+    ORCH_SPEECH.generation += 1;
+    if (ORCH_SPEECH.controller) ORCH_SPEECH.controller.stop();
+    if (ORCH_SPEECH.message) orchSpeechState({state: 'stopped'});
+    ORCH_SPEECH.message = '';
+    if (ORCH_SPEECH.button && ORCH_SPEECH.button.isConnected) {
+      ORCH_SPEECH.button.disabled = false; ORCH_SPEECH.button.textContent = 'Озвучить';
+      ORCH_SPEECH.button.setAttribute('aria-pressed', 'false');
+    }
     AGENT_SPEAK.gen += 1;
     if (AGENT_SPEAK.timer) { clearTimeout(AGENT_SPEAK.timer); AGENT_SPEAK.timer = null; }
     if (AGENT_SPEAK.audio) {
@@ -435,20 +460,13 @@
       });
       face.addEventListener('mouseenter', () => {
         if (face.classList.contains('speaking')) return;
-        if (face.classList.contains('orch-msg-face')) {
-          agentSpeakFromFace(face);
-          return;
-        }
+        if (face.classList.contains('orch-msg-face')) return;
         if (agentFaceReduceMotion()) return;
         agentFacePlay(face, { loop: false });
       });
       face.addEventListener('mouseleave', () => {
         if (face.classList.contains('speaking')) return;
-        if (face.classList.contains('orch-msg-face')) {
-          if (AGENT_SPEAK.face === face || AGENT_SPEAK.timer) agentSpeakStop();
-          else agentFacePause(face);
-          return;
-        }
+        if (face.classList.contains('orch-msg-face')) return;
         agentFacePause(face);
       });
       if (face.classList.contains('speaking')) agentFacePlay(face, { loop: true });
@@ -467,7 +485,7 @@
     { id: 'ai', label: 'AI Lab', href: 'ai-lab.html', icon: 'ai' },
     { id: 'agents', label: 'AI Agents', href: 'ai-agents.html', icon: 'plug' },
     { id: 'news', label: 'Новости', href: 'news.html', icon: 'news' },
-    { id: 'community', label: 'SF Chat', href: 'community.html', icon: 'docs' },
+    { id: 'community', label: 'SF Social', href: 'community.html', icon: 'docs' },
     { id: 'topstep', label: 'TopStep', href: 'topstep.html', icon: 'trophy' },
     { id: 'docs', label: 'Документы', href: 'documents.html', icon: 'docs' },
   ];
@@ -879,6 +897,7 @@
       <div class="tb-right">
         <button class="chip ok user-chip" id="chip-user" type="button" hidden title="Мой кабинет"><span class="avatar avatar-sm" id="chip-avatar">·</span><span id="chip-user-name">Пользователь</span></button>
         <button class="chip ok" id="chip-workspace" type="button" hidden><span class="dot"></span><span id="chip-workspace-name">Workspace</span></button>
+        <button class="chip trial-chip" id="chip-trial" type="button" hidden title="Пробный доступ"><span id="chip-trial-text">Пробный доступ</span><span class="trial-bar" aria-hidden="true"><span class="trial-bar-fill" id="chip-trial-fill"></span></span></button>
         <span class="tb-page-actions" id="page-actions"></span>
         <span class="chip off" id="chip-nt" title="NinjaTrader"><span class="dot"></span>NinjaTrader</span>
         <span class="chip off" id="chip-bridge" title="Bridge (мост данных)"><span class="dot"></span>Bridge</span>
@@ -917,7 +936,15 @@
     wireA11y();
     wireRailResize(rail, app);
     renderDevPreviewBanner();
-    requestAnimationFrame(() => { authenticateAndStart(newsStrip); });
+    // A browser does not run requestAnimationFrame callbacks for a hidden
+    // document, so a page opened in a background tab used to sit on its loading
+    // skeleton with no error until the tab was focused. Schedule the same start
+    // through a timeout as well and let whichever fires first win; the latch
+    // keeps the auth exchange and shell build to exactly one run.
+    let shellStarted = false;
+    const startShell = () => { if (!shellStarted) { shellStarted = true; authenticateAndStart(newsStrip); } };
+    requestAnimationFrame(startShell);
+    setTimeout(startShell, 0);
   }
 
   // ---- Rail (sidebar) drag-resize ------------------------------------------
@@ -991,6 +1018,388 @@
     const content = qs('.content'); if (content) obs.observe(content, { childList: true, subtree: true });
   }
 
+  function formatSecurityCountdown(totalSeconds) {
+    const seconds = Math.max(0, Math.ceil(Number(totalSeconds || 0)));
+    const min = Math.floor(seconds / 60);
+    return `${String(min).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+  }
+
+  function trapDialogFocus(dialog, onEscape) {
+    const focusableSelector = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';
+    const onKey = (event) => {
+      if (event.key === 'Escape' && onEscape) { event.preventDefault(); onEscape(); return; }
+      if (event.key !== 'Tab') return;
+      const items = qsa(focusableSelector, dialog).filter(node => !node.hidden && node.offsetParent !== null);
+      if (!items.length) { event.preventDefault(); return; }
+      const first = items[0], last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    };
+    dialog.addEventListener('keydown', onKey);
+    return () => dialog.removeEventListener('keydown', onKey);
+  }
+
+  function renderDeviceConfirmationGate(auth, newsStrip) {
+    const content = qs('.content');
+    if (!content) return;
+    document.documentElement.classList.add('auth-locked');
+    if (newsStrip) newsStrip.hidden = true;
+    const access = auth.device_access || {};
+    const client = access.client || {};
+    const machine = access.machine || null;
+    const channels = Array.isArray(access.confirmation_channels) ? access.confirmation_channels : [];
+    // The sign-in that just happened already proved who this is. In that short
+    // window the first confirmation asks for the trust mode and nothing else;
+    // every other case still goes through a code.
+    const freshSignin = !!access.fresh_signin_provider && access.code_required === false;
+    const pendingDeadline = Date.parse(access.pending_expires_at_utc || '')
+      || (Date.now() + Number(access.pending_expires_in_sec || 0) * 1000);
+    let trustMode = '';
+    let challenge = null;
+    let pendingTick = null;
+    let challengeTick = null;
+    let resendReadyAt = 0;
+    let expired = false;
+
+    const stopTicks = () => {
+      if (pendingTick) clearInterval(pendingTick);
+      if (challengeTick) clearInterval(challengeTick);
+      pendingTick = null; challengeTick = null;
+    };
+    const logout = async (message) => {
+      stopTicks();
+      try { await API.http.authLogout(); } catch (_) { /* expiry may already invalidate it */ }
+      renderTelegramLogin(message || 'Сессия завершена. Войдите снова.');
+    };
+    const auditLine = () => {
+      const audit = client.audit || {};
+      return [audit.masked_ip ? `IP: ${esc(audit.masked_ip)}` : '', audit.location ? esc(audit.location) : '']
+        .filter(Boolean).join(' · ');
+    };
+    const shell = (inner, label) => {
+      content.innerHTML = `<div id="device-confirmation-gate" class="auth-screen device-confirmation-screen" role="dialog" aria-modal="true" aria-label="${esc(label)}">
+        <section class="device-confirmation-card">
+          <div class="auth-brand"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Защищённый доступ</span></div></div>
+          ${inner}
+        </section>
+      </div>`;
+      const dialog = qs('#device-confirmation-gate', content);
+      trapDialogFocus(dialog);
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+        (qs('button:not([disabled]), input:not([disabled])', dialog) || dialog).focus();
+      });
+      return dialog;
+    };
+    const wirePendingCountdown = (scope) => {
+      if (pendingTick) clearInterval(pendingTick);
+      const paint = () => {
+        const node = qs('[data-device-pending-time]', scope);
+        const left = pendingDeadline ? Math.max(0, (pendingDeadline - Date.now()) / 1000) : Number(access.pending_expires_in_sec || 0);
+        if (node) node.textContent = formatSecurityCountdown(left);
+        if (left <= 0 && !expired) {
+          expired = true;
+          logout('Время подтверждения доступа истекло. Войдите снова.');
+        }
+      };
+      paint(); pendingTick = setInterval(paint, 1000);
+    };
+    const logoutButton = (scope) => {
+      const button = qs('[data-device-logout]', scope);
+      if (button) button.onclick = () => logout('Вы вышли из аккаунта.');
+    };
+
+    const renderChoice = () => {
+      if (challengeTick) clearInterval(challengeTick);
+      challengeTick = null; challenge = null;
+      const scope = shell(`
+        <div class="device-confirmation-heading">
+          <span class="device-shield-art" aria-hidden="true">
+            <svg viewBox="0 0 96 84" fill="none">
+              <rect x="14" y="4" width="68" height="56" rx="12" fill="url(#dcShieldPlate)" stroke="rgba(126,180,255,.42)" stroke-width="1.5"></rect>
+              <path d="M48 17.5 34.5 22.6v11.3c0 8.2 5.6 15.1 13.5 18 7.9-2.9 13.5-9.8 13.5-18V22.6z" fill="url(#dcShieldFill)" stroke="rgba(160,205,255,.75)" stroke-width="1.6" stroke-linejoin="round"></path>
+              <path d="m42.2 33.4 4.3 4.3 7.6-8.2" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>
+              <path d="M40 60h16l2 10H38z" fill="rgba(96,132,210,.45)"></path>
+              <rect x="28" y="70" width="40" height="5" rx="2.5" fill="rgba(120,160,235,.55)"></rect>
+              <defs>
+                <linearGradient id="dcShieldPlate" x1="14" y1="4" x2="82" y2="60" gradientUnits="userSpaceOnUse"><stop stop-color="#1a2550"></stop><stop offset="1" stop-color="#101736"></stop></linearGradient>
+                <linearGradient id="dcShieldFill" x1="34" y1="17" x2="62" y2="52" gradientUnits="userSpaceOnUse"><stop stop-color="#3ea8ff"></stop><stop offset="1" stop-color="#7d6bff"></stop></linearGradient>
+              </defs>
+            </svg>
+          </span>
+          <h1>Подтвердите это устройство</h1>
+          <p>Это ваш первый вход. Для вашей безопасности<br>подтвердите это устройство.</p>
+        </div>
+        <div class="device-access-summary">
+          <strong>${esc(machine?.display_name || client.display_name || client.client || 'Новый клиент')}</strong>
+          <span>${esc([client.os_family, client.os_version, client.client].filter(Boolean).join(' · ') || 'Браузер или приложение')}</span>
+          ${auditLine() ? `<small>${auditLine()}</small>` : ''}
+        </div>
+        <div class="device-trust-choices">
+          <div class="device-trust-choice permanent">
+            <div class="device-choice-head"><strong>Подтвердить постоянно</strong><span class="device-choice-icon" aria-hidden="true">∞</span></div>
+            <span>Устройство будет доверено до вашего отзыва в разделе «Безопасность».</span>
+            <button type="button" class="device-choice-action permanent" data-device-mode="permanent">Подтвердить постоянно</button>
+          </div>
+          <div class="device-trust-choice session">
+            <div class="device-choice-head"><strong>Только текущая сессия</strong><span class="device-choice-icon" aria-hidden="true">◷</span></div>
+            <span>Доступ действует только сейчас. При следующем входе потребуется новый код.</span>
+            <button type="button" class="device-choice-action session" data-device-mode="session">Разрешить только сейчас</button>
+          </div>
+        </div>
+        ${freshSignin ? '<div class="device-fresh-note">Личность только что подтверждена при входе — код не понадобится.</div>' : (channels.length ? '' : '<div class="device-confirmation-error" role="alert">Нет подтверждённого Telegram или e-mail. Завершите вход и восстановите способ подтверждения.</div>')}
+        <div class="device-pending-footer"><span class="device-pending-mark" aria-hidden="true">${AUTH_ICON.clock}</span><span>Если не подтвердить — сессия завершится через</span> <strong data-device-pending-time>--:--</strong></div>
+        <button type="button" class="btn ghost device-logout" data-device-logout>Выйти из аккаунта</button>
+      `, 'Подтверждение нового доступа');
+      qsa('[data-device-mode]', scope).forEach(button => {
+        button.disabled = !freshSignin && !channels.length;
+        button.onclick = () => (freshSignin
+          ? applyFreshTrust(scope, String(button.dataset.deviceMode || ''))
+          : renderCode(String(button.dataset.deviceMode || '')));
+      });
+      logoutButton(scope); wirePendingCountdown(scope);
+    };
+
+    const fillCode = (scope, value) => {
+      const digits = String(value || '').replace(/\D/g, '').slice(0, 6).split('');
+      const inputs = qsa('[data-device-code-digit]', scope);
+      inputs.forEach((input, index) => { input.value = digits[index] || ''; });
+      (inputs[Math.min(digits.length, 5)] || inputs[0])?.focus();
+    };
+    const updatePreviewOtp = (scope, payload) => {
+      const panel = qs('[data-preview-otp-panel]', scope);
+      if (!panel) return;
+      const code = String((payload || {}).test_code || '');
+      const visible = !!(
+        PREVIEW_CONTEXT && PREVIEW_CONTEXT.enabled
+        && (payload || {}).delivery === 'preview_synthetic'
+        && /^\d{6}$/.test(code)
+      );
+      panel.hidden = !visible;
+      if (!visible) return;
+      const value = qs('[data-preview-otp-value]', panel);
+      if (value) value.textContent = code;
+      const fill = qs('[data-preview-otp-fill]', panel);
+      if (fill) fill.onclick = () => fillCode(scope, code);
+    };
+    const startChallenge = async (scope, provider) => {
+      const message = qs('[data-device-code-message]', scope);
+      const submit = qs('[data-device-submit]', scope);
+      const resend = qs('[data-device-resend]', scope);
+      challenge = null;
+      if (challengeTick) clearInterval(challengeTick);
+      challengeTick = null;
+      qsa('[data-device-channel]', scope).forEach(button => { button.disabled = true; });
+      qsa('[data-device-code-digit]', scope).forEach(input => { input.disabled = true; });
+      if (submit) submit.disabled = true;
+      if (resend) resend.disabled = true;
+      updatePreviewOtp(scope, null);
+      if (message) { message.className = 'device-code-message'; message.textContent = 'Отправляем код…'; }
+      try {
+        challenge = await API.http.accountSecurityChallenge({
+          purpose: 'device_confirm', device_id: client.id,
+          provider, trust_mode: trustMode,
+        });
+        resendReadyAt = Date.now() + Number(challenge.resend_available_in_sec || 0) * 1000;
+        qsa('[data-device-channel]', scope).forEach(button => {
+          button.disabled = false;
+          button.classList.toggle('on', button.dataset.deviceChannel === challenge.provider);
+        });
+        qsa('[data-device-code-digit]', scope).forEach(input => { input.disabled = false; });
+        if (submit) submit.disabled = false;
+        if (message) {
+          message.textContent = `Код отправлен: ${SEC_PROVIDER_LABEL[challenge.provider] || challenge.provider} ${challenge.masked_target || ''}`.trim();
+        }
+        updatePreviewOtp(scope, challenge);
+        fillCode(scope, '');
+        wireChallengeCountdown(scope);
+      } catch (error) {
+        qsa('[data-device-channel]', scope).forEach(button => { button.disabled = false; });
+        if (message) { message.className = 'device-code-message error'; message.textContent = error.message || String(error); }
+      }
+    };
+    const wireChallengeCountdown = (scope) => {
+      if (challengeTick) clearInterval(challengeTick);
+      const paint = () => {
+        const expires = Date.parse((challenge || {}).expires_at_utc || '') || Date.now();
+        const codeLeft = Math.max(0, (expires - Date.now()) / 1000);
+        const codeNode = qs('[data-device-code-time]', scope);
+        if (codeNode) codeNode.textContent = formatSecurityCountdown(codeLeft);
+        const submit = qs('[data-device-submit]', scope);
+        const inputs = qsa('[data-device-code-digit]', scope);
+        const codeExpired = !!challenge && codeLeft <= 0;
+        if (submit && submit.dataset.busy !== '1') submit.disabled = !challenge || codeExpired;
+        inputs.forEach(input => { input.disabled = !challenge || codeExpired; });
+        if (codeExpired) {
+          const message = qs('[data-device-code-message]', scope);
+          if (message && !message.classList.contains('error')) {
+            message.className = 'device-code-message error';
+            message.textContent = 'Код истёк. Запросите новый код.';
+          }
+        }
+        const resend = qs('[data-device-resend]', scope);
+        const resendLeft = Math.max(0, (resendReadyAt - Date.now()) / 1000);
+        if (resend) {
+          resend.disabled = !challenge || resendLeft > 0;
+          resend.textContent = resendLeft > 0
+            ? `Отправить код повторно (${Math.ceil(resendLeft)} сек)`
+            : 'Отправить код повторно';
+        }
+      };
+      paint(); challengeTick = setInterval(paint, 1000);
+    };
+    const submitCode = async (scope) => {
+      const code = qsa('[data-device-code-digit]', scope).map(input => input.value).join('');
+      const message = qs('[data-device-code-message]', scope);
+      const submit = qs('[data-device-submit]', scope);
+      if (!challenge || !/^\d{6}$/.test(code)) {
+        if (message) { message.className = 'device-code-message error'; message.textContent = 'Введите все 6 цифр кода.'; }
+        return;
+      }
+      submit.dataset.busy = '1';
+      submit.disabled = true;
+      if (message) { message.className = 'device-code-message'; message.textContent = 'Проверяем код…'; }
+      try {
+        const result = await API.http.accountDeviceApprove({
+          device_id: client.id, challenge_id: challenge.challenge_id,
+          code, trust_mode: trustMode,
+        });
+        stopTicks(); renderSuccess(result);
+      } catch (error) {
+        delete submit.dataset.busy;
+        const expires = Date.parse((challenge || {}).expires_at_utc || '') || 0;
+        submit.disabled = !challenge || (expires && expires <= Date.now());
+        if (message) { message.className = 'device-code-message error'; message.textContent = error.message || String(error); }
+        fillCode(scope, '');
+      }
+    };
+    const applyFreshTrust = async (scope, mode) => {
+      trustMode = mode === 'session' ? 'session' : 'permanent';
+      const buttons = qsa('[data-device-mode]', scope);
+      buttons.forEach(button => { button.disabled = true; });
+      try {
+        const result = await API.http.accountDeviceApprove({
+          device_id: client.id, trust_mode: trustMode,
+        });
+        stopTicks();
+        renderSuccess(result);
+      } catch (error) {
+        buttons.forEach(button => { button.disabled = false; });
+        // The window can close between drawing the screen and pressing a
+        // button; then this is an ordinary confirmation and needs a code.
+        if (channels.length) { renderCode(mode); return; }
+        toast(String((error && error.message) || 'Не удалось подтвердить устройство.'));
+      }
+    };
+    const renderCode = (mode) => {
+      trustMode = mode === 'session' ? 'session' : 'permanent';
+      const scope = shell(`
+        <button type="button" class="device-back" data-device-back aria-label="Вернуться к выбору режима">←</button>
+        <div class="device-confirmation-heading compact">
+          <p class="device-confirmation-kicker">${trustMode === 'permanent' ? 'Постоянное доверие' : 'Только текущая сессия'}</p>
+          <h1>Подтвердите устройство</h1>
+          <p>Мы отправили 6-значный код<br>на ваш проверенный канал.</p>
+        </div>
+        <div class="device-channel-list" role="group" aria-label="Канал подтверждения">
+          ${channels.map(channel => `<button type="button" class="device-channel" data-device-channel="${esc(channel.provider)}"><span class="device-channel-icon" aria-hidden="true">${AUTH_ICON[channel.provider === 'telegram' ? 'telegram' : 'mail']}</span><span class="device-channel-copy"><strong>${esc(channel.label)}</strong><span>${esc(channel.masked_target)}</span></span></button>`).join('')}
+        </div>
+        <form class="device-code-form" data-device-code-form>
+          <label id="device-code-label">Введите код из сообщения</label>
+          <div class="device-code-inputs" role="group" aria-labelledby="device-code-label">
+            ${[1, 2, 3, 4, 5, 6].map(index => `<input data-device-code-digit type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="${index === 1 ? 'one-time-code' : 'off'}" maxlength="${index === 1 ? 6 : 1}" aria-label="Цифра ${index} из 6">`).join('')}
+          </div>
+          <div class="device-code-message" data-device-code-message role="status" aria-live="polite"></div>
+          <div class="preview-otp-panel" data-preview-otp-panel hidden>
+            <div><strong>Preview synthetic OTP</strong><span>Код существует только внутри изолированного test process.</span></div>
+            <code class="mono" data-preview-otp-value>------</code>
+            <button type="button" class="btn sm" data-preview-otp-fill>Подставить тестовый код</button>
+          </div>
+          <div class="device-code-life">Код действителен <strong data-device-code-time>--:--</strong></div>
+          <button type="submit" class="btn primary device-code-submit" data-device-submit>Подтвердить</button>
+        </form>
+        <button type="button" class="device-resend" data-device-resend disabled>Отправить код повторно</button>
+        <div class="device-code-warning"><span aria-hidden="true">${AUTH_ICON.shield}</span><span>Коды никогда не запрашиваются нашим сервисом в других сообщениях.</span></div>
+        <div class="device-pending-footer"><span>Доступ завершится через</span> <strong data-device-pending-time>--:--</strong></div>
+        <button type="button" class="btn ghost device-logout" data-device-logout>Выйти из аккаунта</button>
+      `, 'Ввод кода подтверждения');
+      qs('[data-device-back]', scope).onclick = renderChoice;
+      qsa('[data-device-channel]', scope).forEach(button => {
+        button.onclick = () => startChallenge(scope, button.dataset.deviceChannel);
+      });
+      const inputs = qsa('[data-device-code-digit]', scope);
+      inputs.forEach((input, index) => {
+        input.oninput = () => {
+          const entered = input.value.replace(/\D/g, '');
+          if (entered.length > 1) { fillCode(scope, entered); return; }
+          input.value = entered.slice(-1);
+          if (input.value && inputs[index + 1]) inputs[index + 1].focus();
+        };
+        input.onkeydown = (event) => {
+          if (event.key === 'Backspace' && !input.value && inputs[index - 1]) inputs[index - 1].focus();
+          if (event.key === 'Enter') { event.preventDefault(); submitCode(scope); }
+        };
+        input.onpaste = (event) => {
+          const pasted = (event.clipboardData || window.clipboardData).getData('text');
+          if (/\d/.test(pasted)) { event.preventDefault(); fillCode(scope, pasted); }
+        };
+      });
+      qs('[data-device-code-form]', scope).onsubmit = (event) => { event.preventDefault(); submitCode(scope); };
+      qs('[data-device-resend]', scope).onclick = async () => {
+        const message = qs('[data-device-code-message]', scope);
+        const resend = qs('[data-device-resend]', scope);
+        resend.disabled = true;
+        try {
+          challenge = await API.http.accountSecurityChallengeResend({ challenge_id: challenge.challenge_id });
+          resendReadyAt = Date.now() + Number(challenge.resend_available_in_sec || 0) * 1000;
+          if (message) { message.className = 'device-code-message'; message.textContent = `Новый код отправлен: ${challenge.masked_target || ''}`; }
+          updatePreviewOtp(scope, challenge);
+          qsa('[data-device-code-digit]', scope).forEach(input => { input.disabled = false; });
+          const submit = qs('[data-device-submit]', scope);
+          if (submit) { delete submit.dataset.busy; submit.disabled = false; }
+          fillCode(scope, ''); wireChallengeCountdown(scope);
+        } catch (error) {
+          if (message) { message.className = 'device-code-message error'; message.textContent = error.message || String(error); }
+        }
+      };
+      logoutButton(scope); wirePendingCountdown(scope);
+      startChallenge(scope, channels[0].provider);
+    };
+    // The machine card lists the clients the server actually grouped under it.
+    // Nothing is invented here: with no proven grouping the list stays empty.
+    const successClients = () => {
+      const rows = Array.isArray(machine && machine.clients) ? machine.clients : [];
+      const list = rows.length ? rows : (client && (client.display_name || client.client) ? [client] : []);
+      return list.map(row => ({
+        label: String(row.display_name || row.client || 'Клиент'),
+        state: row.active_now === false ? 'Активен' : 'Активен сейчас',
+      }));
+    };
+    const renderSuccess = (result) => {
+      const permanent = (result || {}).trust_mode === 'permanent';
+      const scope = shell(`
+        <div class="device-confirmation-heading success">
+          <span class="device-success-seal" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6.5 12.4 3.6 3.6 7.4-8"></path></svg></span>
+          <h1>Устройство подтверждено!</h1>
+          <p>${permanent ? 'Теперь вы можете работать безопасно.' : 'Доступ разрешён только для текущей сессии.'}</p>
+        </div>
+        <div class="device-success-card">
+          <div class="device-success-head">
+            <span class="device-success-icon" aria-hidden="true">${AUTH_ICON.monitor}</span>
+            <div class="device-success-name"><strong>${esc(machine?.display_name || client.display_name || client.client || 'Клиент')}</strong>
+              <span>${esc([client.os_family, client.os_version, client.device_kind || ''].filter(Boolean).join(' · ') || 'Браузер или приложение')}</span>
+              ${auditLine() ? `<small>${auditLine()}</small>` : ''}
+            </div>
+            <span class="badge ${permanent ? 'live' : 'trial'}">${permanent ? 'Доверено' : 'Только текущая сессия'}</span>
+          </div>
+          ${successClients().length ? `<div class="device-success-uses"><p>В этом устройстве используются:</p>${successClients().map(row => `<div class="device-success-use"><span>${esc(row.label)}</span><span class="badge live">${esc(row.state)}</span></div>`).join('')}</div>` : ''}
+        </div>
+        <button type="button" class="btn primary device-enter" data-device-enter>Перейти в кабинет</button>
+      `, 'Доступ подтверждён');
+      qs('[data-device-enter]', scope).onclick = () => location.reload();
+    };
+    renderChoice();
+  }
+
   async function authenticateAndStart(newsStrip, refresh = false) {
     const result = window.API
       ? await (refresh && API.refreshAuth ? API.refreshAuth() : API.authReady)
@@ -1016,16 +1425,32 @@
         renderTelegramLogin('Сессия завершена администратором. Войдите снова.');
         return;
       }
+      if (result.error.code === 'device_confirmation_expired') {
+        renderTelegramLogin('Время подтверждения доступа истекло. Войдите снова.');
+        return;
+      }
       renderTelegramLogin('');
       return;
     }
     CURRENT_AUTH = result.auth || { role: 'owner', is_owner: true, user: {} };
+    renderDevPreviewBanner();
+    if (CURRENT_AUTH.device_access && CURRENT_AUTH.device_access.required) {
+      renderDeviceConfirmationGate(CURRENT_AUTH, newsStrip);
+      return;
+    }
+    // Security first, then access: a confirmed client whose starting grant is
+    // spent still keeps its account and sees one simple screen.
+    if (CURRENT_AUTH.trial_usage && CURRENT_AUTH.trial_usage.expired) {
+      renderTrialExpiredGate(CURRENT_AUTH);
+      return;
+    }
     document.documentElement.classList.remove('auth-locked');
     const user = CURRENT_AUTH.user || {};
     applyChipUser(user);
     captureReferral();
     handlePaypalReturn();
-    applyNavAccess(CURRENT_AUTH);
+    if (applyNavAccess(CURRENT_AUTH)) return;
+    applyTrialChip(CURRENT_AUTH.trial_usage);
     const chipUser = qs('#chip-user');
     if (chipUser) chipUser.onclick = () => openCabinet();
     const activeWorkspace = CURRENT_AUTH.active_workspace || {};
@@ -1132,9 +1557,18 @@
     });
   }
 
+  let impersonationLayoutCleanup = null;
+  function syncImpersonationLayout() {
+    const bar = qs('#impersonation-banner');
+    const bottom = bar ? Math.max(0, Math.ceil(bar.getBoundingClientRect().bottom)) : 0;
+    document.body.style.setProperty('--qa-drawer-top', bottom + 'px');
+  }
   function renderImpersonationBanner(auth) {
+    if (impersonationLayoutCleanup) impersonationLayoutCleanup();
+    impersonationLayoutCleanup = null;
     const old = qs('#impersonation-banner');
     if (old) old.remove();
+    syncImpersonationLayout();
     if (!auth || !auth.impersonating) return;
     const user = auth.user || {};
     const label = `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username || user.id || user.user_id || 'пользователь';
@@ -1143,6 +1577,14 @@
       <button type="button" class="btn sm" id="impersonation-return">Вернуться в админку</button>
     </div>`);
     document.body.appendChild(bar);
+    syncImpersonationLayout();
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(syncImpersonationLayout) : null;
+    if (observer) observer.observe(bar);
+    window.addEventListener('resize', syncImpersonationLayout);
+    impersonationLayoutCleanup = () => {
+      if (observer) observer.disconnect();
+      window.removeEventListener('resize', syncImpersonationLayout);
+    };
     const btn = qs('#impersonation-return', bar);
     if (btn) btn.onclick = async () => {
       btn.disabled = true;
@@ -1199,6 +1641,48 @@
   function renderDevPreviewBanner() {
     const old = qs('#dev-view-as-banner');
     if (old) old.remove();
+    document.documentElement.classList.remove('dev-view-as-active', 'preview-sandbox-active');
+    if (PREVIEW_CONTEXT && PREVIEW_CONTEXT.enabled) {
+      const scenarioLabels = {
+        new_user: 'Новый пользователь',
+        agent_world_operator: 'Синтетический оператор Agent World',
+        active_user: 'Активный пользователь',
+        trusted_device: 'Доверенное устройство',
+        pending_access: 'Новый неподтверждённый доступ',
+      };
+      const scenario = String(PREVIEW_CONTEXT.scenario || 'new_user');
+      const bar = el(`<div id="dev-view-as-banner" class="dev-view-as-banner preview-sandbox-banner" role="status" aria-live="polite">
+        <span class="dev-view-as-tag">PREVIEW / TEST USER</span>
+        <span class="dev-view-as-role">${esc(scenarioLabels[scenario] || scenario)}</span>
+        <span class="dev-view-as-note">Только synthetic data · внешние действия заблокированы${PREVIEW_CONTEXT.promo_code ? ` · промокод ${esc(PREVIEW_CONTEXT.promo_code)}` : ''}</span>
+        <span class="preview-sandbox-actions">
+          <button class="btn sm" type="button" data-preview-control="reset">Reset Preview</button>
+          <button class="btn sm" type="button" data-preview-control="new-user">New Preview User</button>
+          <button class="btn sm" type="button" data-preview-control="new-client"${CURRENT_AUTH ? '' : ' disabled'}>Новый browser/client</button>
+          <button class="btn sm preview-exit" type="button" data-preview-control="exit">Exit Preview</button>
+        </span>
+      </div>`);
+      document.body.appendChild(bar);
+      document.documentElement.classList.add('preview-sandbox-active');
+      const run = async (button, action) => {
+        qsa('[data-preview-control]', bar).forEach(item => { item.disabled = true; });
+        try {
+          const out = await action();
+          location.assign((out && out.redirect_url) || '/ui/');
+        } catch (error) {
+          reportError(error);
+          qsa('[data-preview-control]', bar).forEach(item => { item.disabled = false; });
+          const newClient = qs('[data-preview-control="new-client"]', bar);
+          if (newClient && !CURRENT_AUTH) newClient.disabled = true;
+        }
+      };
+      qs('[data-preview-control="reset"]', bar).onclick = event => run(event.currentTarget, () => API.http.previewSandboxReset(scenario));
+      qs('[data-preview-control="new-user"]', bar).onclick = event => run(event.currentTarget, () => API.http.previewSandboxNewUser());
+      const newClient = qs('[data-preview-control="new-client"]', bar);
+      if (newClient) newClient.onclick = event => run(event.currentTarget, () => API.http.previewSandboxSimulateClient());
+      qs('[data-preview-control="exit"]', bar).onclick = event => run(event.currentTarget, () => API.http.previewSandboxExit());
+      return;
+    }
     const label = devPreviewLabel();
     // Only Development ever shows the banner; it is absent/forbidden elsewhere.
     if (!label || (CURRENT_AUTH && !isDevelopmentEnv())) return;
@@ -1270,50 +1754,28 @@
     let status;
     try { status = await API.http.devPreviewStatus(); }
     catch (e) { return renderError(body, e, () => { closeDrawer(); openDevPreviewPanel(); }); }
-    const personas = Array.isArray(status.personas) ? status.personas : [];
+    const scenarios = Array.isArray(status.sandbox_scenarios) ? status.sandbox_scenarios : [];
+    const active = status.active_sandbox || {};
     body.innerHTML = `
-      <div class="finance-note"><strong>Только Development.</strong> Переключатель показывает приложение глазами роли, применяя реальные серверные права выбранной роли. Реальные роли и права не меняются. В Canary и Production функция отключена.</div>
-      <div class="section-title">Смотреть как</div>
-      <div class="dev-persona-grid">${personas.map(p => `<button class="btn ghost dev-persona" data-persona="${esc(p.id)}"><strong>${esc(p.label)}</strong><span class="cab-sub">${esc(p.description || '')}</span></button>`).join('')}</div>
-      <div class="section-title">Открыть Development как разработчик</div>
-      <div class="finance-note">Создаёт одноразовую ссылку для входа как владелец из отдельного браузера. Ссылка действует только с localhost и один раз.</div>
-      <div class="flex gap-sm"><button class="btn" id="dev-bootstrap-mint">Получить ссылку</button></div>
-      <div id="dev-bootstrap-url" class="dev-bootstrap-url" hidden></div>
-      <div class="section-title">Обслуживание</div>
-      <div class="flex gap-sm"><button class="btn ghost" id="dev-personas-reset">Сбросить тестовые персоны</button></div>`;
-    qsa('.dev-persona', body).forEach(btn => {
+      <div class="finance-note"><strong>Изолированный Preview sandbox.</strong> Каждый запуск создаёт отдельный процесс, synthetic user, собственные identity/session/device/workspace/trading stores и уникальные cookies. Owner data не копируются и не изменяются; e-mail, Telegram, платежи, брокеры, cloud AI и live orders заблокированы.</div>
+      ${active.running ? `<div class="preview-active-note"><span class="badge pending">активен</span> Предыдущий sandbox: ${esc(active.scenario || '')}. Новый запуск безопасно заменит его.</div>` : ''}
+      <div class="section-title">Acceptance-сценарий</div>
+      <div class="dev-persona-grid preview-scenario-grid">${scenarios.map(item => `<button class="btn ghost dev-persona" data-preview-scenario="${esc(item.id)}"><strong>${esc(item.label)}</strong><span class="cab-sub">${esc(item.description || '')}</span></button>`).join('')}</div>
+      <div class="finance-note">После запуска вы перейдёте в настоящий Aurora UI на отдельном localhost origin. Постоянная полоса <strong>PREVIEW / TEST USER</strong> позволяет сбросить данные, создать нового synthetic user, имитировать новый browser/client и выйти обратно.</div>`;
+    qsa('[data-preview-scenario]', body).forEach(btn => {
       btn.onclick = async () => {
-        const persona = btn.dataset.persona;
-        const label = (btn.querySelector('strong') || {}).textContent || persona;
-        qsa('.dev-persona', body).forEach(b => { b.disabled = true; });
+        const scenario = btn.dataset.previewScenario;
+        qsa('[data-preview-scenario]', body).forEach(item => { item.disabled = true; });
         try {
-          await API.http.devPreviewViewAs(persona);
-          setDevPreviewLabel(label);
-          toast('Предпросмотр роли активирован');
-          setTimeout(() => location.reload(), 300);
-        } catch (e) { reportError(e); qsa('.dev-persona', body).forEach(b => { b.disabled = false; }); }
+          const out = await API.http.devPreviewLaunch(scenario);
+          if (!out || !out.url) throw new Error('Preview sandbox не вернул безопасную ссылку входа.');
+          location.assign(out.url);
+        } catch (e) {
+          reportError(e);
+          qsa('[data-preview-scenario]', body).forEach(item => { item.disabled = false; });
+        }
       };
     });
-    const mint = qs('#dev-bootstrap-mint', body);
-    if (mint) mint.onclick = async () => {
-      mint.disabled = true;
-      try {
-        const out = await API.http.devBootstrapMint();
-        const target = qs('#dev-bootstrap-url', body);
-        if (target) {
-          target.hidden = false;
-          target.innerHTML = `<code class="mono">${esc(out.url || out.token || '')}</code><div class="cab-sub">Одноразовая ссылка. Действует ${esc(String(out.expires_in_sec || ''))} сек. Откройте её в отдельном браузере на этом компьютере.</div>`;
-        }
-      } catch (e) { reportError(e); }
-      finally { mint.disabled = false; }
-    };
-    const reset = qs('#dev-personas-reset', body);
-    if (reset) reset.onclick = async () => {
-      reset.disabled = true;
-      try { await API.http.devPreviewResetPersonas(); toast('Тестовые персоны сброшены'); }
-      catch (e) { reportError(e); }
-      finally { reset.disabled = false; }
-    };
   }
 
   function renderGoogleLinkGate(auth) {
@@ -1531,6 +1993,16 @@
   // Beginner UX: hide pro sections entirely (not lock-blur).
   function applyNavAccess(auth) {
     auth = auth || {};
+    // Only the authenticated server's exact workspace opt-in unifies the rail.
+    // A missing/disabled/malformed grant preserves the existing navigation.
+    const worldEnabled = !!(auth.agent_world && auth.agent_world.enabled === true);
+    const worldNav = qs('.rail-item[data-nav="ai"]');
+    if (worldNav) {
+      worldNav.href = worldEnabled ? 'ai-command-center.html' : 'ai-lab.html';
+      worldNav.title = worldEnabled ? 'AI Центр' : 'AI Lab';
+      const label = qs('.lb', worldNav);
+      if (label) label.textContent = worldNav.title;
+    }
     const isOwner = !!auth.is_owner;
     const user = auth.user || {};
     const uxMode = String(auth.ux_mode || user.ux_mode || (isOwner ? 'professional' : '')).toLowerCase();
@@ -1558,7 +2030,7 @@
         return;
       }
       // A professional must not see a student-only terminal in their rail.
-      item.hidden = id === 'practice';
+      item.hidden = id === 'practice' || (worldEnabled && id === 'agents');
       if (id === 'overview') { item.classList.remove('rail-locked'); return; }
       let isLocked = hasLockList ? locked.has(id) : (!isOwner && features && features[id] === false);
       item.classList.toggle('rail-locked', !!isLocked);
@@ -1572,6 +2044,17 @@
     if (uxMode === 'beginner') {
       ensureBeginnerWatermark();
       return;
+    }
+    if (worldEnabled) {
+      // Old bookmarks stay compatible without keeping a second AI surface.
+      // Match the actual legacy file, not data-page="ai" (also used by the
+      // new center), so the canonical page can never redirect to itself.
+      const legacyAIPage = /(?:^|\/)(ai-lab|ai-agents)\.html$/.exec(location.pathname || '');
+      if (legacyAIPage) {
+        location.replace('ai-command-center.html' + (location.search || '')
+          + '#tab=' + (legacyAIPage[1] === 'ai-agents' ? 'agents' : 'overview'));
+        return true;
+      }
     }
     if (uxMode === 'professional' && page === 'practice') {
       location.replace('index.html');
@@ -1828,6 +2311,7 @@
       : `<div class="cab-card"><h4>Мой NinjaTrader</h4><div id="cab-nt"><div class="state-loading"><span class="spinner"></span>Проверка…</div></div></div>`;
     return `
       ${modeCard}
+      ${me.personal_workspace_available === true ? `<div class="cab-card"><h4>Личное рабочее пространство</h4><p class="cab-sub">Ваши модели, Persona и задачи хранятся отдельно. Ключи владельца не копируются. Подключение NinjaTrader не требуется и настраивается отдельно.</p><button class="btn primary sm" id="cab-personal-workspace">${me.active_workspace?.kind === 'personal' ? 'Открыть мои модели' : 'Создать / выбрать личное пространство'}</button><p class="cab-sub" id="cab-personal-workspace-msg" role="status"></p></div>` : ''}
       <div class="cab-card"><h4>Подписка</h4>
         <div class="cab-kv"><span class="k">Тариф</span><span class="v"><strong>${esc(planLabel)}</strong> ${planBadge}</span></div>
         ${expires ? `<div class="cab-kv"><span class="k">Срок</span><span class="v">${expires}</span></div>` : ''}
@@ -2405,6 +2889,55 @@
   // Deciding what a plan grants is an administrative act, so it belongs in
   // Admin -- an owner opening their own cabinet should see their account, not
   // the switchboard for everyone's.
+  async function renderAccessInto(node, me) {
+    node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка…</div>';
+    let auth = me;
+    try { auth = await API.http.authMe(); } catch (e) { /* fall back to what we have */ }
+    const usage = (auth && auth.trial_usage) || {};
+    const granted = !!usage.granted_elsewhere;
+    const percent = Math.max(0, Math.min(100, Number(usage.percent_remaining) || 0));
+    node.innerHTML = `
+      <div class="section-title">Ваш доступ</div>
+      <div class="access-card">
+        <div class="access-head"><strong>${granted ? 'Полный доступ' : (usage.expired ? 'Пробный доступ завершён' : 'Пробный доступ')}</strong>
+          <span class="badge ${granted ? 'live' : (usage.expired ? 'failed' : 'trial')}">${granted ? 'активен' : (usage.expired ? 'исчерпан' : 'активен')}</span></div>
+        <p class="cab-sub">Все зарегистрированные пользователи получают один и тот же полный продукт. Отличается только оставшееся время активного использования.</p>
+        ${granted ? '' : `<div class="access-metrics">
+          <div><dt>Осталось</dt><dd>${esc(trialHumanTime(usage.remaining_sec))}</dd></div>
+          <div><dt>Из них выдано</dt><dd>${esc(trialHumanTime(usage.limit_sec))}</dd></div>
+          <div><dt>Остаток</dt><dd>${percent}%</dd></div>
+        </div>
+        <div class="trial-gate-bar" aria-hidden="true"><span style="width:${percent}%"></span></div>
+        <p class="cab-sub">Время расходуется только во время активной работы: если вы не пользуетесь StratForge, оно не списывается.</p>`}
+      </div>
+      <div class="section-title">Промокод</div>
+      <form class="auth-form" data-access-promo>
+        <div class="field"><label for="access-promo-code">Промокод</label><input id="access-promo-code" autocomplete="off" maxlength="64" placeholder="Введите промокод"></div>
+        <button class="btn primary" type="submit">Активировать</button>
+      </form>
+      <div class="cab-sub" data-access-message></div>
+      <div class="section-title">Полный доступ</div>
+      <div class="flex gap-sm"><button class="btn ghost" type="button" data-access-buy>Получить полный доступ</button></div>`;
+    const message = qs('[data-access-message]', node);
+    const form = qs('[data-access-promo]', node);
+    if (form) form.onsubmit = async (event) => {
+      event.preventDefault();
+      const submit = form.querySelector('button[type="submit"]');
+      submit.disabled = true;
+      if (message) message.textContent = '';
+      try {
+        await API.http.billingPromoRedeem({ code: (qs('#access-promo-code', form) || {}).value || '' });
+        toast('Промокод активирован');
+        setTimeout(() => location.reload(), 400);
+      } catch (error) {
+        submit.disabled = false;
+        if (message) message.textContent = authMessage(error, 'Промокод не подошёл.');
+      }
+    };
+    const buy = qs('[data-access-buy]', node);
+    if (buy) buy.onclick = () => renderWelcomeAccess({ asOverlay: true });
+  }
+
   async function renderPlansInto(node, me, scope) {
     node.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка тарифов…</div>';
     try {
@@ -2861,6 +3394,25 @@
   }
   function renderProfileInto(cb, me) {
     cb.innerHTML = cabinetProfile(me);
+    const personal = qs('#cab-personal-workspace', cb);
+    if (personal) personal.onclick = async () => {
+      const msg = qs('#cab-personal-workspace-msg', cb);
+      personal.disabled = true;
+      msg.textContent = 'Проверяю личное пространство…';
+      try {
+        await API.http.accountPersonalWorkspace({ display_name: 'Моё личное пространство' });
+        const fresh = await API.http.authStatus();
+        CURRENT_AUTH = Object.assign({}, CURRENT_AUTH, fresh);
+        applyNavAccess(CURRENT_AUTH);
+        if (fresh.agent_world?.enabled === true) {
+          location.href = 'ai-command-center.html#tab=overview&domain=models';
+          return;
+        }
+        msg.textContent = 'Личное пространство готово. AI Центр пока не включён в нём: требуется точечное разрешение владельца для этого Local-пространства.';
+      } catch (e) {
+        msg.textContent = e.message || 'Не удалось создать личное пространство. Можно повторить.';
+      } finally { personal.disabled = false; }
+    };
     const nt = qs('#cab-nt', cb);
     if (nt) renderNinjaInto(nt, me);
     qsa('[data-set-ux]', cb).forEach(btn => {
@@ -2930,6 +3482,24 @@
     else if (min < 60) rel = `${min} мин назад`;
     else if (min < 1440) rel = `${Math.floor(min / 60)} ч назад`;
     else rel = `${Math.floor(min / 1440)} дн назад`;
+    let abs = iso;
+    try { abs = new Date(t).toLocaleString(); } catch (_) { /* keep iso */ }
+    return `<span title="${esc(abs)}">${esc(rel)}</span>`;
+  }
+
+  // Forward-looking label for a deadline (session expiry, temporary access).
+  // secWhen() measures elapsed time and renders every future moment as
+  // «только что», which reads as if the access had already ended.
+  function secUntil(iso) {
+    if (!iso) return '—';
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return esc(String(iso));
+    const min = Math.round((t - Date.now()) / 60000);
+    let rel;
+    if (min <= 0) rel = 'истекло';
+    else if (min < 60) rel = `через ${min} мин`;
+    else if (min < 1440) rel = `через ${Math.floor(min / 60)} ч`;
+    else rel = `через ${Math.floor(min / 1440)} дн`;
     let abs = iso;
     try { abs = new Date(t).toLocaleString(); } catch (_) { /* keep iso */ }
     return `<span title="${esc(abs)}">${esc(rel)}</span>`;
@@ -3324,7 +3894,7 @@
     }
   }
 
-  async function renderSecurityInto(cb, me) {
+  async function renderSecurityLegacyInto(cb, me) {
     cb.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка устройств…</div>';
     let data, nt = null;
     try {
@@ -3474,18 +4044,316 @@
     });
   }
 
+  function securityAccessBadge(access, fallbackStatus) {
+    const state = String((access || {}).state || fallbackStatus || 'pending');
+    const mode = String((access || {}).trust_mode || '');
+    if (state === 'active' && mode === 'session') return '<span class="badge trial">Только текущая сессия</span>';
+    if (state === 'active' || mode === 'permanent' || fallbackStatus === 'trusted') return '<span class="badge live">Доверено</span>';
+    if (state === 'pending') return '<span class="badge pending">Ожидает подтверждения</span>';
+    if (state === 'revoked') return '<span class="badge failed">Отозвано</span>';
+    return '<span class="badge archived">Сессия завершена</span>';
+  }
+
+  // Device and client marks for the security list. Stroke icons, no vendor
+  // logos: the row states what the client is, it does not advertise it.
+  const SECURITY_ICON = {
+    desktop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.8" y="4" width="18.4" height="12.5" rx="2.2"/><path d="M9 20h6M12 16.5V20"/></svg>',
+    laptop: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4.5" width="16" height="11" rx="2"/><path d="M2.5 18.5h19"/></svg>',
+    browser: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.8"/><path d="M3.4 9.4h17.2M3.4 14.6h17.2"/><path d="M12 3.2c2.4 2.4 3.6 5.4 3.6 8.8s-1.2 6.4-3.6 8.8c-2.4-2.4-3.6-5.4-3.6-8.8S9.6 5.6 12 3.2Z"/></svg>',
+    connector: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8.5 3.5 12 7 15.5M17 8.5 20.5 12 17 15.5M13.8 5.5l-3.6 13"/></svg>',
+    pencil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4l10.5-10.5a2.1 2.1 0 0 0-3-3L5 17v3Z"/><path d="m14.5 5.5 4 4"/></svg>',
+  };
+  function securityClientHtml(client, nested) {
+    const audit = client.audit || {};
+    const access = client.access || {};
+    const facts = [client.auto_name, audit.masked_ip ? `IP: ${audit.masked_ip}` : '', audit.location || ''].filter(Boolean);
+    const active = Number(client.active_sessions || 0);
+    const canRename = !!(client.actions || {}).rename;
+    const canRevoke = !!(client.actions || {}).revoke;
+    const pending = String(access.state || client.status || '') === 'pending';
+    return `<article class="security-client ${nested ? 'nested' : 'standalone'}" data-security-client="${esc(client.id)}">
+      <div class="security-client-icon" aria-hidden="true">${SECURITY_ICON[client.kind === 'connector' ? 'connector' : 'browser']}</div>
+      <div class="security-client-main">
+        <div class="security-client-title"><strong>${esc(client.display_name || 'Web Browser')}</strong>${securityAccessBadge(access, client.status)}</div>
+        <div class="security-client-meta">${facts.length ? facts.map(esc).join(' · ') : 'Браузер или приложение'}</div>
+        <div class="security-client-meta">Последняя активность: ${client.last_seen_at_utc ? secWhen(client.last_seen_at_utc) : '—'} · Активных сессий: ${active}</div>
+      </div>
+      <div class="security-row-actions">
+        ${pending ? `<button type="button" class="btn sm sec-approve-permanent" data-sec-client-approve="${esc(client.id)}">Подтвердить постоянно</button><button type="button" class="btn sm sec-approve-session" data-sec-client-session="${esc(client.id)}">Только текущая сессия</button>` : ''}
+        ${canRename ? `<button type="button" class="btn sm ghost" data-sec-client-rename="${esc(client.id)}" data-sec-name="${esc(client.display_name || '')}">Переименовать</button>` : ''}
+        ${canRevoke ? `<button type="button" class="btn sm danger" data-sec-client-${pending ? 'reject' : 'revoke'}="${esc(client.id)}" data-sec-name="${esc(client.display_name || '')}">${pending ? 'Отклонить' : 'Отозвать клиент'}</button>` : ''}
+      </div>
+    </article>`;
+  }
+
+  function securityMachineHtml(machine, index) {
+    const trust = machine.trust || {};
+    const audit = machine.audit || {};
+    const clients = Array.isArray(machine.clients) ? machine.clients : [];
+    const panelId = `security-machine-clients-${index}`;
+    const canRename = !!(machine.actions || {}).rename;
+    const canRevoke = !!(machine.actions || {}).revoke;
+    return `<article class="security-machine" data-security-machine="${esc(machine.id)}">
+      <div class="security-machine-head">
+        <div class="security-machine-icon" aria-hidden="true">${SECURITY_ICON[/mac|book/i.test(String(machine.auto_name || '')) ? 'laptop' : 'desktop']}</div>
+        <div class="security-machine-main">
+          <div class="security-machine-title"><strong>${esc(machine.display_name || 'Компьютер')}</strong>${canRename ? `<button type="button" class="security-name-edit" data-sec-machine-rename="${esc(machine.id)}" data-sec-name="${esc(machine.display_name || '')}" title="Переименовать" aria-label="Переименовать устройство">${SECURITY_ICON.pencil}</button>` : ''}${securityAccessBadge({ state: trust.status === 'trusted' ? 'active' : trust.status, trust_mode: trust.mode }, trust.status)}</div>
+          <div class="security-client-meta">${esc(machine.auto_name || 'Физическое устройство')}${audit.masked_ip ? ` · IP: ${esc(audit.masked_ip)}` : ''}${audit.location ? ` · ${esc(audit.location)}` : ''}</div>
+          <div class="security-client-meta">Последняя активность: ${machine.last_seen_at_utc ? secWhen(machine.last_seen_at_utc) : '—'} · Клиентов: ${clients.length}</div>
+        </div>
+        <div class="security-row-actions">
+          ${canRename ? `<button type="button" class="btn sm ghost" data-sec-machine-rename="${esc(machine.id)}" data-sec-name="${esc(machine.display_name || '')}">Переименовать</button>` : ''}
+          ${canRevoke ? `<button type="button" class="btn sm danger" data-sec-machine-revoke="${esc(machine.id)}" data-sec-name="${esc(machine.display_name || '')}">Отозвать устройство</button>` : ''}
+          <button type="button" class="btn sm ghost security-expand" data-sec-machine-expand aria-expanded="true" aria-controls="${panelId}">Свернуть</button>
+        </div>
+      </div>
+      <div class="security-machine-clients" id="${panelId}">
+        <div class="security-group-label">На этом устройстве подтверждённо используются</div>
+        ${clients.length ? clients.map(client => securityClientHtml(client, true)).join('') : '<div class="security-empty">Связанные клиенты не найдены.</div>'}
+      </div>
+    </article>`;
+  }
+
+  function securitySessionHtml(session) {
+    const audit = session.audit || {};
+    const access = { state: session.state, trust_mode: session.trust_mode };
+    return `<article class="security-session-row">
+      <div class="security-client-icon" aria-hidden="true">◷</div>
+      <div class="security-client-main">
+        <div class="security-client-title"><strong>${esc(session.client || 'Сессия')}</strong>${session.current ? '<span class="badge live">Текущая</span>' : ''}${securityAccessBadge(access)}</div>
+        <div class="security-client-meta">Начало: ${secWhen(session.created_at_utc)}${audit.masked_ip ? ` · IP: ${esc(audit.masked_ip)}` : ''}${audit.location ? ` · ${esc(audit.location)}` : ''}</div>
+        <div class="security-client-meta">Завершение по серверу: ${session.expires_at_utc ? secUntil(session.expires_at_utc) : '—'}</div>
+      </div>
+      <button type="button" class="btn sm danger" data-sec-session-end="${esc(session.id)}" data-sec-current="${session.current ? '1' : '0'}">Завершить сессию</button>
+    </article>`;
+  }
+
+  function securityActionDialog(options) {
+    const opts = options || {};
+    return new Promise(resolve => {
+      const previous = document.activeElement;
+      const overlay = el(`<div class="security-dialog-overlay" role="presentation">
+        <section class="security-dialog" role="dialog" aria-modal="true" aria-labelledby="security-dialog-title">
+          <h3 id="security-dialog-title">${esc(opts.title || 'Подтвердите действие')}</h3>
+          ${opts.body ? `<p>${esc(opts.body)}</p>` : ''}
+          ${opts.input ? `<label class="field"><span>${esc(opts.inputLabel || 'Название')}</span><input data-security-dialog-input value="${esc(opts.inputValue || '')}" maxlength="${Number(opts.maxlength || 80)}" ${opts.inputMode ? `inputmode="${esc(opts.inputMode)}"` : ''}></label>` : ''}
+          <div class="security-dialog-error" data-security-dialog-error role="alert"></div>
+          <div class="security-dialog-actions"><button type="button" class="btn ghost" data-security-dialog-cancel>Отмена</button><button type="button" class="btn ${opts.danger ? 'danger' : 'primary'}" data-security-dialog-confirm>${esc(opts.confirmLabel || 'Продолжить')}</button></div>
+        </section>
+      </div>`);
+      document.body.appendChild(overlay);
+      const dialog = qs('.security-dialog', overlay);
+      const input = qs('[data-security-dialog-input]', overlay);
+      const finish = value => {
+        releaseTrap(); overlay.remove();
+        if (previous && previous.focus) previous.focus();
+        resolve(value);
+      };
+      const releaseTrap = trapDialogFocus(dialog, () => finish(null));
+      qs('[data-security-dialog-cancel]', overlay).onclick = () => finish(null);
+      qs('[data-security-dialog-confirm]', overlay).onclick = () => {
+        if (!input) { finish(true); return; }
+        const value = input.value.trim();
+        if (!value || (opts.pattern && !opts.pattern.test(value))) {
+          qs('[data-security-dialog-error]', overlay).textContent = opts.inputError || 'Проверьте введённое значение.';
+          input.focus(); return;
+        }
+        finish(value);
+      };
+      overlay.onclick = event => { if (event.target === overlay) finish(null); };
+      requestAnimationFrame(() => (input || qs('[data-security-dialog-cancel]', overlay)).focus());
+    });
+  }
+
+  async function renderSecurityInto(cb, me, selectedTab) {
+    cb.innerHTML = '<div class="state-loading"><span class="spinner"></span>Загрузка доступов…</div>';
+    let data, nt = null;
+    try {
+      [data, nt] = await Promise.all([
+        API.http.accountSecurity(),
+        API.http.accountNtSecurity().catch(() => null),
+      ]);
+    } catch (e) { renderError(cb, e, () => renderSecurityInto(cb, me, selectedTab)); return; }
+
+    const machines = Array.isArray(data.machines) ? data.machines : [];
+    const standalone = Array.isArray(data.standalone_clients) ? data.standalone_clients : [];
+    const sessions = Array.isArray(data.sessions) ? data.sessions : [];
+    const history = Array.isArray(data.login_history) ? data.login_history : [];
+    const identities = Array.isArray(data.identities) ? data.identities : [];
+    const channels = Array.isArray(data.confirmation_channels) ? data.confirmation_channels : [];
+    const activeTab = ['devices', 'sessions', 'history'].includes(selectedTab) ? selectedTab : 'devices';
+    const channelText = channels.length
+      ? channels.map(channel => `${esc(channel.label)} ${esc(channel.masked_target || '')}`.trim()).join(' · ')
+      : 'Нет подтверждённого Telegram или e-mail.';
+
+    const LOGIN_PROVIDERS = ['telegram', 'google', 'email'];
+    const linkedSet = new Set(identities.map(identity => String(identity.provider || '')));
+    const loginCount = identities.filter(identity => LOGIN_PROVIDERS.includes(String(identity.provider || ''))).length;
+    const idRows = identities.length ? identities.map(identity => {
+      const provider = String(identity.provider || '');
+      const isLast = LOGIN_PROVIDERS.includes(provider) && loginCount <= 1;
+      return `<div class="sec-id-row">
+        <div><strong>${esc(SEC_PROVIDER_LABEL[provider] || provider)}${identity.label ? ` · ${esc(identity.label)}` : ''}</strong><span class="badge ${identity.verified ? 'live' : 'pending'}">${identity.verified ? 'Подтверждён' : 'Не подтверждён'}</span></div>
+        ${isLast ? '<span class="cab-sub">Единственный способ входа</span>' : `<button class="btn sm ghost" data-id-unlink="${esc(identity.identity_id)}" data-id-prov="${esc(provider)}">Отвязать</button>`}
+      </div>`;
+    }).join('') : '<div class="security-empty">Нет привязанных способов входа.</div>';
+
+    let ntCard = '';
+    if (nt && nt.factors && !nt.is_owner) {
+      ntCard = `<div class="cab-card"><h4>Личный NinjaTrader — безопасность</h4><div class="chips-in"><span class="chip-tag">${nt.factors.telegram ? '✓' : '•'} Telegram</span><span class="chip-tag">${nt.factors.email ? '✓' : '•'} e-mail</span></div><div class="cab-sub">Критические действия требуют отдельного step-up подтверждения.</div></div>`;
+    }
+
+    cb.innerHTML = `<section class="security-access">
+      <div class="security-access-head"><div><p class="device-confirmation-kicker">Безопасность аккаунта</p><h3>Устройства и доступы</h3><p>Здесь видно, кто сейчас может войти в аккаунт и где этот доступ отключить.</p></div><div class="security-channel-note"><strong>Коды подтверждения</strong><span>${channelText}</span></div></div>
+      <div class="security-main-tabs" role="tablist" aria-label="Разделы безопасности">
+        <button type="button" role="tab" data-security-tab="devices" aria-selected="${activeTab === 'devices'}" class="${activeTab === 'devices' ? 'on' : ''}">Устройства</button>
+        <button type="button" role="tab" data-security-tab="sessions" aria-selected="${activeTab === 'sessions'}" class="${activeTab === 'sessions' ? 'on' : ''}">Мои сессии <span>${sessions.length}</span></button>
+        <button type="button" role="tab" data-security-tab="history" aria-selected="${activeTab === 'history'}" class="${activeTab === 'history' ? 'on' : ''}">История входов</button>
+      </div>
+      <div class="security-panel" role="tabpanel" data-security-panel="devices" ${activeTab === 'devices' ? '' : 'hidden'}>
+        <div class="security-section-heading"><div><h4>Известные устройства</h4><p>Клиенты объединены с компьютером только при подтверждённой аппаратной привязке или pairing.</p></div></div>
+        <div class="security-machine-list">${machines.length ? machines.map(securityMachineHtml).join('') : '<div class="security-empty">Пока нет физического устройства с доказанной привязкой.</div>'}</div>
+        <div class="security-section-heading"><div><h4>Другие клиенты / удалённый доступ</h4><p>Эти браузеры и приложения показаны отдельно: система не приписывает их компьютеру по IP, VPN или User-Agent.</p></div></div>
+        <div class="security-standalone-list">${standalone.length ? standalone.map(client => securityClientHtml(client, false)).join('') : '<div class="security-empty">Отдельных клиентов нет.</div>'}</div>
+      </div>
+      <div class="security-panel" role="tabpanel" data-security-panel="sessions" ${activeTab === 'sessions' ? '' : 'hidden'}>
+        <div class="security-section-heading"><div><h4>Активные сессии</h4><p>Завершение сессии не отзывает постоянное доверие клиента.</p></div></div>
+        <div class="security-session-list">${sessions.length ? sessions.map(securitySessionHtml).join('') : '<div class="security-empty">Активных сессий нет.</div>'}</div>
+      </div>
+      <div class="security-panel" role="tabpanel" data-security-panel="history" ${activeTab === 'history' ? '' : 'hidden'}>
+        <div class="security-section-heading"><div><h4>История входов</h4><p>IP и местоположение — только аудит, а не идентификатор устройства.</p></div></div>
+        <div class="security-history-list">${history.length ? history.map(row => `<div class="security-history-row"><strong>${esc(row.client || row.source || 'Вход')}</strong><span>${secWhen(row.at_utc)}${row.masked_ip ? ` · IP: ${esc(row.masked_ip)}` : ''}</span><small>${esc(row.source || '')}</small></div>`).join('') : '<div class="security-empty">История входов пока пуста.</div>'}</div>
+      </div>
+    </section>
+    <div class="cab-card security-identities"><h4>Способы входа</h4><div class="list">${idRows}</div><div class="flex gap-sm wrap security-id-actions">${!linkedSet.has('email') ? '<button class="btn" data-id-link="email">Привязать e-mail</button>' : ''}${!linkedSet.has('google') ? '<button class="btn" data-id-link="google">Привязать Google</button>' : ''}</div></div>
+    ${ntCard}`;
+
+    const currentTab = () => String((qs('[data-security-tab].on', cb) || {}).dataset?.securityTab || 'devices');
+    const reload = () => renderSecurityInto(cb, me, currentTab());
+    qsa('[data-security-tab]', cb).forEach(button => {
+      button.onclick = () => {
+        const tab = button.dataset.securityTab;
+        qsa('[data-security-tab]', cb).forEach(item => { item.classList.toggle('on', item === button); item.setAttribute('aria-selected', item === button ? 'true' : 'false'); });
+        qsa('[data-security-panel]', cb).forEach(panel => { panel.hidden = panel.dataset.securityPanel !== tab; });
+      };
+    });
+    qsa('[data-sec-machine-expand]', cb).forEach(button => {
+      button.onclick = () => {
+        const panel = document.getElementById(button.getAttribute('aria-controls'));
+        const open = button.getAttribute('aria-expanded') === 'true';
+        button.setAttribute('aria-expanded', open ? 'false' : 'true'); button.textContent = open ? 'Развернуть' : 'Свернуть';
+        if (panel) panel.hidden = open;
+      };
+    });
+    qsa('[data-sec-client-rename]', cb).forEach(button => {
+      button.onclick = async () => {
+        const name = await securityActionDialog({ title: 'Переименовать клиент', body: 'Это имя будете видеть только вы.', input: true, inputValue: button.dataset.secName, confirmLabel: 'Сохранить' });
+        if (!name) return;
+        try { await API.http.accountDeviceRename(button.dataset.secClientRename, name); toast('Клиент переименован'); reload(); } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-sec-machine-rename]', cb).forEach(button => {
+      button.onclick = async () => {
+        const name = await securityActionDialog({ title: 'Переименовать устройство', body: 'Например: Домашний ПК или MacBook.', input: true, inputValue: button.dataset.secName, confirmLabel: 'Сохранить' });
+        if (!name) return;
+        try { await API.http.accountMachineRename(button.dataset.secMachineRename, name); toast('Устройство переименовано'); reload(); } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-sec-client-revoke]', cb).forEach(button => {
+      button.onclick = async () => {
+        const ok = await securityActionDialog({ title: `Отозвать клиент «${button.dataset.secName || 'клиент'}»?`, body: 'Будут завершены только сессии этого клиента. Другие клиенты не изменятся.', confirmLabel: 'Отозвать клиент', danger: true });
+        if (!ok) return;
+        try { await API.http.accountDeviceRevoke(button.dataset.secClientRevoke); toast('Доступ клиента отозван'); reload(); } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-sec-client-reject]', cb).forEach(button => {
+      button.onclick = async () => {
+        const ok = await securityActionDialog({ title: 'Отклонить новый доступ?', body: 'Неподтверждённые сессии этого клиента будут завершены.', confirmLabel: 'Отклонить', danger: true });
+        if (!ok) return;
+        try { await API.http.accountDeviceReject(button.dataset.secClientReject); toast('Новый доступ отклонён'); reload(); } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-sec-machine-revoke]', cb).forEach(button => {
+      button.onclick = async () => {
+        const ok = await securityActionDialog({ title: `Отозвать устройство «${button.dataset.secName || 'устройство'}»?`, body: 'Все его клиенты и активные сессии будут завершены.', confirmLabel: 'Отозвать устройство', danger: true });
+        if (!ok) return;
+        try { await API.http.accountMachineRevoke(button.dataset.secMachineRevoke); toast('Доступ устройства отозван'); reload(); } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-sec-session-end]', cb).forEach(button => {
+      button.onclick = async () => {
+        const current = button.dataset.secCurrent === '1';
+        const ok = await securityActionDialog({ title: current ? 'Завершить текущую сессию?' : 'Завершить эту сессию?', body: current ? 'Вы выйдете из аккаунта на этом клиенте.' : 'Постоянное доверие клиента сохранится.', confirmLabel: 'Завершить сессию', danger: true });
+        if (!ok) return;
+        try { await API.http.accountSessionRevoke(button.dataset.secSessionEnd); if (current) location.reload(); else { toast('Сессия завершена'); reload(); } } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-sec-client-approve]', cb).forEach(button => {
+      button.onclick = async () => {
+        try {
+          const started = await API.http.accountSecurityChallenge({ purpose: 'device_confirm', device_id: button.dataset.secClientApprove, trust_mode: 'permanent' });
+          const code = started.test_code || await securityActionDialog({ title: 'Подтвердить клиент постоянно', body: `Введите 6-значный код: ${SEC_PROVIDER_LABEL[started.provider] || started.provider} ${started.masked_target || ''}`, input: true, inputLabel: 'Код подтверждения', inputMode: 'numeric', maxlength: 6, pattern: /^\d{6}$/, inputError: 'Введите ровно 6 цифр.', confirmLabel: 'Подтвердить' });
+          if (!code) return;
+          await API.http.accountDeviceApprove({ device_id: button.dataset.secClientApprove, challenge_id: started.challenge_id, code, trust_mode: 'permanent' });
+          toast('Клиент подтверждён'); reload();
+        } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-sec-client-session]', cb).forEach(button => {
+      button.onclick = async () => {
+        try {
+          const started = await API.http.accountSecurityChallenge({ purpose: 'device_confirm', device_id: button.dataset.secClientSession, trust_mode: 'session' });
+          const code = started.test_code || await securityActionDialog({ title: 'Разрешить только текущую сессию', body: `Введите 6-значный код: ${SEC_PROVIDER_LABEL[started.provider] || started.provider} ${started.masked_target || ''}`, input: true, inputLabel: 'Код подтверждения', inputMode: 'numeric', maxlength: 6, pattern: /^\d{6}$/, inputError: 'Введите ровно 6 цифр.', confirmLabel: 'Разрешить' });
+          if (!code) return;
+          await API.http.accountDeviceApprove({ device_id: button.dataset.secClientSession, challenge_id: started.challenge_id, code, trust_mode: 'session' });
+          toast('Доступ разрешён до конца сессии'); reload();
+        } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-id-unlink]', cb).forEach(button => {
+      button.onclick = async () => {
+        const ok = await securityActionDialog({ title: 'Отвязать способ входа?', body: 'Войти через него больше не получится, пока вы не привяжете его заново.', confirmLabel: 'Отвязать', danger: true });
+        if (!ok) return;
+        try { await API.http.accountIdentityUnlink({ identity_id: button.dataset.idUnlink }); toast('Способ входа отвязан'); reload(); } catch (e) { reportError(e); }
+      };
+    });
+    qsa('[data-id-link]', cb).forEach(button => {
+      button.onclick = async () => {
+        try {
+          if (button.dataset.idLink === 'google') {
+            const out = await API.http.authGoogleLinkStart({ return_path: location.pathname + location.search });
+            if (!out?.auth_url) throw new Error('Google-линковка недоступна.');
+            location.href = out.auth_url; return;
+          }
+          const email = await securityActionDialog({ title: 'Привязать e-mail', body: 'Код будет отправлен на этот адрес.', input: true, inputLabel: 'E-mail', maxlength: 254, pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/, inputError: 'Введите корректный e-mail.', confirmLabel: 'Отправить код' });
+          if (!email) return;
+          const started = await API.http.authEmailLinkStart({ email });
+          const code = started.test_code || await securityActionDialog({ title: 'Подтвердить e-mail', body: `Введите код, отправленный на ${email}.`, input: true, inputLabel: 'Код', inputMode: 'numeric', maxlength: 6, pattern: /^\d{6}$/, inputError: 'Введите ровно 6 цифр.', confirmLabel: 'Подтвердить' });
+          if (!code) return;
+          await API.http.authEmailLinkVerify({ challenge_id: started.challenge_id, code }); toast('E-mail привязан'); reload();
+        } catch (e) { reportError(e); }
+      };
+    });
+  }
+
   function renderCabinet(body, me, tab) {
     const header = cabinetHeader(me);
     // Cabinet is personal self-service only. System operations, user
     // management, monitoring and owner controls live in the capability-gated
     // Admin Panel.
-    const tabs = [['profile', 'Профиль'], ['card', 'Моя карточка'], ['security', 'Безопасность'], ['plans', 'Тарифы']];
+    // Tiers are not part of the product a regular member sees right now: every
+    // registered account gets the same full access, so the tab states how much
+    // of it is left instead of offering plans to compare.
+    const tabs = me && me.is_owner
+      ? [['profile', 'Профиль'], ['card', 'Моя карточка'], ['security', 'Безопасность'], ['plans', 'Тарифы']]
+      : [['profile', 'Профиль'], ['card', 'Моя карточка'], ['security', 'Безопасность'], ['access', 'Доступ']];
     const start = tabs.some(t => t[0] === tab) ? tab : 'profile';
     body.innerHTML = header + `<div class="cab-tabs">${tabs.map(([id, label]) => `<button class="cab-tab ${id === start ? 'on' : ''}" data-cab-tab="${id}">${label}</button>`).join('')}</div><div id="cab-body"></div>`;
     const cb = qs('#cab-body', body);
     const renderTab = (t) => {
       qsa('[data-cab-tab]', body).forEach(b => b.classList.toggle('on', b.dataset.cabTab === t));
-      if (t === 'plans') renderPlansInto(cb, me, 'self');
+      if (t === 'access') renderAccessInto(cb, me);
+      else if (t === 'plans') renderPlansInto(cb, me, 'self');
       else if (t === 'card') renderUserCardInto(cb, () => API.http.accountCard());
       else if (t === 'security') renderSecurityInto(cb, me);
       else renderProfileInto(cb, me);
@@ -3937,9 +4805,15 @@
         catch (e) { reportError(e); create.disabled = false; }
       };
       qsa('[data-stg-as]', node).forEach(btn => btn.onclick = async () => {
-        if (!confirm('Открыть приложение как этот пользователь?')) return;
+        if (btn.disabled) return;
         btn.disabled = true;
-        try { await API.http.ownerImpersonate(Number(btn.dataset.stgAs)); toast('Открываю'); setTimeout(() => location.reload(), 300); }
+        try {
+          if (!await confirmDialog('Открыть приложение как этот пользователь? Действия будут выполняться в его тестовой сессии.', {
+            title: 'Открыть тестовую сессию', confirmLabel: 'Открыть как пользователь',
+          })) { btn.disabled = false; return; }
+          if (!btn.isConnected) return;
+          await API.http.ownerImpersonate(Number(btn.dataset.stgAs)); toast('Открываю'); setTimeout(() => location.reload(), 300);
+        }
         catch (e) { reportError(e); btn.disabled = false; }
       });
       qsa('[data-stg-google]', node).forEach(btn => btn.onclick = async () => {
@@ -3948,10 +4822,6 @@
       qsa('[data-stg-team]', node).forEach(btn => btn.onclick = async () => {
         try { await API.http.ownerAgentTeamGrant(Number(btn.dataset.stgTeam), 'grant'); toast('Выдана полная команда агентов'); } catch (e) { reportError(e); }
       });
-  }
-
-  function loginCard(inner) {
-    return `<div class="auth-screen"><section class="auth-card"><div class="auth-brand"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Защищённый вход</span></div></div>${inner}<div class="auth-security">Единый профиль · подтверждённые Telegram, Google или e-mail<br>Внутренний идентификатор аккаунта — UUID; способы входа не объединяются автоматически</div></section></div>`;
   }
 
   async function showLegalNoticeModal(id, fallbackLabel) {
@@ -3983,173 +4853,414 @@
     overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
   }
 
+  // ---- login / registration -------------------------------------------------
+  // Two separate jobs, two separate paths. Login answers "who is this?" and
+  // Device Confirmation, which lives elsewhere, answers "can this access be
+  // trusted?". Nothing here decides trust, and nothing here shows a form the
+  // person has not asked for yet.
+  const AUTH_TRIAL_DEFAULT_DAYS = 7;
+  const AUTH_TRIAL_DEFAULT_SECONDS = 5 * 3600;
+  const AUTH_METHOD_LABEL = { telegram: 'Telegram', google: 'Google', email: 'E-mail' };
+  // Brand marks stay literal: Telegram's plane, Google's four-colour G and a
+  // plain envelope read instantly, where a glyph substitute reads as a bug.
+  const AUTH_ICON = {
+    telegram: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M21.2 3.3 2.9 10.4c-1.1.4-1.1 1.1-.2 1.4l4.6 1.4 1.8 5.4c.2.6.4.8 1 .8.5 0 .7-.2 1-.5l2.2-2.2 4.6 3.4c.8.5 1.4.2 1.6-.8l3-14c.3-1.2-.5-1.8-1.3-1.4ZM7.9 13.6l9.5-6c.5-.3.9-.1.6.2l-8.1 7.3-.3 3.2-1.7-4.7Z"/></svg>',
+    google: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M21.6 12.23c0-.71-.06-1.4-.18-2.05H12v3.88h5.38a4.6 4.6 0 0 1-2 3.02v2.5h3.24c1.9-1.74 2.98-4.3 2.98-7.35Z"/><path fill="#34A853" d="M12 22c2.7 0 4.96-.9 6.62-2.42l-3.24-2.5c-.9.6-2.04.96-3.38.96-2.6 0-4.8-1.76-5.59-4.12H3.06v2.58A10 10 0 0 0 12 22Z"/><path fill="#FBBC05" d="M6.41 13.92a6 6 0 0 1 0-3.84V7.5H3.06a10 10 0 0 0 0 9l3.35-2.58Z"/><path fill="#EA4335" d="M12 5.98c1.47 0 2.79.5 3.83 1.5l2.87-2.87C16.95 2.98 14.7 2 12 2a10 10 0 0 0-8.94 5.5l3.35 2.58C7.2 7.72 9.4 5.98 12 5.98Z"/></svg>',
+    mail: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.75" y="5" width="18.5" height="14" rx="2.5"/><path d="m3.5 7.5 7.4 5.2c.66.47 1.54.47 2.2 0l7.4-5.2"/></svg>',
+    scan: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8.5V6a2 2 0 0 1 2-2h2.5M15.5 4H18a2 2 0 0 1 2 2v2.5M20 15.5V18a2 2 0 0 1-2 2h-2.5M8.5 20H6a2 2 0 0 1-2-2v-2.5"/><rect x="8" y="8" width="3.2" height="3.2" rx=".8"/><rect x="12.8" y="12.8" width="3.2" height="3.2" rx=".8"/><path d="M12.8 8H16v3.2M8 12.8v3.2h3.2"/></svg>',
+    user: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.6"/><path d="M4.8 20a7.2 7.2 0 0 1 14.4 0"/></svg>',
+    enter: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 8l4 4-4 4M14 12H4"/></svg>',
+    clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 1.8"/></svg>',
+    shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.9 5 5.5v5.9c0 4.2 2.9 7.8 7 9.2 4.1-1.4 7-5 7-9.2V5.5z"/><path d="m9 11.9 2.2 2.2 4-4.3"/></svg>',
+    monitor: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.8" y="4" width="18.4" height="12.5" rx="2.2"/><path d="M9 20h6M12 16.5V20"/></svg>',
+    external: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6M20 4l-8.5 8.5"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/></svg>',
+  };
+
+  // Owner Preview only. Typing a plausible name, a free handle and an address
+  // for every walkthrough is the slowest part of reviewing the onboarding, so
+  // the sandbox offers to invent them. This never renders outside Preview:
+  // the guard is the same PREVIEW_CONTEXT the isolated child process sets.
+  let PREVIEW_IDENTITY = null;
+  function previewSandboxActive() {
+    return !!(PREVIEW_CONTEXT && PREVIEW_CONTEXT.enabled);
+  }
+  async function previewIdentity() {
+    if (!previewSandboxActive()) throw new Error('Synthetic identity доступна только в Preview.');
+    if (PREVIEW_IDENTITY) return PREVIEW_IDENTITY;
+    const out = await API.http.previewSandboxIdentity();
+    const identity = (out && out.identity) || {};
+    if (!identity.handle || !identity.first_name || !identity.email) {
+      throw new Error('Preview не вернул test identity.');
+    }
+    PREVIEW_IDENTITY = identity;
+    return PREVIEW_IDENTITY;
+  }
+  function previewAutofillBar(actions) {
+    if (!previewSandboxActive()) return '';
+    const buttons = actions.map(([action, label]) =>
+      `<button type="button" class="btn sm" data-preview-fill="${esc(action)}">${esc(label)}</button>`,
+    ).join('');
+    return `<div class="preview-autofill" role="group" aria-label="Тестовые данные Preview">
+      <span class="preview-autofill-tag">PREVIEW</span>
+      <span class="preview-autofill-note">Данные ненастоящие и живут только в этом sandbox.</span>
+      ${buttons}
+    </div>`;
+  }
+
+  function authShell(inner, modifier) {
+    return `<div class="auth-screen auth-cosmos"><div class="auth-sky" aria-hidden="true"></div>`
+      + `<div class="auth-stage${modifier ? ' ' + modifier : ''}">`
+      + `<div class="auth-mark"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Торговые решения будущего</span></div></div>`
+      + inner + `</div></div>`;
+  }
+
+  function authCard(inner, modifier) {
+    return `<section class="auth-card auth-card-lux${modifier ? ' ' + modifier : ''}">${inner}</section>`;
+  }
+
+  // Two shapes, because the approved designs use two: the opening step wears a
+  // segmented bar under a plain label, the later steps a compact pill of dots.
+  function authSteps(current, variant) {
+    if (variant === 'bar') {
+      const bars = [1, 2, 3].map(index => `<span class="auth-step-bar${index <= current ? ' on' : ''}"></span>`).join('');
+      return `<div class="auth-steps bar" role="status" aria-live="polite"><span class="auth-step-caption">Шаг ${current} из 3</span><span class="auth-step-track" aria-hidden="true">${bars}</span></div>`;
+    }
+    const dots = [1, 2, 3].map(index => `<span class="auth-step-dot${index === current ? ' on' : ''}${index < current ? ' done' : ''}"></span>`).join('');
+    return `<div class="auth-steps" role="status" aria-live="polite"><span class="auth-step-label">Шаг ${current} из 3<span class="auth-step-dots" aria-hidden="true">${dots}</span></span></div>`;
+  }
+
+  function authError(message) {
+    return message ? `<div class="auth-error" role="alert">${esc(message)}</div>` : '';
+  }
+
+  // The server speaks in codes; a person needs a sentence they can act on.
+  const AUTH_MESSAGES = {
+    handle_required: 'Придумайте имя пользователя StratForge.',
+    handle_length: 'Имя пользователя — от 3 до 32 символов.',
+    handle_format: 'Разрешены латинские буквы, цифры, точка и подчёркивание.',
+    handle_reserved: 'Это имя пользователя зарезервировано.',
+    handle_taken: 'Это имя пользователя уже занято.',
+    terms_required: 'Подтвердите согласие с условиями, чтобы создать профиль.',
+    email_code_invalid: 'Код неверный или истёк. Запросите новый.',
+    registration_expired: 'Подтверждение личности истекло. Начните регистрацию заново.',
+    google_already_registered: 'Этот Google-аккаунт уже зарегистрирован — войдите вместо регистрации.',
+  };
+
+  function authMessage(error, fallback) {
+    if (!error) return fallback || '';
+    const code = String(error.code || '');
+    if (AUTH_MESSAGES[code]) return AUTH_MESSAGES[code];
+    const text = String(error.message || error || '').trim();
+    // Never surface a raw transport or provider error to the person.
+    if (!text || /^(HTTP\s*\d|OAuth|Error:|TypeError|\d{3}$)/i.test(text)) return fallback || 'Что-то пошло не так. Попробуйте ещё раз.';
+    return text;
+  }
+
+  // ---- starting access grant ------------------------------------------------
+  // Everyone who registers gets the same full product. What differs is how much
+  // active use is left, so the shell shows that quietly and nothing else.
+  function trialHumanTime(seconds) {
+    const total = Math.max(0, Math.round(Number(seconds) || 0));
+    // Rounding the remainder on its own produced "4 ч 60 мин": round the whole
+    // span to minutes first, then split it, so the parts can never carry.
+    const wholeMinutes = Math.round(total / 60);
+    const hours = Math.floor(wholeMinutes / 60);
+    const minutes = wholeMinutes % 60;
+    if (hours && minutes) return `${hours} ч ${minutes} мин`;
+    if (hours) return `${hours} ч`;
+    if (minutes) return `${minutes} мин`;
+    return 'меньше минуты';
+  }
+
+  function applyTrialChip(usage) {
+    const chip = qs('#chip-trial');
+    if (!chip) return;
+    const state = usage && typeof usage === 'object' ? usage : {};
+    const measured = state.kind === 'active_usage' && !state.granted_elsewhere;
+    if (!measured) { chip.hidden = true; return; }
+    const percent = Math.max(0, Math.min(100, Number(state.percent_remaining) || 0));
+    const text = qs('#chip-trial-text', chip);
+    const fill = qs('#chip-trial-fill', chip);
+    if (text) {
+      text.textContent = state.expired
+        ? 'Пробный доступ завершён'
+        : `Пробный доступ — осталось ${trialHumanTime(state.remaining_sec)} · ${percent}%`;
+    }
+    if (fill) fill.style.width = percent + '%';
+    chip.classList.toggle('low', !state.expired && percent <= 20);
+    chip.classList.toggle('spent', !!state.expired);
+    chip.title = state.expired
+      ? 'Пробный доступ завершён — откройте полный доступ'
+      : `Осталось ${trialHumanTime(state.remaining_sec)} активного использования из ${trialHumanTime(state.limit_sec)}`;
+    chip.onclick = () => openCabinet('access');
+    chip.hidden = false;
+  }
+
+  function renderTrialExpiredGate(auth) {
+    document.documentElement.classList.add('auth-locked');
+    const content = qs('.content');
+    if (!content) return;
+    const news = qs('[data-global-news-strip]'); if (news) news.hidden = true;
+    const usage = (auth && auth.trial_usage) || {};
+    content.innerHTML = `<div class="auth-screen auth-cosmos trial-gate"><div class="auth-sky" aria-hidden="true"></div>
+      <div class="auth-stage"><div class="auth-mark"><img src="${BRAND_MARK}" alt=""><div><strong>${APP_NAME}</strong><span>Доступ к продукту</span></div></div>
+      <section class="auth-card auth-card-lux">
+        <div class="auth-copy"><h1>Пробный доступ завершён</h1><p>Вы использовали ${trialHumanTime(usage.limit_sec)} активной работы. Аккаунт, профиль и безопасность остаются с вами.</p></div>
+        <div class="trial-gate-bar" aria-hidden="true"><span style="width:100%"></span></div>
+        <div class="auth-error" data-trial-message hidden role="alert"></div>
+        <form class="auth-form" data-trial-promo-form>
+          <div class="field"><label for="trial-promo">Промокод</label><input id="trial-promo" autocomplete="off" maxlength="64" placeholder="Введите промокод" data-autofocus></div>
+          <button class="btn primary auth-main-action" type="submit">Активировать промокод</button>
+        </form>
+        <button class="btn ghost auth-main-action" type="button" data-trial-buy>Получить полный доступ</button>
+        <div class="auth-foot-row">
+          <button type="button" class="linklike" data-trial-cabinet>Профиль и безопасность</button>
+          <button type="button" class="linklike" data-trial-logout>Выйти из аккаунта</button>
+        </div>
+      </section></div></div>`;
+    const message = qs('[data-trial-message]', content);
+    const show = (text) => { if (message) { message.textContent = text; message.hidden = !text; } };
+    const form = qs('[data-trial-promo-form]', content);
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const code = (qs('#trial-promo', form) || {}).value || '';
+      const submit = form.querySelector('button[type="submit"]');
+      submit.disabled = true;
+      show('');
+      try {
+        await API.http.billingPromoRedeem({ code });
+        location.reload();
+      } catch (error) {
+        submit.disabled = false;
+        show(authMessage(error, 'Промокод не подошёл. Проверьте код и попробуйте ещё раз.'));
+      }
+    };
+    qs('[data-trial-buy]', content).onclick = () => renderWelcomeAccess({ asOverlay: true });
+    qs('[data-trial-cabinet]', content).onclick = () => openCabinet('access');
+    qs('[data-trial-logout]', content).onclick = async () => {
+      try { await API.http.authLogout(); } catch (e) { /* leaving anyway */ }
+      location.reload();
+    };
+    requestAnimationFrame(() => (qs('[data-autofocus]', content) || content).focus());
+  }
+
   function renderTelegramLogin(initialError) {
     document.documentElement.classList.add('auth-locked');
     const content = qs('.content');
     const news = qs('[data-global-news-strip]'); if (news) news.hidden = true;
     if (!content) return;
     let polling = null;
+    let qrTick = null;
     let providers = (initialError && initialError.providers) || {};
+    let registrationContract = {};
     const initialMessage = typeof initialError === 'string'
       ? initialError
       : (initialError && initialError.status && ![401, 403].includes(Number(initialError.status)) ? initialError.message : '');
-    let qrTick = null;
+    // What registration has collected so far. It never leaves the browser
+    // until the person accepts the terms on the last step.
+    const draft = { handle: '', first_name: '', last_name: '', method: '', challenge_id: '', code: '', email: '', identity: '' };
+
     const stopQrRefresh = () => { if (qrTick) clearInterval(qrTick); qrTick = null; };
     const stopPolling = () => {
       if (polling) clearInterval(polling);
       polling = null;
       stopQrRefresh();
     };
-    const renderStart = (message) => {
-      stopPolling();
+    const focusFirst = () => requestAnimationFrame(() => {
+      const target = qs('[data-autofocus]', content) || qs('input:not([disabled]), button:not([disabled])', content);
+      if (target) target.focus();
+    });
+    const providerFlags = () => {
       const telegram = providers.telegram || {};
       const google = providers.google || {};
       const email = providers.email || {};
-      const telegramDisabled = telegram.available === false;
-      const googleEnabled = !!(google.available || google.test_auth_fallback);
-      const emailEnabled = !!email.available;
-      content.innerHTML = loginCard(`<div id="auth-provider-start"><div class="auth-copy"><h1>Вход и регистрация</h1><p>Войдите в существующий аккаунт или зарегистрируйте новый. После подтверждения личности новый пользователь автоматически получает полный пробный доступ к продукту на 7 дней. Живые графики используют только разрешённый для аккаунта источник market data.</p></div>${message ? `<div class="finance-note telegram-error">${esc(message)}</div>` : ''}<button class="btn primary auth-main-action" id="auth-start" ${telegramDisabled ? 'disabled' : ''}>Продолжить через Telegram</button><button class="btn ghost auth-main-action" id="auth-google-start" ${googleEnabled ? '' : 'disabled'}>${google.test_auth_fallback && !google.available ? 'Google · Development test' : (googleEnabled ? 'Продолжить через Google' : 'Google пока не настроен')}</button><div class="auth-copy"><p>Или используйте подтверждённый e-mail.</p></div><form id="auth-email-start-form" class="auth-form"><div class="field"><label for="auth-login-email">E-mail</label><input id="auth-login-email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com"></div><div class="field"><label for="auth-login-first">Имя <span class="cab-sub">(для нового профиля)</span></label><input id="auth-login-first" autocomplete="given-name" maxlength="80"></div><div class="field"><label for="auth-login-last">Фамилия <span class="cab-sub">(для нового профиля)</span></label><input id="auth-login-last" autocomplete="family-name" maxlength="80"></div><label class="auth-terms"><input type="checkbox" id="auth-provider-accept"> <span>Для нового профиля я соглашаюсь с <button type="button" class="linklike" id="auth-provider-terms">договором StratForge AI</button>.</span></label><button class="btn ghost auth-main-action" type="submit" ${emailEnabled ? '' : 'disabled'}>${emailEnabled ? 'Получить код по e-mail' : 'E-mail вход пока недоступен'}</button></form><button class="btn ghost auth-main-action" id="auth-open-promo" type="button">Промокод или донат</button></div>`);
-      const button = qs('#auth-start', content);
-      if (button) button.onclick = async () => {
-        button.disabled = true;
-        try { renderWaiting(await API.http.authLoginStart()); }
-        catch (error) { renderStart(error.message || String(error)); }
+      return {
+        telegram: telegram.available !== false,
+        google: !!(google.available || google.test_auth_fallback),
+        googleTest: !!(google.test_auth_fallback && !google.available),
+        email: !!email.available,
       };
-      const terms = qs('#auth-provider-terms', content);
-      if (terms) terms.onclick = () => showTermsModal();
-      const profile = () => ({
-        email: (qs('#auth-login-email', content) || {}).value || '',
-        first_name: (qs('#auth-login-first', content) || {}).value || '',
-        last_name: (qs('#auth-login-last', content) || {}).value || '',
-        accept_terms: !!((qs('#auth-provider-accept', content) || {}).checked),
-      });
-      const googleButton = qs('#auth-google-start', content);
-      if (googleButton && googleEnabled) googleButton.onclick = async () => {
-        const details = profile();
-        googleButton.disabled = true;
-        try {
-          if (google.available) {
-            const out = await API.http.authGoogleLoginStart({ return_path: location.pathname || '/ui/', accept_terms: details.accept_terms });
-            if (out.auth_url) location.href = out.auth_url;
-            else throw new Error('Google не вернул ссылку входа');
-          } else {
-            const out = await API.http.testAuthGoogleLogin({ email: details.email, google_name: [details.first_name, details.last_name].filter(Boolean).join(' '), accept_terms: details.accept_terms });
-            if (out.status === 'authenticated') { location.reload(); return; }
-            if (out.challenge_id) renderWaiting({ challenge_id: out.challenge_id }, out);
-          }
-        } catch (error) { renderStart(error.message || String(error)); }
-      };
-      const emailForm = qs('#auth-email-start-form', content);
-      if (emailForm && emailEnabled) emailForm.onsubmit = async (event) => {
-        event.preventDefault();
-        const details = profile();
-        const submit = emailForm.querySelector('button[type="submit"]'); submit.disabled = true;
-        try { renderEmailCode(await API.http.authEmailStart({ email: details.email }), details); }
-        catch (error) { renderStart(error.message || String(error)); }
-      };
-      const promo = qs('#auth-open-promo', content);
-      if (promo) promo.onclick = () => renderWelcomeAccess({ asOverlay: true });
     };
-    const renderProfile = (challengeId, state) => {
+    const trialDays = () => Number(registrationContract.trial_days || AUTH_TRIAL_DEFAULT_DAYS);
+    // The grant is stated in active use and comes from the server contract.
+    const trialGrantLabel = () => trialHumanTime(
+      Number(registrationContract.trial_active_seconds || 0) || AUTH_TRIAL_DEFAULT_SECONDS,
+    );
+
+    // ---- welcome ------------------------------------------------------------
+    const renderWelcome = (message) => {
       stopPolling();
-      const profile = state.profile || {};
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Завершите профиль</h1><p>Telegram подтвердил личность. Укажите имя, фамилию и e-mail — после регистрации полный 7-дневный доступ включится автоматически.</p></div><form id="auth-profile-form" class="auth-form"><div class="field"><label for="auth-first-name">Имя</label><input id="auth-first-name" autocomplete="given-name" required maxlength="80" value="${esc(profile.first_name || '')}"></div><div class="field"><label for="auth-last-name">Фамилия</label><input id="auth-last-name" autocomplete="family-name" required maxlength="80" value="${esc(profile.last_name || '')}"></div><div class="field"><label for="auth-email">E-mail</label><input id="auth-email" type="email" autocomplete="email" required maxlength="254" value="${esc(profile.email || '')}"></div><label class="auth-terms"><input type="checkbox" id="auth-accept-terms"> <span>Я соглашаюсь с <button type="button" class="linklike" id="auth-terms-link">договором StratForge AI</button> и беру все риски на себя.</span></label><button class="btn primary auth-main-action" type="submit">Зарегистрироваться</button></form>`);
-      const form = qs('#auth-profile-form', content);
-      const termsLink = qs('#auth-terms-link', form);
-      if (termsLink) termsLink.onclick = () => showTermsModal();
-      form.onsubmit = async (event) => {
-        event.preventDefault();
-        if (!(qs('#auth-accept-terms', form) || {}).checked) { toast('Подтвердите согласие'); return; }
-        const submit = form.querySelector('button[type="submit"]'); submit.disabled = true;
-        try {
-          const next = await API.http.authProfile(challengeId, {
-            first_name: qs('#auth-first-name', form).value,
-            last_name: qs('#auth-last-name', form).value,
-            email: qs('#auth-email', form).value,
-            accept_terms: true,
-          });
-          renderWaiting({ challenge_id: challengeId }, next);
-        } catch (error) { submit.disabled = false; toast('Ошибка: ' + (error.message || error)); }
-      };
+      content.innerHTML = authShell(
+        `<div class="auth-hero">
+          <h1>Добро пожаловать в StratForge AI</h1>
+          <p class="auth-hero-sub">Безопасный доступ к вашему торговому рабочему пространству</p>
+          ${authError(message)}
+          <div class="auth-choice">
+            <button type="button" class="auth-choice-card" data-auth-go="login" data-autofocus>
+              <span class="auth-choice-icon" aria-hidden="true">${AUTH_ICON.enter}</span>
+              <strong>Войти</strong>
+              <span>Войдите в существующий аккаунт</span>
+              <span class="auth-choice-go" aria-hidden="true">&#8594;</span>
+            </button>
+            <button type="button" class="auth-choice-card accent" data-auth-go="register">
+              <span class="auth-choice-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="3.6"/><path d="M3.6 20a6.4 6.4 0 0 1 11.3-4.1"/><path d="M18 14.5v6M15 17.5h6"/></svg></span>
+              <strong>Зарегистрироваться</strong>
+              <span>Создайте новый профиль в StratForge AI</span>
+              <span class="auth-choice-go" aria-hidden="true">&#8594;</span>
+            </button>
+          </div>
+          <div class="auth-hero-seal" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2.75 4.75 5.5v6.1c0 4.4 3 8.1 7.25 9.65 4.25-1.55 7.25-5.25 7.25-9.65V5.5z"></path><path d="m8.9 11.9 2.2 2.2 4-4.3"></path></svg></div>
+          <p class="auth-hero-foot">Продолжая, вы сможете выбрать удобный способ входа<br>или создать новый профиль</p>
+        </div>`, 'auth-stage-wide');
+      const go = qsa('[data-auth-go]', content);
+      go.forEach(btn => btn.onclick = () => (btn.dataset.authGo === 'login' ? renderLogin('') : renderStep1('')));
+      focusFirst();
     };
-    const renderEmailCode = (started, profile) => {
+
+    // ---- login --------------------------------------------------------------
+    const renderLogin = (message, qrLogin) => {
       stopPolling();
-      const testCode = String((started || {}).test_code || '');
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>Подтвердите e-mail</h1><p>${testCode ? 'Development test-backend: используйте показанный одноразовый код.' : 'Код отправлен через настроенного почтового провайдера.'}</p></div>${testCode ? `<div class="finance-note"><strong>Тестовый код:</strong> <span class="mono">${esc(testCode)}</span></div>` : ''}<form id="auth-email-verify-form" class="auth-form"><div class="field"><label for="auth-email-code">Одноразовый код</label><input id="auth-email-code" inputmode="numeric" autocomplete="one-time-code" required pattern="[0-9]{6}" maxlength="6" value="${esc(testCode)}"></div><label class="auth-terms"><input type="checkbox" id="auth-email-verify-accept" ${profile.accept_terms ? 'checked' : ''}> <span>Для нового профиля я соглашаюсь с <button type="button" class="linklike" id="auth-email-verify-terms">договором StratForge AI</button>.</span></label><button class="btn primary auth-main-action" type="submit">Подтвердить e-mail</button></form><button class="btn ghost auth-main-action" id="auth-email-back" type="button">Другой способ входа</button>`);
-      const form = qs('#auth-email-verify-form', content);
-      const terms = qs('#auth-email-verify-terms', form); if (terms) terms.onclick = () => showTermsModal();
-      form.onsubmit = async (event) => {
-        event.preventDefault();
-        const submit = form.querySelector('button[type="submit"]'); submit.disabled = true;
-        try {
-          const out = await API.http.authEmailVerify({
-            challenge_id: started.challenge_id,
-            code: (qs('#auth-email-code', form) || {}).value || '',
-            profile: Object.assign({}, profile, {
-              accept_terms: !!((qs('#auth-email-verify-accept', form) || {}).checked),
-            }),
-          });
-          if (out.status === 'authenticated') { location.reload(); return; }
-          if (out.challenge_id) { renderWaiting({ challenge_id: out.challenge_id }, out); return; }
-          renderStart('Не удалось завершить вход по e-mail.');
-        } catch (error) {
-          submit.disabled = false;
-          toast('Ошибка: ' + (error.message || error));
-        }
-      };
-      const back = qs('#auth-email-back', content); if (back) back.onclick = () => renderStart('');
+      const flags = providerFlags();
+      const qrSvg = String((qrLogin || {}).qr_svg || '');
+      const webFallback = String((qrLogin || {}).web_fallback_url || (qrLogin || {}).bot_url || '');
+      const qrBlock = flags.telegram
+        ? `<div class="auth-qr-panel">
+            <div class="auth-qr-copy">
+              <span class="auth-qr-badge" aria-hidden="true">${AUTH_ICON.scan}</span>
+              <strong>Быстрый вход по QR-коду</strong>
+              <span>Отсканируйте код телефоном<br>и подтвердите вход</span>
+              <span class="auth-qr-life" data-auth-qr-life></span>
+            </div>
+            <div class="auth-qr-frame" data-auth-qr>${qrSvg || '<div class="auth-qr-loading"><span class="spinner"></span></div>'}${qrSvg ? `<span class="auth-qr-logo" aria-hidden="true"><img src="${BRAND_MARK}" alt=""></span>` : ''}</div>
+          </div>
+          ${webFallback ? `<a class="auth-qr-fallback" href="${esc(webFallback)}" rel="noopener" data-auth-external-telegram>Telegram не установлен? Открыть в браузере</a>` : ''}
+          ${previewAutofillBar([['telegram', 'Подтвердить тестовым пользователем']])}
+          <div class="auth-or"><span>или</span></div>`
+        : '';
+      content.innerHTML = authShell(authCard(
+        `<div class="auth-copy"><h1>Выберите способ входа</h1><p>Продолжите через удобный для вас способ</p></div>
+        ${authError(message)}
+        ${qrBlock}
+        <div class="auth-methods">
+          <button type="button" class="auth-method telegram" data-auth-login="telegram" ${flags.telegram ? 'data-autofocus' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">${AUTH_ICON.telegram}</span><span class="auth-method-label">Продолжить через Telegram</span><span class="auth-method-go" aria-hidden="true">&#8594;</span></button>
+          <button type="button" class="auth-method google" data-auth-login="google" ${flags.google ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">${AUTH_ICON.google}</span><span class="auth-method-label">Продолжить через Google${flags.googleTest ? '<em class="auth-method-note">Development test</em>' : ''}</span><span class="auth-method-go" aria-hidden="true">&#8594;</span></button>
+          <button type="button" class="auth-method email" data-auth-login="email" ${flags.email ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">${AUTH_ICON.mail}</span><span class="auth-method-label">Войти по e-mail</span><span class="auth-method-go" aria-hidden="true">&#8594;</span></button>
+        </div>
+        <div class="auth-foot-row">
+          <button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button>
+          <span class="auth-foot-right">
+            <button type="button" class="linklike auth-promo-link" data-auth-promo>Промокод или донат</button>
+            <button type="button" class="linklike auth-help" data-auth-help>Нужна помощь? <span class="auth-help-mark" aria-hidden="true">?</span></button>
+          </span>
+        </div>`), 'auth-stage-login');
+      previewChallengeId = String((qrLogin || {}).challenge_id || '');
+      wirePreviewFill();
+      if (previewSandboxActive()) {
+        qsa('[data-auth-external-telegram]', content).forEach(link => link.onclick = (event) => {
+          event.preventDefault();
+          toast('В Preview внешний Telegram отключён — используйте synthetic-кнопку на этом экране.');
+        });
+      }
+      qs('[data-auth-back]', content).onclick = () => renderWelcome('');
+      qs('[data-auth-promo]', content).onclick = () => renderWelcomeAccess({ asOverlay: true });
+      qs('[data-auth-help]', content).onclick = () => toast('Вход подтверждается в Telegram, Google или по коду на e-mail. Коды действуют несколько минут.');
+      qsa('[data-auth-login]', content).forEach(btn => btn.onclick = () => startLogin(btn.dataset.authLogin));
+      focusFirst();
+      if (flags.telegram && !qrLogin) refreshLoginQr(message);
+      else if (qrLogin) watchQr(qrLogin, () => renderLogin('', null));
     };
-    const check = async (challengeId) => {
+
+    // The QR is a real, short-lived, single-use login challenge: the phone
+    // approves it inside Telegram and this page is signed in by the server.
+    const refreshLoginQr = async (message) => {
       try {
-        const state = await API.http.authLoginStatus(challengeId);
-        if (state.status === 'authenticated') { stopPolling(); location.reload(); return; }
-        if (state.status === 'awaiting_profile') { renderProfile(challengeId, state); return; }
-        if (state.status === 'pending_owner') { renderWaiting({ challenge_id: challengeId }, state); return; }
-        if (['denied', 'account_blocked', 'identity_mismatch', 'phone_mismatch'].includes(state.status)) renderStart('Вход отклонён. Обратитесь к владельцу.');
+        const login = await API.http.authLoginStart();
+        if (!qs('[data-auth-qr]', content)) return;
+        renderLogin(message, login);
       } catch (error) {
-        if (error.status === 410) renderStart('Ссылка входа истекла. Создайте новую.');
+        const frame = qs('[data-auth-qr]', content);
+        if (frame) frame.innerHTML = '<div class="auth-qr-loading">Код входа недоступен</div>';
       }
     };
-    const renderWaiting = (login, knownState) => {
+
+    const watchQr = (login, onExpired) => {
+      stopPolling();
       const challengeId = login.challenge_id;
-      const status = (knownState || {}).status || 'created';
-      if (status === 'awaiting_profile') { renderProfile(challengeId, knownState); return; }
-      const pendingOwner = status === 'pending_owner';
+      if (!challengeId) return;
+      polling = setInterval(() => check(challengeId), 2000);
+      check(challengeId);
+      const ttl = Number(login.expires_in_sec || 0);
+      if (ttl <= 0) return;
+      const deadline = Date.now() + ttl * 1000;
+      qrTick = setInterval(() => {
+        const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+        const life = qs('[data-auth-qr-life]', content);
+        if (life) life.textContent = left ? `Код действует ещё ${left} с` : 'Обновляем код…';
+        if (left > 0) return;
+        stopPolling();
+        if (typeof onExpired === 'function') onExpired();
+      }, 1000);
+    };
+
+    const startLogin = async (method) => {
+      if (method === 'telegram') { renderTelegramWait('login'); return; }
+      if (method === 'google') { startGoogle('login'); return; }
+      renderEmailEntry('login', '');
+    };
+
+    // ---- shared: telegram identity -----------------------------------------
+    const renderTelegramWait = async (mode, message) => {
+      stopPolling();
+      let login = {};
+      try { login = await API.http.authLoginStart(); }
+      catch (error) {
+        const back = mode === 'login' ? renderLogin : renderStep1;
+        back(authMessage(error, 'Не удалось начать вход через Telegram.'));
+        return;
+      }
       const manual = login.manual_command || (login.code ? `/login ${login.code}` : '');
-      const botUrl = pendingOwner ? '' : String(login.bot_url || '');
-      const qrSvg = pendingOwner ? '' : String(login.qr_svg || '');
-      // The phone is the second device: scanning a QR with the normal camera
-      // is the primary path, so nothing here opens a popup window. On the
-      // phone itself the same deep link is one tap away.
-      const webFallback = pendingOwner ? '' : String(login.web_fallback_url || login.bot_url || '');
+      const qrSvg = String(login.qr_svg || '');
+      const botUrl = String(login.bot_url || '');
+      const appUrl = String(login.app_url || '');
       // The QR carries the tg: scheme so a phone camera opens Telegram itself.
-      // That scheme is a dead end without Telegram installed, so the https
-      // link stays visible right underneath as the escape hatch.
-      const scanBlock = qrSvg
-        ? `<div class="auth-qr"><div class="auth-qr-frame">${qrSvg}</div><p class="auth-qr-copy">Наведите камеру телефона — откроется Telegram и наш бот. Нажмите <strong>«Подтвердить вход»</strong>, и эта страница войдёт сама.</p><div class="auth-qr-life" id="auth-qr-life"></div>${webFallback ? `<a class="auth-qr-fallback" id="auth-qr-web" href="${esc(webFallback)}" rel="noopener">Telegram не установлен? Открыть в браузере</a>` : ''}</div>`
-        : '';
-      const appUrl = pendingOwner ? '' : String(login.app_url || '');
-      // The href stays the https link so the control degrades to something
-      // real without JS, and so a long-press still offers a working target.
-      const sameDevice = botUrl
-        ? `<a class="btn ghost auth-main-action" id="auth-open-telegram" href="${esc(botUrl)}" rel="noopener">Открыть в Telegram</a><div class="row-sub" id="auth-telegram-hint"></div>`
-        : '';
-      content.innerHTML = loginCard(`<div class="auth-copy"><h1>${pendingOwner ? 'Ожидается решение владельца' : 'Вход через Telegram'}</h1><p>${pendingOwner ? 'Аккаунт будет активирован только после личного подтверждения владельцем. Это правило одинаково для Telegram, Google и e-mail.' : 'Одно подтверждение в Telegram — и вход завершится здесь автоматически. Отправлять контакт не нужно.'}</p></div>${scanBlock}${sameDevice}${manual ? `<details class="auth-manual-fallback"><summary>Другой способ · ввести код вручную</summary><div class="finance-note">Отправьте боту команду:<br><span class="mono">${esc(manual)}</span> <button class="btn sm ghost" id="auth-copy-code" type="button">Копировать</button></div></details>` : ''}<div class="auth-wait"><span class="spinner"></span><span>Ждём подтверждения…</span></div><button class="btn ghost" id="auth-restart">Другой способ входа</button>`);
+      // That scheme is a dead end without Telegram installed, so the https link
+      // stays visible right underneath as the escape hatch.
+      const webFallback = String(login.web_fallback_url || login.bot_url || '');
+      content.innerHTML = authShell(authCard(
+        `${mode === 'register' ? authSteps(2) : ''}
+        <div class="auth-copy"><h1>Подтвердите вход в Telegram</h1><p>Наведите камеру телефона — откроется наш бот. Нажмите «Подтвердить вход», и эта страница продолжит сама. Отправлять контакт не нужно.</p></div>
+        ${authError(message)}
+        ${qrSvg ? `<div class="auth-qr"><div class="auth-qr-frame solo" data-auth-qr>${qrSvg}</div><div class="auth-qr-life" data-auth-qr-life></div>${webFallback ? `<a class="auth-qr-fallback" id="auth-qr-web" href="${esc(webFallback)}" rel="noopener" data-auth-external-telegram>Telegram не установлен? Открыть в браузере</a>` : ''}</div>` : ''}
+        ${botUrl ? `<a class="btn ghost auth-main-action" id="auth-open-telegram" href="${esc(botUrl)}" rel="noopener" data-autofocus data-auth-external-telegram>Открыть в Telegram</a><div class="auth-field-hint" id="auth-telegram-hint"></div>` : ''}
+        ${manual ? `<details class="auth-manual-fallback"><summary>Другой способ · ввести код вручную</summary><div class="auth-note">Отправьте боту команду:<br><span class="mono">${esc(manual)}</span> <button class="btn sm ghost" id="auth-copy-code" type="button">Копировать</button></div></details>` : ''}
+        <div class="auth-wait"><span class="spinner"></span><span>Ждём подтверждения…</span></div>
+        ${previewAutofillBar([['telegram', 'Продолжить через тестовый Telegram']])}
+        <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+      previewChallengeId = String(login.challenge_id || '');
+      wirePreviewFill();
+      if (previewSandboxActive()) {
+        qsa('[data-auth-external-telegram]', content).forEach(link => link.onclick = (event) => {
+          event.preventDefault();
+          toast('В Preview внешний Telegram отключён — используйте synthetic-кнопку на этом экране.');
+        });
+      }
+      qs('[data-auth-back]', content).onclick = () => (mode === 'login' ? renderLogin('') : renderStep1(''));
       const copy = qs('#auth-copy-code', content);
       if (copy) copy.onclick = async () => {
         try { await navigator.clipboard.writeText(manual); toast('Код скопирован'); }
         catch (e) { toast(manual); }
       };
-      const restart = qs('#auth-restart', content); if (restart) restart.onclick = () => renderStart('');
       // Reach an installed Telegram directly instead of routing through a web
       // page. `tg:` has no fallback of its own, so watch for the app taking
       // over: if the tab is still here and visible shortly after, the scheme
-      // went nowhere and the https link is used instead. A permission prompt
-      // the OS or browser shows is left alone -- it just delays the handover,
-      // which is why the check is on visibility rather than on a timer alone.
+      // went nowhere and the https link is used instead.
       const openTelegram = qs('#auth-open-telegram', content);
       if (openTelegram && appUrl) openTelegram.onclick = (event) => {
         event.preventDefault();
+        if (previewSandboxActive()) {
+          toast('В Preview внешний Telegram отключён — используйте synthetic-кнопку на этом экране.');
+          return;
+        }
         const hint = qs('#auth-telegram-hint', content);
         let handedOver = false;
         const noteHandover = () => { handedOver = true; };
@@ -4165,40 +5276,510 @@
           location.href = botUrl;
         }, 1400);
       };
-      // A QR is a bearer token with a short life. When it lapses, replace it
-      // in place rather than leaving a code on screen that no longer works.
-      stopPolling();
-      polling = setInterval(() => check(challengeId), 2000);
-      const ttl = Number(login.expires_in_sec || 0);
-      if (ttl > 0 && qrSvg) {
-        const deadline = Date.now() + ttl * 1000;
-        qrTick = setInterval(async () => {
-          const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
-          const life = qs('#auth-qr-life', content);
-          if (life) life.textContent = left ? `Код действует ещё ${left} с` : 'Обновляем код…';
-          if (left > 0) return;
-          stopPolling();
-          try { renderWaiting(await API.http.authLoginStart()); }
-          catch (e) { renderStart('Не удалось обновить код входа. Попробуйте снова.'); }
-        }, 1000);
-      }
-      check(challengeId);
+      focusFirst();
+      watchQr(login, () => renderTelegramWait(mode, 'Код входа истёк — создан новый.'));
     };
+
+    // ---- shared: google -----------------------------------------------------
+    // The browser would leave for accounts.google.com here. In Preview it
+    // stays, and the same screen offers the synthetic hand-off instead --
+    // so the step is still a step the person walks through themselves.
+    const renderGoogleWait = (mode, message) => {
+      stopPolling();
+      content.innerHTML = authShell(authCard(
+        `${mode === 'register' ? authSteps(2) : ''}
+        <div class="auth-copy"><h1>Продолжите через Google</h1><p>Мы откроем страницу Google. Подтвердите вход в своём аккаунте, и эта страница продолжит сама.</p></div>
+        ${authError(message)}
+        <button type="button" class="btn primary auth-main-action" data-auth-google-go data-autofocus>Открыть Google</button>
+        ${previewAutofillBar([['google', 'Продолжить через тестовый Google']])}
+        <div class="auth-foot-row center"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+      wirePreviewFill();
+      qs('[data-auth-back]', content).onclick = () => (mode === 'login' ? renderLogin('') : renderStep1(''));
+      qs('[data-auth-google-go]', content).onclick = () => {
+        if (previewSandboxActive()) {
+          toast('В Preview внешний Google отключён — используйте synthetic-кнопку ниже.');
+          return;
+        }
+        startGoogle(mode, true);
+      };
+      focusFirst();
+    };
+
+    const startGoogle = async (mode, confirmed) => {
+      const flags = providerFlags();
+      // In Preview the person first reaches the real provider screen, then
+      // explicitly presses its separate synthetic credential action.
+      previewGoogleMode = mode;
+      if (previewSandboxActive() && !confirmed) { renderGoogleWait(mode, ''); return; }
+      try {
+        if (flags.googleTest) {
+          if (mode === 'register') {
+            const staged = await API.http.testAuthGoogleLogin({ intent: 'register' });
+            draft.method = 'google';
+            draft.challenge_id = staged.registration_id;
+            draft.email = staged.email || '';
+            draft.identity = staged.email || 'Google';
+            renderStep3('');
+            return;
+          }
+          const out = await API.http.testAuthGoogleLogin({});
+          if (out.status === 'authenticated') { location.reload(); return; }
+          renderLogin('Не удалось войти через Google. Попробуйте ещё раз.');
+          return;
+        }
+        const started = await API.http.authGoogleLoginStart({
+          return_path: location.pathname + location.search,
+          accept_terms: false,
+        });
+        if (started.auth_url) { location.assign(started.auth_url); return; }
+        throw new Error('');
+      } catch (error) {
+        const back = mode === 'login' ? renderLogin : renderStep1;
+        back(authMessage(error, 'Не удалось войти через Google. Попробуйте ещё раз.'));
+      }
+    };
+
+    // ---- shared: e-mail -----------------------------------------------------
+    const renderEmailEntry = (mode, message) => {
+      stopPolling();
+      content.innerHTML = authShell(authCard(
+        `${mode === 'register' ? authSteps(2) : ''}
+        <div class="auth-copy"><h1>${mode === 'register' ? 'Подтвердите e-mail' : 'Вход по e-mail'}</h1><p>Мы отправим одноразовый код на этот адрес.</p></div>
+        ${authError(message)}
+        <form class="auth-form" data-auth-email-form>
+          <div class="field"><label for="auth-email-input">E-mail</label><input id="auth-email-input" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com" value="${esc(draft.email || '')}" data-autofocus></div>
+          <button class="btn primary auth-main-action" type="submit">Получить код</button>
+        </form>
+        ${previewAutofillBar([['email', 'Подставить тестовый e-mail']])}
+        <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+      wirePreviewFill();
+      qs('[data-auth-back]', content).onclick = () => (mode === 'login' ? renderLogin('') : renderStep1(''));
+      const form = qs('[data-auth-email-form]', content);
+      form.onsubmit = async (event) => {
+        event.preventDefault();
+        const submit = form.querySelector('button[type="submit"]');
+        submit.disabled = true;
+        const email = (qs('#auth-email-input', form) || {}).value || '';
+        try {
+          const started = await API.http.authEmailStart({ email });
+          draft.email = email;
+          renderEmailCode(mode, started, '');
+        } catch (error) {
+          submit.disabled = false;
+          renderEmailEntry(mode, authMessage(error, 'Не удалось отправить код. Проверьте адрес.'));
+        }
+      };
+      focusFirst();
+    };
+
+    const renderEmailCode = (mode, started, message) => {
+      stopPolling();
+      const testCode = String((started || {}).test_code || '');
+      const previewCode = !!(PREVIEW_CONTEXT && PREVIEW_CONTEXT.enabled
+        && (started || {}).delivery === 'preview_synthetic' && /^\d{6}$/.test(testCode));
+      const devCode = !!testCode && !previewCode;
+      content.innerHTML = authShell(authCard(
+        `${mode === 'register' ? authSteps(2) : ''}
+        <div class="auth-copy"><h1>Введите код</h1><p>Код отправлен на <strong>${esc(draft.email)}</strong>${previewCode ? ' · synthetic-код Preview, письмо не отправлялось' : ''}.</p></div>
+        ${authError(message)}
+        ${previewCode ? `<div class="preview-otp-panel auth-preview-otp"><div><strong>Preview synthetic OTP</strong><span>Только для этого изолированного test user.</span></div><code class="mono">${esc(testCode)}</code><button class="btn sm" type="button" data-auth-fill-code>Подставить тестовый код</button></div>`
+          : (devCode ? `<div class="auth-note"><strong>Тестовый код:</strong> <span class="mono">${esc(testCode)}</span></div>` : '')}
+        <form class="auth-form" data-auth-code-form>
+          <div class="field"><label for="auth-code-input">Одноразовый код</label><input id="auth-code-input" inputmode="numeric" autocomplete="one-time-code" required pattern="[0-9]{6}" maxlength="6" value="" data-autofocus></div>
+          <button class="btn primary auth-main-action" type="submit">${mode === 'register' ? 'Подтвердить e-mail' : 'Войти'}</button>
+        </form>
+        <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Другой адрес</button></div>`));
+      qs('[data-auth-back]', content).onclick = () => renderEmailEntry(mode, '');
+      const fill = qs('[data-auth-fill-code]', content);
+      if (fill) fill.onclick = () => {
+        const input = qs('#auth-code-input', content);
+        if (input) { input.value = testCode; input.focus(); }
+      };
+      const form = qs('[data-auth-code-form]', content);
+      form.onsubmit = async (event) => {
+        event.preventDefault();
+        const code = (qs('#auth-code-input', form) || {}).value || '';
+        const submit = form.querySelector('button[type="submit"]');
+        submit.disabled = true;
+        if (mode === 'register') {
+          // Registration verifies the address only after the terms step, so
+          // the code is held here and spent by "Создать профиль".
+          draft.method = 'email';
+          draft.challenge_id = started.challenge_id;
+          draft.code = code;
+          draft.identity = draft.email;
+          renderStep3('');
+          return;
+        }
+        try {
+          const out = await API.http.authEmailVerify({
+            challenge_id: started.challenge_id, code,
+            profile: { accept_terms: false },
+          });
+          if (out.status === 'authenticated') { location.reload(); return; }
+          // An address with no account yet cannot be logged in; continue as a
+          // registration with the identity already verified.
+          draft.method = 'email';
+          draft.challenge_id = started.challenge_id;
+          draft.code = code;
+          draft.identity = draft.email;
+          renderStep1('Этого адреса ещё нет в StratForge — создадим профиль.');
+        } catch (error) {
+          submit.disabled = false;
+          if (String(error.code || '') === 'email_code_invalid') {
+            renderEmailCode(mode, started, 'Код неверный или истёк. Запросите новый.');
+            return;
+          }
+          if (String(error.message || '').indexOf('условия') >= 0) {
+            draft.method = 'email';
+            draft.challenge_id = started.challenge_id;
+            draft.code = code;
+            draft.identity = draft.email;
+            renderStep1('Этого адреса ещё нет в StratForge — создадим профиль.');
+            return;
+          }
+          renderEmailCode(mode, started, authMessage(error, 'Не удалось подтвердить код.'));
+        }
+      };
+      focusFirst();
+    };
+
+    // Preview only. Synthetic actions replace provider credentials, never the
+    // surrounding screens, consent, final registration or device-trust choice.
+    let previewChallengeId = '';
+    let previewGoogleMode = 'register';
+    const previewFillDraft = async () => {
+      const identity = await previewIdentity();
+      draft.handle = identity.handle;
+      draft.first_name = identity.first_name;
+      draft.last_name = identity.last_name;
+      draft.email = identity.email;
+      // The method stays the person's choice: filling in a name must not
+      // decide how they are going to prove who they are.
+      return identity;
+    };
+    // The synthetic tap on the Telegram button. The page keeps polling and
+    // keeps walking its own screens; only the provider side is stood in for.
+    const previewApproveTelegram = async (button) => {
+      if (!previewChallengeId) { toast("Код входа ещё не готов — подождите секунду."); return; }
+      if (button) button.disabled = true;
+      try {
+        await API.http.previewSandboxApproveLogin(previewChallengeId);
+        await check(previewChallengeId);
+      } catch (error) {
+        if (button) button.disabled = false;
+        toast(authMessage(error, "Synthetic Telegram не ответил. Обновите код."));
+      }
+    };
+    const previewApproveGoogle = async (button) => {
+      if (button) button.disabled = true;
+      try {
+        const out = await API.http.previewSandboxApproveGoogle(previewGoogleMode);
+        if (out.status === 'authenticated') { location.reload(); return; }
+        if (!out.registration_id) throw new Error('Google identity не подтверждена.');
+        draft.method = 'google';
+        draft.challenge_id = String(out.registration_id || '');
+        draft.email = String(out.email || '');
+        draft.identity = draft.email || 'Google';
+        if (previewGoogleMode === 'login') {
+          renderStep1('Google подтвердил личность — выберите имя пользователя StratForge.');
+        } else {
+          renderStep3('');
+        }
+      } catch (error) {
+        if (button) button.disabled = false;
+        renderGoogleWait(previewGoogleMode, authMessage(error, 'Synthetic Google не подтвердил вход.'));
+      }
+    };
+    const wirePreviewFill = () => {
+      qsa("[data-preview-fill]", content).forEach(button => button.onclick = async () => {
+        const action = String(button.dataset.previewFill || "");
+        if (action === "telegram") { previewApproveTelegram(button); return; }
+        if (action === "google") { previewApproveGoogle(button); return; }
+        button.disabled = true;
+        try {
+          if (action === "email" || action === "tg-email") {
+            const identity = await previewIdentity();
+            const field = qs(action === "email" ? "#auth-email-input" : "#auth-tg-email", content);
+            if (field) { field.value = identity.email; field.focus(); }
+            return;
+          }
+          const identity = await previewFillDraft();
+          const set = (selector, value) => {
+            const field = qs(selector, content);
+            if (field) field.value = value;
+          };
+          set("#auth-handle", identity.handle);
+          set("#auth-first", identity.first_name);
+          set("#auth-last", identity.last_name);
+          const handle = qs("#auth-handle", content);
+          if (handle) handle.dispatchEvent(new Event("input"));
+        } catch (error) {
+          toast(authMessage(error, 'Не удалось получить synthetic identity.'));
+        } finally {
+          if (button.isConnected) button.disabled = false;
+        }
+      });
+    };
+
+    // ---- registration -------------------------------------------------------
+    const renderStep1 = (message) => {
+      stopPolling();
+      const flags = providerFlags();
+      // An identity verified before the profile keeps its method; everyone else
+      // picks one here, on the same step as the name, exactly as the design has it.
+      const preVerified = !!(draft.method && draft.challenge_id);
+      const available = ['telegram', 'google', 'email'].filter(m => flags[m]);
+      if (!preVerified && (!draft.method || !available.includes(draft.method))) draft.method = available[0] || '';
+      const methodBlock = preVerified ? '' : `
+          <div class="auth-inline-divider"><span>Способ регистрации</span></div>
+          <div class="auth-method-grid" role="radiogroup" aria-label="Способ регистрации">
+            <button type="button" role="radio" class="auth-method-card telegram${draft.method === 'telegram' ? ' on' : ''}" aria-checked="${draft.method === 'telegram'}" data-auth-method="telegram" ${flags.telegram ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">${AUTH_ICON.telegram}</span><strong>Через Telegram</strong></button>
+            <button type="button" role="radio" class="auth-method-card google${draft.method === 'google' ? ' on' : ''}" aria-checked="${draft.method === 'google'}" data-auth-method="google" ${flags.google ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">${AUTH_ICON.google}</span><strong>Через Google</strong></button>
+            <button type="button" role="radio" class="auth-method-card email${draft.method === 'email' ? ' on' : ''}" aria-checked="${draft.method === 'email'}" data-auth-method="email" ${flags.email ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">${AUTH_ICON.mail}</span><strong>Через e-mail</strong></button>
+          </div>`;
+      content.innerHTML = authShell(authCard(
+        `${authSteps(1, 'bar')}
+        <div class="auth-copy"><h1>Создание профиля</h1><p>Сначала выберите, как вас будет видеть система</p></div>
+        ${authError(message)}
+        <form class="auth-form" data-auth-profile-form>
+          <div class="field">
+            <label for="auth-handle">Имя пользователя</label>
+            <div class="auth-handle-input"><span aria-hidden="true">${AUTH_ICON.user}</span><input id="auth-handle" autocomplete="username" required maxlength="32" placeholder="Введите имя пользователя" value="${esc(draft.handle)}" aria-describedby="auth-handle-hint" data-autofocus></div>
+            <div class="auth-field-hint" id="auth-handle-hint" data-auth-handle-state>Латинские буквы, цифры, точка и подчёркивание. Это имя не зависит от Google или Telegram.</div>
+          </div>
+          <div class="field"><label for="auth-first">Имя</label><div class="auth-handle-input"><span aria-hidden="true">${AUTH_ICON.user}</span><input id="auth-first" autocomplete="given-name" required maxlength="80" placeholder="Введите ваше имя" value="${esc(draft.first_name)}"></div></div>
+          <div class="field"><label for="auth-last">Фамилия <span class="auth-optional">(необязательно)</span></label><div class="auth-handle-input"><span aria-hidden="true">${AUTH_ICON.user}</span><input id="auth-last" autocomplete="family-name" maxlength="80" placeholder="Введите вашу фамилию" value="${esc(draft.last_name)}"></div></div>
+          ${methodBlock}
+          <button class="btn primary auth-main-action" type="submit">Продолжить <span aria-hidden="true">&#8594;</span></button>
+        </form>
+        ${previewAutofillBar([['fill', 'Заполнить тестовыми данными']])}
+        <div class="auth-foot-row center"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`), 'auth-stage-reg');
+      wirePreviewFill();
+      qs('[data-auth-back]', content).onclick = () => renderWelcome('');
+      qsa('[data-auth-method]', content).forEach(button => button.onclick = () => {
+        draft.method = String(button.dataset.authMethod || '');
+        qsa('[data-auth-method]', content).forEach(other => {
+          const on = other === button;
+          other.classList.toggle('on', on);
+          other.setAttribute('aria-checked', on ? 'true' : 'false');
+        });
+      });
+      const handleInput = qs('#auth-handle', content);
+      const state = qs('[data-auth-handle-state]', content);
+      let probe = null;
+      const showHandleState = async () => {
+        const value = (handleInput.value || '').trim();
+        if (!value) { state.className = 'auth-field-hint'; state.textContent = 'Латинские буквы, цифры, точка и подчёркивание.'; return; }
+        try {
+          const out = await API.http.authHandleCheck(value, { retries: 0 });
+          if ((handleInput.value || '').trim() !== value) return;
+          state.className = 'auth-field-hint ' + (out.available ? 'ok' : 'bad');
+          state.textContent = out.available ? `@${out.handle} свободно` : (out.reason || 'Это имя пользователя недоступно.');
+        } catch (e) { /* the final check is server-side on submit */ }
+      };
+      handleInput.oninput = () => { if (probe) clearTimeout(probe); probe = setTimeout(showHandleState, 350); };
+      if (draft.handle) showHandleState();
+      const form = qs('[data-auth-profile-form]', content);
+      form.onsubmit = async (event) => {
+        event.preventDefault();
+        draft.handle = (qs('#auth-handle', form).value || '').trim().replace(/^@+/, '');
+        draft.first_name = (qs('#auth-first', form).value || '').trim();
+        draft.last_name = (qs('#auth-last', form).value || '').trim();
+        try {
+          const out = await API.http.authHandleCheck(draft.handle, { retries: 0 });
+          if (!out.available) { renderStep1(out.reason || 'Это имя пользователя недоступно.'); return; }
+        } catch (e) { /* server re-checks on create */ }
+        // An identity verified before the profile (e-mail that had no account)
+        // keeps its place; otherwise the method chosen here starts verification.
+        if (preVerified) { renderStep3(''); return; }
+        if (draft.method === 'telegram') { renderTelegramWait('register'); return; }
+        if (draft.method === 'google') { startGoogle('register'); return; }
+        if (draft.method === 'email') { renderEmailEntry('register', ''); return; }
+        renderStep2('Выберите способ регистрации.');
+      };
+      focusFirst();
+    };
+
+    const renderStep2 = (message) => {
+      stopPolling();
+      const flags = providerFlags();
+      content.innerHTML = authShell(authCard(
+        `${authSteps(2)}
+        <div class="auth-copy"><h1>Выберите способ регистрации</h1><p>Так вы будете подтверждать вход в StratForge</p></div>
+        ${authError(message)}
+        <div class="auth-method-grid">
+          <button type="button" class="auth-method-card telegram" data-auth-register="telegram" ${flags.telegram ? 'data-autofocus' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">&#9992;</span><strong>Через Telegram</strong></button>
+          <button type="button" class="auth-method-card google" data-auth-register="google" ${flags.google ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">G</span><strong>${flags.googleTest ? 'Google · test' : 'Через Google'}</strong></button>
+          <button type="button" class="auth-method-card email" data-auth-register="email" ${flags.email ? '' : 'disabled'}><span class="auth-method-icon" aria-hidden="true">&#9993;</span><strong>Через e-mail</strong></button>
+        </div>
+        <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+      qs('[data-auth-back]', content).onclick = () => renderStep1('');
+      qsa('[data-auth-register]', content).forEach(btn => btn.onclick = () => {
+        const method = btn.dataset.authRegister;
+        if (method === 'telegram') { renderTelegramWait('register'); return; }
+        if (method === 'google') { startGoogle('register'); return; }
+        renderEmailEntry('register', '');
+      });
+      focusFirst();
+    };
+
+    const renderStep3 = (message) => {
+      stopPolling();
+      // Three lines, as the approved design has it: who you are, how you get in,
+      // and what the starting grant is. The secondary note keeps the verified
+      // identity and the full name visible without a fourth and fifth row.
+      const rows = [
+        ['user', 'Имя пользователя', '@' + (draft.handle || ''), [draft.first_name, draft.last_name].filter(Boolean).join(' ')],
+        ['enter', 'Способ входа', AUTH_METHOD_LABEL[draft.method] || '', draft.identity || ''],
+        ['clock', 'Пробный доступ', trialGrantLabel(), 'активного использования'],
+      ].filter(row => row[2]);
+      content.innerHTML = authShell(authCard(
+        `${authSteps(3)}
+        <div class="auth-copy"><h1>Завершение регистрации</h1><p>Подтвердите условия и создайте профиль</p></div>
+        ${authError(message)}
+        <dl class="auth-summary">${rows.map(([mark, label, value, note]) => `<div><dt><span class="auth-summary-icon" aria-hidden="true">${AUTH_ICON[mark]}</span>${esc(label)}</dt><dd>${esc(value)}${note ? `<small>${esc(note)}</small>` : ''}</dd></div>`).join('')}</dl>
+        <div class="auth-terms-box">
+          <strong>Условия использования</strong>
+          <p>Добро пожаловать в StratForge AI. Используя сервис, вы соглашаетесь с настоящими Условиями использования и Политикой конфиденциальности. Пожалуйста, внимательно ознакомьтесь с ними.</p>
+          <p class="auth-terms-clause">1. Общие положения</p>
+          <p>StratForge AI предоставляет аналитические инструменты и данные финансовых рынков в информационных целях. Мы не даём финансовых рекомендаций, а торговые решения и риски остаются за вами.</p>
+          <p>После подтверждения личности новый пользователь получает полный доступ ко всем функциям StratForge на ${trialGrantLabel()} активного использования: время расходуется только во время работы. Живые графики используют только разрешённый для аккаунта источник market data.</p>
+        </div>
+        <label class="auth-terms-accept"><input type="checkbox" data-auth-accept><span class="auth-check" aria-hidden="true"></span> <span>Я ознакомился(лась) с <button type="button" class="linklike" data-auth-terms>условиями использования</button> и <button type="button" class="linklike" data-auth-privacy>политикой конфиденциальности</button></span></label>
+        <button type="button" class="btn ghost auth-main-action auth-full-terms" data-auth-full-terms><span aria-hidden="true">${AUTH_ICON.external}</span>Открыть полный текст</button>
+        <button type="button" class="btn primary auth-main-action" data-auth-create data-autofocus>Создать профиль</button>
+        <div class="auth-foot-row center"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+      qs('[data-auth-back]', content).onclick = () => renderStep1('');
+      const terms = qs('[data-auth-terms]', content); if (terms) terms.onclick = () => showTermsModal();
+      const privacy = qs('[data-auth-privacy]', content); if (privacy) privacy.onclick = () => showTermsModal();
+      const full = qs('[data-auth-full-terms]', content); if (full) full.onclick = () => showTermsModal();
+      const create = qs('[data-auth-create]', content);
+      create.onclick = async () => {
+        if (!(qs('[data-auth-accept]', content) || {}).checked) {
+          renderStep3('Подтвердите согласие с условиями, чтобы создать профиль.');
+          return;
+        }
+        create.disabled = true;
+        try {
+          const out = await API.http.authRegisterComplete({
+            method: draft.method,
+            challenge_id: draft.challenge_id,
+            code: draft.code,
+            email: draft.email,
+            handle: draft.handle,
+            first_name: draft.first_name,
+            last_name: draft.last_name,
+            accept_terms: true,
+          });
+          if (out.status === 'authenticated' || out.ok) { location.reload(); return; }
+          renderStep3('Профиль не создан. Попробуйте ещё раз.');
+        } catch (error) {
+          create.disabled = false;
+          const code = String(error.code || '');
+          if (code.indexOf('handle') === 0) { renderStep1(authMessage(error)); return; }
+          if (code === 'registration_expired') { renderStep2(authMessage(error)); return; }
+          renderStep3(authMessage(error, 'Профиль не создан. Попробуйте ещё раз.'));
+        }
+      };
+      focusFirst();
+    };
+
+    // ---- shared polling -----------------------------------------------------
+    const check = async (challengeId) => {
+      try {
+        const state = await API.http.authLoginStatus(challengeId);
+        if (state.status === 'authenticated') { stopPolling(); location.reload(); return; }
+        if (state.status === 'awaiting_profile') {
+          stopPolling();
+          draft.method = 'telegram';
+          draft.challenge_id = challengeId;
+          draft.identity = (state.profile && state.profile.username ? '@' + state.profile.username : 'Telegram');
+          if (!draft.email) draft.email = String((state.profile || {}).email || '');
+          if (!draft.first_name) draft.first_name = String((state.profile || {}).first_name || '');
+          if (!draft.last_name) draft.last_name = String((state.profile || {}).last_name || '');
+          if (draft.handle) renderTelegramEmail('');
+          else renderStep1('Telegram подтвердил личность — осталось выбрать имя пользователя.');
+          return;
+        }
+        if (state.status === 'pending_owner') {
+          stopPolling();
+          renderLogin('Аккаунт ожидает подтверждения владельца.');
+          return;
+        }
+        if (['denied', 'account_blocked', 'identity_mismatch', 'phone_mismatch'].includes(state.status)) {
+          stopPolling();
+          renderLogin('Вход отклонён. Обратитесь к владельцу.');
+        }
+      } catch (error) {
+        if (error.status === 410) { stopPolling(); renderLogin('Код входа истёк. Создайте новый.'); }
+      }
+    };
+
+    // Telegram proves who the person is but carries no address, and the
+    // account model needs one for recovery, so it is asked for once, here.
+    const renderTelegramEmail = (message) => {
+      stopPolling();
+      content.innerHTML = authShell(authCard(
+        `${authSteps(2)}
+        <div class="auth-copy"><h1>Ваш e-mail</h1><p>Telegram подтвердил личность. E-mail нужен для восстановления доступа и уведомлений.</p></div>
+        ${authError(message)}
+        <form class="auth-form" data-auth-tg-email>
+          <div class="field"><label for="auth-tg-email">E-mail</label><input id="auth-tg-email" type="email" autocomplete="email" required maxlength="254" placeholder="you@example.com" value="${esc(draft.email)}" data-autofocus></div>
+          <button class="btn primary auth-main-action" type="submit">Продолжить <span aria-hidden="true">&#8594;</span></button>
+        </form>
+        ${previewAutofillBar([['tg-email', 'Подставить тестовый e-mail']])}
+        <div class="auth-foot-row"><button type="button" class="linklike auth-back" data-auth-back>&#8592; Назад</button></div>`));
+      wirePreviewFill();
+      qs('[data-auth-back]', content).onclick = () => renderStep1('');
+      const form = qs('[data-auth-tg-email]', content);
+      form.onsubmit = (event) => {
+        event.preventDefault();
+        draft.email = (qs('#auth-tg-email', form).value || '').trim();
+        renderStep3('');
+      };
+      focusFirst();
+    };
+
+    // ---- entry --------------------------------------------------------------
     let callbackChallenge = '';
+    let googleRegistration = '';
+    let googleError = '';
     try {
       const params = new URLSearchParams(location.search || '');
       callbackChallenge = String(params.get('auth_challenge') || '');
-      if (callbackChallenge) {
+      googleRegistration = String(params.get('google_registration') || '');
+      googleError = String(params.get('google_error') || '');
+      if (callbackChallenge || googleRegistration || googleError) {
         params.delete('auth_challenge');
+        params.delete('google_registration');
+        params.delete('google_error');
         history.replaceState({}, '', location.pathname + (params.toString() ? '?' + params.toString() : '') + location.hash);
       }
     } catch (e) { callbackChallenge = ''; }
-    if (callbackChallenge) renderWaiting({ challenge_id: callbackChallenge }, { status: 'pending_owner' });
-    else renderStart(initialMessage);
+
+    const boot = () => {
+      if (googleRegistration) {
+        API.http.authRegistrationState(googleRegistration, { retries: 0 }).then((state) => {
+          draft.method = 'google';
+          draft.challenge_id = googleRegistration;
+          draft.email = state.email || '';
+          draft.identity = state.email || 'Google';
+          if (!draft.handle) draft.handle = state.suggested_handle || '';
+          renderStep1('Google подтвердил личность — выберите имя пользователя StratForge.');
+        }).catch(() => renderWelcome('Подтверждение Google истекло. Начните регистрацию заново.'));
+        return;
+      }
+      if (callbackChallenge) { renderLogin(''); check(callbackChallenge); return; }
+      if (googleError) { renderLogin('Не удалось войти через Google. Попробуйте ещё раз.'); return; }
+      renderWelcome(initialMessage);
+    };
+
     API.http.authProviders({ retries: 0 }).then((out) => {
       providers = (out && out.providers) || providers;
-      if (!callbackChallenge && qs('#auth-provider-start', content)) renderStart(initialMessage);
-    }).catch(() => { /* configured current providers remain available */ });
+      registrationContract = (out && out.registration) || {};
+      boot();
+    }).catch(() => boot());
   }
 
   async function runReady() {
@@ -7079,14 +8660,24 @@
       };
       const clearAll = qs('[data-inbox-clear-all]', body);
       if (clearAll) clearAll.onclick = async () => {
-        if (!confirm('Удалить все системные уведомления? Личные сообщения останутся в SF Chat.')) return;
+        if (clearAll.disabled) return;
+        clearAll.disabled = true;
+        let confirmed = false;
         try {
+          confirmed = await confirmDialog('Удалить все системные уведомления? Личные сообщения останутся в SF Chat.', {
+            title: 'Очистить уведомления?', confirmLabel: 'Очистить', danger: true,
+          });
+          if (!confirmed) return;
           await API.http.notificationsClear({ mode: 'all' });
           qsa('.sf-notice').forEach((n) => n.remove());
           toast('Уведомления очищены');
           await render();
           refreshInAppNotices({ silent: true });
         } catch (e) { reportError(e); }
+        finally {
+          clearAll.disabled = false;
+          if (!confirmed && clearAll.isConnected) clearAll.focus({ preventScroll: true });
+        }
       };
       qsa('[data-inbox-open]', body).forEach((btn) => btn.addEventListener('click', () => {
         const id = String(btn.dataset.inboxOpen || '');
@@ -7191,6 +8782,78 @@
     }
   }
 
+  // ---- in-app decisions (never replace window.confirm/prompt globally) ---------
+  let ACTIVE_APP_DIALOG = null;
+  function requestDialog(options = {}) {
+    const hasInput = options.input === true;
+    const cancelled = hasInput ? null : false;
+    // Never queue a second action or share the first action's consent.
+    if (ACTIVE_APP_DIALOG) return Promise.resolve(cancelled);
+    const previousFocus = document.activeElement;
+    const dialog = el(`<dialog class="app-dialog" aria-modal="true" aria-labelledby="app-dialog-title" aria-describedby="app-dialog-message">
+      <form class="app-dialog-form">
+        <header class="app-dialog-head"><div><span class="app-dialog-context">${esc(options.context || APP_NAME)}</span><h2 id="app-dialog-title">${esc(options.title || 'Подтвердите действие')}</h2></div><button type="button" class="btn icon ghost" data-dialog-close aria-label="Закрыть окно">${icon('close')}</button></header>
+        <p id="app-dialog-message">${esc(options.message || '')}</p>
+        ${hasInput ? `<label class="app-dialog-field"><span>${esc(options.inputLabel || 'Название')}</span><input data-dialog-input type="text" autocomplete="off"></label>` : ''}
+        <footer class="app-dialog-actions"><button type="button" class="btn ghost" data-dialog-cancel>${esc(options.cancelLabel || 'Отмена')}</button><button type="submit" class="btn ${options.danger ? 'danger' : 'primary'}" data-dialog-accept>${esc(options.confirmLabel || 'Подтвердить')}</button></footer>
+      </form>
+    </dialog>`);
+    const input = qs('[data-dialog-input]', dialog);
+    if (input) {
+      input.value = String(options.value || '');
+      input.maxLength = options.maxLength || 200;
+      input.required = options.required !== false;
+    }
+    return new Promise(resolve => {
+      let settled = false, releaseFocus = () => {};
+      const finish = value => {
+        if (settled) return;
+        settled = true;
+        releaseFocus();
+        window.removeEventListener('pagehide', cancel);
+        window.removeEventListener('hashchange', cancel);
+        if (dialog.open) dialog.close();
+        dialog.remove();
+        ACTIVE_APP_DIALOG = null;
+        if (previousFocus && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
+        resolve(value);
+      };
+      const cancel = () => finish(cancelled);
+      ACTIVE_APP_DIALOG = dialog;
+      qs('[data-dialog-close]', dialog).onclick = cancel;
+      qs('[data-dialog-cancel]', dialog).onclick = cancel;
+      qs('form', dialog).onsubmit = event => {
+        event.preventDefault();
+        if (input && input.required && !input.value.trim()) { input.focus(); return; }
+        finish(input ? input.value : true);
+      };
+      // Escape belongs only to this dialog, not SF Chat or the underlying drawer.
+      dialog.addEventListener('keydown', event => event.stopPropagation());
+      dialog.addEventListener('cancel', event => { event.preventDefault(); cancel(); });
+      dialog.addEventListener('close', cancel);
+      releaseFocus = trapDialogFocus(dialog, cancel);
+      window.addEventListener('pagehide', cancel);
+      window.addEventListener('hashchange', cancel);
+      document.body.appendChild(dialog);
+      try {
+        // Styled DOM dialog: the tab is inert, but the browser/event loop keeps working.
+        // Unsupported clients fail closed; never fall back to a browser prompt.
+        dialog.showModal();
+        (input || qs('[data-dialog-cancel]', dialog)).focus();
+        if (input) input.select();
+      } catch (e) {
+        cancel();
+        toast('Не удалось открыть окно подтверждения. Действие отменено.');
+      }
+    });
+  }
+  function confirmDialog(message, options = {}) {
+    return requestDialog({ ...options, message, input: false });
+  }
+  function promptDialog(message, options = {}) {
+    return requestDialog({ ...options, message, input: true });
+  }
+
   // ---- drawer -----------------------------------------------------------------
   function drawer(titleHtml, bodyHtml) {
     let back = qs('.drawer-back');
@@ -7205,9 +8868,17 @@
     const d = back._d;
     d.style.width = '';
     d.classList.remove('wide', 'full', 'custom');
-    qs('.drawer-h', d).innerHTML = `<div class="drawer-title">${titleHtml}</div><div class="drawer-tools"><button class="btn sm ghost" data-drawer-size="wide">Шире</button><button class="btn sm ghost" data-drawer-size="full">На весь экран</button><button class="btn icon ghost" data-close-drawer aria-label="Закрыть">${icon('close')}</button></div>`;
+    qs('.drawer-h', d).innerHTML = `<div class="drawer-title" id="app-drawer-title">${titleHtml}</div><div class="drawer-tools"><button class="btn sm ghost" data-drawer-size="wide">Шире</button><button class="btn sm ghost" data-drawer-size="full">На весь экран</button><button class="btn icon ghost" data-close-drawer aria-label="Закрыть">${icon('close')}</button></div>`;
+    // This same drawer is reused by unrelated panels. Its accessible name
+    // follows the current visible heading, never a previous caller's label.
+    d.removeAttribute('aria-label');
+    d.setAttribute('aria-labelledby', 'app-drawer-title');
+    d.inert = false;
+    d.removeAttribute('aria-hidden');
     qs('.drawer-b', d).innerHTML = bodyHtml;
+    const opening = d._openGeneration = (d._openGeneration || 0) + 1;
     requestAnimationFrame(() => {
+      if (opening !== d._openGeneration) return;
       back.classList.add('open');
       d.classList.add('open');
       // After the class lands, so the measurement sees the real width.
@@ -7264,7 +8935,14 @@
   }
   function closeDrawer() {
     const back = qs('.drawer-back');
-    if (back) { back.classList.remove('open'); back._d.classList.remove('open'); }
+    if (back) {
+      back.classList.remove('open'); back._d.classList.remove('open');
+      back._d._openGeneration = (back._d._openGeneration || 0) + 1;
+      // Translated off screen is still reachable by Tab and screen readers.
+      // Keep the content/history, but make a closed drawer non-interactive.
+      back._d.inert = true;
+      back._d.setAttribute('aria-hidden', 'true');
+    }
     syncNoticeOffset();
   }
 
@@ -7292,11 +8970,13 @@
   // Non-blocking: sending shows the message + a typing indicator immediately and
   // only awaits the reply; it never freezes the page.
   const ORCH = {
-    built: false, open: false, sending: false,
+    built: false, open: false, sending: false, dialogActionPending: false,
     conversations: [], currentId: 'default', loadingList: false, pollStop: null,
     mode: 'auto', messagesSignature: '', feedbackVoice: null, loadError: null,
     retryAfter: 0, transientError: null, viewerProfileId: '', aiAvailable: null,
     pendingAttachments: [], listQuery: '', listFilter: 'all',
+    personas: [], personaId: '', personaError: '', personaGeneration: 0,
+    personaModels: [], selectedModelId: '',
   };
   const ORCH_KEY = lsKey('orch.currentConversationId');
   const ORCH_SKIN_KEY = lsKey('orch.skin');
@@ -7411,10 +9091,120 @@
   function orchLoadMode() {
     return 'auto';
   }
+  function orchPersonaOptions(personas, selected, error) {
+    const people = Array.isArray(personas) ? personas : [];
+    const main = people.filter(person => person.main_assistant === true);
+    const defaultLabel = main.length === 1 ? `Главный: ${main[0].title || main[0].name || 'Persona'}${main[0].status === 'active' ? '' : ' · приостановлен'}` : main.length > 1 ? 'Главный помощник: требуется уточнение' : 'Авто · главный помощник не назначен';
+    const options = [`<option value="">${esc(defaultLabel)}</option>`];
+    people.forEach(person => {
+      const id = String(person.id || '');
+      if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id) || !['active', 'suspended'].includes(person.status)) return;
+      const title = String(person.title || person.name || 'Persona');
+      options.push(`<option value="${esc(id)}"${id === selected ? ' selected' : ''}${person.status === 'active' ? '' : ' disabled'}>${esc(title)}${person.main_assistant === true ? ' · главный' : ''}${person.status === 'active' ? '' : ' · приостановлен'}</option>`);
+    });
+    if (selected && !people.some(person => person.id === selected)) options.push(`<option value="${esc(selected)}" selected disabled>Выбранная Persona недоступна — выберите другую</option>`);
+    return `<label for="orch-persona-select">Помощник <select class="btn sm" id="orch-persona-select" style="max-width:100%;min-width:0">${options.join('')}</select></label> <button class="btn sm" id="orch-persona-refresh" type="button" title="Обновить список Persona">Обновить</button><small style="display:block;overflow-wrap:anywhere">${esc(error || 'Выбирается личность, не модель. Доступны только поддерживаемые задания; имя не даёт новых прав.')}</small>`;
+  }
+  async function orchLoadPersonaModels(reason = '') {
+    // Loads only this Persona's connections; the server still decides which
+    // are executable and re-checks the chosen one before any task exists.
+    if (ORCH.sending || !ORCH.personaId) return;
+    const persona = ORCH.personaId, generation = ORCH.personaGeneration;
+    try {
+      const data = await API.http.aiControlCenterDomain('models', {limit: 100}, {retries: 0});
+      if (generation !== ORCH.personaGeneration || persona !== ORCH.personaId) return;
+      ORCH.personaModels = Array.isArray(data?.items) ? data.items : [];
+      if (!ORCH.personaModels.some(model => model.id === ORCH.selectedModelId && model.status === 'active' && model.persona_id === persona && model.execution_available === true)) ORCH.selectedModelId = '';
+      const available = ORCH.personaModels.some(model => model.persona_id === persona && model.status === 'active' && model.execution_available === true);
+      ORCH.personaError = !available ? 'Нет проверенных доступных подключений этой Persona.'
+        : reason === 'ambiguous' ? 'Выберите подключение в списке и отправьте сообщение ещё раз.' : '';
+    } catch (_) {
+      if (generation !== ORCH.personaGeneration || persona !== ORCH.personaId) return;
+      ORCH.personaModels = []; ORCH.selectedModelId = ''; ORCH.personaError = 'Подключения не загружены. Повторите выбор модели.';
+    }
+    orchRenderPersonaPicker();
+  }
+  function orchNeedsModelChoice(error) {
+    return String(error?.code || error?.error || error?.message || error || '').includes('persona_model_ambiguous');
+  }
+  function orchRenderPersonaPicker() {
+    const wrap = qs('#orch-model-picker');
+    if (!wrap) return;
+    const hidden = orchIsHumanConversation(ORCH.currentId) || isGuest() || ORCH.aiAvailable === false;
+    wrap.hidden = hidden; wrap.setAttribute('aria-hidden', String(hidden));
+    if (hidden) return;
+    const availableModels = (ORCH.personaModels || []).filter(model => model.persona_id === ORCH.personaId && model.status === 'active' && model.execution_available === true);
+    const modelPicker = ORCH.personaId ? `<div><button class="btn sm" id="orch-load-models" type="button">Выбрать модель</button>${availableModels.length ? `<label>Подключение <select class="btn sm" id="orch-persona-model" style="max-width:100%"><option value="">Без явного выбора (только одно подключение)</option>${availableModels.map(model => `<option value="${esc(model.id)}"${model.id === ORCH.selectedModelId ? ' selected' : ''}>${esc(model.label || model.title)}${model.can_execute_test_only === true ? ' · SYNTHETIC' : ''}</option>`).join('')}</select></label>` : ''}<small style="display:block">Смена подключения действует на следующее сообщение; Persona, лицо и история сохраняются.</small></div>` : '';
+    const html = orchPersonaOptions(ORCH.personas, ORCH.personaId, ORCH.personaError) + modelPicker;
+    if (wrap._personaHtml !== html) {
+      wrap._personaHtml = html; wrap.innerHTML = html;
+      qs('#orch-persona-select', wrap)?.addEventListener('change', event => {
+        if (ORCH.sending) return;
+        const id = event.target.value;
+        if (id && !ORCH.personas.some(person => person.id === id && person.status === 'active')) return;
+        agentSpeakStop(); ORCH.personaId = id; ORCH.personaError = ''; ORCH.selectedModelId = ''; ORCH.personaModels = [];
+        orchRenderPersonaPicker();
+      });
+      qs('#orch-persona-refresh', wrap)?.addEventListener('click', () => orchLoadPersonas());
+      qs('#orch-persona-model', wrap)?.addEventListener('change', event => {
+        if (ORCH.sending) return;
+        const id = event.target.value;
+        if (id && !availableModels.some(model => model.id === id)) return;
+        ORCH.selectedModelId = id;
+      });
+      qs('#orch-load-models', wrap)?.addEventListener('click', () => orchLoadPersonaModels());
+    }
+    const select = qs('#orch-persona-select', wrap), refresh = qs('#orch-persona-refresh', wrap);
+    if (select) select.disabled = ORCH.sending;
+    if (refresh) refresh.disabled = ORCH.sending;
+    const modelSelect = qs('#orch-persona-model', wrap), modelLoad = qs('#orch-load-models', wrap);
+    if (modelSelect) modelSelect.disabled = ORCH.sending;
+    if (modelLoad) modelLoad.disabled = ORCH.sending;
+  }
+  async function orchLoadPersonas() {
+    const generation = ++ORCH.personaGeneration, people = [], seen = new Set();
+    if (!window.API?.http?.aiControlCenterDomain || API.config.offline || isGuest()) return;
+    try {
+      let cursor = null;
+      for (let page = 0; page < 10; page += 1) {
+        const data = await API.http.aiControlCenterDomain('personas', { limit: 100, ...(cursor ? { cursor } : {}) }, { retries: 0 });
+        if (!Array.isArray(data?.items)) throw new Error('invalid_persona_catalog');
+        people.push(...data.items);
+        cursor = data.next_cursor || null;
+        if (!cursor) break;
+        if (seen.has(cursor) || page === 9) throw new Error('incomplete_persona_catalog');
+        seen.add(cursor);
+      }
+      if (generation !== ORCH.personaGeneration) return;
+      ORCH.personas = people; ORCH.personaError = '';
+    } catch (_) {
+      if (generation !== ORCH.personaGeneration) return;
+      ORCH.personas = [];
+      ORCH.personaError = 'Список личных помощников не получен. Обновите список; выбор не считается подтверждённым.';
+    }
+    orchRenderPersonaPicker();
+  }
+  function orchPersonaTransport(personas, selected, models = [], selectedModel = '') {
+    if (!selected) return {};
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(selected)
+        || !(Array.isArray(personas) ? personas : []).some(person => person.id === selected && person.status === 'active')) throw new Error('Выбранная Persona недоступна. Обновите список и выберите помощника.');
+    const result = { persona_id: selected };
+    if (selectedModel) {
+      if (!models.some(model => model.id === selectedModel && model.persona_id === selected && model.status === 'active' && model.execution_available === true)) throw new Error('Выбранное подключение недоступно. Обновите список моделей.');
+      result.selected_model_id = selectedModel;
+    }
+    return result;
+  }
+  function orchPendingPersonaFace(persona, label) {
+    const name = String(label || persona?.title || persona?.name || 'AI-помощник');
+    return persona && AGENT_AVATAR_IDS[persona.avatar_key] ? agentAvatarHtml(persona.avatar_key, {label: name, cls: 'orch-msg-face'})
+      : `<span class="orch-human-face orch-msg-face" title="${esc(name)} · AI-помощник">${esc(name.slice(0, 1))}</span>`;
+  }
   function orchLoadLastId() {
     try { return localStorage.getItem(ORCH_KEY) || 'default'; } catch (e) { return 'default'; }
   }
   function orchSaveCurrentId(cid) {
+    if (ORCH.currentId !== String(cid || '')) { agentSpeakStop(); ORCH.personaId = ''; ORCH.selectedModelId = ''; ORCH.personaModels = []; }
     ORCH.currentId = String(cid || '');
     try {
       if (ORCH.currentId) localStorage.setItem(ORCH_KEY, ORCH.currentId);
@@ -7502,14 +9292,13 @@
         <button type="button" class="orch-drawer-scrim" id="orch-drawer-scrim" aria-label="Закрыть список диалогов" tabindex="-1"></button>
         <aside class="orch-convos" id="orch-convos" aria-label="Диалоги">
           <div class="orch-convo-tools">
-            <div class="orch-convo-tools-head"><span>Диалоги</span><span id="orch-convo-count">0</span></div>
+            <div class="orch-convo-tabs" role="tablist" aria-label="Папки и фильтры диалогов">
+              <div class="orch-convo-tabs-scroll" id="orch-convo-tabs"></div>
+              <button class="orch-folder-add" id="orch-folder-add" type="button" title="Добавить папку" aria-label="Добавить папку">${icon('plus')}</button>
+            </div>
             <label class="orch-convo-search" for="orch-convo-search">${icon('search')}<input id="orch-convo-search" type="search" autocomplete="off" placeholder="Поиск диалогов" aria-label="Поиск диалогов"></label>
             <button class="orch-convo-new" id="orch-new-side" type="button">${icon('plus')}<span>Новый диалог</span></button>
-            <div class="orch-convo-filters" role="tablist" aria-label="Фильтр диалогов">
-              <button type="button" class="active" data-orch-convo-filter="all" role="tab" aria-selected="true">Все</button>
-              <button type="button" data-orch-convo-filter="pinned" role="tab" aria-selected="false">Закреплённые</button>
-              <button type="button" data-orch-convo-filter="recent" role="tab" aria-selected="false">Недавние</button>
-            </div>
+            <span class="orch-convo-counter" id="orch-convo-count">0</span>
           </div>
           <div class="orch-convo-list" id="orch-convo-list"></div>
         </aside>
@@ -7551,10 +9340,13 @@
 
     fab.addEventListener('click', () => { ORCH.open ? closeOrchestrator() : openOrchestrator(); });
     qs('#orch-close', panel).addEventListener('click', closeOrchestrator);
+    panel.addEventListener('click', orchFollowAgentWorldLink);
     qs('#orch-list-toggle', panel).addEventListener('click', () => { orchCloseSkinMenu(); panel.classList.toggle('show-convos'); });
     qs('#orch-drawer-scrim', panel).addEventListener('click', () => panel.classList.remove('show-convos'));
     qs('#orch-new', panel).addEventListener('click', () => { orchCloseSkinMenu(); orchNewConversation(); });
     qs('#orch-new-side', panel).addEventListener('click', () => { orchCloseSkinMenu(); orchNewConversation(); });
+    const folderAdd = qs('#orch-folder-add', panel);
+    if (folderAdd) folderAdd.addEventListener('click', () => { orchCloseSkinMenu(); orchAddFolder(); });
     qs('#orch-convo-search', panel).addEventListener('input', (e) => {
       // Filtering rebuilt the whole rail on every character. One render per
       // typing pause keeps the field responsive on a large list.
@@ -7735,8 +9527,10 @@
     const wanted = ORCH.currentId;
     ORCH.historyRows = null; ORCH.historyMore = false; ORCH.historyBefore = undefined;
     const messagesFirst = wanted ? orchLoadMessages(wanted).catch(() => false) : null;
+    const personasFirst = orchLoadPersonas();
     const loaded = await orchLoadConversations();
     if (messagesFirst) await messagesFirst;
+    await personasFirst;
     if (!loaded) return;
     // orchLoadConversations may retarget currentId when the stored dialogue is
     // gone; in that case the prefetch above rendered nothing and the corrected
@@ -7767,6 +9561,9 @@
     return openOrchestrator(options || {});
   }
   function orchRenderAuthRequired(panel) {
+    agentSpeakStop();
+    ++ORCH.personaGeneration; ORCH.personas = []; ORCH.personaId = ''; ORCH.personaError = ''; ORCH.selectedModelId = ''; ORCH.personaModels = [];
+    const personaPicker = qs('#orch-model-picker'); if (personaPicker) { personaPicker.hidden = true; personaPicker.innerHTML = ''; personaPicker._personaHtml = ''; }
     const root = panel || qs('#orch-panel');
     if (!root) return;
     ORCH.loadError = { status: 401, message: 'Требуется вход через Telegram.' };
@@ -7866,6 +9663,7 @@
     const meta = ORCH_WORK_STATES[workState] || ORCH_WORK_STATES.open;
     const isDefault = !!(c && c.is_default);
     orchUpdateHeader();
+    orchRenderPersonaPicker();
     const badge = qs('#orch-task-state');
     if (badge) {
       if (!c || human || isDefault) {
@@ -7913,15 +9711,134 @@
   // Upper bound on rows put in the DOM at once. Far above any realistic rail,
   // so it never fires in ordinary use; it only stops a pathological list from
   // freezing the click that produced it.
+  // Folders are a rail-side arrangement, not a property of the conversation:
+  // they live in this browser only and never touch the chat record. Deleting a
+  // folder therefore loses no message and no conversation.
+  const ORCH_FOLDER_KEY = 'stratforge.sfchat.folders';
+  function orchLoadFolders() {
+    try {
+      const raw = JSON.parse(localStorage.getItem(ORCH_FOLDER_KEY) || '{}');
+      const names = Array.isArray(raw.names) ? raw.names.filter(n => typeof n === 'string' && n.trim()) : [];
+      const of = raw.of && typeof raw.of === 'object' ? raw.of : {};
+      return { names, of };
+    } catch (e) { return { names: [], of: {} }; }
+  }
+  function orchSaveFolders(state) {
+    try { localStorage.setItem(ORCH_FOLDER_KEY, JSON.stringify({ names: state.names, of: state.of })); }
+    catch (e) { /* a browser with storage off still gets a working rail */ }
+    ORCH.folders = state;
+  }
+  function orchFolders() {
+    if (!ORCH.folders) ORCH.folders = orchLoadFolders();
+    return ORCH.folders;
+  }
+  async function orchDialogAction(action) {
+    if (ORCH.dialogActionPending) return;
+    if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
+    const originId = ORCH.currentId;
+    const originAuth = CURRENT_AUTH;
+    ORCH.dialogActionPending = true;
+    try { await action(() => ORCH.currentId === originId && CURRENT_AUTH === originAuth && !ORCH.sending); }
+    catch (e) { reportError(e); }
+    finally { ORCH.dialogActionPending = false; }
+  }
+  async function orchAddFolder() {
+    return orchDialogAction(async stillCurrent => {
+      const name = await promptDialog('Сгруппируйте диалоги в списке SF Chat.', {
+        context: 'SF Chat', title: 'Новая папка', inputLabel: 'Название папки', confirmLabel: 'Создать папку', maxLength: 40,
+      });
+      if (name == null || !stillCurrent()) return;
+      const clean = String(name).trim().slice(0, 40);
+      if (!clean) return;
+      const state = orchFolders();
+      if (!state.names.includes(clean)) state.names.push(clean);
+      orchSaveFolders(state);
+      ORCH.listFilter = 'folder:' + clean;
+      orchRenderConversations();
+    });
+  }
+  async function orchMoveToFolder(cid) {
+    return orchDialogAction(async stillCurrent => {
+      const state = orchFolders();
+      const current = String(state.of[cid] || '');
+      const hint = state.names.length ? `Доступные папки: ${state.names.join(', ')}` : 'Папок пока нет — введите название новой.';
+      const name = await promptDialog(`${hint}\nОставьте поле пустым, чтобы убрать диалог из папки.`, {
+        context: 'SF Chat', title: 'Переместить диалог', inputLabel: 'Папка', value: current,
+        confirmLabel: 'Сохранить', maxLength: 40, required: false,
+      });
+      if (name == null || !stillCurrent()) return;
+      const clean = String(name).trim().slice(0, 40);
+      if (!clean) delete state.of[cid];
+      else {
+        if (!state.names.includes(clean)) state.names.push(clean);
+        state.of[cid] = clean;
+      }
+      orchSaveFolders(state);
+      orchRenderConversations();
+    });
+  }
+  function orchRenderFolderTabs(counts) {
+    const wrap = qs('#orch-convo-tabs'); if (!wrap) return;
+    const state = orchFolders();
+    const tabs = [['all', 'All'], ['pinned', 'Закреплённые'], ['recent', 'Недавние']]
+      .concat(state.names.map(name => ['folder:' + name, name]));
+    const html = tabs.map(([id, label]) => {
+      const active = ORCH.listFilter === id;
+      const n = counts[id];
+      return `<button type="button" role="tab" class="orch-convo-tab${active ? ' active' : ''}" data-orch-convo-filter="${esc(id)}" aria-selected="${active}">${esc(label)}${n ? `<span>${n}</span>` : ''}</button>`;
+    }).join('');
+    if (wrap._orchTabs !== html) { wrap._orchTabs = html; wrap.innerHTML = html; }
+    qsa('[data-orch-convo-filter]', wrap).forEach(button => button.onclick = () => {
+      ORCH.listFilter = button.dataset.orchConvoFilter || 'all';
+      orchRenderConversations();
+    });
+  }
+  // Rail day headings, in the reference's wording.
+  function orchDayLabel(iso) {
+    if (!iso) return 'Ранее';
+    const zone = (window.AuroraDomain && AuroraDomain.PT_ZONE) || 'America/Los_Angeles';
+    const day = (value) => {
+      try { return new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(value); }
+      catch (e) { return String(value); }
+    };
+    const when = new Date(iso);
+    if (isNaN(when.getTime())) return 'Ранее';
+    const now = new Date();
+    const yesterday = new Date(now.getTime() - 86400000);
+    if (day(when) === day(now)) return 'Сегодня';
+    if (day(when) === day(yesterday)) return 'Вчера';
+    try { return new Intl.DateTimeFormat('ru-RU', { timeZone: zone, day: '2-digit', month: 'short' }).format(when); }
+    catch (e) { return 'Ранее'; }
+  }
+  function orchRowTime(iso) {
+    if (!iso) return '';
+    try {
+      return new Intl.DateTimeFormat('ru-RU', {
+        timeZone: (window.AuroraDomain && AuroraDomain.PT_ZONE) || 'America/Los_Angeles',
+        hour: '2-digit', minute: '2-digit',
+      }).format(new Date(iso));
+    } catch (e) { return ''; }
+  }
   const ORCH_LIST_RENDER_CAP = 300;
   function orchRenderConversations() {
     const wrap = qs('#orch-convo-list') || qs('#orch-convos'); if (!wrap) return;
     const unreadMap = NOTICE.unreadByConversation || {};
     const query = String(ORCH.listQuery || '').trim().toLocaleLowerCase('ru-RU');
-    const filter = ['all', 'pinned', 'recent'].includes(ORCH.listFilter) ? ORCH.listFilter : 'all';
+    const folderState = orchFolders();
+    const known = ['all', 'pinned', 'recent'].concat(folderState.names.map(n => 'folder:' + n));
+    const filter = known.includes(ORCH.listFilter) ? ORCH.listFilter : 'all';
     let visible = ORCH.conversations.slice();
     if (filter === 'pinned') visible = visible.filter(c => !!(c.pinned || c.is_default));
+    if (filter.indexOf('folder:') === 0) {
+      const wanted = filter.slice(7);
+      visible = visible.filter(c => String(folderState.of[c.conversation_id] || '') === wanted);
+    }
     if (filter === 'recent') visible.sort((a, b) => String(b.updated_at_utc || '').localeCompare(String(a.updated_at_utc || '')));
+    const tabCounts = { all: ORCH.conversations.length, pinned: ORCH.conversations.filter(c => !!(c.pinned || c.is_default)).length };
+    folderState.names.forEach(name => {
+      tabCounts['folder:' + name] = ORCH.conversations.filter(c => String(folderState.of[c.conversation_id] || '') === name).length;
+    });
+    orchRenderFolderTabs(tabCounts);
     if (query) visible = visible.filter(c => {
       const participant = c.participant || {};
       return [c.title, c.subtitle, c.last_message_preview, participant.display_name, participant.username]
@@ -7930,11 +9847,7 @@
     const count = qs('#orch-convo-count');
     if (count) count.textContent = visible.length === ORCH.conversations.length
       ? String(visible.length) : `${visible.length}/${ORCH.conversations.length}`;
-    qsa('[data-orch-convo-filter]').forEach(button => {
-      const active = button.dataset.orchConvoFilter === filter;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-selected', active ? 'true' : 'false');
-    });
+
     // A filter or a cleared search re-renders every matching row. At 2000
     // conversations that is ~30k nodes and ~1.2s of blocked main thread for one
     // click. The rail renders a bounded window and says so; the counter above it
@@ -7942,7 +9855,7 @@
     const total = visible.length;
     const truncated = Math.max(0, total - ORCH_LIST_RENDER_CAP);
     if (truncated) visible = visible.slice(0, ORCH_LIST_RENDER_CAP);
-    const rows = visible.map(c => {
+    const rowHtml = visible.map(c => {
       const active = c.conversation_id === ORCH.currentId;
       const human = orchIsHumanConversation(c);
       const canEdit = !human && !c.is_default;
@@ -7957,23 +9870,33 @@
         ? `<img src="${esc(participant.avatar_url)}" alt="">`
         : esc(String(participant.display_name || c.title || '?').slice(0, 1).toUpperCase())}</span>` : '';
       const subtitle = human
-        ? [String(c.last_message_preview || ''), orchFmtTime(c.updated_at_utc)].filter(Boolean).join(' · ')
-        : `${orchFmtTime(c.updated_at_utc)} · ${Number(c.message_count || 0)} сообщ.`;
+        ? String(c.last_message_preview || 'личная переписка')
+        : `${Number(c.message_count || 0)} сообщений`;
       const state = human
         ? '<div class="orch-convo-state human">личная переписка</div>'
         : `<div class="orch-convo-state ${(c.closed ? 'closed' : (c.is_default ? 'open' : (ORCH_WORK_STATES[c.work_state] || ORCH_WORK_STATES.open)[1]))}">${c.closed ? 'закрыта' : (c.is_default ? 'всегда открыт' : (ORCH_WORK_STATES[c.work_state] || ORCH_WORK_STATES.open)[0])}</div>`;
+      const folderName = String(folderState.of[c.conversation_id] || '');
       return `<div class="orch-convo ${active ? 'active' : ''} ${pinned ? 'pinned' : ''}${unreadCls}" data-cid="${esc(c.conversation_id)}" role="button" tabindex="0">
         ${face}
         <div class="orch-convo-main">
-          <div class="orch-convo-title">${pinned ? icon('pin') : ''}${esc(c.title || 'Диалог')}${unreadBadge}</div>
-          <div class="orch-convo-sub">${esc(subtitle)}</div>
+          <div class="orch-convo-title">${esc(c.title || 'Диалог')}${unreadBadge}<time>${esc(orchRowTime(c.updated_at_utc))}</time></div>
+          <div class="orch-convo-sub">${esc(subtitle)}${folderName ? `<span class="orch-convo-folder">${esc(folderName)}</span>` : ''}</div>
           ${state}
         </div>
         <div class="orch-convo-acts">
           ${human ? '' : (c.is_default ? '<span class="orch-convo-sys" title="Системный чат — всегда закреплён">AI</span>' : `<button class="orch-icon-btn sm ${pinned ? 'on' : ''}" data-pin="${esc(c.conversation_id)}" data-pinned="${pinned ? '1' : '0'}" title="${pinned ? 'Открепить' : 'Закрепить вверху'}" aria-label="Закрепить">${icon('pin')}</button>`)}
+          <button class="orch-icon-btn sm" data-folder="${esc(c.conversation_id)}" title="Папка диалога" aria-label="Папка диалога">${icon('layers')}</button>
           ${canEdit ? `<button class="orch-icon-btn sm" data-rename="${esc(c.conversation_id)}" title="Переименовать" aria-label="Переименовать">${icon('edit')}</button><button class="orch-icon-btn sm" data-del="${esc(c.conversation_id)}" title="Удалить" aria-label="Удалить">${icon('trash')}</button>` : ''}
         </div>
       </div>`;
+    });
+    // Days, in the reference's shape: one quiet heading above each group.
+    let lastDay = '';
+    const rows = rowHtml.map((html, index) => {
+      const day = orchDayLabel(visible[index] && visible[index].updated_at_utc);
+      const heading = day === lastDay ? '' : `<div class="orch-convo-day">${esc(day)}</div>`;
+      lastDay = day;
+      return heading + html;
     }).join('');
     const error = ORCH.loadError
       ? '<div class="empty-state">Не удалось обновить список. Показана сохранённая история; повторите после восстановления соединения.</div>'
@@ -8004,6 +9927,8 @@
         if (rename) { e.stopPropagation(); orchRename(rename.dataset.rename); return; }
         const remove = e.target.closest('[data-del]');
         if (remove) { e.stopPropagation(); orchDelete(remove.dataset.del); return; }
+        const folder = e.target.closest('[data-folder]');
+        if (folder) { e.stopPropagation(); orchMoveToFolder(folder.dataset.folder); return; }
         const row = e.target.closest('.orch-convo');
         if (row) orchSelectConversation(row.dataset.cid);
       });
@@ -8016,36 +9941,40 @@
     catch (e) { reportError(e); }
   }
   async function orchSelectConversation(cid) {
-    if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
-    if (cid && cid !== ORCH.currentId) {
+    return orchDialogAction(async stillCurrent => {
+      if (!cid || cid === ORCH.currentId) {
+        qs('#orch-panel').classList.remove('show-convos');
+        if (cid) dismissNoticesForConversation(cid);
+        return;
+      }
+      if (orchHasUnfinishedCurrent() && !await confirmDialog('Текущая тема ещё не завершена. Её история останется в списке диалогов.', {
+        context: 'SF Chat', title: 'Перейти в другой диалог?', confirmLabel: 'Перейти', cancelLabel: 'Остаться в диалоге',
+      })) return;
+      if (!stillCurrent()) return;
       ORCH.historyRows = null; ORCH.historyMore = false; ORCH.historyBefore = undefined;
-    }
-    if (!cid || cid === ORCH.currentId) {
+      orchSaveCurrentId(cid);
+      ORCH.messagesSignature = '';
+      orchStopFeedbackVoice();
+      orchRenderConversations();
       qs('#orch-panel').classList.remove('show-convos');
-      if (cid) dismissNoticesForConversation(cid);
-      return;
-    }
-    if (orchHasUnfinishedCurrent() && !confirm('Текущая тема ещё не завершена. Перейти в другой диалог?')) return;
-    orchSaveCurrentId(cid);
-    ORCH.messagesSignature = '';
-    orchStopFeedbackVoice();
-    orchRenderConversations();
-    qs('#orch-panel').classList.remove('show-convos');
-    await orchLoadMessages(cid);
-    orchRenderWorkState();
-    if (orchIsHumanConversation(cid)) {
-      try { await API.http.sfChatRead(cid); } catch (e) { /* visible dialogue remains usable */ }
-      await refreshInAppNotices({ silent: true });
-    }
-    dismissNoticesForConversation(cid);
-    const ta = qs('#orch-text'); if (ta && !ta.disabled) ta.focus();
+      await orchLoadMessages(cid);
+      orchRenderWorkState();
+      if (orchIsHumanConversation(cid)) {
+        try { await API.http.sfChatRead(cid); } catch (e) { /* visible dialogue remains usable */ }
+        await refreshInAppNotices({ silent: true });
+      }
+      dismissNoticesForConversation(cid);
+      const ta = qs('#orch-text'); if (ta && !ta.disabled) ta.focus();
+    });
   }
   async function orchNewConversation() {
-    if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
-    if (!window.API || API.config.offline) return;
-    if (ORCH.aiAvailable === false) return;
-    if (orchHasUnfinishedCurrent() && !confirm('Текущая тема ещё не завершена. Создать новую тему всё равно?')) return;
-    try {
+    return orchDialogAction(async stillCurrent => {
+      if (!window.API || API.config.offline) return;
+      if (ORCH.aiAvailable === false) return;
+      if (orchHasUnfinishedCurrent() && !await confirmDialog('Текущая тема ещё не завершена. Её история останется в списке диалогов.', {
+        context: 'SF Chat', title: 'Создать новую тему?', confirmLabel: 'Создать тему', cancelLabel: 'Остаться в диалоге',
+      })) return;
+      if (!stillCurrent()) return;
       const res = await API.http.aiOrchestratorCreateConversation('');
       ORCH.listQuery = '';
       ORCH.listFilter = 'all';
@@ -8055,32 +9984,42 @@
       await orchLoadMessages(ORCH.currentId);
       qs('#orch-panel').classList.remove('show-convos');
       const ta = qs('#orch-text'); if (ta && !ta.disabled) ta.focus();
-    } catch (e) { reportError(e); }
+    });
   }
   async function orchRename(cid) {
-    if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
-    if (orchIsHumanConversation(cid)) return;
-    const current = ORCH.conversations.find(c => c.conversation_id === cid);
-    const title = prompt('Название диалога:', (current && current.title) || '');
-    if (title == null) return;
-    const clean = String(title).trim();
-    if (!clean) return;
-    try { await API.http.aiOrchestratorRenameConversation(cid, clean); await orchLoadConversations(); }
-    catch (e) { reportError(e); }
+    return orchDialogAction(async stillCurrent => {
+      if (orchIsHumanConversation(cid)) return;
+      const current = ORCH.conversations.find(c => c.conversation_id === cid);
+      const title = await promptDialog('Новое название будет показано в списке диалогов.', {
+        context: 'SF Chat', title: 'Переименовать диалог', inputLabel: 'Название диалога',
+        value: (current && current.title) || '', confirmLabel: 'Сохранить',
+      });
+      if (title == null || !stillCurrent()) return;
+      const clean = String(title).trim();
+      if (!clean) return;
+      await API.http.aiOrchestratorRenameConversation(cid, clean); await orchLoadConversations();
+    });
   }
   async function orchDelete(cid) {
-    if (ORCH.sending) { toast('Дождитесь ответа в текущем диалоге'); return; }
-    if (orchIsHumanConversation(cid)) return;
-    if (!confirm('Удалить этот диалог вместе с его историей?')) return;
-    try {
+    return orchDialogAction(async stillCurrent => {
+      if (orchIsHumanConversation(cid)) return;
+      if (!await confirmDialog('Диалог будет удалён вместе с его историей. Это действие нельзя отменить.', {
+        context: 'SF Chat', title: 'Удалить диалог?', confirmLabel: 'Удалить диалог', danger: true,
+      })) return;
+      if (!stillCurrent()) return;
       await API.http.aiOrchestratorDeleteConversation(cid);
       if (ORCH.currentId === cid) orchSaveCurrentId('default');
       await orchLoadConversations();
       await orchLoadMessages(ORCH.currentId);
-    } catch (e) { reportError(e); }
+    });
+  }
+  function orchIsAgentWorldMessage(row) {
+    if (!row || row.role === 'user' || row.sender_type === 'human' || row.sender_profile_id) return false;
+    return String(row.source || '').startsWith('agent_world_') || (Array.isArray(row.actions) && row.actions.some(action =>
+      String(action?.name || action?.action || '').startsWith('agent_world_')));
   }
   function orchRatingHtml(row, isUser) {
-    if (isUser || !row.message_id) return '';
+    if (isUser || !row.message_id || orchIsAgentWorldMessage(row)) return '';
     const rating = Number(row.rating || 0);
     const comment = String(row.feedback_comment || '');
     const hasComment = !!comment.trim();
@@ -8110,6 +10049,7 @@
     unset: 'не отмечено', done: 'выполнено', failed: 'не выполнено', na: 'переписка',
   };
   function orchInferKind(row) {
+    if (row.role === 'system' && row.source === 'agent_world_followup') return 'informational';
     const explicit = String(row.message_kind || '').trim();
     if (ORCH_KIND_LABELS[explicit]) return explicit;
     const actions = Array.isArray(row.actions) ? row.actions.filter(a => a && typeof a === 'object') : [];
@@ -8122,6 +10062,12 @@
     return 'task';
   }
   function orchFulfillmentOf(row) {
+    // A completed transport/action is not an owner's acceptance. Historical
+    // feedback stays on the message; Agent World uses its canonical review.
+    if (orchIsAgentWorldMessage(row)) {
+      const review = row._awTask?.human_review?.status;
+      return review === 'accepted' ? 'done' : review === 'rejected' ? 'failed' : 'unset';
+    }
     const raw = String(row.fulfillment || '').trim();
     if (ORCH_FULFILL_LABELS[raw]) return raw;
     const kind = orchInferKind(row);
@@ -8164,19 +10110,227 @@
     blocked: ['Нужно внимание', 'blocked'], error: ['Ошибка', 'blocked'],
     completed: ['', 'done'], confirmed_connected: ['', 'done'],
   };
+  function orchAgentWorldTaskId(row) {
+    if (row?.source !== 'agent_world_local' || row.role !== 'assistant') return '';
+    const id = (row.actions || []).find(action => ['real_model_response', 'synthetic_model_response', 'external_agent_task_v1'].includes(action?.source_kind))?.task_id;
+    return /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(String(id || '')) ? id : '';
+  }
+  async function orchAgentWorldViews(messages, cid) {
+    if (typeof API.http.aiControlCenterTask !== 'function') return messages;
+    const last = new Map();
+    messages.forEach((row, index) => { const id = orchAgentWorldTaskId(row); if (id) last.set(id, index); });
+    const views = new Map(), entries = Array.from(last.entries()).slice(-20);
+    for (let offset = 0; offset < entries.length; offset += 4) {
+      await Promise.all(entries.slice(offset, offset + 4).map(async ([id, index]) => {
+        try {
+          const response = await API.http.aiControlCenterTask(id), task = response.task || response;
+          if (task.id === id && task.conversation_id === cid
+              && ['real_model_response', 'synthetic_model_response', 'external_agent_task_v1'].includes(task.source_kind)
+              && (task.source_kind !== 'synthetic_model_response' || task.synthetic === true)) views.set(index, task);
+        } catch (_) { /* Unavailable current state must never become a PASS. */ }
+      }));
+      if (ORCH.currentId !== cid) return messages;
+    }
+    return messages.map((row, index) => ({ ...row, _awTask: views.get(index) || null,
+      _awLatest: last.get(orchAgentWorldTaskId(row)) === index }));
+  }
+  function orchPersonaId(row) {
+    if (!row || row.role !== 'assistant' || row.sender_type === 'human' || row.sender_profile_id) return '';
+    const id = String(row.agent_id || '');
+    return /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id) ? id : '';
+  }
+  async function orchPersonaViews(messages, cid) {
+    const found = new Map(), ids = [...new Set(messages.map(orchPersonaId).filter(Boolean))];
+    if (typeof API.http.aiControlCenterDomainItem === 'function') {
+      for (let offset = 0; offset < ids.length; offset += 4) {
+        await Promise.all(ids.slice(offset, offset + 4).map(async id => {
+          try {
+            const response = await API.http.aiControlCenterDomainItem('personas', id), item = response.item || response;
+            if (item.id === id && Number.isInteger(item.revision) && item.presentation) found.set(id, item);
+          } catch (_) { /* A deleted/foreign/revoked Persona never becomes Vitek or inherits a provider voice. */ }
+        }));
+        if (ORCH.currentId !== cid) return messages;
+      }
+    }
+    return messages.map(row => ({...row, _persona: found.get(orchPersonaId(row)) || null}));
+  }
+  function orchSpeechPersona(row) {
+    if (orchPersonaId(row)) return row._persona || null;
+    const ref = String(row.agent_id || row.agent_name || '').toLowerCase();
+    const face = AGENT_AVATAR_IDS[ref];
+    if (!face) return null;
+    // Historical staff replies retain their assets. Without a persisted Persona
+    // voice they explicitly use a local device preset, never owner credentials.
+    return {id: 'legacy-' + face, revision: 1, title: row.agent_name || ref,
+      presentation: {resolved_voice_profile_id: face, voice_mode: 'browser',
+        voice_label: 'Голос устройства', voice_gender: face === 'marina' ? 'female' : 'male',
+        voice_speed: 1, voice_language: 'ru-RU', animation_mode: 'auto'}};
+  }
+  function orchSpeechHtml(row) {
+    if (row.role !== 'assistant' || row.sender_type === 'human' || row.sender_profile_id || !row.message_id || !row.content) return '';
+    const persona = orchSpeechPersona(row), configured = persona?.presentation?.resolved_voice_profile_id;
+    const available = !!configured && (!orchPersonaId(row) || ['active', 'draft'].includes(persona.status));
+    const hint = orchPersonaId(row) ? (available ? 'Озвучить сохранённый ответ голосом персоны' : 'Персона или её голос недоступны. История сохранена.')
+      : 'Исторический ответ: локальный голос устройства, без подключения провайдера';
+    return `<div class="orch-msg-meta"><button type="button" class="btn sm ghost" data-orch-speech="${esc(row.message_id)}" aria-pressed="false" title="${esc(hint)}" ${available ? '' : 'disabled'}>Озвучить</button> <span data-orch-speech-status role="status" aria-live="polite">${available ? '' : esc(hint)}</span></div>`;
+  }
+  function orchLoadPersonaAudio() {
+    if (window.PersonaAudio?.create) return Promise.resolve(window.PersonaAudio);
+    if (ORCH_SPEECH.module) return ORCH_SPEECH.module;
+    ORCH_SPEECH.module = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      let done = false;
+      const finish = error => {
+        if (done) return; done = true; clearTimeout(timer);
+        script.onload = script.onerror = null;
+        if (error || !window.PersonaAudio?.create) { ORCH_SPEECH.module = null; script.remove(); reject(Error('speech_module_unavailable')); }
+        else resolve(window.PersonaAudio);
+      };
+      const timer = setTimeout(() => finish(true), 10000);
+      script.src = '/ui/assets/persona-audio.js?v=20260908-agent-world-persona-chat1';
+      script.async = true; script.onload = () => finish(false); script.onerror = () => finish(true);
+      document.head.appendChild(script);
+    });
+    return ORCH_SPEECH.module;
+  }
+  function orchSpeechState(view) {
+    const button = ORCH_SPEECH.button, status = ORCH_SPEECH.status;
+    if (button && button.isConnected) {
+      button.disabled = false;
+      button.textContent = ['preparing', 'speaking'].includes(view.state) ? 'Остановить' : 'Озвучить';
+      button.setAttribute('aria-pressed', ['preparing', 'speaking'].includes(view.state) ? 'true' : 'false');
+    }
+    if (status && status.isConnected) {
+      const mode = view.mode === 'server' ? 'Подключённый голос' : 'Локальный голос устройства';
+      status.textContent = view.state === 'preparing' ? 'Проверка сообщения и голоса…'
+        : view.state === 'speaking' ? `${mode}${view.voice ? ': ' + view.voice : ''}. ${view.animation === 'speaking_loop' ? 'Анимация речи, без синхронизации фонем.' : 'Статичный аватар.'}`
+        : view.state === 'finished' ? 'Озвучивание завершено.' : view.state === 'stopped' ? 'Озвучивание остановлено.'
+        : view.state === 'text_fallback' ? 'Звук недоступен или доступ не подтверждён. Ответ доступен текстом.' : '';
+    }
+    if (!['preparing', 'speaking'].includes(view.state)) ORCH_SPEECH.message = '';
+  }
+  function wireOrchSpeech(container, messages, cid) {
+    qsa('[data-orch-speech]', container).forEach(button => button.addEventListener('click', async () => {
+      if (ORCH.currentId !== cid || !ORCH.open) return;
+      const id = button.dataset.orchSpeech, row = messages.find(item => item.message_id === id);
+      const persona = row && orchSpeechPersona(row);
+      if (!persona || !row.content) return;
+      if (ORCH_SPEECH.message === id) { agentSpeakStop(); return; }
+      agentSpeakStop();
+      const generation = ORCH_SPEECH.generation;
+      ORCH_SPEECH.message = id; ORCH_SPEECH.button = button;
+      ORCH_SPEECH.status = button.parentElement?.querySelector('[data-orch-speech-status]');
+      orchSpeechState({state: 'preparing'});
+      try {
+        const module = await orchLoadPersonaAudio();
+        if (generation !== ORCH_SPEECH.generation || ORCH.currentId !== cid || !ORCH.open || !button.isConnected) return;
+        if (!ORCH_SPEECH.controller) ORCH_SPEECH.controller = module.create({host: window,
+          playFace: agentFacePlay, pauseFace: agentFacePause, reducedMotion: agentFaceReduceMotion, onState: orchSpeechState,
+          requestSpeech: request => {
+            if (!request.message_ref) return {fallback: 'browser', text: request.text, reason: 'legacy_local_device_preset'};
+            if (!API.http.aiControlCenterPersonaSpeak || API.config.offline) return Promise.reject({status: 403});
+            return API.http.aiControlCenterPersonaSpeak(request.persona_id, {payload: request.message_ref,
+              expected_revision: request.expected_revision, idempotency_key: window.crypto.randomUUID()});
+          }});
+        const face = button.closest('.orch-msg')?.querySelector('.orch-msg-face');
+        await ORCH_SPEECH.controller.play({persona, text: row.content, face, userInitiated: true,
+          ...(orchPersonaId(row) ? {message_ref: {conversation_id: cid, message_id: id}} : {})});
+      } catch (_) {
+        if (generation === ORCH_SPEECH.generation) orchSpeechState({state: 'text_fallback'});
+      }
+    }));
+  }
+  window.addEventListener('pagehide', agentSpeakStop);
+  window.addEventListener('hashchange', agentSpeakStop);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) agentSpeakStop(); });
+  function orchAgentWorldCard(row) {
+    const id = orchAgentWorldTaskId(row);
+    if (!id) return '';
+    const savedTransport = (row.actions || []).some(action => action?.verification_scope === 'transport_only'
+      || action?.verification?.scope === 'transport_only' || action?.task_class === 'assistant_response');
+    const savedNote = savedTransport ? '<small>Сохранённая проверка относится только к получению текста. Содержание автоматически не оценено; профессиональный рейтинг не изменяется.</small>' : '';
+    if (!row._awLatest) return savedNote;
+    const task = row._awTask;
+    if (!task) return `<div class="orch-aw-task">Текущее состояние задачи недоступно. Проверка не считается завершённой.${savedNote}</div>`;
+    const actions = Array.isArray(task.actions) ? task.actions : [];
+    const review = task.human_review || {};
+    const transportOnly = savedTransport || task.verification_scope === 'transport_only' || [task.task_class, task.rubric_key].includes('assistant_response');
+    const verification = { passed: 'пройдена', failed: 'не пройдена', pending: 'ожидается' }[task.verification_status] || 'не получена';
+    const verificationText = transportOnly ? `Техническая проверка получения ответа: ${verification}. Содержание автоматически не оценено; требуется отдельное решение человека. В профессиональный рейтинг не входит.` : `Автоматическая проверка: ${verification}. Приёмка владельцем — отдельное решение.`;
+    return `<section class="orch-aw-task" data-aw-chat-task="${esc(id)}" data-aw-state="${esc(task.display_status)}"><strong>${esc(task.display_title || 'Задача Agent World')}</strong><p>${esc(task.display_status_label || task.status_label || 'Состояние не получено')}</p><p>${esc(task.result_label || '')}</p><small>${esc(verificationText)}</small>${actions.includes('review_result') && review.status === 'pending' ? `<div class="orch-aw-actions"><button type="button" class="btn sm" data-aw-chat-review="accept" data-aw-task-id="${esc(id)}">Проверено: принять</button><button type="button" class="btn sm" data-aw-chat-review="reject" data-aw-task-id="${esc(id)}">Проверено: отклонить</button></div>` : ''}<a class="btn sm" href="/ui/ai-command-center.html#tab=work&task=${encodeURIComponent(id)}">Задача, история и действия</a></section>`;
+  }
+  function wireOrchAgentWorld(container, messages, cid) {
+    qsa('[data-aw-chat-review]', container).forEach(button => button.addEventListener('click', async () => {
+      const task = messages.find(row => row._awTask?.id === button.dataset.awTaskId)?._awTask;
+      if (!task || ORCH.currentId !== cid) return;
+      const decision = button.dataset.awChatReview;
+      const confirmed = await confirmDialog('Решение сохранится только для этого результата. Оно не разрешает дальнейшие действия и не оценивает профессиональное качество модели.', { title: decision === 'accept' ? 'Принять проверенный результат?' : 'Отклонить проверенный результат?', confirmLabel: 'Сохранить решение' });
+      if (!confirmed || ORCH.currentId !== cid) return;
+      button.disabled = true;
+      try {
+        await API.http.aiControlCenterDomainAction('tasks', task.id, 'review_result', { expected_revision: task.revision, idempotency_key: window.crypto.randomUUID(), payload: { decision, comment: '', source_sha256: task.human_review.source_sha256 } });
+        window.dispatchEvent(new CustomEvent('agent-world-updated'));
+        await orchLoadMessages(cid);
+      } catch (error) { reportError(error); }
+      finally { button.disabled = false; }
+    }));
+  }
+  function orchAgentWorldReportUrl(row) {
+    if (row?.source !== 'agent_world_local' || row?.role !== 'assistant') return '';
+    for (const action of Array.isArray(row.actions) ? row.actions : []) {
+      if (action?.synthetic !== false || action?.status !== 'completed' || action?.verification?.passed !== true
+        || !['ninjatrader_report', 'real_model_response'].includes(action?.source_kind)) continue;
+      const job = String(action.source_job_id || '');
+      if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/.test(job) || /[\r\n]/.test(job)) continue;
+      const url = '/ui/backtesting.html?job=' + encodeURIComponent(job);
+      if (action.report_url === url) return url;
+    }
+    return '';
+  }
+  function orchAttachmentsHtml(row) {
+    const reportUrl = orchAgentWorldReportUrl(row);
+    return (Array.isArray(row.attachments) ? row.attachments : []).filter(a => a && a.url).map(a => {
+      const scopedArtifact = /^\/api\/ai-control-center\/artifacts\/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(a.url) && !/[\r\n]/.test(a.url);
+      // Older model envelopes omitted type, and Chief defaulted JSON to image.
+      // Read-time compatibility keeps the immutable conversation untouched.
+      const legacyReport = reportUrl && scopedArtifact && a.type === 'image';
+      if (scopedArtifact && row.source === 'agent_world_local' && (a.type === 'artifact' || legacyReport)) {
+        return `<a class="btn sm orch-msg-artifact" href="${esc(a.url)}" target="_blank" rel="noopener noreferrer">${esc(a.caption || 'Артефакт отчёта')} ↗</a>`;
+      }
+      if (a.type !== 'image') return '';
+      return `<a class="orch-msg-shot" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.caption || 'Снимок графика')}"><img loading="lazy" src="${esc(a.url)}" alt="${esc(a.caption || 'Снимок графика')}"></a>`;
+    }).join('');
+  }
+  function orchFollowAgentWorldLink(event) {
+    const link = event.target.closest?.('[data-aw-chat-continuation]');
+    if (!link || event.button > 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    const target = new URL(link.href, window.location.href);
+    if (target.origin !== window.location.origin || target.pathname !== window.location.pathname) return;
+    event.preventDefault();
+    closeOrchestrator();
+    if (target.hash === window.location.hash) window.dispatchEvent(new Event('aw-chat-navigate'));
+    else window.location.hash = target.hash;
+  }
   function orchActionsHtml(row, isUser) {
     if (isUser || !Array.isArray(row.actions) || !row.actions.length) return '';
+    if (orchAgentWorldTaskId(row)) return orchAgentWorldCard(row);
     // Progress rows stay informative while unfinished; terminal «Выполнено»
     // lives in the footer marks instead of repeating above every bubble.
     const items = row.actions.filter(action => action && typeof action === 'object').slice(0, 8).map(action => {
       const name = String(action.name || action.action || 'vitek_task');
+      if (name === 'coordinator_clarification' && action.conversation_id && action.source_message_id) {
+        const route = '/ui/ai-command-center.html#tab=overview&domain=automation&chat_conversation=' + encodeURIComponent(action.conversation_id) + '&chat_message=' + encodeURIComponent(action.source_message_id);
+        return `<a class="btn sm" data-aw-chat-continuation href="${esc(route)}">Уточнить данные и ожидаемый результат</a>`;
+      }
       const status = String(action.status || 'running');
       const state = ORCH_ACTION_STATES[status] || [status || 'Выполняется', 'running'];
       const label = String(action.owner_label || action.summary || ORCH_ACTION_LABELS[name] || 'Работа по поручению');
       const stateText = state[0] ? `<span class="orch-action-state">${esc(state[0])}</span>` : '';
       return `<div class="orch-action ${esc(state[1])}"><span class="orch-action-mark" aria-hidden="true"></span><span class="orch-action-label">${esc(label)}</span>${stateText}</div>`;
     }).join('');
-    return items ? `<div class="orch-actions" aria-label="Ход выполнения">${items}</div>` : '';
+    const reportUrl = orchAgentWorldReportUrl(row);
+    const report = reportUrl ? `<a class="btn sm" href="${esc(reportUrl)}">Открыть исходный отчёт</a>` : '';
+    return items ? `<div class="orch-actions" aria-label="Ход выполнения">${items}${report}</div>` : '';
   }
   function orchChainHtml(row) {
     const chain = Array.isArray(row.participation_chain)
@@ -8195,14 +10349,25 @@
   }
   function orchFooterHtml(row, isUser) {
     if (isUser || !row.message_id) return orchRatingHtml(row, isUser);
+    if (orchIsAgentWorldMessage(row)) {
+      const taskId = orchAgentWorldTaskId(row), review = row._awTask?.human_review?.status;
+      const reviewLabel = {accepted: 'Результат принят', rejected: 'Результат отклонён', pending: 'Ожидается проверка результата'}[review]
+        || 'Статус проверки — в карточке задачи';
+      const oldRating = Number(row.rating || 0), oldComment = String(row.feedback_comment || '');
+      const oldFulfillment = ORCH_FULFILL_LABELS[row.fulfillment] || '';
+      return `<details class="orch-msg-footer"><summary class="orch-msg-tools-summary"><span class="orch-msg-tools-label">··· Детали ответа</span><time>${esc(orchFmtTime(row.timestamp_utc))}</time></summary>
+        <div class="orch-msg-footer-panel"><p>${esc(reviewLabel)}. Решение принимается только через проверку конкретного результата Agent World.</p>
+        ${oldRating || oldComment || oldFulfillment ? `<details><summary>Исторические отметки SF Chat — не приёмка задачи</summary>${oldRating ? `<p>Прежняя оценка сообщения: ${esc(oldRating)} из 3, не оценка профессионального качества.</p>` : ''}${oldComment ? `<p>${esc(oldComment)}</p>` : ''}${oldFulfillment ? `<p>Прежняя отметка: ${esc(oldFulfillment)}.</p>` : ''}</details>` : ''}
+        <a class="btn sm" href="/ui/ai-command-center.html#tab=work${taskId ? '&task=' + encodeURIComponent(taskId) : ''}">Задача, результат и история</a></div></details>`;
+    }
     const kind = orchInferKind(row);
     const fulfillment = orchFulfillmentOf(row);
     const kindLabel = ORCH_KIND_LABELS[kind] || kind;
     const fulfillLabel = ORCH_FULFILL_LABELS[fulfillment] || fulfillment;
     const isInformational = kind === 'informational';
-    const showMarks = !isInformational && (kind !== 'chat' || fulfillment === 'done' || fulfillment === 'failed');
+    const showMarks = !orchAgentWorldTaskId(row) && !isInformational && (kind !== 'chat' || fulfillment === 'done' || fulfillment === 'failed');
     const agentRef = row.agent_id || row.agent_name || row.domain_agent || 'vitek';
-    const agentLabel = String(row.agent_name || agentRef || 'Витёк');
+    const agentLabel = String(row.agent_name || (orchPersonaId(row) ? row._persona?.title || 'AI-помощник' : agentRef) || 'Витёк');
     const title = String(row.agent_title || '').trim();
     const model = String(row.model || '').trim();
     const provider = String(row.provider || '').trim();
@@ -8251,6 +10416,22 @@
       </div>
     </details>`;
   }
+  // Shown only while the verdict is genuinely open: a task or a report that
+  // nobody has marked done or failed yet. Plain chat never asks for one.
+  function orchAwaitHtml(row) {
+    if (orchIsAgentWorldMessage(row)) return '';
+    if (!row || row.role === 'user' || !row.message_id) return '';
+    const kind = orchInferKind(row);
+    if (kind === 'chat' || kind === 'informational') return '';
+    if (orchFulfillmentOf(row) !== 'unset') return '';
+    return `<div class="orch-await">
+      <span class="orch-await-label">Жду ваш ответ</span>
+      <div class="orch-fulfill-marks compact" data-orch-fulfill-id="${esc(row.message_id)}" data-fulfillment="unset">
+        <button type="button" class="orch-fulfill-btn" data-orch-fulfill="done" title="Правильно или выполнено" aria-label="Правильно или выполнено">${icon('check')}</button>
+        <button type="button" class="orch-fulfill-btn" data-orch-fulfill="failed" title="Неправильно или не выполнено" aria-label="Неправильно или не выполнено">${icon('close')}</button>
+      </div>
+    </div>`;
+  }
   function orchMessageHtml(row) {
     const humanMessage = row.sender_type === 'human' || !!row.sender_profile_id;
     if (humanMessage) {
@@ -8271,7 +10452,7 @@
       ? (row.actor_is_owner ? String(row.actor_name || 'Вы') : String(row.actor_name || row.user_name || row.user_id || 'Пользователь'))
       : '';
     const agentRef = row.agent_id || row.agent_name || row.domain_agent || 'vitek';
-    const agentLabel = String(row.agent_name || agentRef || 'Витёк');
+    const agentLabel = String(row.agent_name || (orchPersonaId(row) ? row._persona?.title || 'AI-помощник' : agentRef) || 'Витёк');
     const meta = isUser
       ? [esc(actor), orchFmtTime(row.timestamp_utc)].filter(Boolean).join(' · ')
       : '';
@@ -8279,14 +10460,22 @@
     const footer = isUser
       ? (meta ? `<div class="orch-msg-meta">${meta}</div>` : '')
       : orchFooterHtml(row, isUser);
-    const attachments = Array.isArray(row.attachments) ? row.attachments.filter(a => a && a.type === 'image' && a.url) : [];
-    const media = attachments.map(a =>
-      `<a class="orch-msg-shot" href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.caption || 'Снимок графика')}"><img loading="lazy" src="${esc(a.url)}" alt="${esc(a.caption || 'Снимок графика')}"></a>`
-    ).join('');
-    const face = isUser ? '' : agentAvatarHtml(agentRef, {
+    const media = orchAttachmentsHtml(row);
+    const personaId = orchPersonaId(row), persona = row._persona;
+    const faceRef = personaId ? persona?.avatar_key : agentRef;
+    const face = isUser ? '' : personaId && !AGENT_AVATAR_IDS[faceRef]
+      ? `<span class="orch-human-face" title="${esc(agentLabel)} · AI-помощник">${esc(agentLabel.slice(0, 1))}</span>` : agentAvatarHtml(faceRef, {
       label: agentLabel, cls: 'orch-msg-face', messageId: row.message_id || '',
     });
-    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}">${face}<div class="orch-msg-stack"><div class="orch-msg-body">${esc(row.content || '')}</div>${media}${actions}${footer}</div></div>`;
+    // The answer wears its own header (who answered, on which model) and, while
+    // it still waits for a verdict, the approve / reject pair sits on the card
+    // itself instead of inside the collapsed details panel.
+    const model = String(row.model || '').trim();
+    const provider = String(row.provider || '').trim();
+    const head = isUser ? '' : `<div class="orch-msg-card-head"><span class="orch-msg-author">${esc(agentLabel)}</span>${model ? `<span class="orch-msg-model">модель: ${esc(model)}${provider ? ` (${esc(provider)})` : ''}</span>` : ''}${orchAwaitHtml(row)}</div>`;
+    const technical = orchAgentWorldTaskId(row) && (String(row.content || '').length > 500 || /^\s*[\[{]/.test(row.content || ''));
+    const body = technical ? `<details class="orch-msg-body orch-aw-details"><summary>Полное сообщение и данные результата</summary><pre>${esc(row.content || '')}</pre></details>` : `<div class="orch-msg-body">${esc(row.content || '')}</div>`;
+    return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}"${personaId ? ` data-persona-id="${esc(personaId)}"` : ''}>${face}<div class="orch-msg-stack">${head}${body}${media}${actions}${footer}${orchSpeechHtml(row)}</div></div>`;
   }
   function orchStopFeedbackVoice() {
     const voice = ORCH.feedbackVoice;
@@ -8297,17 +10486,20 @@
     try { if (voice.rec) voice.rec.stop(); } catch (e) { /* ignore */ }
   }
   async function orchToggleConversationState() {
-    const current = orchCurrentConversation();
-    if (!current || !window.API || API.config.offline) return;
-    if (orchIsHumanConversation(current)) return;
-    const next = current.closed ? 'open' : 'closed';
-    if (next === 'closed' && orchHasUnfinishedCurrent() && !confirm('Вопрос ещё не завершён. Закрыть тему без продолжения?')) return;
-    try {
-      await API.http.aiOrchestratorSetConversationState(ORCH.currentId, next);
+    return orchDialogAction(async stillCurrent => {
+      const current = orchCurrentConversation();
+      if (!current || !window.API || API.config.offline) return;
+      if (orchIsHumanConversation(current)) return;
+      const next = current.closed ? 'open' : 'closed';
+      if (next === 'closed' && orchHasUnfinishedCurrent() && !await confirmDialog('Вопрос ещё не завершён. Тема останется в истории, и вы сможете открыть её снова.', {
+        context: 'SF Chat', title: 'Закрыть тему без продолжения?', confirmLabel: 'Закрыть тему',
+      })) return;
+      if (!stillCurrent()) return;
+      await API.http.aiOrchestratorSetConversationState(current.conversation_id, next);
       await orchLoadConversations();
       orchRenderWorkState();
       const ta = qs('#orch-text'); if (ta && !ta.disabled) ta.focus();
-    } catch (e) { reportError(e); }
+    });
   }
   function orchStartFeedbackVoice(btn, ta) {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -8491,6 +10683,30 @@
       ORCH.loadingOlder = false;
     }
   }
+  function orchFailure(error, uncertain) {
+    // Provider payloads can contain private data. Only known machine codes go
+    // into expandable details; never place arbitrary error text in the chat.
+    const known = {
+      execution_v2_approved_scope_changed: 'Параметры поручения не совпали с подтверждёнными. Выполнение остановлено защитой; откройте задачу и проверьте выбранную персону и подключение.',
+      persona_model_required: 'Для этой персоны нужно выбрать доступное подключение в AI Центре.',
+      persona_model_ambiguous: 'У персоны несколько доступных подключений. Выберите подключение в списке над полем ввода и отправьте сообщение ещё раз.',
+      persona_selection_inactive: 'Выбранная персона не активна. Проверьте её состояние в AI Центре.',
+      persona_selection_unavailable: 'Выбранная персона недоступна в текущем рабочем пространстве.',
+    };
+    const code = typeof error === 'string' ? error : String(error?.code || error?.message || '');
+    const status = Number(error?.status);
+    return {
+      text: uncertain ? 'Не удалось подтвердить получение ответа. Обновите историю перед повторной отправкой: сервер мог уже сохранить результат.'
+        : Object.prototype.hasOwnProperty.call(known, code) ? known[code]
+        : status === 401 || status === 403 ? 'Доступ к ответу не подтверждён. Проверьте вход и доступ к рабочему пространству.'
+        : 'Ответ не получен. Обновите историю и проверьте состояние задачи перед новой попыткой.',
+      code: Object.prototype.hasOwnProperty.call(known, code) ? code : uncertain ? 'delivery_unconfirmed' : 'response_not_received',
+      status: Number.isInteger(status) && status >= 400 && status <= 599 ? status : null,
+    };
+  }
+  function orchErrorHtml(failure) {
+    return `<span class="orch-err" role="status">${esc(failure.text)}</span><details class="orch-error-details"><summary>Технические подробности</summary><p><code>${esc(failure.code)}</code>${failure.status ? ` · HTTP ${esc(failure.status)}` : ''}</p><p>Повторная отправка автоматически не выполнялась. История задач и ошибок сохраняется.</p></details>`;
+  }
   async function orchLoadMessages(cid, silent) {
     const box = qs('#orch-msgs'); if (!box) return;
     if (!cid) return false;
@@ -8533,27 +10749,34 @@
       if (!silent) { renderError(box, e, () => orchLoadMessages(cid)); return false; }
       return false;
     }
+    if (!human) {
+      messages = await orchAgentWorldViews(messages, cid);
+      messages = await orchPersonaViews(messages, cid);
+    }
     if (ORCH.currentId !== cid) return;
     const signature = JSON.stringify(messages.map(row => [
       row.message_id, row.timestamp_utc, row.content, row.rating,
       row.feedback_comment, row.feedback_timestamp_utc, row.model, row.provider,
       row.agent_name, row.actions, row.fulfillment, row.message_kind, row.participation_chain,
-      row.sender_profile_id, row.attachments,
+      row.sender_profile_id, row.attachments, row._awTask, row._awLatest, row._persona,
     ]));
     if (silent && signature === ORCH.messagesSignature) return;
     if (silent && (ORCH.feedbackVoice || qsa('.orch-feedback-text', box).some(ta => ta.dataset.dirty === '1'))) return;
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
     orchStopFeedbackVoice();
+    agentSpeakStop();
     box.innerHTML = messages.length ? orchMessagesHtml(messages) : (human
       ? '<div class="empty-state">Личная переписка начнётся с первого сообщения.</div>'
       : '<div class="empty-state">Начните диалог: например «Разработай простую стратегию максимально быстро».</div>');
     if (ORCH.transientError && ORCH.transientError.cid === cid) {
-      box.insertAdjacentHTML('beforeend', `<div class="orch-msg assistant"><span class="orch-err">${esc(ORCH.transientError.text)}</span></div>`);
+      box.insertAdjacentHTML('beforeend', `<div class="orch-msg assistant">${orchErrorHtml(ORCH.transientError)}</div>`);
     }
     ORCH.messagesSignature = signature;
     if (!human) {
       wireOrchFeedback(box);
       wireAgentFaces(box);
+      wireOrchAgentWorld(box, messages, cid);
+      wireOrchSpeech(box, messages, cid);
     }
     if (!silent || atBottom) box.scrollTop = box.scrollHeight;
     if (human && ORCH.open && ORCH.currentId === cid) {
@@ -8562,7 +10785,7 @@
     return true;
   }
   async function orchSend() {
-    if (ORCH.sending) return;
+    if (ORCH.sending || ORCH.dialogActionPending) return;
     const ta = qs('#orch-text'); const box = qs('#orch-msgs'); const sendBtn = qs('#orch-send');
     if (!ta || !box) return;
     const text = ta.value.trim();
@@ -8570,7 +10793,15 @@
     if (!text && !(human && ORCH.pendingAttachments.length)) return;
     if (isGuest()) { orchRenderAuthRequired(qs('#orch-panel')); return; }
     if (!window.API || API.config.offline) { toast('Чат недоступен в офлайн-превью'); return; }
+    let personaOptions = {}, chooseModel = false;
+    if (!human) {
+      try { personaOptions = orchPersonaTransport(ORCH.personas, ORCH.personaId, ORCH.personaModels || [], ORCH.selectedModelId || ''); }
+      catch (error) { toast(error.message); return; }
+    }
+    const pendingPersona = !human ? ORCH.personas.find(person => person.id === personaOptions.persona_id)
+      || (!ORCH.personaId ? ORCH.personas.find(person => person.main_assistant === true && person.status === 'active') : null) : null;
     ORCH.sending = true;
+    orchRenderPersonaPicker();
     ORCH.transientError = null;
     if (sendBtn) sendBtn.disabled = true;
     ta.value = ''; ta.style.height = 'auto';
@@ -8614,7 +10845,7 @@
         <div class="orch-think-live-label">${icon('spark')}<span>Передаю запрос…</span></div>
         <div class="orch-think-live-text"><span id="orch-live-think-body"></span></div>
       </div>
-      <div class="orch-msg assistant orch-live-answer" id="orch-live-body">${agentAvatarHtml('vitek', { speaking: true, label: 'Виктор', cls: 'orch-msg-face' })}<div class="orch-msg-stack"><span class="orch-dots"><i></i><i></i><i></i></span></div></div>
+      <div class="orch-msg assistant orch-live-answer" id="orch-live-body">${pendingPersona ? orchPendingPersonaFace(pendingPersona) : agentAvatarHtml('vitek', { speaking: true, label: 'Виктор', cls: 'orch-msg-face' })}<div class="orch-msg-stack"><span class="orch-dots"><i></i><i></i><i></i></span></div></div>
     </div>`);
     box.appendChild(live);
     wireAgentFaces(live);
@@ -8626,7 +10857,9 @@
     const liveStack = () => qs('.orch-msg-stack', liveBody) || liveBody;
     const setLiveFace = (ref, label) => {
       if (!liveBody) return;
-      const next = agentAvatarHtml(ref || 'vitek', {
+      const stableId = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(String(ref || ''));
+      const next = stableId ? orchPendingPersonaFace(ORCH.personas.find(person => person.id === ref), label)
+        : agentAvatarHtml(ref || 'vitek', {
         speaking: true, label: label || 'Виктор', cls: 'orch-msg-face',
       });
       const current = qs('.orch-msg-face', liveBody);
@@ -8659,25 +10892,29 @@
         },
         onError: (err) => {
           removeThink();
-          setLiveBody(`<span class="orch-err">Не удалось получить ответ: ${esc(err)}</span>`);
+          chooseModel = chooseModel || orchNeedsModelChoice(err);
+          setLiveBody(orchErrorHtml(orchFailure(err, false)));
           keepBottom();
         },
-      });
+      }, personaOptions);
       if (!streamResult || streamResult.ok !== true) {
-        const message = String((streamResult && streamResult.error) || 'Не удалось получить ответ.');
-        ORCH.transientError = { cid, text: `Не удалось получить ответ: ${message}` };
+        chooseModel = chooseModel || orchNeedsModelChoice(streamResult?.error);
+        ORCH.transientError = { cid, ...orchFailure(streamResult?.error, false) };
         removeThink();
-        setLiveBody(`<span class="orch-err">${esc(ORCH.transientError.text)}</span>`);
+        setLiveBody(orchErrorHtml(ORCH.transientError));
       }
     } catch (e) {
       // A failed streaming POST may already have been committed by the server.
       // Never repeat the same mutating message through a second transport.
-      const message = String((e && e.message) || e || 'Соединение прервалось');
-      ORCH.transientError = { cid, text: `Не удалось подтвердить получение ответа: ${message}. Обновите историю перед повторной отправкой.` };
+      chooseModel = chooseModel || orchNeedsModelChoice(e);
+      ORCH.transientError = { cid, ...orchFailure(e, true) };
       removeThink();
-      setLiveBody(`<span class="orch-err">${esc(ORCH.transientError.text)}</span>`);
+      setLiveBody(orchErrorHtml(ORCH.transientError));
     } finally {
       ORCH.sending = false;
+      orchRenderPersonaPicker();
+      // Several executable connections and no choice: offer the choice here.
+      if (chooseModel && ORCH.personaId) orchLoadPersonaModels('ambiguous');
       if (sendBtn) sendBtn.disabled = false;
       // Reload from storage so the final reply and auditable action states
       // replace the transient public progress block.
@@ -8693,6 +10930,6 @@
     return true;
   }
 
-  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV, openOrchestrator, openSFChat, closeOrchestrator, isGuest, requireSignIn, agentAvatarId, agentAvatarUrl, agentAvatarHtml, wireAgentFaces, agentFacePlay, agentFacePause, openCabinet, openAdminPanel, showEnvironmentSwitcher, get CURRENT_AUTH() { return CURRENT_AUTH; } };
+  window.UI = { icon, money, pct, pnlClass, badge, esc, el, qs, qsa, toast, confirmDialog, promptDialog, drawer, closeDrawer, sortable, ready, menu, pageActions, onLeave, signal, poll, renderLoading, renderEmpty, renderError, reportError, enhanceA11y, action, getSelectedAccount, setSelectedAccount, normalizeNewsKey, uniqueTickerRows, expandTickerRows, marketNoticeRows, scheduleStrategyRows, NAV, openOrchestrator, openSFChat, closeOrchestrator, isGuest, requireSignIn, agentAvatarId, agentAvatarUrl, agentAvatarHtml, wireAgentFaces, agentFacePlay, agentFacePause, agentSpeakStop, openCabinet, openAdminPanel, showEnvironmentSwitcher, get CURRENT_AUTH() { return CURRENT_AUTH; } };
   document.addEventListener('DOMContentLoaded', buildShell);
 })();
