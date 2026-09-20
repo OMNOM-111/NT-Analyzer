@@ -197,3 +197,11 @@
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Disposable Agent World PostgreSQL acceptance (deploy/testing/): generated
+# credentials, cluster data and its self-signed certificate never belong in Git.
+acceptance.env
+pgdata/
+*.superpw
+deploy/testing/**/server.key
+deploy/testing/**/server.crt

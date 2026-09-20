@@ -471,6 +471,41 @@ def test_auth_enabled() -> bool:
     }
 
 
+def preview_sandbox_enabled() -> bool:
+    """Whether this process is an isolated owner-launched Preview sandbox.
+
+    A Preview marker is not an authentication bypass.  It is accepted only in
+    an explicitly selected Development process with test auth enabled and a
+    high-entropy process id supplied by the parent Development server.  Canary
+    and Production therefore cannot be turned into Preview by setting one flag.
+    """
+    marker = str(os.environ.get("STRATFORGE_PREVIEW_SANDBOX") or "").strip()
+    preview_id = str(os.environ.get("STRATFORGE_PREVIEW_ID") or "").strip()
+    return bool(
+        marker == "1"
+        and environment_explicit()
+        and is_development()
+        and test_auth_enabled()
+        and re.fullmatch(r"[a-z0-9]{12,48}", preview_id)
+    )
+
+
+def preview_public_metadata() -> Dict[str, Any]:
+    """Secret-free Preview identity used by every real Aurora page."""
+    if not preview_sandbox_enabled():
+        return {"enabled": False}
+    scenario = str(os.environ.get("STRATFORGE_PREVIEW_SCENARIO") or "new_user").strip()
+    return {
+        "enabled": True,
+        "id": str(os.environ.get("STRATFORGE_PREVIEW_ID") or ""),
+        "scenario": scenario,
+        "label": "PREVIEW / TEST USER",
+        "synthetic": True,
+        "external_side_effects": "blocked",
+        "promo_code": str(os.environ.get("STRATFORGE_PREVIEW_PROMO_CODE") or ""),
+    }
+
+
 def impersonation_enabled() -> bool:
     """Owner impersonation ("open as persona") is the local Development QA default.
 
@@ -957,18 +992,26 @@ def status() -> Dict[str, Any]:
         "allow_live_orders": allow_live_orders(),
         "rate_limits_disabled": rate_limits_disabled(),
         "allow_owner_telegram_mirror": allow_owner_telegram_mirror(),
+        "preview_sandbox": preview_public_metadata(),
         "data_root": str(data_root()),
         "deployment": config.as_dict(),
     }
 
 
 def public_status() -> Dict[str, Any]:
-    return deployment_config(strict=False).public_dict()
+    return {
+        **deployment_config(strict=False).public_dict(),
+        "preview_sandbox": preview_public_metadata(),
+    }
 
 
 def assert_production_safe() -> None:
     """Retained name for the shared Canary/Production remote safety gate."""
     if not is_development():
+        if str(os.environ.get("STRATFORGE_PREVIEW_SANDBOX") or "").strip() == "1":
+            raise RuntimeEnvError(
+                "STRATFORGE_PREVIEW_SANDBOX запрещён в Canary/Production.", 503,
+            )
         if str(os.environ.get("NTA_ENABLE_TEST_AUTH") or "").strip() == "1":
             raise RuntimeEnvError(
                 "NTA_ENABLE_TEST_AUTH=1 запрещён в Canary/Production.", 503,
@@ -1071,6 +1114,9 @@ def session_cookie_name() -> str:
     """
     if str(os.environ.get("STRATFORGE_LEGACY_VIEWER") or "").strip() == "1":
         return "sf_legacy_viewer_session"
+    if preview_sandbox_enabled():
+        preview_id = str(os.environ.get("STRATFORGE_PREVIEW_ID") or "")[:24]
+        return f"sf_preview_{preview_id}_session"
     if environment_explicit():
         env = deployment_environment()
         if env == CANARY:
@@ -1093,6 +1139,8 @@ def local_storage_namespace() -> str:
     """
     if str(os.environ.get("STRATFORGE_LEGACY_VIEWER") or "").strip() == "1":
         return "legacy-viewer"
+    if preview_sandbox_enabled():
+        return "preview-" + str(os.environ.get("STRATFORGE_PREVIEW_ID") or "")[:24]
     if environment_explicit():
         env = deployment_environment()
         if env == CANARY:

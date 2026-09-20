@@ -90,10 +90,34 @@
     }
     return data;
   }
+  async function sendIdempotent(path, body, prefix) {
+    const requestId = mutationRequestId(prefix || 'mutation');
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: requestHeaders({
+        'Content-Type': 'application/json',
+        'Idempotency-Key': requestId,
+      }),
+      body: JSON.stringify(body || {}),
+    });
+    let data = null;
+    try { data = await res.json(); } catch (e) { /* empty */ }
+    if (!res.ok) {
+      const retryHeader = Number(res.headers.get('Retry-After') || 0);
+      throw new HttpError(
+        res.status, (data && data.error) || res.statusText, path,
+        retryHeader > 0 ? retryHeader * 1000 : 0,
+        (data && data.code) || '', data,
+      );
+    }
+    return data;
+  }
   // Orchestrator avatar TTS: returns either an audio Blob or a JSON fallback
   // signal `{ fallback: "browser" }` when OpenAI Speech is unavailable.
   async function orchestratorSpeak(payload) {
-    const path = '/api/ai-lab/orchestrator/speak';
+    return sendAudio('/api/ai-lab/orchestrator/speak', payload);
+  }
+  async function sendAudio(path, payload) {
     const res = await fetch(path, {
       method: 'POST',
       headers: requestHeaders({
@@ -149,7 +173,20 @@
   // and parse SSE frames manually. `handlers` = { onThinkingStart, onThinkingDelta,
   // onStatus, onThinkingDone, onFinal, onError, onDone }. Resolves when the
   // stream ends. Falls back gracefully if streaming is unsupported.
-  async function streamOrchestrator(message, conversationId, agent, handlers) {
+  function personaChatOptions(options) {
+    if (options?.selected_model_id != null && options?.persona_id == null) throw new Error('Сначала выберите Persona.');
+    if (options == null || options.persona_id == null) return {};
+    const id = options.persona_id;
+    if (typeof id !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) throw new Error('Выберите сохранённую Persona.');
+    const result = { persona_id: id.toLowerCase() };
+    if (options.selected_model_id != null) {
+      const model = options.selected_model_id;
+      if (typeof model !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(model)) throw new Error('Выберите сохранённое подключение.');
+      result.selected_model_id = model.toLowerCase();
+    }
+    return result;
+  }
+  async function streamOrchestrator(message, conversationId, agent, handlers, options) {
     const path = '/api/ai-lab/orchestrator/message/stream';
     const h = handlers || {};
     const res = await fetch(path, {
@@ -158,6 +195,7 @@
       body: JSON.stringify({
         message, conversation_id: conversationId || 'default', agent: agent || '',
         request_id: mutationRequestId('orchestrator'),
+        ...personaChatOptions(options),
       }),
     });
     if (!res.ok || !res.body || !res.body.getReader) {
@@ -230,6 +268,9 @@
     authGoogleLinkStart: (body) => send('/api/auth/google/start', 'POST', body || {}),
     authEmailStart: (body) => send('/api/auth/email/start', 'POST', body || {}),
     authEmailVerify: (body) => send('/api/auth/email/verify', 'POST', body || {}),
+    authHandleCheck: (handle, o) => getJSON('/api/auth/handle/check?handle=' + encodeURIComponent(handle || ''), o),
+    authRegistrationState: (id, o) => getJSON('/api/auth/registration/state?id=' + encodeURIComponent(id || ''), o),
+    authRegisterComplete: (body) => send('/api/auth/register/complete', 'POST', body || {}),
     authEmailLinkStart: (body) => send('/api/auth/email/link/start', 'POST', body || {}),
     authEmailLinkVerify: (body) => send('/api/auth/email/link/verify', 'POST', body || {}),
     legalTerms: (o) => getJSON('/api/legal/terms', o),
@@ -297,9 +338,19 @@
     adminOperations: (o) => getJSON('/api/admin/operations', o),
     authMe: (o) => getJSON('/api/auth/me', o),
     devPreviewStatus: (o) => getJSON('/api/dev/preview/status', o),
+    devPreviewLaunch: (scenario) => send('/api/dev/preview/launch', 'POST', { scenario }),
     devPreviewViewAs: (persona) => send('/api/dev/preview/view-as', 'POST', { persona }),
     devPreviewExit: () => send('/api/dev/preview/exit', 'POST', {}),
     devPreviewResetPersonas: () => send('/api/dev/preview/reset-personas', 'POST', {}),
+    previewSandboxReset: (scenario) => send('/api/dev/preview/reset', 'POST', { scenario }),
+    previewSandboxNewUser: () => send('/api/dev/preview/new-user', 'POST', {}),
+    previewSandboxSimulateClient: () => send('/api/dev/preview/simulate-client', 'POST', {}),
+    previewSandboxExit: () => send('/api/dev/preview/exit', 'POST', {}),
+    // Sandbox-only: fake input for a screen, and the synthetic Telegram
+    // approval that stands in for tapping the bot button.
+    previewSandboxIdentity: () => send('/api/dev/preview/identity', 'POST', {}),
+    previewSandboxApproveLogin: (challengeId) => send('/api/dev/preview/telegram/approve', 'POST', { challenge_id: challengeId }),
+    previewSandboxApproveGoogle: (intent) => send('/api/dev/preview/google/approve', 'POST', { intent }),
     devBootstrapMint: () => send('/api/dev/bootstrap/mint', 'POST', {}),
     devServiceLogin: (actor) => send('/api/dev/service-login', 'POST', { actor }),
     adminReleases: (o) => getJSON('/api/admin/releases', o),
@@ -322,10 +373,15 @@
     accountSecurity: (o) => getJSON('/api/account/security', o),
     accountDevices: (o) => getJSON('/api/account/devices', o),
     accountSecurityChallenge: (body) => send('/api/account/security/challenge', 'POST', body || {}),
+    accountSecurityChallengeResend: (body) => send('/api/account/security/challenge/resend', 'POST', body || {}),
     accountSecurityChallengeConfirm: (body) => send('/api/account/security/challenge/confirm', 'POST', body || {}),
     accountDeviceApprove: (body) => send('/api/account/devices/approve', 'POST', body || {}),
     accountDeviceReject: (deviceId) => send('/api/account/devices/reject', 'POST', { device_id: deviceId }),
     accountDeviceRevoke: (deviceId) => send('/api/account/devices/revoke', 'POST', { device_id: deviceId }),
+    accountDeviceRename: (deviceId, displayName) => send('/api/account/devices/rename', 'POST', { device_id: deviceId, display_name: displayName }),
+    accountMachineRevoke: (machineId) => send('/api/account/machines/revoke', 'POST', { physical_device_id: machineId }),
+    accountMachineRename: (machineId, displayName) => send('/api/account/machines/rename', 'POST', { physical_device_id: machineId, display_name: displayName }),
+    accountSessionRevoke: (sessionId) => send('/api/account/sessions/revoke', 'POST', { session_id: sessionId }),
     accountNtSecurity: (o) => getJSON('/api/account/nt-security', o),
     accountIdentities: (o) => getJSON('/api/account/identities', o),
     accountNtStepUpStart: (body) => send('/api/account/nt-security/step-up/start', 'POST', body || {}),
@@ -368,6 +424,7 @@
     bridgeSetup: (o) => getJSON('/api/bridge/setup', o),
     workspaces: (o) => getJSON('/api/workspaces', o),
     workspacePersonal: (body) => send('/api/workspaces/personal', 'POST', body || {}),
+    accountPersonalWorkspace: (body) => send('/api/account/workspace/personal', 'POST', body || {}),
     workspaceSelect: (workspaceId) => send('/api/workspaces/select', 'POST', { workspace_id: workspaceId }),
     bridgeConnections: (o) => getJSON('/api/bridge/connections', o),
     bridgePairStart: (body) => send('/api/bridge/pair/start', 'POST', body || {}),
@@ -399,6 +456,19 @@
     cloudProviderTest: (provider) => send('/api/ai-lab/cloud-agents/provider-test', 'POST', { provider }),
     cloudProviderDisconnect: (provider) => send('/api/ai-lab/cloud-agents/provider-disconnect', 'POST', { provider }),
     aiAgents: (o) => getJSON('/api/ai-agents', o),
+    aiControlCenterOverview: (o) => getJSON('/api/ai-control-center/overview', o),
+    aiControlCenterOverviewSnapshot: (o) => getJSON('/api/ai-control-center/overview?cached=1', o),
+    aiControlCenterTasks: (q, o) => getJSON('/api/ai-control-center/tasks' + qs(q), o),
+    aiControlCenterTask: (id, o) => getJSON('/api/ai-control-center/tasks/' + encodeURIComponent(id), o),
+    aiControlCenterDomain: (domain, q, o) => getJSON('/api/ai-control-center/domains/' + encodeURIComponent(domain) + qs(q), o),
+    aiControlCenterGoal: (o) => getJSON('/api/ai-control-center/goal', o),
+    aiControlCenterGoalSave: (goal) => send('/api/ai-control-center/goal', 'POST', { goal }),
+    aiControlCenterDomainItem: (domain, id, o) => getJSON('/api/ai-control-center/domains/' + encodeURIComponent(domain) + '/' + encodeURIComponent(id), o),
+    aiControlCenterDomainAction: (domain, id, action, body) => send('/api/ai-control-center/domains/' + encodeURIComponent(domain) + '/' + encodeURIComponent(id) + '/' + encodeURIComponent(action), 'POST', body || {}),
+    aiControlCenterPersonaSpeak: (id, body) => sendAudio('/api/ai-control-center/domains/personas/' + encodeURIComponent(id) + '/speak', body || {}),
+    aiControlCenterSection: (section, q, o) => getJSON('/api/ai-control-center/' + encodeURIComponent(section) + qs(q), o),
+    aiControlCenterDemoRun: (body) => send('/api/ai-control-center/demo-runs', 'POST', body || {}),
+    aiControlCenterTaskChat: (id, body) => send('/api/ai-control-center/tasks/' + encodeURIComponent(id) + '/chat', 'POST', body || {}),
     aiAgent: (id, o) => getJSON('/api/ai-agents/' + encodeURIComponent(id), o),
     aiAgentCreate: (agent) => send('/api/ai-agents', 'POST', { agent }),
     aiAgentUpdate: (id, agent) => send('/api/ai-agents/' + encodeURIComponent(id), 'POST', { agent }),
@@ -482,6 +552,33 @@
     communityPublishStrategy: (body) => send('/api/community/strategies', 'POST', body || {}),
     communityCopy: (body) => send('/api/community/copy', 'POST', body || {}),
     communityReport: (body) => send('/api/community/report', 'POST', body || {}),
+    communityV2Feed: (q, o) => getJSON('/api/community/v2/feed' + qs(q), o),
+    communityV2Saved: (q, o) => getJSON('/api/community/v2/saved' + qs(q), o),
+    communityV2Profiles: (q, o) => getJSON('/api/community/v2/profiles' + qs(q), o),
+    communityV2Profile: (id, q, o) => getJSON('/api/community/v2/profiles/' + encodeURIComponent(id) + qs(q), o),
+    communityV2Identities: (o) => getJSON('/api/community/v2/identities', o),
+    communityV2Organization: (id, q, o) => getJSON('/api/community/v2/organizations/' + encodeURIComponent(id) + qs(q), o),
+    communityV2FollowOrganization: (orgId, following) => send('/api/community/v2/organizations/follow', 'POST', { org_id: orgId, following: !!following }),
+    communityV2UpdateProfile: (body) => send('/api/community/v2/profile', 'POST', body || {}),
+    communityV2Follow: (profileId, following) => send('/api/community/v2/follows', 'POST', { profile_id: profileId, following: following !== false }),
+    communityV2Post: (body) => sendIdempotent('/api/community/v2/posts', body || {}, 'community-post'),
+    communityV2Objects: (q, o) => getJSON('/api/community/v2/objects' + qs(q), o),
+    communityV2PublishObject: (body) => sendIdempotent('/api/community/v2/objects', body || {}, 'community-object'),
+    communityV2Reaction: (postId, reaction) => send('/api/community/v2/posts/' + encodeURIComponent(postId) + '/reaction', 'POST', { reaction: reaction || '' }),
+    communityV2Comment: (postId, text) => send('/api/community/v2/posts/' + encodeURIComponent(postId) + '/comments', 'POST', { text: text || '' }),
+    communityV2Bookmark: (postId, bookmarked) => send('/api/community/v2/posts/' + encodeURIComponent(postId) + '/bookmark', 'POST', { bookmarked: bookmarked !== false }),
+    communityV2DeletePost: (postId) => send('/api/community/v2/posts/' + encodeURIComponent(postId) + '/delete', 'POST', {}),
+    communityV2DeleteComment: (commentId) => send('/api/community/v2/comments/' + encodeURIComponent(commentId) + '/delete', 'POST', {}),
+    communityV2Block: (profileId, blocked) => send('/api/community/v2/blocks', 'POST', { profile_id: profileId, blocked: blocked !== false }),
+    communityV2Report: (body) => send('/api/community/v2/reports', 'POST', body || {}),
+    communityV2Moderation: (q, o) => getJSON('/api/community/v2/moderation' + qs(q), o),
+    communityV2Moderate: (reportId, body) => send('/api/community/v2/moderation/' + encodeURIComponent(reportId), 'POST', body || {}),
+    sfChatConversations: (q, o) => getJSON('/api/sf-chat/conversations' + qs(q), o),
+    sfChatState: (o) => getJSON('/api/sf-chat/state', o),
+    sfChatConversation: (id, q, o) => getJSON('/api/sf-chat/conversations/' + encodeURIComponent(id) + qs(q), o),
+    sfChatStartConversation: (profileId) => send('/api/sf-chat/conversations/start', 'POST', { profile_id: profileId }),
+    sfChatMessage: (conversationId, text, attachments) => sendIdempotent('/api/sf-chat/messages', { conversation_id: conversationId, text: text || '', attachments: attachments || [] }, 'sf-chat'),
+    sfChatRead: (conversationId) => send('/api/sf-chat/read', 'POST', { conversation_id: conversationId }),
     aiStarRatings: (o) => getJSON('/api/ai-lab/ratings', o),
     createBatch: (body) => send('/api/batches', 'POST', body),
     cancelJob: (id) => send('/api/jobs/' + encodeURIComponent(id) + '/cancel', 'POST', {}),
@@ -541,8 +638,8 @@
     aiRunStatus: (o) => getJSON('/api/ai-lab/run/status', o),
     aiChiefStatus: (o) => getJSON('/api/ai-lab/chief-agent', o),
     aiOrchestratorStatus: (o) => getJSON('/api/ai-lab/orchestrator', o),
-    aiOrchestratorMessage: (message, conversationId, agent) => send('/api/ai-lab/orchestrator/message', 'POST', { message, conversation_id: conversationId || 'default', agent: agent || '', request_id: mutationRequestId('orchestrator') }),
-    aiOrchestratorMessageStream: (message, conversationId, agent, handlers) => streamOrchestrator(message, conversationId, agent, handlers),
+    aiOrchestratorMessage: (message, conversationId, agent, options) => send('/api/ai-lab/orchestrator/message', 'POST', { message, conversation_id: conversationId || 'default', agent: agent || '', request_id: mutationRequestId('orchestrator'), ...personaChatOptions(options) }),
+    aiOrchestratorMessageStream: (message, conversationId, agent, handlers, options) => streamOrchestrator(message, conversationId, agent, handlers, options),
     aiOrchestratorJob: (jobId, o) => getJSON('/api/ai-lab/orchestrator/jobs/' + encodeURIComponent(jobId), o),
     aiOrchestratorCancelJob: (jobId) => send('/api/ai-lab/orchestrator/jobs/' + encodeURIComponent(jobId) + '/cancel', 'POST', {}),
     aiOrchestratorSpeak: (payload) => orchestratorSpeak(payload || {}),
@@ -590,6 +687,7 @@
     aiSweepStale: (body) => send('/api/ai-lab/maintenance/sweep-stale', 'POST', body || {}),
     aiUserResearchScan: (body) => send('/api/ai-lab/user-research/scan', 'POST', body || {}),
     aiResearches: (o) => getJSON('/api/ai-lab/researches', o),
+    aiKnowledgeBase: (o) => getJSON('/api/ai-lab/knowledge-base', o),
     aiResearch: (id, o) => getJSON('/api/ai-lab/researches/' + encodeURIComponent(id), o),
     aiResearchCreate: (body) => send('/api/ai-lab/researches', 'POST', body || {}),
     aiResearchUpdate: (id, body) => send('/api/ai-lab/researches/' + encodeURIComponent(id), 'POST', body || {}),

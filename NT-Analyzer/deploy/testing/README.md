@@ -74,3 +74,38 @@ missing.
 - Production itself hard-rejects the local auth bypass and the test DSNs; this
   kit only targets an isolated acceptance instance.
 - No secrets are stored in this folder; `.env.example` contains placeholders.
+
+## Agent World acceptance (migration 0023) — no longer blocked
+
+`tests/test_agent_world_postgres.py` is **69 cases from 27 test functions**.
+Exactly one, `test_constructor_does_no_database_io_ddl_or_fallback`, needs no
+server, which is why an unconfigured run reports `1 passed, 68 skipped` and a
+configured run reports `69 passed`. The suite size never changed.
+
+It uses its own gate, separate from the four Stage 8 suites above:
+
+    STRATFORGE_TEST_AGENT_WORLD_POSTGRES_ALLOW=1
+    STRATFORGE_TEST_AGENT_WORLD_POSTGRES_ADMIN_URL=...
+    STRATFORGE_TEST_AGENT_WORLD_POSTGRES_URL=...
+    STRATFORGE_ALLOW_INSECURE_LOCAL_POSTGRES=1
+
+and refuses any target that is not a disposable `aw_disposable_*` database on
+127.0.0.1, checking that the application role is neither SUPERUSER nor
+BYPASSRLS. Three cases open the adapter with `production=True`, so the cluster
+must serve TLS.
+
+`provision-disposable-agent-world-postgres.py` brings up such a cluster inside a
+directory you choose — its own data directory, a free loopback port, a
+self-signed certificate for that cluster only, generated passwords written to
+`<workdir>/acceptance.env`, and nothing else. It registers no service, needs no
+elevation, and changes no PATH, firewall rule or existing PostgreSQL install.
+`--teardown` stops it and deletes the data directory and the env file.
+
+Obtain the binaries as the official PostgreSQL Windows **zip archive** (no
+installer) and extract it so `<workdir>/pgsql/bin/initdb.exe` exists. Note when
+recording evidence: that archive is served without a published checksum or
+signature file, and the executables inside it are not Authenticode-signed, so
+authenticity rests on the HTTPS origin plus the version and structure you can
+verify locally.
+
+Never commit `acceptance.env`, `pgdata/`, `server.key` or `server.crt`.

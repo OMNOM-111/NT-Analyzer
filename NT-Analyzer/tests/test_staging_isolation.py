@@ -7,7 +7,7 @@ from app import (
     account_auth, admin_journal, community, demo_backtest, durable, google_auth,
     governance, in_app_notifications, integrations, jobqueue, local_secrets,
     marginrefresh, market_data, market_events, market_news, ops, portfolio_registry,
-    practice_trading, runtime, runtime_env, strategy_recovery, tunnel_manager,
+    practice_trading, runtime, runtime_env, sf_chat, strategy_recovery, tunnel_manager,
     secure_store, subscriptions, telegram_remote, telegram_service, user_support,
     vitek, workspaces,
 )
@@ -37,6 +37,7 @@ def test_all_mutable_core_paths_switch_to_staging_root(tmp_path, monkeypatch) ->
             "telegram_settings": telegram_service._settings_path(),
             "telegram_state": telegram_service._state_path(),
             "community": community._store_path(),
+            "sf_chat": sf_chat._store_path(),
             "practice": practice_trading._store_path(),
             "demo": demo_backtest._quota_path(),
             "notifications": in_app_notifications._path(),

@@ -320,6 +320,7 @@ def _login(uid: int) -> str:
     out = account_auth.create_session_for_user(
         uid, ip="203.0.113.5", user_agent="Mozilla/5.0 (Windows NT 10.0) Chrome/120",
         require_google=False, skip_dual_auth_gate=True,
+        device_confirmation_required=False,
     )
     return out["session_token"]
 

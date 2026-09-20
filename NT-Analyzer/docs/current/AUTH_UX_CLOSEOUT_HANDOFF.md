@@ -19,6 +19,27 @@ OWNER** в конце. Общая причина у почти всего: ав�
 учётные данные владельца, поэтому любая аутентифицированная проверка на
 живых Canary/Production выполняется только человеком.
 
+## Development update 2026-09-02 — Device Confirmation / Trusted Access
+
+Новый flow разрабатывается отдельно в ветке
+`codex/device-confirmation-trusted-access`; он ещё не выпускался в Canary или
+Production. Канонический чек-лист и verification evidence находятся в
+[Device Confirmation Development record](../changelog/2026-09-02-device-confirmation-trusted-access.md).
+
+Актуальный Development-контракт заменяет прежнее предположение о суточном
+доверии: новый неизвестный human access получает pending session примерно на
+две минуты и подтверждается шестизначным кодом через Telegram или verified
+email. Пользователь выбирает permanent trust для конкретного Client либо
+доступ только для текущей auth Session. При session-only следующая сессия снова
+требует подтверждения.
+
+Физический Machine не выводится из IP, hostname, User-Agent, VPN или location.
+Machine → Client → Session разрешено показывать только при hardware-bound
+Connector identity или attested pairing; остальные browser/app access остаются
+отдельными Clients. Server-side guard не допускает pending session к продуктовым
+API. Старый operational snapshot ниже сохранён как историческое свидетельство
+действующего релиза, а не как описание ещё не выпущенной Development-функции.
+
 Найдено и починено попутно, вне исходного списка:
 
 - **удаление аккаунта было неполным** — оставляло identities, devices и

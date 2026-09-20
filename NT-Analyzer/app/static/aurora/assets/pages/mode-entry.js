@@ -7,6 +7,7 @@
   const options = Array.from(document.querySelectorAll('[data-mode]'));
   let auth = null;
   let currentMode = '';
+  let previewContext = { enabled: false };
 
   const RELEASE_ICONS = {
     dev: 'brand/stratforge-dev.png',
@@ -35,6 +36,12 @@
     const source = payload || {};
     const deployment = source.deployment && typeof source.deployment === 'object'
       ? source.deployment : source;
+    const preview = source.preview_sandbox && typeof source.preview_sandbox === 'object'
+      ? source.preview_sandbox
+      : (deployment.preview_sandbox && typeof deployment.preview_sandbox === 'object'
+        ? deployment.preview_sandbox : { enabled: false });
+    previewContext = Object.assign({ enabled: false }, preview);
+    renderPreviewBanner();
     const environment = String(deployment.deployment_environment || deployment.environment || source.deployment_environment || '').toLowerCase();
     const channel = String(deployment.release_channel || '').toLowerCase();
     const version = String(deployment.app_version || deployment.build_version || '').trim();
@@ -83,6 +90,67 @@
   async function loadBuildIdentity() {
     try { applyBuildIdentity(await window.API.http.runtimeEnv({ retries: 0 })); }
     catch (e) { /* Keep the unresolved marker visible; never guess a channel. */ }
+  }
+
+  function renderPreviewBanner() {
+    const old = document.getElementById('dev-view-as-banner');
+    if (old) old.remove();
+    if (!previewContext.enabled) return;
+    const labels = {
+      new_user: 'Новый пользователь',
+      active_user: 'Активный пользователь',
+      trusted_device: 'Доверенное устройство',
+      pending_access: 'Новый неподтверждённый доступ',
+    };
+    const scenario = String(previewContext.scenario || 'new_user');
+    const bar = document.createElement('div');
+    bar.id = 'dev-view-as-banner';
+    bar.className = 'dev-view-as-banner preview-sandbox-banner';
+    bar.setAttribute('role', 'status');
+    bar.setAttribute('aria-live', 'polite');
+    const tag = document.createElement('span');
+    tag.className = 'dev-view-as-tag';
+    tag.textContent = 'PREVIEW / TEST USER';
+    const role = document.createElement('span');
+    role.className = 'dev-view-as-role';
+    role.textContent = labels[scenario] || scenario;
+    const note = document.createElement('span');
+    note.className = 'dev-view-as-note';
+    note.textContent = 'Только synthetic data · внешние действия заблокированы';
+    const actions = document.createElement('span');
+    actions.className = 'preview-sandbox-actions';
+    const controls = [
+      ['reset', 'Reset Preview'],
+      ['new-user', 'New Preview User'],
+      ['new-client', 'Новый browser/client'],
+      ['exit', 'Exit Preview'],
+    ];
+    controls.forEach(([id, labelText]) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = `btn sm${id === 'exit' ? ' preview-exit' : ''}`;
+      button.dataset.previewControl = id;
+      button.textContent = labelText;
+      if (id === 'new-client' && !auth) button.disabled = true;
+      actions.appendChild(button);
+    });
+    bar.append(tag, role, note, actions);
+    document.body.appendChild(bar);
+    const run = async (action) => {
+      Array.from(actions.querySelectorAll('button')).forEach(button => { button.disabled = true; });
+      setStatus('Обновляю Preview sandbox…');
+      try {
+        const out = await action();
+        window.location.assign((out && out.redirect_url) || '/ui/');
+      } catch (error) {
+        setStatus((error && error.message) || 'Preview sandbox недоступен.');
+        renderPreviewBanner();
+      }
+    };
+    actions.querySelector('[data-preview-control="reset"]').onclick = () => run(() => window.API.http.previewSandboxReset(scenario));
+    actions.querySelector('[data-preview-control="new-user"]').onclick = () => run(() => window.API.http.previewSandboxNewUser());
+    actions.querySelector('[data-preview-control="new-client"]').onclick = () => run(() => window.API.http.previewSandboxSimulateClient());
+    actions.querySelector('[data-preview-control="exit"]').onclick = () => run(() => window.API.http.previewSandboxExit());
   }
 
   function label(mode) { return mode === 'beginner' ? 'Студент' : 'Профессионал'; }
@@ -168,6 +236,7 @@
       currentMode = String((auth && auth.ux_mode) || user.ux_mode || '').toLowerCase();
       if (currentMode !== 'beginner' && currentMode !== 'professional') currentMode = '';
     } catch (e) { auth = null; currentMode = ''; }
+    renderPreviewBanner();
     show();
   })();
 })();

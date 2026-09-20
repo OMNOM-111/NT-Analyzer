@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import hashlib
 import os
+import socket
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 
@@ -48,6 +50,7 @@ def _truncate_stage8(admin_url: str) -> None:
     import psycopg
 
     with psycopg.connect(admin_url, autocommit=True) as conn:
+        conn.execute("SELECT set_config('stratforge.service_scope', 'global', false)")
         conn.execute(
             """
             TRUNCATE sf_service_leases, sf_service_heartbeats,
@@ -65,6 +68,8 @@ def stage8_store(monkeypatch):
 
     _truncate_stage8(ADMIN_URL)
     with psycopg.connect(ADMIN_URL, autocommit=True) as conn:
+        # The schema-owner fixture role is also subject to FORCE RLS.
+        conn.execute("SELECT set_config('stratforge.service_scope', 'global', false)")
         conn.execute(
             """INSERT INTO sf_users(user_id,status,is_owner,document) VALUES
                  (%s,'active',TRUE,'{}'::jsonb),
@@ -156,7 +161,7 @@ def _bar(at: datetime, *, timeframe: str = "1m", close: float = 100.5) -> dict:
 
 def test_stage8_migrations_and_relational_isolation_constraints(stage8_store) -> None:
     plan = MigrationRunner(ADMIN_URL).plan()
-    assert plan["applied_versions"] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    assert plan["applied_versions"] == list(range(1, 24))
     assert plan["pending"] == []
     expected = {
         "sf_connector_sessions_workspace_installation_fk",
@@ -660,8 +665,19 @@ def test_stage8_retention_is_bounded_and_covers_sensitive_operational_state(stag
         ).fetchone()["status"] == "open"
 
 
-def test_stage8_storage_outage_fails_closed_before_processing(stage8_store, monkeypatch) -> None:
-    bad_url = APP_URL.replace(":55432/", ":55433/")
+@pytest.fixture()
+def unavailable_database_url():
+    """Hold a non-listening loopback port instead of guessing another DB port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as unavailable:
+        unavailable.bind(("127.0.0.1", 0))
+        parsed = urlsplit(APP_URL)
+        credentials = parsed.netloc.rpartition("@")[0]
+        authority = (credentials + "@" if credentials else "") + f"127.0.0.1:{unavailable.getsockname()[1]}"
+        yield urlunsplit(parsed._replace(netloc=authority))
+
+
+def test_stage8_storage_outage_fails_closed_before_processing(stage8_store, monkeypatch, unavailable_database_url) -> None:
+    bad_url = unavailable_database_url
     bad_client = PostgresClient(bad_url, production=False)
     monkeypatch.setattr(production_storage_package, "get_client", lambda: bad_client)
     monkeypatch.setattr(ai_budgets, "get_client", lambda: bad_client)

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+import socket
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import pytest
 
@@ -50,6 +52,9 @@ def clean_database(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("STRATFORGE_MAX_ARTIFACT_BYTES", "524288")
     (tmp_path / "objects").mkdir()
     with psycopg.connect(ADMIN_URL, autocommit=True) as conn:
+        # The acceptance schema owner is NOSUPERUSER/NOBYPASSRLS. Raw fixture
+        # connections establish the same service scope as PostgresClient.
+        conn.execute("SELECT set_config('stratforge.service_scope', 'global', false)")
         conn.execute(
             """
             TRUNCATE sf_repository_documents, sf_auth_challenges, sf_auth_sessions,
@@ -62,6 +67,10 @@ def clean_database(tmp_path: Path, monkeypatch):
                             sf_telegram_outbox, sf_telegram_bot_state, sf_ai_workspace_budgets,
                             sf_ai_reservations, sf_ai_usage_events, sf_market_data_subscriptions,
                             sf_market_data_snapshots, sf_market_data_ingest_batches, sf_operational_events,
+              sf_chat_messages, sf_chat_reads, sf_chat_participants, sf_chat_conversations,
+              sf_community_comments, sf_community_reactions, sf_community_bookmarks,
+              sf_community_moderation_reports, sf_community_follows, sf_community_blocks,
+              sf_community_posts, sf_community_profiles,
               sf_storage_quotas, sf_artifacts, sf_migration_runs, sf_workspaces,
               sf_users RESTART IDENTITY CASCADE
             """
@@ -77,9 +86,9 @@ def _seed(client: PostgresClient) -> dict[str, str]:
     docs = DocumentRepository(client)
     auth = docs.read("auth", {"version": 2, "users": [], "challenges": [], "sessions": []})
     auth["users"] = [
-        {"user_id": 101, "status": "active", "is_owner": True, "first_name": "Owner"},
-        {"user_id": 202, "status": "active", "is_owner": False, "first_name": "Alpha"},
-        {"user_id": 303, "status": "active", "is_owner": False, "first_name": "Beta"},
+        {"user_id": 101, "user_uuid": str(uuid.uuid5(uuid.NAMESPACE_URL, "storage-acceptance:101")), "status": "active", "is_owner": True, "first_name": "Owner"},
+        {"user_id": 202, "user_uuid": str(uuid.uuid5(uuid.NAMESPACE_URL, "storage-acceptance:202")), "status": "active", "is_owner": False, "first_name": "Alpha"},
+        {"user_id": 303, "user_uuid": str(uuid.uuid5(uuid.NAMESPACE_URL, "storage-acceptance:303")), "status": "active", "is_owner": False, "first_name": "Beta"},
     ]
     docs.write("auth", auth)
 
@@ -122,8 +131,8 @@ def _seed(client: PostgresClient) -> dict[str, str]:
 
 def test_migration_is_applied_and_checksum_stable() -> None:
     plan = MigrationRunner(ADMIN_URL).plan()
-    assert plan["latest_version"] == 11
-    assert plan["applied_versions"] == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    assert plan["latest_version"] == 23
+    assert plan["applied_versions"] == list(range(1, 24))
     assert plan["pending"] == []
     assert len(plan["migration_set_sha256"]) == 64
 
@@ -181,6 +190,50 @@ def test_document_optimistic_concurrency_rejects_lost_update() -> None:
     doc_b["active_workspaces"]["303"] = ids["b"]
     with pytest.raises(StorageConflictError, match="Concurrent workspaces"):
         repo_b.write("workspaces", doc_b)
+
+
+def test_community_and_sf_chat_documents_sync_fk_mirrors_and_deny_scoped_sql() -> None:
+    client = _client()
+    ids = _seed(client)
+    docs = DocumentRepository(client)
+    community_doc = docs.read("community", {"version": 4})
+    community_doc.update({
+        "profiles": [
+            {"profile_id": "sfp_alpha_0001", "user_id": 202, "username": "alpha_user",
+             "profile_visibility": "network", "allow_messages": "everyone"},
+            {"profile_id": "sfp_beta_00001", "user_id": 303, "username": "beta_user",
+             "profile_visibility": "followers", "allow_messages": "following"},
+        ],
+        "posts": [{
+            "post_id": "cpost_alpha_001", "author_profile_id": "sfp_alpha_0001",
+            "workspace_id": ids["a"], "visibility": "network", "kind": "text",
+        }],
+        "comments": [], "follows": [], "social_blocks": [], "post_reactions": [],
+        "bookmarks": [], "reports": [],
+    })
+    docs.write("community", community_doc)
+    chat_doc = docs.read("sf_chat", {"version": 1})
+    chat_doc.update({
+        "conversations": [{
+            "conversation_id": "sfh_alpha_beta_01", "conversation_type": "human",
+            "participant_profile_ids": ["sfp_alpha_0001", "sfp_beta_00001"], "last_seq": 1,
+        }],
+        "messages": [{
+            "message_id": "sfm_alpha_000001", "conversation_id": "sfh_alpha_beta_01",
+            "seq": 1, "sender_profile_id": "sfp_alpha_0001", "text": "private",
+        }],
+        "reads": [{
+            "conversation_id": "sfh_alpha_beta_01", "profile_id": "sfp_alpha_0001",
+            "last_read_seq": 1,
+        }],
+    })
+    docs.write("sf_chat", chat_doc)
+
+    with client.transaction(Scope.global_service_scope(), read_only=True) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM sf_community_profiles").fetchone()["n"] == 2
+        assert conn.execute("SELECT count(*) AS n FROM sf_chat_messages").fetchone()["n"] == 1
+    with client.transaction(Scope(user_id=202, workspace_id=ids["a"]), read_only=True) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM sf_chat_messages").fetchone()["n"] == 0
 
 
 def test_legacy_audit_repository_populates_stage8_required_columns() -> None:
@@ -267,9 +320,16 @@ def test_artifacts_are_opaque_checksum_verified_quota_bound_and_isolated(monkeyp
 
 
 def test_database_outage_and_read_only_fail_closed() -> None:
-    bad = APP_URL.replace(":55432/", ":55433/")
-    with pytest.raises(StorageUnavailableError):
-        AuthRepository(_client(bad)).get_user(202, scope=Scope(user_id=202))
+    # Reserve a loopback port without listening. The failure is independent of
+    # the acceptance server's configured port and cannot hit another database.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as unavailable:
+        unavailable.bind(("127.0.0.1", 0))
+        parsed = urlsplit(APP_URL)
+        credentials = parsed.netloc.rpartition("@")[0]
+        authority = (credentials + "@" if credentials else "") + f"127.0.0.1:{unavailable.getsockname()[1]}"
+        bad = urlunsplit(parsed._replace(netloc=authority))
+        with pytest.raises(StorageUnavailableError):
+            AuthRepository(_client(bad)).get_user(202, scope=Scope(user_id=202))
 
     separator = "&" if "?" in APP_URL else "?"
     read_only_url = APP_URL + separator + "options=" + quote("-c default_transaction_read_only=on")
@@ -288,7 +348,7 @@ def test_selected_owner_migration_is_atomic_scoped_and_idempotent() -> None:
     documents = {
         "auth": {
             "version": 2,
-            "users": [{"user_id": owner_id, "is_owner": True, "status": "active",
+            "users": [{"user_id": owner_id, "user_uuid": str(uuid.uuid5(uuid.NAMESPACE_URL, "storage-acceptance:404")), "is_owner": True, "status": "active",
                        "first_name": "Selected", "session_token": "excluded"}],
             "challenges": [{"challenge_id": "excluded-challenge"}],
             "sessions": [{"session_id": "excluded-session", "user_id": owner_id}],
@@ -411,7 +471,7 @@ def test_real_application_modules_route_production_state_to_postgres_only(
         workspace_id = "ws_owner_PRODMOD01"
         auth_doc = account_auth._read_doc()
         auth_doc["users"] = [{
-            "user_id": owner_id, "is_owner": True, "role": "owner",
+            "user_id": owner_id, "user_uuid": str(uuid.uuid5(uuid.NAMESPACE_URL, "storage-acceptance:505")), "is_owner": True, "role": "owner",
             "status": "active", "first_name": "Production",
         }]
         account_auth._write_doc(auth_doc)
@@ -454,34 +514,24 @@ def test_real_application_modules_route_production_state_to_postgres_only(
 
 
 
-def test_workspace_membership_upsert_defect(monkeypatch, tmp_path) -> None:
-    reset_for_tests()
-    monkeypatch.setenv("STRATFORGE_STORAGE_MODE", "postgresql")
-    monkeypatch.setenv("STRATFORGE_DATABASE_URL", APP_URL)
-    core.init_pool()
-    with core._pool.connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM sf_workspace_memberships")
-            cur.execute("DELETE FROM sf_workspaces")
-            cur.execute("DELETE FROM sf_users")
-    try:
-        user_id = 901
-        ws_id = "ws_test_upsert_123"
-        with core._pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("INSERT INTO sf_users (user_id, status, role, is_owner, auth_secret) VALUES (%s, 'active', 'user', false, '')", (user_id,))
-                cur.execute("INSERT INTO sf_workspaces (workspace_id, owner_user_id, status, kind, name) VALUES (%s, %s, 'active', 'personal', 'Test')", (ws_id, user_id))
-        
-        doc = {"workspaces": [], "memberships": [{"workspace_id": ws_id, "user_id": user_id, "role": "owner"}], "active_workspaces": {}}
-        # This will trigger the INSERT ON CONFLICT UPDATE in core.py
-        core.flush_workspaces(doc)
-        
-        # Second flush should not raise UniqueViolation or Foreign Key error
-        core.flush_workspaces(doc)
-        
-        with core._pool.connection() as conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT role FROM sf_workspace_memberships WHERE workspace_id = %s AND user_id = %s", (ws_id, user_id))
-                assert cur.fetchone()[0] == "owner"
-    finally:
-        reset_for_tests()
+def test_workspace_membership_upsert_preserves_referenced_jobs() -> None:
+    """Use the current writer, not the removed pool/flush_workspaces API."""
+    client = _client()
+    identities = _seed(client)
+    scope = Scope(user_id=202, workspace_id=identities["a"])
+    job = {"job_id": "job_upsert_reference", "workspace_id": identities["a"],
+           "user_id": 202, "kind": "backtest", "status": "queued",
+           "idempotency_key": "membership-upsert-acceptance"}
+    JobRepository(client).put(job, scope=scope)
+    documents = DocumentRepository(client)
+    for role in ("operator", "owner", "owner"):
+        document = documents.read("workspaces", {})
+        next(row for row in document["memberships"] if row["workspace_id"] == identities["a"])["role"] = role
+        documents.write("workspaces", document)
+    with client.transaction(Scope.global_service_scope(), read_only=True) as conn:
+        rows = conn.execute(
+            "SELECT role FROM sf_workspace_memberships WHERE workspace_id=%s AND user_id=%s",
+            (identities["a"], 202),
+        ).fetchall()
+    assert rows == [{"role": "owner"}]
+    assert JobRepository(client).get(job["job_id"], scope=scope)["job_id"] == job["job_id"]

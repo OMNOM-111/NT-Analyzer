@@ -22,11 +22,23 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import atexit
+import os
 import secrets
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+import threading
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from . import account_auth, runtime_env, workspaces
+from . import account_auth, preview_sandbox, runtime_env, workspaces
 
 
 # Reserved deterministic id band for preview personas (kept clear of real and
@@ -98,6 +110,309 @@ class DevPreviewError(RuntimeError):
         super().__init__(message)
         self.status = int(status)
         self.code = str(code or "")
+
+
+# --------------------------------------------------------------------------- #
+# Full isolated Preview sandbox process.
+# --------------------------------------------------------------------------- #
+_SANDBOX_LOCK = threading.RLock()
+_ACTIVE_SANDBOX: Optional[Dict[str, Any]] = None
+
+
+def sandbox_scenarios() -> List[Dict[str, str]]:
+    return preview_sandbox.scenario_catalog()
+
+
+def _require_owner(actor_user_id: Any) -> int:
+    _require_development()
+    try:
+        actor = int(actor_user_id or 0)
+    except (TypeError, ValueError):
+        actor = 0
+    with account_auth._LOCK:
+        doc = account_auth._read_doc()
+        user = account_auth._user(doc, actor)
+        if not user or not user.get("is_owner"):
+            raise DevPreviewError(
+                "Preview sandbox доступен только владельцу в Development.",
+                403,
+                code="owner_required",
+            )
+    return actor
+
+
+def _loopback_origin(value: Any) -> str:
+    origin = str(value or "").strip().rstrip("/")
+    try:
+        parsed = urllib.parse.urlparse(origin)
+        host = str(parsed.hostname or "").lower()
+        port = parsed.port
+    except (TypeError, ValueError):
+        parsed, host, port = None, "", None
+    if (
+        parsed is None
+        or parsed.scheme != "http"
+        or host not in {"127.0.0.1", "localhost", "::1"}
+        or not port
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise DevPreviewError(
+            "Preview можно запустить только из loopback Development origin.",
+            403,
+            code="loopback_required",
+        )
+    return origin
+
+
+def _free_loopback_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def _sandbox_base() -> Path:
+    return (Path(tempfile.gettempdir()) / "stratforge-preview-sandboxes").resolve()
+
+
+_SENSITIVE_ENV_MARKERS = (
+    "TOKEN", "SECRET", "PASSWORD", "API_KEY", "PRIVATE_KEY",
+    "CONNECTION_STRING", "DATABASE_URL", "REDIS_URL", "WEBHOOK",
+    "TELEGRAM", "PAYPAL", "RESEND", "OPENAI", "ANTHROPIC", "AZURE",
+    "GEMINI", "DEEPSEEK", "TOPSTEP", "ALPACA", "IBKR", "CLOUDFLARE",
+    "TUNNEL", "SENTRY_DSN",
+)
+_ROOT_ENV_NAMES = {
+    "STRATFORGE_DATA_ROOT", "NTA_DATA_ROOT", "STRATFORGE_CANARY_DATA_ROOT",
+    "STRATFORGE_DEVELOPMENT_DATA_ROOT", "NTA_STAGING_DATA_ROOT",
+}
+
+
+def _sandbox_environment(
+    *, preview_id: str, scenario: str, parent_origin: str,
+    root: Path, base: Path, entry_token: str, control_token: str, port: int,
+) -> Dict[str, str]:
+    env: Dict[str, str] = {}
+    for key, value in os.environ.items():
+        upper = key.upper()
+        if upper in _ROOT_ENV_NAMES:
+            continue
+        if any(marker in upper for marker in _SENSITIVE_ENV_MARKERS):
+            continue
+        env[str(key)] = str(value)
+    env.update({
+        "DEPLOYMENT_ENV": "development",
+        "APP_ENV": "development",
+        "NTA_ENABLE_TEST_AUTH": "1",
+        "NTA_ENABLE_IMPERSONATION": "0",
+        "NTA_TEST_BYPASS_AUTH": "0",
+        "NTA_STAGING_ALLOW_OWNER_TELEGRAM": "0",
+        "NTA_NT_GOOGLE_REQUIRED": "0",
+        "NTA_DUAL_AUTH_REQUIRED": "0",
+        "NTA_ALLOW_REAL_PAYMENTS": "0",
+        "NTA_ALLOW_LIVE_ORDERS": "0",
+        "STRATFORGE_REAL_PAYMENTS_ALLOWED": "0",
+        "STRATFORGE_LIVE_TRADING_ALLOWED": "0",
+        "STRATFORGE_PREVIEW_SANDBOX": "1",
+        "STRATFORGE_PREVIEW_ID": preview_id,
+        "STRATFORGE_PREVIEW_SCENARIO": scenario,
+        "STRATFORGE_PREVIEW_ENTRY_TOKEN": entry_token,
+        "STRATFORGE_PREVIEW_CONTROL_TOKEN": control_token,
+        "STRATFORGE_PREVIEW_PARENT_ORIGIN": parent_origin,
+        "STRATFORGE_PREVIEW_BASE_ROOT": str(base),
+        "STRATFORGE_DEVELOPMENT_DATA_ROOT": str(root),
+        "STRATFORGE_ALLOWED_HOSTS": "127.0.0.1,localhost",
+        "STRATFORGE_PUBLIC_ORIGIN": f"http://127.0.0.1:{port}",
+        "STRATFORGE_INSTANCE_ID": f"preview-{preview_id[:24]}",
+        "STRATFORGE_COOKIE_NAMESPACE": f"preview-{preview_id[:24]}",
+        "STRATFORGE_LOG_NAMESPACE": f"preview-{preview_id[:24]}",
+        "PYTHONUNBUFFERED": "1",
+    })
+    # Explicit empty provider values prevent a local secret loader or inherited
+    # configuration from selecting a real transport.
+    for key in (
+        "NTA_TELEGRAM_CHAT_ID", "NTA_TELEGRAM_BOT_TOKEN",
+        "NTA_TELEGRAM_BOT_USERNAME", "NTA_EMAIL_AUTH_PROVIDER",
+        "NTA_EMAIL_AUTH_FROM", "NTA_RESEND_API_KEY",
+    ):
+        env[key] = ""
+    # A synthetic bot name, never the owner's real one. Delivery still cannot
+    # happen — the token is empty and the child cannot open a socket — but the
+    # login screen can render its QR and Telegram option, which is what the
+    # owner is here to look at.
+    env["NTA_TELEGRAM_BOT_USERNAME"] = "stratforge_preview_bot"
+    return env
+
+
+def _process_alive(record: Optional[Dict[str, Any]]) -> bool:
+    process = (record or {}).get("process")
+    return bool(process is not None and process.poll() is None)
+
+
+def _validated_preview_container(record: Dict[str, Any]) -> Optional[Path]:
+    try:
+        base = _sandbox_base()
+        container = Path(str(record.get("container") or "")).resolve()
+        relative = container.relative_to(base)
+        if len(relative.parts) != 2:
+            return None
+        if str(record.get("preview_id") or "") != relative.parts[-1]:
+            return None
+        return container
+    except (OSError, ValueError):
+        return None
+
+
+def _stop_active_sandbox_locked(*, remove_data: bool) -> None:
+    global _ACTIVE_SANDBOX
+    record = _ACTIVE_SANDBOX
+    _ACTIVE_SANDBOX = None
+    if not record:
+        return
+    process = record.get("process")
+    if process is not None and process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+    if remove_data:
+        container = _validated_preview_container(record)
+        if container and container.exists():
+            shutil.rmtree(container)
+
+
+def stop_active_sandbox(*, remove_data: bool = True) -> None:
+    with _SANDBOX_LOCK:
+        _stop_active_sandbox_locked(remove_data=remove_data)
+
+
+def _wait_for_sandbox(record: Dict[str, Any], timeout_sec: float = 15.0) -> None:
+    endpoint = f"http://127.0.0.1:{record['port']}/api/health/live"
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    deadline = time.monotonic() + max(1.0, timeout_sec)
+    last_error = ""
+    while time.monotonic() < deadline:
+        if not _process_alive(record):
+            last_error = "Preview child process stopped during startup."
+            break
+        try:
+            with opener.open(endpoint, timeout=0.4) as response:
+                if int(getattr(response, "status", 0) or 0) == 200:
+                    return
+        except (OSError, urllib.error.URLError) as exc:
+            last_error = type(exc).__name__
+        time.sleep(0.08)
+    log_tail = ""
+    try:
+        log_tail = Path(str(record.get("log_path") or "")).read_text(
+            encoding="utf-8", errors="replace",
+        )[-1600:]
+    except OSError:
+        pass
+    detail = (log_tail.strip() or last_error or "readiness timeout")[-1600:]
+    raise DevPreviewError(
+        "Preview sandbox не запустился: " + detail,
+        503,
+        code="preview_start_failed",
+    )
+
+
+def launch_sandbox(actor_user_id: Any, scenario: Any, *, origin: Any) -> Dict[str, Any]:
+    """Launch one isolated child and return a single-use entry URL."""
+    global _ACTIVE_SANDBOX
+    actor = _require_owner(actor_user_id)
+    selected = preview_sandbox.normalize_scenario(scenario)
+    parent_origin = _loopback_origin(origin)
+    preview_id = secrets.token_hex(12)
+    entry_token = secrets.token_urlsafe(48)
+    control_token = secrets.token_urlsafe(48)
+    port = _free_loopback_port()
+    base = _sandbox_base()
+    container = (base / str(os.getpid()) / preview_id).resolve()
+    root = (container / "data").resolve()
+    root.mkdir(parents=True, exist_ok=False)
+    log_path = container / "preview-server.log"
+    env = _sandbox_environment(
+        preview_id=preview_id, scenario=selected, parent_origin=parent_origin,
+        root=root, base=base, entry_token=entry_token,
+        control_token=control_token, port=port,
+    )
+    command = [sys.executable, "-m", "app.preview_server", "--port", str(port)]
+    creationflags = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    log_handle = log_path.open("w", encoding="utf-8")
+    try:
+        with _SANDBOX_LOCK:
+            _stop_active_sandbox_locked(remove_data=True)
+            process = subprocess.Popen(
+                command,
+                cwd=str(Path(__file__).resolve().parent.parent),
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+                creationflags=creationflags,
+            )
+            record: Dict[str, Any] = {
+                "process": process,
+                "preview_id": preview_id,
+                "scenario": selected,
+                "port": port,
+                "container": str(container),
+                "root": str(root),
+                "log_path": str(log_path),
+                "started_at": time.time(),
+                "actor_user_id": actor,
+            }
+            _ACTIVE_SANDBOX = record
+        _wait_for_sandbox(record)
+    except Exception as exc:
+        with _SANDBOX_LOCK:
+            if _ACTIVE_SANDBOX and _ACTIVE_SANDBOX.get("preview_id") == preview_id:
+                _stop_active_sandbox_locked(remove_data=True)
+        if isinstance(exc, DevPreviewError):
+            raise
+        raise DevPreviewError(
+            "Preview sandbox не запустился.",
+            503,
+            code="preview_start_failed",
+        ) from exc
+    finally:
+        log_handle.close()
+    url = f"http://127.0.0.1:{port}/api/dev/preview/enter?token={urllib.parse.quote(entry_token)}"
+    account_auth._audit(
+        "dev.preview_sandbox_started",
+        user_id=actor,
+        owner_id=actor,
+        extra={"preview_id": preview_id, "scenario": selected, "port": port},
+    )
+    return {
+        "ok": True,
+        "preview_id": preview_id,
+        "scenario": selected,
+        "url": url,
+        "isolated": True,
+        "external_side_effects": "blocked",
+    }
+
+
+def active_sandbox_status() -> Dict[str, Any]:
+    with _SANDBOX_LOCK:
+        record = _ACTIVE_SANDBOX
+        if not record:
+            return {"running": False}
+        return {
+            "running": _process_alive(record),
+            "preview_id": str(record.get("preview_id") or ""),
+            "scenario": str(record.get("scenario") or ""),
+            "port": int(record.get("port") or 0),
+            "started_at": float(record.get("started_at") or 0),
+        }
+
+
+atexit.register(stop_active_sandbox)
 
 
 def _require_development() -> None:
@@ -246,6 +561,7 @@ def start_view_as(
         session = account_auth.create_session_for_user(
             actor, ip=ip, user_agent=user_agent, source="view_as_owner",
             skip_dual_auth_gate=True,
+            device_confirmation_required=False,
         )
         account_auth._audit("dev.view_as_started", user_id=actor, owner_id=actor,
                             extra={"persona": persona_id})
@@ -259,6 +575,7 @@ def start_view_as(
         uid, ip=ip, user_agent=user_agent, source="view_as",
         skip_dual_auth_gate=True, impersonator_owner_id=actor,
         impersonation_preset="dev_preview",
+        device_confirmation_required=False,
     )
     account_auth._audit("dev.view_as_started", user_id=uid, owner_id=actor,
                         extra={"persona": persona_id})
@@ -295,6 +612,7 @@ def exit_view_as(
     restored = account_auth.create_session_for_user(
         owner, ip=ip, user_agent=user_agent, source="view_as_return",
         skip_dual_auth_gate=True,
+        device_confirmation_required=False,
     )
     account_auth._audit("dev.view_as_ended", user_id=owner, owner_id=owner, extra={})
     return {"ok": True, "restored": True, "session_token": restored.get("session_token")}
@@ -328,6 +646,7 @@ def return_to_developer(*, ip: str = "127.0.0.1", user_agent: str = "dev-return"
     restored = account_auth.create_session_for_user(
         owner, ip=ip, user_agent=user_agent, source="view_as_return",
         skip_dual_auth_gate=True,
+        device_confirmation_required=False,
     )
     account_auth._audit("dev.view_as_ended", user_id=owner, owner_id=owner, extra={})
     return {"ok": True, "restored": True, "session_token": restored.get("session_token")}
@@ -419,6 +738,7 @@ def redeem_bootstrap_token(
     session = account_auth.create_session_for_user(
         owner, ip=ip, user_agent=user_agent, source="dev_bootstrap",
         skip_dual_auth_gate=True,
+        device_confirmation_required=False,
     )
     account_auth._audit("dev.bootstrap_redeemed", user_id=owner, owner_id=owner, extra={})
     return {"ok": True, "session_token": session.get("session_token"), "owner_id": owner}
@@ -440,5 +760,8 @@ def status(actor_user_id: Any) -> Dict[str, Any]:
         "environment": runtime_env.deployment_environment(),
         "available": is_owner,
         "personas": personas(),
+        "sandbox_scenarios": sandbox_scenarios(),
+        "active_sandbox": active_sandbox_status(),
+        "architecture": "isolated_process",
         "bootstrap_available": is_owner,
     }

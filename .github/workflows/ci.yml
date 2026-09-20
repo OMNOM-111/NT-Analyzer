@@ -20,7 +20,12 @@ permissions:
 jobs:
   python-tests:
     runs-on: [self-hosted, windows, x64, stratforge-ci]
-    timeout-minutes: 30
+    # Measured 2026-09-10 on this runner: the suite is 5580 cases and takes
+    # 78 minutes here, against 17 on the hosted Linux leg -- Windows pays for
+    # every subprocess and SQLite file the harness opens. The old 30-minute cap
+    # was set when the suite was ~4235 cases and now cancels a healthy run
+    # before it can finish. Kept finite so a genuine hang still ends the job.
+    timeout-minutes: 120
     env:
       PYTHONUTF8: "1"
       PYTHONIOENCODING: utf-8

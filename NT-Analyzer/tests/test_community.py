@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from app import community
+from app import account_auth, community
 
 
 @pytest.fixture()
@@ -288,3 +288,493 @@ def test_reports_requests_and_image_attachment_are_private_to_workspace(communit
             attachments=[{"name": "bad.txt", "data_url": "data:text/plain;base64,Zm9v"}],
         )
     assert invalid.value.status == 400
+
+    with pytest.raises(community.CommunityError, match="MIME"):
+        community.post_message(
+            42,
+            text="spoofed image",
+            workspace_id=workspace,
+            attachments=[{"name": "fake.png", "data_url": "data:image/png;base64,Zm9v"}],
+        )
+
+
+def test_social_feed_profile_privacy_and_interactions(community_store):
+    alice = community.ensure_social_profile(
+        42, display_name="Alice Trader", username="alice_trader",
+    )["profile"]
+    bob = community.ensure_social_profile(
+        99, display_name="Bob Quant", username="bob_quant",
+    )["profile"]
+    community.update_social_profile(
+        99, bio="Private research notes", profile_visibility="followers",
+        allow_messages="following",
+    )
+
+    restricted = community.social_profile(42, bob["profile_id"])["profile"]
+    assert restricted["bio"] == ""
+    assert restricted["details_visible"] is False
+    assert restricted["can_message"] is False
+    assert not ({"user_id", "user_uuid", "workspace_id", "email"} & restricted.keys())
+
+    community.follow_profile(99, alice["profile_id"])
+    visible = community.social_profile(42, bob["profile_id"])["profile"]
+    assert visible["can_message"] is True
+    community.follow_profile(42, bob["profile_id"])
+    visible = community.social_profile(42, bob["profile_id"])["profile"]
+    assert visible["bio"] == "Private research notes"
+
+    post = community.create_social_post(
+        99, text="Разбор #MNQ без инвестиционных обещаний", visibility="followers",
+        idempotency_key="post-1",
+    )["post"]
+    duplicate = community.create_social_post(
+        99, text="Разбор #MNQ без инвестиционных обещаний", visibility="followers",
+        idempotency_key="post-1",
+    )
+    assert duplicate["deduplicated"] is True
+    assert duplicate["post"]["post_id"] == post["post_id"]
+
+    feed = community.social_feed(42, scope="following", hashtag="mnq")
+    assert [row["post_id"] for row in feed["posts"]] == [post["post_id"]]
+    reacted = community.react_to_post(42, post["post_id"], reaction="insightful")["post"]
+    assert reacted["viewer_reaction"] == "insightful"
+    assert reacted["reactions"]["insightful"] == 1
+    commented = community.comment_on_post(42, post["post_id"], text="Полезный разбор")["post"]
+    assert commented["comment_count"] == 1
+    saved = community.bookmark_post(42, post["post_id"])["post"]
+    assert saved["bookmarked"] is True
+    assert community.social_feed(42, saved_only=True)["posts"][0]["post_id"] == post["post_id"]
+
+
+def test_social_block_removes_relationships_and_hides_content(community_store):
+    alice = community.ensure_social_profile(42, display_name="Alice", username="alice_42")["profile"]
+    bob = community.ensure_social_profile(99, display_name="Bob", username="bob_99")["profile"]
+    community.follow_profile(42, bob["profile_id"])
+    community.create_social_post(99, text="Bob post")
+    community.block_social_profile(42, bob["profile_id"])
+
+    assert community.social_feed(42)["posts"] == []
+    profiles = community.list_social_profiles(42)["profiles"]
+    assert all(row["profile_id"] != bob["profile_id"] for row in profiles)
+    with pytest.raises(community.CommunityError) as exc:
+        community.social_profile(42, bob["profile_id"])
+    assert exc.value.status == 404
+    stored = community._load()
+    assert not any({row.get("follower_profile_id"), row.get("target_profile_id")}
+                   == {alice["profile_id"], bob["profile_id"]}
+                   for row in stored["follows"])
+
+
+def test_social_objects_must_be_server_attested(community_store):
+    community.ensure_social_profile(42, display_name="Alice", username="alice_42")
+    with pytest.raises(community.CommunityError) as exc:
+        community.create_social_post(
+            42, text="raw result", object_snapshot={"kind": "backtest", "pnl": 999999},
+        )
+    assert exc.value.status == 403
+
+
+def test_server_attested_result_snapshot_is_allowlisted_and_immutable(community_store):
+    summary = {
+        "status": "done",
+        "class_name": "MNQOpenDrive",
+        "instrument": "MNQ 09-26",
+        "timeframe": "1 Minute",
+        "finished_at_utc": "2026-09-01T12:00:00Z",
+        "metrics": {
+            "net_profit": 125.5,
+            "profit_factor": 1.42,
+            "max_drawdown": -40,
+            "trade_count": 12,
+            "raw_private_metric": 999,
+        },
+        "path": "C:/private/result",
+        "trades": [{"price": 1}],
+        "source_code": "secret",
+    }
+    snapshot = community.attested_result_snapshot(
+        "job_demo_001", summary, origin={"type": "demo", "user_id": "42"},
+    )
+    assert snapshot["source_type"] == "demo_result"
+    assert snapshot["source_id"] == "job_demo_001"
+    assert snapshot["metrics"] == {
+        "Net P&L": 125.5,
+        "Profit factor": 1.42,
+        "Max drawdown": -40,
+        "Trades": 12,
+    }
+    assert len(snapshot["attestation"]["digest"]) == 64
+    assert not ({"path", "trades", "source_code", "origin"} & snapshot.keys())
+    assert "raw_private_metric" not in snapshot["metrics"]
+
+    community.ensure_social_profile(42, display_name="Alice", username="alice_42")
+    post = community.create_social_post(
+        42, text="Verified demo", object_snapshot=snapshot, trusted_snapshot=True,
+    )["post"]
+    assert post["object"]["attestation"] == snapshot["attestation"]
+
+    with pytest.raises(community.CommunityError) as unfinished:
+        community.attested_result_snapshot("job_running_1", {"status": "running"})
+    assert unfinished.value.status == 409
+
+
+def test_social_soft_delete_and_owner_moderation_queue(community_store):
+    alice = community.ensure_social_profile(42, display_name="Alice", username="alice_42")["profile"]
+    community.ensure_social_profile(99, display_name="Bob", username="bob_99")
+    post = community.create_social_post(42, text="Reported post")["post"]
+
+    with pytest.raises(community.CommunityError) as foreign_delete:
+        community.delete_social_post(99, post["post_id"])
+    assert foreign_delete.value.status == 403
+
+    report = community.report_social_target(
+        99, post["post_id"], target_type="post", reason="policy review",
+    )
+    queue = community.social_moderation_queue()
+    assert queue["reports"][0]["report_id"] == report["report_id"]
+    assert not ({"from_profile_id", "user_id", "user_uuid"} & queue["reports"][0].keys())
+    resolved = community.moderate_social_report(
+        1, report["report_id"], action="remove", note="confirmed",
+    )
+    assert resolved["content_removed"] is True
+    assert community.social_feed(42)["posts"] == []
+    stored = next(row for row in community._load()["posts"] if row["post_id"] == post["post_id"])
+    assert stored["deleted_at_utc"] and stored["moderated"] is True
+    assert community.social_moderation_queue(status="resolved")["reports"][0]["resolution"] == "remove"
+
+    # Permanent record: the author's own publication has no delete at all.
+    own = community.create_social_post(42, text="Own post")["post"]
+    with pytest.raises(community.CommunityError) as own_delete:
+        community.delete_social_post(42, own["post_id"])
+    assert own_delete.value.status == 403
+    assert community.social_profile(42, alice["profile_id"])["posts"]
+    assert alice["profile_id"]
+
+
+def test_registration_milestone_is_derived_single_and_immutable():
+    """The registration entry is a property of the profile, not a stored post.
+
+    Deriving it from the profile's own registration fields makes every rule the
+    product asks for true by construction: exactly one exists, nobody can delete
+    or back-date it, and a re-login, restart, import or migration cannot produce
+    a second copy — there is no row to duplicate.
+    """
+    owner = community.ensure_social_profile(
+        4242, display_name="Milestone Owner", username="milestone_owner",
+    )["profile"]
+    other = community.ensure_social_profile(
+        4343, display_name="Milestone Other", username="milestone_other",
+    )["profile"]
+
+    own = community.social_profile(4242, owner["profile_id"])
+    milestone = own["registration"]
+    assert milestone["kind"] == "registration"
+    assert milestone["profile_id"] == owner["profile_id"]
+    assert milestone["registered_at_utc"] == owner["joined_at_utc"]
+    assert milestone["is_self"] is True
+
+    # Repeated reads and a re-ensured profile never create or move a second one.
+    community.ensure_social_profile(
+        4242, display_name="Milestone Owner", username="milestone_owner",
+    )
+    again = community.social_profile(4242, owner["profile_id"])["registration"]
+    assert again == milestone
+
+    # It is not a post: publishing does not add it and deleting cannot remove it.
+    assert all(str(post.get("kind") or "") != "registration"
+               for post in own["posts"])
+
+    # Another member sees the real registration date and nothing about the
+    # state of that account.
+    seen = community.social_profile(4242, other["profile_id"])["registration"]
+    assert seen["profile_id"] == other["profile_id"]
+    assert seen["registered_at_utc"] == other["joined_at_utc"]
+    assert seen["is_self"] is False
+    assert seen["account_status"] == ""
+
+
+def test_registration_milestone_reports_absent_facts_as_absent():
+    """No invented dates: an activation that never happened is not rendered."""
+    profile = community.ensure_social_profile(
+        4444, display_name="No Activation", username="no_activation",
+    )["profile"]
+    milestone = community.social_profile(4444, profile["profile_id"])["registration"]
+    assert milestone["registered_at_utc"]
+    # joined_at_utc and created_at_utc coincide for a fresh profile, so there is
+    # no separate activation moment to claim.
+    assert milestone["activated_at_utc"] == ""
+
+
+def test_profile_inherits_the_existing_account_registration_date(monkeypatch):
+    """Community has no registration of its own.
+
+    A profile is created on first sight of an account that already exists, so
+    it must inherit that account's registration date. Stamping the current
+    time would tell a member who registered a month ago that they joined the
+    day they first opened Community — which is exactly what the milestone
+    would then display.
+    """
+    registered = "2026-08-03T21:20:32Z"
+    monkeypatch.setattr(
+        account_auth, "find_active_user",
+        lambda uid: {"user_id": int(uid), "status": "active",
+                     "created_at_utc": registered, "approved_at_utc": registered},
+    )
+
+    profile = community.ensure_social_profile(
+        5150, display_name="Existing Member", username="existing_member",
+    )["profile"]
+    assert profile["joined_at_utc"] == registered
+
+    milestone = community.social_profile(5150, profile["profile_id"])["registration"]
+    assert milestone["registered_at_utc"] == registered
+
+
+def test_a_profile_stamped_before_the_account_was_consulted_is_repaired(monkeypatch):
+    """An existing row keeps the account's date, never the first-sight date."""
+    registered = "2026-08-03T21:20:32Z"
+    monkeypatch.setattr(account_auth, "find_active_user", lambda uid: {})
+    profile = community.ensure_social_profile(
+        5151, display_name="Stamped Now", username="stamped_now",
+    )["profile"]
+    stamped = profile["joined_at_utc"]
+    assert stamped > registered  # created with "now" while the account was unknown
+
+    monkeypatch.setattr(
+        account_auth, "find_active_user",
+        lambda uid: {"user_id": int(uid), "status": "active",
+                     "created_at_utc": registered, "approved_at_utc": registered},
+    )
+    repaired = community.ensure_social_profile(
+        5151, display_name="Stamped Now", username="stamped_now",
+    )["profile"]
+    assert repaired["joined_at_utc"] == registered
+    assert repaired["profile_id"] == profile["profile_id"]  # repaired, not replaced
+
+
+def test_community_and_sf_chat_share_one_profile_for_one_account():
+    """Both surfaces resolve the same identity; neither mints a second one."""
+    from app import sf_chat
+
+    profile = community.ensure_social_profile(
+        5152, display_name="One Identity", username="one_identity",
+    )["profile"]
+    identity = community.chat_identity(
+        5152, display_name="One Identity", username="one_identity",
+    )
+    assert identity["profile_id"] == profile["profile_id"]
+
+    for _ in range(3):
+        community.ensure_social_profile(5152, display_name="One Identity",
+                                        username="one_identity")
+        community.chat_identity(5152, display_name="One Identity",
+                                username="one_identity")
+        sf_chat.list_conversations(5152)
+
+    rows = [row for row in community._load().get("profiles") or []
+            if community._safe_int(row.get("user_id")) == 5152]
+    assert len(rows) == 1
+
+
+def test_private_post_stays_on_its_own_wall_and_never_reaches_recommendation():
+    """A post kept to its own wall is a server-side ACL, not a hidden card.
+
+    Recommendation is the public surface, so a private post must be absent from
+    it even for its author — otherwise the one person who sees a private post
+    in a public feed is the person most likely to assume it is public.
+    """
+    author = community.ensure_social_profile(
+        6001, display_name="Wall Author", username="wall_author",
+    )["profile"]
+    reader = community.ensure_social_profile(
+        6002, display_name="Other Reader", username="other_reader",
+    )["profile"]
+
+    public = community.create_social_post(6001, text="Публичная запись", visibility="network")["post"]
+    private = community.create_social_post(6001, text="Только на моей стене", visibility="private")["post"]
+
+    # Own wall carries both, newest first.
+    own_wall = [row["post_id"] for row in community.social_profile(6001, author["profile_id"])["posts"]]
+    assert public["post_id"] in own_wall
+    assert private["post_id"] in own_wall
+
+    # Recommendation carries only the public one — for the author too.
+    own_feed = [row["post_id"] for row in community.social_feed(6001)["posts"]]
+    assert public["post_id"] in own_feed
+    assert private["post_id"] not in own_feed
+
+    # Another member sees neither the private post on the wall nor in the feed.
+    seen_wall = [row["post_id"] for row in community.social_profile(6002, author["profile_id"])["posts"]]
+    seen_feed = [row["post_id"] for row in community.social_feed(6002)["posts"]]
+    assert public["post_id"] in seen_wall and private["post_id"] not in seen_wall
+    assert public["post_id"] in seen_feed and private["post_id"] not in seen_feed
+    assert reader["profile_id"] != author["profile_id"]
+
+
+def test_private_visibility_is_not_exposed_through_search():
+    """Search is another public read: it must obey the same ACL."""
+    community.ensure_social_profile(6003, display_name="Searchable", username="searchable_one")
+    community.ensure_social_profile(6004, display_name="Searcher", username="searcher_one")
+    private = community.create_social_post(
+        6003, text="Секретный ориентир zzqq", visibility="private",
+    )["post"]
+
+    mine = [row["post_id"] for row in community.social_feed(6003, query="zzqq")["posts"]]
+    theirs = [row["post_id"] for row in community.social_feed(6004, query="zzqq")["posts"]]
+    assert private["post_id"] not in mine
+    assert private["post_id"] not in theirs
+
+
+def test_visibility_values_are_validated_server_side():
+    community.ensure_social_profile(6005, display_name="Strict", username="strict_one")
+    for value in ("network", "followers", "private"):
+        assert community.create_social_post(6005, text=f"v-{value}", visibility=value)["post"]
+    with pytest.raises(community.CommunityError):
+        community.create_social_post(6005, text="bad", visibility="everyone")
+
+
+@pytest.fixture()
+def company(monkeypatch):
+    """The StratForge owner, their profile, and the StratForge AI page."""
+    monkeypatch.setattr(
+        account_auth, "find_active_user",
+        lambda uid: {"user_id": int(uid), "status": "active", "is_owner": int(uid) == 7001,
+                     "created_at_utc": "2026-08-18T17:36:05Z",
+                     "approved_at_utc": "2026-08-18T17:36:05Z"},
+    )
+    owner = community.ensure_social_profile(
+        7001, display_name="Platform Owner", username="platform_owner",
+    )["profile"]
+    editor = community.ensure_social_profile(
+        7002, display_name="Company Editor", username="company_editor",
+    )["profile"]
+    outsider = community.ensure_social_profile(
+        7003, display_name="Plain Member", username="plain_member",
+    )["profile"]
+    doc = community._load()
+    org = community._org_row(doc, community.DEFAULT_ORG_HANDLE)
+    return {"owner": owner, "editor": editor, "outsider": outsider, "org": dict(org or {})}
+
+
+def test_the_platform_owner_owns_the_company_page_without_a_second_account(company):
+    """The organization is a publishing identity, not a login."""
+    org = company["org"]
+    assert org, "the StratForge AI page is created for the platform owner"
+    assert org["name"] == "StratForge AI" and org["handle"] == "stratforge_ai"
+    assert org["owner_profile_id"] == company["owner"]["profile_id"]
+    assert org["ai_publishing_enabled"] is False
+    assert org["ai_publisher_agent_ids"] == []
+
+    # It is not a member: it never appears among profiles, and it has no account.
+    profiles = community._load().get("profiles") or []
+    assert all(str(row.get("profile_id")) != org["org_id"] for row in profiles)
+    assert all("org_id" not in row for row in profiles)
+
+    # Created once, whoever asks and however often.
+    for _ in range(3):
+        community.ensure_social_profile(7001, display_name="Platform Owner",
+                                        username="platform_owner")
+    assert len(community._load().get("organizations") or []) == 1
+
+
+def test_only_owner_and_editors_may_publish_as_the_company(company):
+    org_id = company["org"]["org_id"]
+
+    owned = community.create_social_post(7001, text="От компании", publish_as=org_id)["post"]
+    assert owned["author"]["identity_kind"] == "organization"
+    assert owned["author"]["display_name"] == "StratForge AI"
+
+    # A plain member cannot borrow the company identity.
+    with pytest.raises(community.CommunityError) as refused:
+        community.create_social_post(7003, text="Не моё", publish_as=org_id)
+    assert refused.value.status == 403
+
+    # An editor appointed by the owner can.
+    community.update_organization(7001, org_id, editors=[company["editor"]["profile_id"]])
+    edited = community.create_social_post(7002, text="От редактора", publish_as=org_id)["post"]
+    assert edited["author"]["identity_kind"] == "organization"
+
+    # An editor still cannot re-assign roles.
+    with pytest.raises(community.CommunityError) as denied:
+        community.update_organization(7002, org_id, editors=[])
+    assert denied.value.status == 403
+
+
+def test_publisher_and_actor_are_recorded_separately(company):
+    org_id = company["org"]["org_id"]
+    post = community.create_social_post(7001, text="Аудит", publish_as=org_id)["post"]
+
+    assert post["author"]["display_name"] == "StratForge AI"
+    assert post["attribution"]["published_by_profile_id"] == company["owner"]["profile_id"]
+    assert post["attribution"]["published_by"] == "Platform Owner"
+    assert post["attribution"]["is_ai"] is False
+    assert post["attribution"]["published_by_ai_agent"] == ""
+
+
+def test_ai_publishing_is_refused_until_it_is_explicitly_permitted(company):
+    """No AI may publish as the company while the flow is off — and an agent is
+    never recorded as a person."""
+    org_id = company["org"]["org_id"]
+    with pytest.raises(community.CommunityError) as exc:
+        community.create_social_post(7001, text="AI draft", publish_as=org_id,
+                                     ai_agent_id="vitek")
+    assert exc.value.status == 403
+
+
+def test_company_posts_live_on_the_company_wall_not_the_actor_wall(company):
+    org_id = company["org"]["org_id"]
+    personal = community.create_social_post(7001, text="Личное")["post"]
+    corporate = community.create_social_post(7001, text="Компания", publish_as=org_id)["post"]
+
+    own_wall = [row["post_id"] for row in
+                community.social_profile(7001, company["owner"]["profile_id"])["posts"]]
+    company_wall = [row["post_id"] for row in
+                    community.organization_document(7001, org_id)["posts"]]
+
+    assert personal["post_id"] in own_wall and corporate["post_id"] not in own_wall
+    assert corporate["post_id"] in company_wall and personal["post_id"] not in company_wall
+
+
+def test_company_visibility_follows_the_same_recommendation_contract(company):
+    org_id = company["org"]["org_id"]
+    public = community.create_social_post(7001, text="Публично от компании",
+                                          publish_as=org_id, visibility="network")["post"]
+    private = community.create_social_post(7001, text="Внутреннее",
+                                           publish_as=org_id, visibility="private")["post"]
+
+    feed = [row["post_id"] for row in community.social_feed(7003)["posts"]]
+    assert public["post_id"] in feed
+    assert private["post_id"] not in feed
+
+    owner_feed = [row["post_id"] for row in community.social_feed(7001)["posts"]]
+    assert private["post_id"] not in owner_feed
+
+    wall = [row["post_id"] for row in community.organization_document(7001, org_id)["posts"]]
+    assert private["post_id"] in wall
+
+
+def test_publishable_identities_are_offered_only_to_those_with_the_right(company):
+    org_id = company["org"]["org_id"]
+    owner_kinds = [row["identity_kind"] for row in
+                   community.publishable_identities(7001)["identities"]]
+    outsider_kinds = [row["identity_kind"] for row in
+                      community.publishable_identities(7003)["identities"]]
+    assert owner_kinds == ["profile", "organization"]
+    assert outsider_kinds == ["profile"]
+
+    community.update_organization(7001, org_id, editors=[company["editor"]["profile_id"]])
+    editor_kinds = [row["identity_kind"] for row in
+                    community.publishable_identities(7002)["identities"]]
+    assert editor_kinds == ["profile", "organization"]
+
+
+def test_company_milestone_uses_the_page_creation_date_not_an_account(company):
+    org_id = company["org"]["org_id"]
+    doc = community.organization_document(7001, org_id)
+    milestone = doc["registration"]
+    assert milestone["kind"] == "organization_created"
+    assert milestone["created_at_utc"] == company["org"]["created_at_utc"]
+    # Distinct from the owner's own account registration.
+    own = community.social_profile(7001, company["owner"]["profile_id"])["registration"]
+    assert own["kind"] == "registration"
+    assert milestone["created_at_utc"] != own["registered_at_utc"]

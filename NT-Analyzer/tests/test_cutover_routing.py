@@ -81,8 +81,9 @@ def test_admin_operations_dashboard_uses_capability_contract():
     # builder the Admin page uses at a wider scope. The point of this
     # assertion is that no *system* tab appears in the Cabinet, which the
     # negative checks below still enforce.
-    assert ("const tabs = [['profile', 'Профиль'], ['card', 'Моя карточка'], "
-            "['security', 'Безопасность'], ['plans', 'Тарифы']]") in cabinet
+    # Tiers stay owner-only; a regular member sees one access tab instead.
+    assert "['security', 'Безопасность'], ['plans', 'Тарифы']]" in cabinet
+    assert "['security', 'Безопасность'], ['access', 'Доступ']]" in cabinet
     assert "['operations'," not in cabinet
 
 

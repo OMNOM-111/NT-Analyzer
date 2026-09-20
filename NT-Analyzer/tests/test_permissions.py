@@ -18,7 +18,11 @@ def _entitlement(plan_id: str) -> dict:
 
 def test_owner_has_all_capabilities() -> None:
     perm = permissions.resolve({"is_owner": True})
-    assert all(perm["capabilities"].values())
+    # ai_automation is granted separately, never by being the owner: it is what
+    # background agent work checks before it may write. Asserted explicitly so
+    # the deliberate exclusion cannot be quietly removed.
+    assert perm["capabilities"]["ai_automation"] is False
+    assert all(value for key, value in perm["capabilities"].items() if key != "ai_automation")
     assert all(perm["admin_capabilities"].values())
     assert all(value for key, value in perm["nav"].items() if key != "practice")
     assert perm["nav"]["practice"] is False
@@ -190,6 +194,7 @@ def test_beginner_market_bars_require_explicit_market_admission() -> None:
     with pytest.raises(permissions.PermissionError):
         permissions.enforce("/api/ops/runtime/bars/batch", ctx)
     permissions.enforce("/api/community/feed", ctx)
+    permissions.enforce("/api/sf-chat/conversations", ctx)
     with pytest.raises(permissions.PermissionError):
         permissions.enforce("/api/governance/summary", ctx)
     with pytest.raises(permissions.PermissionError):

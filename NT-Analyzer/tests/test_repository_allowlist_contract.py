@@ -18,6 +18,8 @@ import ast
 import re
 from pathlib import Path
 
+from app.production_storage.core import MigrationRunner
+
 ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS = ROOT / "app" / "production_storage" / "migrations"
 CORE = ROOT / "app" / "production_storage" / "core.py"
@@ -75,7 +77,7 @@ def test_the_repositories_actually_used_are_permitted():
     """Named explicitly, because these two are the ones that drifted."""
     allowed = _python_allowlist() & _sql_allowlist()
     for repository in ("auth", "workspaces", "entitlements", "connectors",
-                       "releases", "doc_specs"):
+                       "releases", "doc_specs", "community", "sf_chat"):
         assert repository in allowed, f"{repository} is not writable"
 
 
@@ -90,3 +92,44 @@ def test_every_store_key_in_the_app_is_allowlisted():
     assert keys, "no _STORE_KEY definitions found -- has the pattern changed?"
     missing = sorted(keys - _python_allowlist())
     assert not missing, f"store keys with no repository allowlist entry: {missing}"
+
+
+def test_community_and_sf_chat_have_constrained_relational_mirrors():
+    migration = (MIGRATIONS / "0021_community_sf_chat_relational_mirrors.sql").read_text(
+        encoding="utf-8",
+    )
+    expected_tables = {
+        "sf_community_profiles", "sf_community_posts", "sf_community_comments",
+        "sf_community_follows", "sf_community_blocks", "sf_community_reactions",
+        "sf_community_bookmarks", "sf_community_moderation_reports",
+        "sf_chat_conversations", "sf_chat_participants", "sf_chat_messages",
+        "sf_chat_reads",
+    }
+    assert expected_tables <= set(re.findall(r"CREATE TABLE IF NOT EXISTS\s+(\w+)", migration))
+    for table in expected_tables:
+        assert f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY" in migration
+    assert "FOREIGN KEY(author_profile_id)" in migration
+    assert "FOREIGN KEY(conversation_id)" in migration
+    assert "sf_community_posts_feed_idx" in migration
+    assert "sf_chat_messages_conversation_idx" in migration
+
+    core = CORE.read_text(encoding="utf-8")
+    assert 'repository == "community"' in core and "self._sync_community(conn, doc)" in core
+    assert 'repository == "sf_chat"' in core and "self._sync_sf_chat(conn, doc)" in core
+
+    migrations = MigrationRunner.migrations()
+    # Contiguous from 1 with no gaps and no duplicates. Pinning the last
+    # version instead made every added migration look like a regression.
+    versions = [row["version"] for row in migrations]
+    assert versions == list(range(1, len(versions) + 1))
+    # The mirrors migration is present; it is no longer required to be last,
+    # because later migrations legitimately extend what it created.
+    names = [row["name"] for row in migrations]
+    assert "0021_community_sf_chat_relational_mirrors.sql" in names
+    # Post visibility is a server-side ACL value, so its allowed set lives in
+    # the schema rather than only in the application.
+    private = (MIGRATIONS / "0022_community_post_private_visibility.sql").read_text(
+        encoding="utf-8",
+    )
+    assert "sf_community_posts_visibility_check" in private
+    assert "'network','followers','private'" in private

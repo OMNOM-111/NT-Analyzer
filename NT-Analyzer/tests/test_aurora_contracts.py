@@ -40,6 +40,18 @@ def _domain_eval(expression: str):
     return json.loads(proc.stdout.strip())
 
 
+@pytest.mark.parametrize("after,expected", [(0.725188, 0.7252), (0, 0), (None, 0.7541), (True, 0.7541), ("invalid", 0.7541)])
+def test_public_report_factor_uses_same_commission_basis_as_net_when_available(after, expected):
+    from app import community
+    metrics = {"net_profit": -898.4, "net_profit_after_commission": -969.7,
+               "profit_factor": .7541, "profit_factor_after_commission": after, "trade_count": 64}
+    original = dict(metrics)
+    snapshot = community.attested_result_snapshot("awnt_report", {"status": "done", "metrics": metrics})
+    assert snapshot["metrics"]["Net P&L"] == -969.7
+    assert snapshot["metrics"]["Profit factor"] == expected
+    assert metrics == original
+
+
 def test_job_detail_adapter_uses_nested_result_and_real_trade_fields():
     fixture = {
         "job_id": "job-1",
@@ -146,7 +158,7 @@ def test_every_aurora_page_uses_one_api_cache_version():
         marker = 'src="assets/api.js?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260812-final-acceptance2"}, versions
+    assert set(versions.values()) == {"20260915-overview-snapshot1"}, versions
 
 
 def test_every_aurora_page_uses_current_theme_cache_version():
@@ -156,7 +168,7 @@ def test_every_aurora_page_uses_current_theme_cache_version():
         marker = 'href="assets/theme.css?v='
         assert marker in html, page.name
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
-    assert set(versions.values()) == {"20260823-trial-access1"}, versions
+    assert set(versions.values()) == {"20260915-dark-system1"}, versions
 
 
 def test_development_preview_is_rewired_after_async_build_identity():
@@ -179,14 +191,21 @@ def test_unified_identity_ui_uses_public_uuid_and_provider_login_contract():
 
     assert "user.id || user.user_id" in ui
     assert "const telegramIdentity" in ui
-    assert "auth-provider-start" in ui
+    # The unauthenticated entry is the real provider login, now split into a
+    # Welcome screen and a dedicated login screen.
+    assert 'data-auth-login="telegram"' in ui
+    assert 'data-auth-login="google"' in ui
+    assert 'data-auth-login="email"' in ui
     assert "authGoogleLoginStart" in api
     assert "authEmailStart" in api
     assert "authEmailVerify" in api
     assert "authEmailLinkStart" in api
     assert "authEmailLinkVerify" in api
-    assert "accept_terms: details.accept_terms" in ui
-    assert 'id="auth-email-verify-accept"' in ui
+    # Consent is collected on the last registration step and sent with the
+    # account-creating call.
+    assert "data-auth-accept" in ui
+    assert "accept_terms: true" in ui
+    assert "authRegisterComplete" in api
 
 
 def test_legal_terms_payload_is_short_form_master_document():
@@ -247,9 +266,10 @@ def test_unauthenticated_entry_uses_provider_login_not_promo_gate():
     boot = ui.split("async function authenticateAndStart", 1)[1].split(
         "CURRENT_AUTH = result.auth", 1
     )[0]
-    assert "Вход и регистрация" in ui
+    assert "Добро пожаловать в StratForge AI" in ui
+    assert "Выберите способ входа" in ui
     assert "Живые графики используют только разрешённый для аккаунта источник market data" in ui
-    assert 'id="auth-open-promo"' in ui
+    assert 'data-auth-promo' in ui
     assert "Смотреть без входа" not in ui
     assert "Смотреть бесплатно" not in ui
     assert "guestAuthStub" not in ui
@@ -272,7 +292,7 @@ def test_every_aurora_page_uses_current_ui_cache_version():
             continue
         versions[page.name] = html.split(marker, 1)[1].split('"', 1)[0]
     assert versions
-    assert set(versions.values()) == {"20260823-trial-access1"}, versions
+    assert set(versions.values()) == {"20260915-dark-default1"}, versions
 
 
 def test_build_identity_is_visible_and_never_guessed_client_side():
@@ -528,8 +548,10 @@ def test_admin_panel_replaces_system_actions_in_personal_menu_and_cabinet() -> N
     # builder the Admin page uses at a wider scope. The point of this
     # assertion is that no *system* tab appears in the Cabinet, which the
     # negative checks below still enforce.
-    assert ("const tabs = [['profile', 'Профиль'], ['card', 'Моя карточка'], "
-            "['security', 'Безопасность'], ['plans', 'Тарифы']]") in cabinet
+    # A regular member sees one access tab instead of tiers; the owner keeps the
+    # plan matrix. Either way the Cabinet stays self-service only.
+    assert "['security', 'Безопасность'], ['plans', 'Тарифы']]" in cabinet
+    assert "['security', 'Безопасность'], ['access', 'Доступ']]" in cabinet
     assert "['users'," not in cabinet
     assert "['operations'," not in cabinet
 
@@ -586,13 +608,15 @@ def test_aurora_trading_exposes_reconnect_modeling_control():
     assert "#ctrl-reconnect" in trading
 
 
-def test_vitek_chat_hides_internal_model_beside_message_time():
+def test_sf_chat_preserves_vitek_metadata_without_exposing_internal_model_beside_time():
     ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
     assert "orchFmtTime(row.timestamp_utc)" in ui
     assert "!isUser && row.model ? esc(row.model)" not in ui
-    assert "StratForge Orchestrator · Витёк" in ui
-    assert '<span class="orch-head-name">StratForge Orchestrator</span>' in ui
-    assert "Витёк · ваша правая рука" in ui
+    assert "SF Chat · люди и AI-помощники" in ui
+    assert '<span class="orch-head-name">SF Chat<span class="orch-head-skin"' in ui
+    assert "AI · Виктор и агенты" in ui
+    assert "function openSFChat" in ui
+    assert "conversation_type === 'human'" in ui
     assert "Ваши чаты и данные сохранены" in ui
     assert "ORCH.conversations = []" not in ui
     assert "modelMeta" in ui and "модель:" in ui
@@ -601,6 +625,24 @@ def test_vitek_chat_hides_internal_model_beside_message_time():
     assert "row.thinking" not in ui
     assert "orchThinkBlock" not in ui
     assert "Анализирую задачу…" in ui
+
+
+def test_sf_chat_header_chip_and_day_marks_render_real_state_not_css_literals():
+    """The skin chip and the day separators must come from live state.
+
+    Both used to be CSS `content` strings: the header read "Orbital Glass" no
+    matter which of the six skins was applied, and every conversation was
+    headed "Сегодня" even when its newest message was days old.
+    """
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    css = (AURORA / "assets" / "theme.css").read_text(encoding="utf-8")
+    assert "content: 'Orbital Glass'" not in css
+    assert "content: 'Сегодня'" not in css
+    assert "qsa('.orch-head-skin, .orch-skin-label')" in ui
+    assert "function orchDayKey" in ui
+    assert "function orchDayLabel" in ui
+    assert "orchMessagesHtml(messages)" in ui
+    assert "orchAppendMessage(box," in ui
 
 
 def test_global_and_chat_polling_do_not_overlap_or_hammer_rate_limits():
@@ -649,7 +691,8 @@ def test_ai_lab_uses_conversational_orchestrator_not_literal_mission_form():
     assert "openOrchestrator" in ui
     assert "orch-fab" in ui
     assert "API.http.aiOrchestratorMessage" in ui
-    assert "aiOrchestratorConversations" in ui
+    assert "sfChatConversations" in ui
+    assert "aiOrchestratorConversations" in api
     assert "/api/ai-lab/orchestrator/message" in api
     assert "/api/ai-lab/orchestrator/conversations" in api
     assert "aiOrchestratorSpeak" in api and "/api/ai-lab/orchestrator/speak" in api
@@ -661,6 +704,89 @@ def test_ai_lab_uses_conversational_orchestrator_not_literal_mission_form():
     html = (AURORA / "ai-agents.html").read_text(encoding="utf-8")
     page = (AURORA / "assets" / "pages" / "ai-agents.js").read_text(encoding="utf-8")
     assert "staff-voice-grid" in html and "openVoiceSettings" in page
+
+
+def test_community_v2_and_unified_sf_chat_are_real_api_backed_surfaces():
+    html = (AURORA / "community.html").read_text(encoding="utf-8")
+    page = (AURORA / "assets" / "pages" / "community.js").read_text(encoding="utf-8")
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+    server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
+
+    for contract in (
+        "community-social-dock",
+        "community-stream-toolbar",
+        "community-feed",
+        "community-composer-v2",
+        "community-profile-wall-feed",
+        "community-profile-view",
+        "community-channels-view",
+    ):
+        assert contract in html
+    # A member's wall is a place inside Community, not an overlay over it: the
+    # centre column swaps context and offers the way back.
+    assert "community-profile-modal" not in html
+    assert 'id="community-profile-back"' in html
+    assert 'id="community-profile-detail-center"' in html
+    assert "setCenterMode('profile')" in page and "setCenterMode(STATE.view === 'channels'" in page
+    assert "community-hero" not in html
+    assert "Торговое сообщество внутри StratForge" not in html
+    assert 'id="community-nav"' not in html
+    assert 'id="community-visibility-modal"' in html and 'id="community-visibility-form"' in html
+    assert 'data-community-sort="recent"' in html and 'data-community-sort="relevant"' in html
+    assert 'data-community-wall-tab="posts"' in html and 'data-community-wall-tab="saved"' in html
+    for action in ("График", "Стратегия", "Файл", "Опубликовать"):
+        assert action in html
+    assert "communityV2Feed" in page and "communityV2Post" in page
+    assert 'data-community-object="result"' in html and 'data-community-object="result" disabled' not in html
+    assert "communityV2Objects" in page and "communityV2PublishObject" in page
+    assert "data-community-rich-object" in page
+    assert "raw.startsWith('@')" in page
+    assert "data-share-post" in page and "Поделиться публикацией" in page
+    assert "openProfileVisibility" in page and "communityV2UpdateProfile" in page
+    assert "community-post-action" in page and "actionIcon" in page
+    assert "server-attested" in page
+
+    # The right column belongs to the signed-in member and never follows the
+    # profile opened in the centre.
+    assert "communityV2Profile(viewer.profile_id" in page
+    assert "communityV2Profile(profileId" in page
+    # The registration entry is rendered from the server's derived object; the
+    # page must not mint a date or a status of its own.
+    # Exactly one composer, and it belongs to the member's own wall in the
+    # right column. Recommendation is a reading surface: creating a post there,
+    # or offering a second create button beside the profile, put the same act
+    # in two places.
+    assert html.count('id="community-composer-card"') == 1
+    composer_at = html.index('id="community-composer-card"')
+    wall_at = html.index('id="community-profile-wall-feed"')
+    feed_at = html.index('id="community-feed"')
+    assert feed_at < composer_at < wall_at, "composer must sit in the wall column, above the wall"
+    assert "data-focus-composer" not in page and "Создать пост" not in page
+    assert 'data-post-visibility="network"' in html and 'data-post-visibility="private"' in html
+    assert "community-post-visibility" not in page
+    assert "composerVisibility()" in page
+    assert "registrationCardHtml(doc.registration" in page
+    assert "registration.registered_at_utc" in page
+    assert "Поздравляем с регистрацией в StratForge!" in page
+    assert "_registration_milestone" in (ROOT / "app" / "community.py").read_text(encoding="utf-8")
+    assert "sfChatStartConversation" in page and "UI.openSFChat" in page
+    assert "mock" not in page.lower()
+    assert "sfChatConversations" in ui and "sfChatConversation" in ui and "sfChatMessage" in ui
+    assert 'id="orch-convo-search"' in ui and 'id="orch-new-side"' in ui
+    # The rail's tabs are built from a list now (All, the two filters and the
+    # viewer's own folders), so the contract is the list, not literal markup.
+    assert 'data-orch-convo-filter="${esc(id)}"' in ui
+    assert "['pinned', 'Закреплённые']" in ui and "['recent', 'Недавние']" in ui
+    assert "orchAddFolder" in ui and "ORCH_FOLDER_KEY" in ui
+    assert "ORCH.listQuery" in ui and "participant.username" in ui
+    assert "sideCreate.hidden = ORCH.aiAvailable === false" in ui
+    assert "NOTICE_MAX_VISIBLE = 1" in ui and "Открыть в чате" in ui
+    assert "/api/community/v2/feed" in api and "/api/sf-chat/conversations" in api
+    assert "/api/community/v2/objects" in api
+    assert 'path == "/api/community/v2/feed"' in server
+    assert 'path == "/api/sf-chat/conversations"' in server
+    assert 'path == "/api/community/v2/objects"' in server
 
 
 def test_named_domain_agents_and_unified_finance_page_contract():
@@ -1027,7 +1153,7 @@ def test_desktop_preserves_backend_freshness_across_http_poll():
     assert "price_marker_live: !!(res && res.price_marker_live)" in js
     assert "const liveTransportFresh = topstepSource && marketDataWsOk && marketFeedFresh" in js
     assert "Date.now() - Number(rec.liveBarAt || 0) <= 15000 || liveTransportFresh" in js
-    assert "desktop.js?v=20260813-live-marker-freshness1" in html
+    assert "desktop.js?v=20260904-agent-world-receipt1" in html
 
 
 def test_command_language_covers_every_desktop_instrument():
@@ -1139,3 +1265,40 @@ def test_backtesting_strategy_dropdown_uses_authoritative_device_catalog():
     assert "device-стратегии не подтверждены" in js
     assert "API.http.strategies()" not in js
     assert "strategies = (strat && strat.strategies) || []" not in js
+
+
+def test_preview_test_data_shortcuts_exist_only_inside_the_sandbox():
+    """Every shortcut is contextual, guarded, and asks the Preview backend."""
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    api = (AURORA / "assets" / "api.js").read_text(encoding="utf-8")
+    preview = (ROOT / "app" / "preview_sandbox.py").read_text(encoding="utf-8")
+    server = (ROOT / "app" / "server.py").read_text(encoding="utf-8")
+    bar = ui.split("function previewAutofillBar(", 1)[1][:900]
+    assert "if (!previewSandboxActive()) return '';" in bar
+    guard = ui.split("function previewSandboxActive()", 1)[1][:200]
+    assert "PREVIEW_CONTEXT" in guard and "enabled" in guard
+    # The markup has exactly one source, so the guard cannot be bypassed.
+    assert ui.count('class="preview-autofill"') == 1
+    assert ui.count('data-preview-fill="') == 1
+    # Identity and provider approvals come from control-cookie-protected Preview
+    # routes rather than a client-side master value or ordinary Local endpoint.
+    assert "previewSandboxIdentity" in ui and "previewSandboxIdentity" in api
+    assert "previewSandboxApproveLogin" in ui and "previewSandboxApproveLogin" in api
+    assert "previewSandboxApproveGoogle" in ui and "previewSandboxApproveGoogle" in api
+    assert "/api/dev/preview/google/approve" in server
+    assert "@preview.local" in preview
+    assert "Данные ненастоящие" in ui
+    for label in (
+        "Заполнить тестовыми данными",
+        "Продолжить через тестовый Telegram",
+        "Продолжить через тестовый Google",
+        "Подставить тестовый e-mail",
+        "Подставить тестовый код",
+        "Подтвердить тестовым пользователем",
+    ):
+        assert label in ui
+    assert "Пройти регистрацию тестовыми данными" not in ui
+    assert "Пройти дальше автоматически" not in ui
+    assert "accept.checked = true" not in ui
+    assert "data-auth-external-telegram" in ui
+    assert "В Preview внешний Telegram отключён" in ui

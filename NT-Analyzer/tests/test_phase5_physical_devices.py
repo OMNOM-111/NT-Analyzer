@@ -430,6 +430,27 @@ def test_machine_of_another_account_is_not_reachable(store):
     assert _machines(42)[0]["status"] == "pending"
 
 
+def test_user_can_rename_only_their_own_machine(store):
+    _observe(42, installation="conn-install-1", source="connector")
+    machine_id = _machines(42)[0]["physical_device_id"]
+
+    renamed = security_devices.rename_physical_device(
+        user_id=42,
+        physical_device_id=machine_id,
+        display_name="Рабочий компьютер",
+    )
+    assert renamed["machine"]["display_name"] == "Рабочий компьютер"
+    assert _machines(42)[0]["display_name"] == "Рабочий компьютер"
+
+    with pytest.raises(security_devices.SecurityDeviceError) as exc:
+        security_devices.rename_physical_device(
+            user_id=7,
+            physical_device_id=machine_id,
+            display_name="Чужое имя",
+        )
+    assert exc.value.code == "machine_not_found"
+
+
 def test_listing_shows_only_your_own_machines(store):
     _observe(42, installation="alice-install", source="connector", session_id="s1")
     _observe(7, installation="bob-install", source="connector", session_id="s2")

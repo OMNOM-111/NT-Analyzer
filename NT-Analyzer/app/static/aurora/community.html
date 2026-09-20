@@ -4,84 +4,150 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:*; media-src 'self' blob:; base-uri 'none'; form-action 'self'; object-src 'none'">
-<title>Сообщество — StratForge AI</title>
-<link rel="stylesheet" href="assets/theme.css?v=20260823-trial-access1">
+<title>SF Social — StratForge AI</title>
+<link rel="stylesheet" href="assets/theme.css?v=20260915-dark-system1">
 <link rel="icon" href="brand/stratforge-icon.ico" sizes="any">
 </head>
-<body data-page="community" data-title="Сообщество" data-kicker="Рабочее пространство пользователей · не оркестратор">
-  <div class="community-workspace">
-    <section class="panel community-channel-panel">
-      <div class="panel-h"><h2>Пространство сообщества</h2><span class="sub">Обсуждения, отчёты, скриншоты и запросы — отдельно от ИИ-оркестратора</span></div>
-      <div class="panel-b">
-        <div class="seg community-channels" id="c-channels" role="group" aria-label="Каналы Community"></div>
-      </div>
-    </section>
+<body data-page="community" data-title="SF Social" data-kicker="Внутренняя социальная сеть StratForge">
+  <div class="community-v2" id="community-v2">
+    <div class="community-layout">
+      <aside class="community-social-dock community-left" aria-label="Люди сообщества">
+        <button type="button" class="community-dock-button community-dock-primary" id="community-find-people" title="Найти людей" aria-label="Найти людей">
+          <span aria-hidden="true">⌕</span>
+        </button>
+        <div class="community-dock-people" id="community-following-list" aria-label="Люди, которых вы читаете">
+          <div class="community-skeleton compact"></div>
+        </div>
+        <span class="community-dock-count" id="community-social-count" title="Участников в подборке">0</span>
+      </aside>
 
-    <div class="grid cols-2 community-main-grid">
-      <section class="panel">
-        <div class="panel-h"><h2 id="c-channel-title">Общий чат</h2><span class="sub" id="c-channel-hint">Обсуждение внутри сообщества</span></div>
-        <div class="panel-b col gap-lg">
+      <main class="community-center">
+        <header class="community-stream-toolbar">
+          <label class="community-search" for="community-search">
+            <span aria-hidden="true">⌕</span>
+            <input id="community-search" type="search" maxlength="80" placeholder="Поиск людей, @username или #hashtag..." autocomplete="off">
+            <kbd>Ctrl K</kbd>
+          </label>
+          <div class="community-stream-heading">
+            <span class="community-heading-icon" aria-hidden="true">◎</span>
+            <h1 id="community-stream-title">Recommendation</h1>
+            <span class="community-tab-status" id="community-tab-status">Загрузка…</span>
+          </div>
+          <div class="community-sort" role="group" aria-label="Сортировка публикаций">
+            <button type="button" class="active" data-community-sort="recent"><span aria-hidden="true">◷</span>По времени</button>
+            <button type="button" data-community-sort="relevant"><span aria-hidden="true">♨</span>По релевантности</button>
+          </div>
+        </header>
+
+        <section class="community-feed" id="community-feed" aria-live="polite"><div class="community-feed-loading"><div class="community-skeleton post"></div><div class="community-skeleton post"></div></div></section>
+        <button type="button" class="btn ghost community-load-more" id="community-load-more" hidden>Показать ещё</button>
+
+        <section class="community-profile-view" id="community-profile-view" hidden aria-label="Профиль участника">
+          <div class="community-profile-view-bar">
+            <button type="button" class="community-profile-back" id="community-profile-back"><span aria-hidden="true">←</span><span id="community-profile-back-label">Recommendation</span></button>
+            <span class="community-profile-view-kind">Профиль трейдера</span>
+          </div>
+          <div id="community-profile-detail-center"><div class="community-skeleton profile"></div></div>
+        </section>
+
+        <section class="community-channels-view" id="community-channels-view" hidden>
+          <div class="community-channel-head">
+            <div><span class="community-eyebrow">РАБОЧИЕ КАНАЛЫ</span><h2 id="c-channel-title">Общий чат</h2><p id="c-channel-hint">Обсуждение внутри текущего workspace</p></div>
+            <div class="community-channel-pills" id="c-channels"></div>
+          </div>
           <div class="community-thread-state" id="c-thread-state" hidden></div>
-          <div class="list community-chat" id="c-chat"></div>
-          <div class="composer community-composer">
-            <textarea id="c-text" rows="3" maxlength="4000" placeholder="Сообщение в сообщество…"></textarea>
+          <div class="community-channel-messages" id="c-chat"></div>
+          <div class="community-channel-objects" id="c-channel-objects"></div>
+          <div class="community-channel-compose">
+            <textarea id="c-text" rows="2" maxlength="4000" placeholder="Сообщение в канал…"></textarea>
             <div class="community-composer-actions">
-              <label class="btn ghost sm" for="c-files">Скриншот</label>
+              <label class="btn ghost sm" for="c-files">Изображение</label>
               <input id="c-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
-              <span class="sub">PNG/JPEG/WebP · до 2 МБ каждый</span>
-              <div class="spacer"></div>
-              <button class="btn primary" id="c-send" type="button">Отправить</button>
+              <div class="community-attachments" id="c-attachments"></div>
+              <span class="spacer"></span><button class="btn primary" id="c-send" type="button">Отправить</button>
             </div>
-            <div class="community-attachments" id="c-attachments"></div>
           </div>
-        </div>
-      </section>
+        </section>
+      </main>
 
-      <section class="panel">
-        <div class="panel-h"><h2>Отчёты и запросы</h2><span class="sub">Передавайте данные в контексте рабочего диалога</span></div>
-        <div class="panel-b col gap-lg">
-          <div class="composer community-report-composer">
-            <div class="field"><label>Отчёт</label><input id="c-report-title" maxlength="140" placeholder="Например: Итоги недели MNQ"></div>
-            <div class="field"><label>Краткое описание</label><textarea id="c-report-summary" rows="2" maxlength="4000" placeholder="Что важно увидеть команде?"></textarea></div>
-            <div class="form-row"><div class="field"><label>P&amp;L</label><input id="c-report-pnl" type="number" step="0.01" placeholder="0"></div><div class="field"><label>Max DD</label><input id="c-report-dd" type="number" step="0.01" placeholder="0"></div></div>
-            <button class="btn" id="c-share-report" type="button">Поделиться отчётом</button>
-          </div>
-          <div class="composer community-request-composer">
-            <div class="field"><label>Запрос участникам</label><input id="c-request-title" maxlength="180" placeholder="Нужен скрин входа по MNQ"></div>
-            <div class="form-row"><div class="field"><label>Что запросить</label><select id="c-request-type"><option value="report">Отчёт</option><option value="data">Данные</option><option value="screenshot">Скриншот</option></select></div><div class="field"><label>Кому (ID, необязательно)</label><input id="c-request-user" type="number" min="1" placeholder="Всем"></div></div>
-            <button class="btn ghost" id="c-create-request" type="button">Создать запрос</button>
-          </div>
-          <div class="list" id="c-reports"></div>
-          <div class="list" id="c-requests"></div>
+      <aside class="community-right community-wall" aria-label="Профиль и стена">
+        <section class="community-profile-summary" id="community-profile-summary"><div class="community-skeleton profile"></div></section>
+        <div class="community-wall-tabs" role="tablist" aria-label="Стена профиля">
+          <button type="button" class="active" role="tab" aria-selected="true" data-community-wall-tab="posts"><span aria-hidden="true">◉</span>Публикации <b id="community-wall-post-count">0</b></button>
+          <button type="button" role="tab" aria-selected="false" data-community-wall-tab="saved"><span aria-hidden="true">◇</span>Закладки <b id="community-wall-saved-count">0</b></button>
         </div>
-      </section>
-    </div>
+        <section class="community-composer-v2 community-wall-composer" id="community-composer-card">
+          <div class="community-avatar" id="community-composer-avatar" aria-hidden="true">SF</div>
+          <div class="community-compose-main">
+            <div class="community-correction-target" id="community-correction-target" hidden></div>
+            <textarea id="community-post-text" rows="1" maxlength="4000" placeholder="Опубликовать на своей стене..."></textarea>
+            <div class="community-pending-media" id="community-pending-media"></div>
+            <div class="community-compose-actions">
+              <button type="button" class="community-action" data-community-object="chart" disabled title="Будет подключено только через server-attested snapshot"><span>⌗</span>График</button>
+              <button type="button" class="community-action" data-community-object="strategy" disabled title="Будет подключено только через server-attested snapshot"><span>▱</span>Стратегия</button>
+              <button type="button" class="community-action" data-community-object="result" title="Выбрать завершённый server-attested результат"><span>↗</span>Результат</button>
+              <label class="community-action" for="community-post-files" title="PNG, JPEG или WebP до 2 МБ"><span>⌕</span>Файл</label>
+              <input id="community-post-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
+              <div class="community-compose-spacer"></div>
+              <label class="community-publish-as" id="community-publish-as-wrap" hidden>
+                <span>Публиковать как</span>
+                <select id="community-publish-as" aria-label="Публиковать как"></select>
+              </label>
+              <div class="community-visibility-toggle" role="radiogroup" aria-label="Видимость публикации">
+                <button type="button" class="active" role="radio" aria-checked="true" data-post-visibility="network" title="Виден в SF Chat и может попасть в Recommendation"><span aria-hidden="true">◉</span>Публично</button>
+                <button type="button" role="radio" aria-checked="false" data-post-visibility="private" title="Остаётся только на вашей стене"><span aria-hidden="true">◇</span>Только на моей странице</button>
+              </div>
+              <button type="button" class="btn primary community-publish" id="community-post-submit"><span aria-hidden="true">➤</span>Опубликовать</button>
+            </div>
+            <!-- The rule the server enforces, stated where the decision is made
+                 rather than discovered afterwards. Text comes from the feed. -->
+            <p class="community-permanence-note" id="community-permanence-note">Опубликованное становится частью постоянной истории профиля: удалить или переписать запись нельзя. Ошибку исправляет новая публикация — обе останутся.</p>
+          </div>
+        </section>
 
-    <div class="grid cols-2 community-main-grid">
-      <section class="panel">
-        <div class="panel-h"><h2>Стратегии и рейтинги</h2><span class="sub">Доходность · просадка · запрос на импорт</span></div>
-        <div class="panel-b col gap-lg">
-          <div class="composer">
-            <div class="field"><label>Название</label><input id="c-title" placeholder="Моя стратегия"></div>
-            <div class="field"><label>Net profit</label><input id="c-net" type="number" value="1200"></div>
-            <div class="field"><label>Max DD</label><input id="c-dd" type="number" value="-400"></div>
-            <div class="field"><label>Заметка</label><input id="c-notes" placeholder="кратко"></div>
-          </div>
-          <button class="btn" id="c-publish" type="button">Опубликовать стратегию</button>
-          <div class="list" id="c-strategies"></div>
-        </div>
-      </section>
-      <section class="panel">
-        <div class="panel-h"><h2>Рейтинг</h2><span class="sub">Результат с поправкой на риск и запросы на копирование</span></div>
-        <div class="panel-b"><div class="list" id="c-ratings"></div></div>
-      </section>
+        <section class="community-wall-feed" id="community-profile-wall-feed" aria-live="polite"><div class="community-skeleton post"></div></section>
+      </aside>
     </div>
   </div>
-<script src="assets/api.js?v=20260812-final-acceptance2"></script>
+
+
+  <div class="community-visibility-modal" id="community-visibility-modal" hidden>
+    <button type="button" class="community-modal-backdrop" data-community-visibility-close aria-label="Закрыть настройки видимости"></button>
+    <section class="community-visibility-dialog" role="dialog" aria-modal="true" aria-labelledby="community-visibility-title">
+      <header class="community-visibility-head">
+        <div><span class="community-visibility-icon" aria-hidden="true">⚙</span><h2 id="community-visibility-title">Видимость профиля StratForge</h2></div>
+        <button type="button" class="community-visibility-close" data-community-visibility-close aria-label="Закрыть">×</button>
+      </header>
+      <p class="community-visibility-intro">Настройте, какие сведения видят подписчики и остальные участники платформы.</p>
+      <form id="community-visibility-form">
+        <fieldset class="community-visibility-group community-visibility-followers">
+          <legend><span aria-hidden="true">◎</span> Для подписчиков (Followers)</legend>
+          <div class="community-visibility-grid">
+            <span class="community-visibility-status"><b aria-hidden="true">✓</b> Профиль и описание</span>
+            <span class="community-visibility-status"><b aria-hidden="true">✓</b> Публикации по подписке</span>
+          </div>
+          <small>Подписчики видят профиль и публикации, разрешённые настройками каждой записи.</small>
+        </fieldset>
+        <fieldset class="community-visibility-group community-visibility-network">
+          <legend><span aria-hidden="true">◉</span> Для всех остальных (Non-followers)</legend>
+          <label class="community-visibility-check"><input id="community-visibility-network" type="checkbox"><span>Показывать описание профиля всей сети</span></label>
+          <small>Публикации, закладки и вложения следуют отдельным правилам доступа.</small>
+        </fieldset>
+        <fieldset class="community-visibility-group community-visibility-messages">
+          <legend><span aria-hidden="true">✉</span> Личные сообщения</legend>
+          <label for="community-visibility-messages-select">Кто может писать</label>
+          <select id="community-visibility-messages-select"><option value="everyone">Все участники</option><option value="following">Только мои подписки</option><option value="nobody">Никто</option></select>
+        </fieldset>
+        <div class="community-visibility-foot"><span>Закладки всегда приватны.</span><button type="submit" class="btn primary"><span aria-hidden="true">✓</span>Сохранить настройки</button></div>
+      </form>
+    </section>
+  </div>
+
+<script src="assets/api.js?v=20260915-overview-snapshot1"></script>
 <script src="assets/domain.js?v=20260629-final4"></script>
 <script src="assets/ambient.js?v=20260703-stratforge1"></script>
-<script src="assets/ui.js?v=20260823-trial-access1"></script>
+<script src="assets/ui.js?v=20260915-dark-default1"></script>
 <script src="assets/victor.js?v=20260718-contours2"></script>
-<script src="assets/pages/community.js?v=20260718-contours2"></script>
+<script src="assets/pages/community.js?v=20260901-community-workspace3"></script>
 </body>
 </html>
