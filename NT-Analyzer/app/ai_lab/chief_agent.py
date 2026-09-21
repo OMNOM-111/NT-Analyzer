@@ -840,8 +840,13 @@ def _shared_memory_bundle(scope: Optional[Dict[str, Any]], *, query: str = "", l
 
 
 def _preferred_address(scope: Optional[Dict[str, Any]]) -> str:
-    rows = _shared_memory_bundle(scope, query="address preference preferred address", limit=100)["entries"]
-    for row in rows:
+    """How the person asked to be addressed - an exact lookup, not a search.
+
+    This is a standing instruction, not a topic: ranking it against the current
+    question dropped it whenever the words differed, and the assistant lost the
+    owner's own name. It is also read on every turn, so it stays a cheap read.
+    """
+    for row in reversed(_user_memories(scope, 100)):
         if row.get("kind") == "address_preference" and str(row.get("text") or "").strip():
             return str(row["text"]).strip()[:120]
     return ""

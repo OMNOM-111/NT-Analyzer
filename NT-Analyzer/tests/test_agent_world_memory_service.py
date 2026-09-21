@@ -165,3 +165,40 @@ def test_token_budget_truncates_one_oversized_fact_and_deduplicates(tmp_path):
     assert packet["selected_count"] == 1
     assert packet["estimated_tokens"] <= 128
     assert packet["entries"][0]["content"].endswith("[truncated to memory token budget]")
+
+
+def test_a_standing_instruction_is_never_ranked_out_of_the_packet(tmp_path):
+    """How the owner asked to be addressed is not a topic of the question.
+
+    Ranking it against the current message dropped it whenever the words
+    differed, and the assistant lost the owner's own name mid-conversation.
+    """
+    address = {"memory_id": "LEGACY-ADDRESS", "kind": "address_preference",
+        "text": "Обращайся ко мне Дмитрий", "created_at_utc": "2026-08-01T10:00:00Z"}
+    note = {"memory_id": "LEGACY-NOTE", "kind": "owner_note",
+        "text": "Стратегия MNQ Liquidity Sweep на проверке", "created_at_utc": "2026-09-15T10:00:00Z"}
+    memory = service(tmp_path, legacy=(address, note))
+    for question in ("что там с MNQ Liquidity Sweep?", "поставь задачу команде на неделю", ""):
+        entries = memory.get_context(MemoryQuery(text=question, max_tokens=2000))["entries"]
+        assert "Обращайся ко мне Дмитрий" in [row["content"] for row in entries], question
+        # It leads the packet, so a tight budget never spends itself elsewhere first.
+        assert entries[0]["content"] == "Обращайся ко мне Дмитрий", question
+    # The topic still decides everything that is a topic.
+    about_strategy = memory.get_context(MemoryQuery(text="что там с MNQ Liquidity Sweep?", max_tokens=2000))
+    assert any("MNQ" in row["content"] for row in about_strategy["entries"])
+    unrelated = memory.get_context(MemoryQuery(text="поставь задачу команде на неделю", max_tokens=2000))
+    assert not any("MNQ" in row["content"] for row in unrelated["entries"])
+
+
+def test_a_compound_key_matches_its_parts_and_stopwords_match_nothing(tmp_path):
+    """`address_preference` is one word to a regex; the question says "address"."""
+    from app.ai_control_center.memory_service import _tokens
+
+    assert {"address", "preference", "address_preference"} <= _tokens("address_preference")
+    assert _tokens("и в на не что как это the and for") == frozenset()
+    # A note must not become relevant because it shares "на" with the question.
+    note = {"memory_id": "LEGACY-NOTE", "kind": "owner_note",
+        "text": "Стратегия MNQ на проверке", "created_at_utc": "2026-09-15T10:00:00Z"}
+    memory = service(tmp_path, legacy=(note,))
+    packet = memory.get_context(MemoryQuery(text="поставь задачу команде на неделю", max_tokens=2000))
+    assert packet["entries"] == []

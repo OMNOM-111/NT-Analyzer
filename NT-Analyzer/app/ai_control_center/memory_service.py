@@ -27,6 +27,17 @@ from .states import ContractError, EntityKind
 _NS = UUID("255805c9-8d33-5869-95d6-00c486619988")
 _WORD = re.compile(r"[\w.-]+", re.UNICODE)
 _TERMINAL_MEMORY = frozenset({"revoked", "expired", "superseded"})
+# Words that carry no topic. Without this a note matched a question merely by
+# sharing "на" or "the", which is noise scored as relevance.
+_STOPWORDS = frozenset({
+    "the", "and", "for", "with", "that", "this", "from", "was", "are", "has", "have", "not", "you", "your",
+    "и", "в", "во", "на", "не", "что", "как", "это", "для", "по", "из", "за", "от", "до", "или", "но", "же",
+    "бы", "ли", "мне", "мы", "вы", "он", "она", "они", "там", "тут", "уже", "ещё", "еще", "при", "над", "под",
+})
+# Standing instructions of the person: how to address them, what to always do.
+# They are not a topic, so relevance must never drop them from the packet.
+_PINNED_PURPOSES = frozenset({"address_preference", "preference", "preferences",
+                              "instruction", "standing_instruction", "rule"})
 
 
 def _utc_now() -> datetime:
@@ -34,7 +45,18 @@ def _utc_now() -> datetime:
 
 
 def _tokens(text: str) -> frozenset[str]:
-    return frozenset(value.casefold() for value in _WORD.findall(text or "") if len(value) > 1)
+    """Words of a text, with compound keys split into their parts.
+
+    `address_preference` is one token to a word regex, so a question about the
+    preferred address matched nothing. Each part is kept beside the whole.
+    """
+    found = set()
+    for value in _WORD.findall(text or ""):
+        for part in (value, *re.split(r"[_.-]+", value)):
+            folded = part.casefold()
+            if len(folded) > 1 and folded not in _STOPWORDS:
+                found.add(folded)
+    return frozenset(found)
 
 
 def _token_cost(text: str) -> int:
@@ -117,13 +139,21 @@ class MemoryCandidate:
     def token_cost(self) -> int:
         return _token_cost(self.content)
 
+    @property
+    def pinned(self) -> bool:
+        """A standing instruction the person gave, not a topic of a question."""
+        return self.explicit and any(
+            value.casefold() in _PINNED_PURPOSES
+            for value in (self.purpose, str(self.raw.get("kind") or "")) if value)
+
 
 class ContextBuilder:
     """Dedupe and fit ranked authorized candidates into a token budget."""
 
     def build(self, query: MemoryQuery, candidates: Sequence[MemoryCandidate]) -> dict:
         selected, seen, used = [], set(), 0
-        for candidate in sorted(candidates, key=lambda row: (-row.score, -row.updated_at.timestamp(), row.identity)):
+        for candidate in sorted(candidates, key=lambda row: (not row.pinned, -row.score,
+                                                            -row.updated_at.timestamp(), row.identity)):
             normalized = re.sub(r"\s+", " ", candidate.content).strip().casefold()
             digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
             if not normalized or digest in seen:
@@ -383,7 +413,7 @@ class MemoryService:
                 ("recency", recency), ("explicit", float(candidate.explicit))) if value > 0)
             # An unrelated recent record no longer wins merely because it was
             # written last. Empty queries intentionally form a general bundle.
-            if query_terms and not (lexical or entity_match or graph or task):
+            if query_terms and not (lexical or entity_match or graph or task) and not candidate.pinned:
                 continue
             ranked.append(replace(candidate, entity_ids=tuple(sorted(entity_ids, key=str)),
                 score=score, reasons=reasons, conflicts=conflict_ids))
