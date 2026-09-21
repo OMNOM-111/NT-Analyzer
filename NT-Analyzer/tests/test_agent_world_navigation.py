@@ -47,6 +47,7 @@ const context = {
   qsa: () => items,
   lockedNavClick: function lockedNavClick() {},
   STUDENT_NAV_IDS: new Set(['overview', 'practice', 'community', 'docs']),
+  LEGACY_NAV_IDS: new Set(['agents']),
   ensureBeginnerWatermark: () => beginners++, ensureDemoWatermark: () => demos++,
   renderLockGate: (...args) => locks.push(args)
 };

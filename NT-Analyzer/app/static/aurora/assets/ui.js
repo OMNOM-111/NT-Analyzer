@@ -2030,6 +2030,9 @@
       item.removeEventListener('click', lockedNavClick);
       if (worldEnabled && LEGACY_NAV_IDS.has(id)) {
         item.hidden = true;
+        item.classList.remove('rail-locked');
+        const legacyLock = item.querySelector('.rail-lock');
+        if (legacyLock) legacyLock.remove();
         return;
       }
       if (uxMode === 'beginner') {
