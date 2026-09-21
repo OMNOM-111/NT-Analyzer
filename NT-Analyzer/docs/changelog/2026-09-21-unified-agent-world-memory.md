@@ -2,8 +2,8 @@
 
 - Date: 2026-09-21
 - Status: `IN DEVELOPMENT`; implementation present, all new runtime gates OFF.
-- Source: branch `codex/unified-memory-service`; source commit is the Git commit
-  containing this change record.
+- Source: branch `codex/unified-memory-service`; implementation commit
+  `2a0c08de225beb8b902f060b54ddeaaf0b1089a5`; [PR #290](https://github.com/OMNOM-111/NT-Analyzer/pull/290).
 - Release impact: code and documentation only. No release, Local restart,
   working-data migration, Canary/Production action or server change.
 
