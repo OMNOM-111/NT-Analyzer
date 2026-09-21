@@ -491,6 +491,89 @@ class Memory(Record):
             raise ContractError("verification_required")
 
 
+@dataclass(frozen=True, kw_only=True)
+class KnowledgeEntity(Record):
+    """Resolved graph node beside, never inside, the existing Memory fact."""
+
+    KIND: ClassVar = EntityKind.KNOWLEDGE_ENTITY
+    entity_type: str
+    canonical_name: str
+    aliases: tuple[str, ...]
+    provenance: tuple[SnapshotRef, ...]
+    metadata: SnapshotRef | None = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        require_token(self.entity_type, limit=80)
+        require_text(self.canonical_name)
+        require_tuple(self.aliases, str)
+        if len(self.aliases) > 64:
+            raise ContractError("too_many_entity_aliases")
+        for alias in self.aliases:
+            require_text(alias)
+        if len({value.casefold() for value in (self.canonical_name, *self.aliases)}) != len(self.aliases) + 1:
+            raise ContractError("duplicate_entity_alias")
+        require_tuple(self.provenance, SnapshotRef)
+        if not self.provenance:
+            raise ContractError("entity_provenance_required")
+        if self.metadata is not None:
+            require_snapshot(self.metadata)
+
+
+@dataclass(frozen=True, kw_only=True)
+class Relationship(Record):
+    """Typed, evidenced and temporal edge between any two Agent World records."""
+
+    KIND: ClassVar = EntityKind.RELATIONSHIP
+    source: EntityRef
+    relationship_type: str
+    target: EntityRef
+    provenance: tuple[SnapshotRef, ...]
+    valid_from: datetime
+    valid_to: datetime | None = None
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        from .relationship_registry import validate_relationship_type
+
+        if not isinstance(self.source, EntityRef) or not isinstance(self.target, EntityRef):
+            raise ContractError("relationship_endpoint_required")
+        if self.source == self.target:
+            raise ContractError("relationship_self_edge")
+        validate_relationship_type(self.relationship_type)
+        require_tuple(self.provenance, SnapshotRef)
+        if not self.provenance:
+            raise ContractError("relationship_provenance_required")
+        require_utc(self.valid_from)
+        if self.valid_to is not None:
+            require_utc(self.valid_to)
+            if self.valid_to <= self.valid_from:
+                raise ContractError("relationship_validity_invalid")
+
+
+@dataclass(frozen=True, kw_only=True)
+class KnowledgeSource(Record):
+    """Persistent source identity whose revisions retain locator history."""
+
+    KIND: ClassVar = EntityKind.KNOWLEDGE_SOURCE
+    source_type: str
+    locator: str
+    source_version_id: UUID
+    content_sha256: str
+    observed_at: datetime
+    evidence: SnapshotRef
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        require_token(self.source_type, limit=80)
+        require_text(self.locator, limit=1000)
+        require_uuid(self.source_version_id)
+        if not isinstance(self.content_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", self.content_sha256):
+            raise ContractError("invalid_sha256")
+        require_utc(self.observed_at)
+        require_snapshot(self.evidence)
+
+
 def validate_record_scope(context: RequestContext, record: Record) -> None:
     """Structural boundary only; membership/capabilities must still be checked."""
     if not isinstance(context, RequestContext) or not isinstance(record, Record):
@@ -499,6 +582,10 @@ def validate_record_scope(context: RequestContext, record: Record) -> None:
     if (record.KIND == EntityKind.EXTERNAL_AGENT_CONNECTION
             and context.user_uuid != record.header.owner_user_uuid):
         raise ContractError("external_agent_owner_denied")
+    if (record.KIND in {EntityKind.KNOWLEDGE_ENTITY, EntityKind.RELATIONSHIP,
+                        EntityKind.KNOWLEDGE_SOURCE}
+            and context.user_uuid != record.header.owner_user_uuid):
+        raise ContractError("knowledge_owner_denied")
     if (isinstance(record, Memory) and record.visibility == Visibility.PRIVATE
             and context.user_uuid != record.header.owner_user_uuid):
         raise ContractError("private_memory_denied")

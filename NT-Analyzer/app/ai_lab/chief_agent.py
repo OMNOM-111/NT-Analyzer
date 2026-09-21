@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from .. import durable
+from .. import durable, runtime_env
 from . import agent_registry, agent_router, command_language, llm_timeouts, operator_notes, paths, registry, runner, universal_llm
 from . import dialogue_policy
 from .io_utils import append_jsonl, read_json, read_jsonl, write_json_atomic, write_jsonl_atomic
@@ -700,7 +700,49 @@ def _remember_user_memory(text: str, *, kind: str, scope: Optional[Dict[str, Any
     }
     if info.get("user_uuid"):
         rec["user_uuid"] = info["user_uuid"]
-    append_jsonl(_user_memory_path(scope), rec)
+    from ..ai_control_center.memory_migration import (MemoryWriteMode, MemoryWriteRouter,
+                                                       resolve_write_mode)
+    mode, canonical = MemoryWriteMode.LEGACY, None
+    try:
+        from ..ai_control_center import domain_gateway
+        from ..ai_control_center.flags import Flag, resolve
+        from ..ai_control_center.memory_service import MemoryService
+        authorized = domain_gateway.access(scope)
+        snapshot, agent_scope = authorized["snapshot"], authorized["context"].scope
+        canonical_enabled = resolve(Flag.AI_MEMORY_CANONICAL_WRITE,
+            scope=agent_scope, snapshot=snapshot).enabled
+        archive_only = resolve(Flag.AI_MEMORY_LEGACY_ARCHIVE_ONLY,
+            scope=agent_scope, snapshot=snapshot).enabled
+        report_path = runtime_env.data_path("ai_control_center", "memory_migration_report.json",
+                                            project_root=paths.PROJECT_ROOT)
+        report = read_json(report_path, default={}) if report_path.is_file() else {}
+        mode = resolve_write_mode(canonical_enabled=canonical_enabled,
+            legacy_archive_only=archive_only, reconciliation_report=report)
+        if mode is not MemoryWriteMode.LEGACY:
+            admit = domain_gateway.domain_admission(authorized, "memory")
+            canonical = MemoryService(domain_gateway.repository(authorized), authorized["context"],
+                admit=admit, write_gate=lambda: resolve(Flag.AI_MEMORY_CANONICAL_WRITE,
+                    scope=authorized["context"].scope, snapshot=authorized["snapshot"]).enabled)
+    except Exception:
+        # A missing/invalid reconciliation or disabled flag fails safely back
+        # to the existing durable JSONL writer. Nothing is deleted or skipped.
+        mode, canonical = MemoryWriteMode.LEGACY, None
+
+    def legacy_write():
+        append_jsonl(_user_memory_path(scope), rec)
+        return rec["memory_id"]
+
+    def canonical_write():
+        if canonical is None:
+            raise ChiefAgentError("Каноническая память не прошла сверку перед переключением записи.")
+        item = canonical.write_fact(title="Chief memory · " + rec["kind"], content=rec["text"],
+            purpose=rec["kind"], idempotency_key=rec["memory_id"], retention_days=3650,
+            evidence={"source": "chief_agent", "legacy_memory_id": rec["memory_id"],
+                "source_message_id": rec["source_message_id"], "context_sha256": hashlib.sha256(
+                    rec["context"].encode("utf-8")).hexdigest()})
+        return str(item.header.entity_id)
+
+    MemoryWriteRouter(mode=mode, legacy_write=legacy_write, canonical_write=canonical_write).write()
     return rec
 
 
@@ -751,9 +793,11 @@ def _archive_conversation_memory(conversation_id: str,
     return record
 
 
-def _shared_memory_bundle(scope: Optional[Dict[str, Any]], *, limit: int = 30,
+def _shared_memory_bundle(scope: Optional[Dict[str, Any]], *, query: str = "", limit: int = 30,
                           char_budget: int = 8000) -> Dict[str, Any]:
-    """Build one workspace-private memory packet shared by every model in a turn."""
+    """Read both stores through the canonical service and rank by task relevance."""
+    from ..ai_control_center.memory_service import MemoryQuery, MemoryService
+
     explicit = _user_memories(scope, limit)
     archive_path = _conversation_memory_archive_path(scope)
     archived: List[Dict[str, Any]] = []
@@ -763,34 +807,41 @@ def _shared_memory_bundle(scope: Optional[Dict[str, Any]], *, limit: int = 30,
             if _backfill_scoped_identity_rows(archived, path=archive_path, scope=scope):
                 write_jsonl_atomic(archive_path, archived)
         archived = archived[-10:]
-    candidates = [*explicit, *archived]
-    entries: List[Dict[str, Any]] = []
-    used, seen = 0, set()
-    for row in reversed(candidates):
-        key = (
-            str(row.get("kind") or ""),
-            str(row.get("conversation_id") or row.get("text") or row.get("memory_id") or ""),
-        )
-        if key in seen:
-            continue
-        serialized = json.dumps(row, ensure_ascii=False, default=str)
-        if entries and used + len(serialized) > max(1000, int(char_budget)):
-            continue
-        seen.add(key)
-        used += len(serialized)
-        entries.append(dict(row))
-    entries.reverse()
-    return {
-        "loaded_at_once": True,
-        "scope": "current_user_workspace",
-        "entries": entries,
-        "explicit_count": len(explicit),
-        "archive_count": len(archived),
-    }
+    legacy = tuple([*explicit, *archived])
+    repository = context = None
+    admit = lambda: None
+    session_binding = None
+    try:
+        from ..ai_control_center import domain_gateway
+        from ..ai_control_center.flags import Flag, resolve
+        authorized = domain_gateway.access(scope, read_only=True)
+        admit = domain_gateway.domain_admission(authorized, "memory")
+        if not resolve(Flag.AI_MEMORY_EXTERNAL_CONTEXT, scope=authorized["context"].scope,
+                       snapshot=authorized["snapshot"]).enabled:
+            raise ValueError("external_memory_context_disabled")
+        repository = domain_gateway.repository(authorized)
+        context = authorized["context"]
+        session_id = str(authorized["chat_scope"].get("auth_session_id") or "")
+        if session_id:
+            session_binding = hashlib.sha256((context.scope.environment.value + ":" +
+                context.scope.workspace_id + ":" + str(context.user_uuid) + ":" + session_id).encode()).hexdigest()
+    except Exception:
+        # Memory V2 may be gated or unavailable while the legacy chat remains
+        # live. The same service still provides the legacy-only read path.
+        repository = context = None
+        admit = lambda: None
+    service = MemoryService(repository, context, admit=admit, legacy_reader=lambda: legacy)
+    packet = service.get_context(MemoryQuery(text=str(query or "")[:32000],
+        max_tokens=max(128, min(64_000, int(max(1000, char_budget) / 3.2))),
+        candidate_limit=max(1, min(1_000, int(limit or 30) + 10)),
+        session_binding=session_binding))
+    packet.update(explicit_count=len(explicit), archive_count=len(archived))
+    return packet
 
 
 def _preferred_address(scope: Optional[Dict[str, Any]]) -> str:
-    for row in reversed(_user_memories(scope, 100)):
+    rows = _shared_memory_bundle(scope, query="address preference preferred address", limit=100)["entries"]
+    for row in rows:
         if row.get("kind") == "address_preference" and str(row.get("text") or "").strip():
             return str(row["text"]).strip()[:120]
     return ""
@@ -5049,7 +5100,7 @@ def _handle_message_impl(message: str, *, source: str = "app", mirror_to_telegra
                                       request_id=request_key, source=source)
     if live_turn is not None:
         return live_turn
-    shared_memory = _shared_memory_bundle(scope)
+    shared_memory = _shared_memory_bundle(scope, query=clean)
     if scope_info:
         scope_info["preferred_address"] = _preferred_address(scope)
         scope_info["shared_memory"] = shared_memory

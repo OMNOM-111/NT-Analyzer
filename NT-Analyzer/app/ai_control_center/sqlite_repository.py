@@ -94,7 +94,8 @@ def _references(value):
 
 
 def _visibility(record: c.Record) -> str:
-    if record.KIND == EntityKind.EXTERNAL_AGENT_CONNECTION:
+    if record.KIND in {EntityKind.EXTERNAL_AGENT_CONNECTION, EntityKind.KNOWLEDGE_ENTITY,
+                       EntityKind.RELATIONSHIP, EntityKind.KNOWLEDGE_SOURCE}:
         return "private"
     return record.visibility.value if isinstance(record, c.Memory) else "workspace"
 

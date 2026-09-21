@@ -13,6 +13,17 @@
 PROGRAM: Agent World / AI Center
 STATUS: IN DEVELOPMENT
 
+CURRENT ISOLATED MEMORY DELTA (2026-09-21): branch codex/unified-memory-service.
+  One MemoryService now defines combined legacy/canonical reads and ranked token
+  context. Existing Memory is unchanged; KnowledgeEntity, Relationship and
+  KnowledgeSource are additive generic-ledger records for both SQLite and PG.
+  Stable source/version/fragment identity, conflict/supersession handling,
+  loss-accounted migration and reversible write modes are implemented behind
+  OFF-by-default flags. No Local restart/data migration/server/release occurred.
+  Canonical memory egress to external models remains separately disabled.
+  Evidence: docs/adr/0013-unified-agent-world-memory.md and
+  docs/changelog/2026-09-21-unified-agent-world-memory.md.
+
 HANDOFF: P1-3 accepted and closed by the owner at f1fe393f.
   Owner mandate 2026-09-12: one integrator for the entire programme.
   Shared-file handoff at 9365695a is accepted. P1-5 saved work at 5511c8f8

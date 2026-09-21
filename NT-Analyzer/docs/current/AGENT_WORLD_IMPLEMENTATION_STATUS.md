@@ -4,6 +4,18 @@ Canonical program status: **IN DEVELOPMENT**. This document describes the
 current unified source, not historical previews and not an accepted release.
 The target architecture and owner's visual references are unchanged.
 
+## 2026-09-21 isolated memory delta
+
+Branch `codex/unified-memory-service` adds the disabled-by-default unified memory
+facade described in [ADR-0013](../adr/0013-unified-agent-world-memory.md). Existing
+`Memory` remains the fact contract; entity/source/relationship records, stable
+source/version/fragment identities, graph-aware token retrieval, loss-accounted
+legacy migration and reversible write gates are additive. Chief chat and
+specialist-agent context now use the facade, but all canonical/external-context
+flags remain OFF. Protected Local 8765, its data, PostgreSQL environments and
+servers were not touched. This delta is `IN DEVELOPMENT`, not a release or owner
+runtime acceptance.
+
 ## Exact source and protected runtime
 
 - Active branch: `codex/agent-world-unified-acceptance`, draft
