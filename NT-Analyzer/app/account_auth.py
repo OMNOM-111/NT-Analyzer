@@ -1387,6 +1387,12 @@ def _ensure_registration_trial(user: Dict[str, Any], *, source: str = "") -> Dic
             user_uuid=_user_uuid(snapshot),
             source=str(source or snapshot.get("initial_trial_source") or "verified_registration"),
         )
+        # The registration outbox provisions the user's own container too.
+        # Preview registration uses this exact path, including entitlement
+        # admission; neither registration path attaches private AI work to
+        # the owner's training workspace.
+        from . import workspaces
+        granted["workspace"] = workspaces.ensure_personal_workspace(uid)
     except subscriptions.SubscriptionError as exc:
         raise AccountAuthError(
             f"Аккаунт подтверждён, но trial пока не сохранён: {exc}",

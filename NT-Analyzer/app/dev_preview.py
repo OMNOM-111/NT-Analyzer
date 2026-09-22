@@ -184,6 +184,7 @@ _SENSITIVE_ENV_MARKERS = (
     "TUNNEL", "SENTRY_DSN",
 )
 _ROOT_ENV_NAMES = {
+    "STRATFORGE_PREVIEW_MODEL_BRIDGE", "STRATFORGE_PREVIEW_MODEL_TOKEN",
     "STRATFORGE_DATA_ROOT", "NTA_DATA_ROOT", "STRATFORGE_CANARY_DATA_ROOT",
     "STRATFORGE_DEVELOPMENT_DATA_ROOT", "NTA_STAGING_DATA_ROOT",
 }
@@ -270,6 +271,8 @@ def _stop_active_sandbox_locked(*, remove_data: bool) -> None:
     _ACTIVE_SANDBOX = None
     if not record:
         return
+    if record.get("model_bridge") is not None:
+        record["model_bridge"].close()
     process = record.get("process")
     if process is not None and process.poll() is None:
         process.terminate()
@@ -340,6 +343,12 @@ def launch_sandbox(actor_user_id: Any, scenario: Any, *, origin: Any) -> Dict[st
         root=root, base=base, entry_token=entry_token,
         control_token=control_token, port=port,
     )
+    bridge = None
+    if selected in {"shared_models_user", "ai_denied_user"}:
+        from .preview_shared_models import Bridge
+        bridge = Bridge(preview_id)
+        env["STRATFORGE_PREVIEW_MODEL_BRIDGE"] = bridge.url
+        env["STRATFORGE_PREVIEW_MODEL_TOKEN"] = bridge.token
     command = [sys.executable, "-m", "app.preview_server", "--port", str(port)]
     creationflags = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
     log_handle = log_path.open("w", encoding="utf-8")
@@ -365,13 +374,27 @@ def launch_sandbox(actor_user_id: Any, scenario: Any, *, origin: Any) -> Dict[st
                 "log_path": str(log_path),
                 "started_at": time.time(),
                 "actor_user_id": actor,
+                "model_bridge": bridge,
             }
             _ACTIVE_SANDBOX = record
         _wait_for_sandbox(record)
+        def reap():
+            process.wait()
+            with _SANDBOX_LOCK:
+                if _ACTIVE_SANDBOX and _ACTIVE_SANDBOX.get("preview_id") == preview_id:
+                    _stop_active_sandbox_locked(remove_data=True)
+        threading.Thread(target=reap, daemon=True, name="preview-cleanup").start()
     except Exception as exc:
+        log_handle.close()
         with _SANDBOX_LOCK:
             if _ACTIVE_SANDBOX and _ACTIVE_SANDBOX.get("preview_id") == preview_id:
                 _stop_active_sandbox_locked(remove_data=True)
+            else:
+                abandoned = _validated_preview_container({"container": str(container), "preview_id": preview_id})
+                if abandoned and abandoned.exists():
+                    shutil.rmtree(abandoned)
+        if bridge is not None and not bridge.closed:
+            bridge.close()
         if isinstance(exc, DevPreviewError):
             raise
         raise DevPreviewError(
@@ -394,7 +417,7 @@ def launch_sandbox(actor_user_id: Any, scenario: Any, *, origin: Any) -> Dict[st
         "scenario": selected,
         "url": url,
         "isolated": True,
-        "external_side_effects": "blocked",
+        "external_side_effects": "shared_models_only" if bridge is not None else "blocked",
     }
 
 

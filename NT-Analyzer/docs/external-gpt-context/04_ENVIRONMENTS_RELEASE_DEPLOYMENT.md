@@ -7,6 +7,14 @@
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: DONE
 
+Local-only Preview change (2026-09-22): the two shared-model QA profiles may call
+one authenticated parent loopback service for catalog/invoke only. Other outbound
+connections remain blocked. The bridge expires after 30 minutes and allows at
+most 32 calls / USD 0.25 while preserving the model's own caps. Exit removes the
+child's data/process/container; minimal owner usage accounting remains. No
+Canary/Production deployment or release identity changed.
+[Canonical evidence](../changelog/2026-09-22-shared-models-local-continuation.md).
+
 ## Only supported release model
 
 ```mermaid

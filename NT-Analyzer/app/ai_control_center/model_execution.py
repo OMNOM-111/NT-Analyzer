@@ -210,7 +210,12 @@ class ModelExecutor:
             if current.get("provider") != model.provider_key or current.get("model") != model.model_key:
                 raise ContractError("model_owner_binding_changed")
         kwargs["check"] = revalidate_binding
-        return self._call(agent_id, context=context, **kwargs)
+        result = self._call(agent_id, context=context, **kwargs)
+        if shared is not None:
+            key = agent_registry.get_api_key(agent_id)
+            if key and key in json.dumps(result, ensure_ascii=False):
+                raise ContractError("model_provider_response_invalid")
+        return result
 
     @staticmethod
     def _call(agent_id, *, context, prompt, system_prompt, conversation_id, max_output_tokens,

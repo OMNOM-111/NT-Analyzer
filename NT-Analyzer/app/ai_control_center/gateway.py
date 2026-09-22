@@ -149,9 +149,11 @@ def domain_service_for(handler):
     from .preview_domains import PreviewDomains
     from .sqlite_repository import SQLiteAgentWorldRepository
     repository = SQLiteAgentWorldRepository(root / "agent-world.sqlite3")
-    return PreviewDomains(context=context, service=DomainService(repository), fresh=fresh,
+    domains = PreviewDomains(context=context, service=DomainService(repository), fresh=fresh,
                           flags=lambda: {flag.value: resolve(flag, scope=context.scope,
                               snapshot=flag_snapshot(context)).enabled for flag in REGISTRY})
+    from .. import preview_shared_models
+    return preview_shared_models.SharedDomains(domains, handler) if preview_shared_models.enabled() else domains
 
 
 def enrich(payload: dict, context: RequestContext, snapshot: FlagSnapshot) -> dict:

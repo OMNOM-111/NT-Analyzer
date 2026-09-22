@@ -10,6 +10,14 @@
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: PARTIAL
 
+Local Shared Models continuation (2026-09-22): registration's trial outbox now
+provisions the user's personal workspace with entitlement admission. Disposable
+Preview uses that path and no longer grants all permission overrides. Explicit
+shared-model/no-AI profiles retain model-ownership/automation/admin denials.
+The bounded Local model bridge carries only call descriptors and responses;
+provider credentials/settings stay with the connection owner. Session/workspace
+checks remain mandatory. See [continuation record](../changelog/2026-09-22-shared-models-local-continuation.md).
+
 ## Previous verified model/domain checkpoint — aa54c294
 
 At that previous checkpoint, clean Local 8765 ran `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96,

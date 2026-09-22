@@ -203,6 +203,15 @@
   `db85773f` and the two that differ are changelogs, so the review binds to
   that commit.
 
+Shared Models continuation (2026-09-22): continue `feat/shared-model-access` from
+recovered `548c995a` and checkpoint `f43a50de`; do not restart implementation.
+Disposable Preview profiles now use registration trial/personal-workspace
+provisioning without blanket permission grants. The old observer QA account's
+temporary `ai_lab` override was restored to its recorded baseline. Live shared
+model invocation in Preview passed (Chat + Agent World, usage/revoke/cleanup).
+Full regression and Git closeout remain
+pending. [Canonical continuation record](../changelog/2026-09-22-shared-models-local-continuation.md).
+
 ## Resume point — 2026-09-09
 
 Continue in `codex/agent-world-unified-acceptance` from saved e45 and its owned

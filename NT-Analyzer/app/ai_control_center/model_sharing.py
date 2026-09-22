@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+import contextvars
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -28,6 +29,19 @@ from .. import runtime_env
 from .states import ContractError
 
 _LOCK = threading.RLock()
+_PREVIEW_PRINCIPAL = contextvars.ContextVar("shared_preview_principal", default=None)
+
+
+@contextmanager
+def preview_principal(person):
+    """Trusted Local bridge attribution; never populated from public auth JSON."""
+    if not runtime_env.is_development():
+        raise ContractError("preview_development_required")
+    token = _PREVIEW_PRINCIPAL.set(dict(person))
+    try:
+        yield
+    finally:
+        _PREVIEW_PRINCIPAL.reset(token)
 _SCHEMA = (
     """CREATE TABLE IF NOT EXISTS shares (
         model_id TEXT PRIMARY KEY, environment TEXT NOT NULL, owner_workspace_id TEXT NOT NULL,
@@ -64,14 +78,17 @@ def _db(create: bool = True):
     if not create and not path.is_file():
         yield None
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
+    if create:
+        path.parent.mkdir(parents=True, exist_ok=True)
     with _LOCK:
-        connection = sqlite3.connect(str(path), timeout=10)
+        connection = (sqlite3.connect(str(path), timeout=10) if create else
+                      sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=10))
         connection.row_factory = sqlite3.Row
         try:
-            connection.execute("PRAGMA journal_mode=WAL")
-            for statement in _SCHEMA:
-                connection.execute(statement)
+            if create:
+                connection.execute("PRAGMA journal_mode=WAL")
+                for statement in _SCHEMA:
+                    connection.execute(statement)
             yield connection
             connection.commit()
         finally:
@@ -201,10 +218,15 @@ def caller(usage_context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     raw = str((usage_context or {}).get("user_id") or "").strip()
     if not raw:
         return None
+    preview = _PREVIEW_PRINCIPAL.get()
+    if preview is not None and raw == preview.get("user_uuid"):
+        return dict(preview)
     user = (account_auth.find_active_user(int(raw)) if raw.isdigit()
             else account_auth.find_active_user_by_uuid(raw))
     if not user:
-        return None
+        # An attributed but inactive/unknown principal must not be treated as
+        # an unattributed platform job with access to the owner's registry.
+        return {"is_owner": False, "user_uuid": raw, "invalid": True}
     return {"is_owner": user.get("is_owner") is True,
             "user_uuid": str(user.get("user_uuid") or raw), "user_id": user.get("user_id"),
             "name": str(usage_context.get("user_name") or user.get("display_name") or user.get("name") or "")}
@@ -222,6 +244,8 @@ def registry_filter(usage_context: Dict[str, Any]) -> Optional[set]:
     person = caller(usage_context)
     if person is None or person["is_owner"]:
         return None
+    if person.get("invalid"):
+        return set()
     return shared_registry_ids()
 
 
@@ -242,7 +266,7 @@ def observe(row: Dict[str, Any], usage_context: Dict[str, Any], *, grant: Option
     if not runtime_env.is_development():
         return
     person = caller(usage_context)
-    if person is None:
+    if person is None or person.get("invalid"):
         return
     share = grant
     if share is None:

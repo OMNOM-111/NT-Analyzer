@@ -1757,7 +1757,7 @@
     const scenarios = Array.isArray(status.sandbox_scenarios) ? status.sandbox_scenarios : [];
     const active = status.active_sandbox || {};
     body.innerHTML = `
-      <div class="finance-note"><strong>Изолированный Preview sandbox.</strong> Каждый запуск создаёт отдельный процесс, synthetic user, собственные identity/session/device/workspace/trading stores и уникальные cookies. Owner data не копируются и не изменяются; e-mail, Telegram, платежи, брокеры, cloud AI и live orders заблокированы.</div>
+      <div class="finance-note"><strong>Изолированный Preview sandbox.</strong> Каждый запуск создаёт временного пользователя со своим workspace и выбранными правами. Данные владельца и API-ключи не копируются. В сценариях общих моделей доступны только явно расшаренные Local-модели (до 32 вызовов и $0.25 за 30 минут); остальные внешние вызовы, платежи и торговля заблокированы. Выход удаляет данные Preview; учёт реальных расходов остаётся у владельца подключения.</div>
       ${active.running ? `<div class="preview-active-note"><span class="badge pending">активен</span> Предыдущий sandbox: ${esc(active.scenario || '')}. Новый запуск безопасно заменит его.</div>` : ''}
       <div class="section-title">Acceptance-сценарий</div>
       <div class="dev-persona-grid preview-scenario-grid">${scenarios.map(item => `<button class="btn ghost dev-persona" data-preview-scenario="${esc(item.id)}"><strong>${esc(item.label)}</strong><span class="cab-sub">${esc(item.description || '')}</span></button>`).join('')}</div>

@@ -53,6 +53,14 @@ def reply(text="ok", **changes):
             **changes}
 
 
+def test_unknown_attributed_user_is_not_an_unrestricted_platform_job(monkeypatch):
+    from app import account_auth
+    monkeypatch.setenv("STRATFORGE_ENV", "development")
+    monkeypatch.setattr(account_auth, "find_active_user_by_uuid", lambda _: None)
+    assert model_sharing.registry_filter({"user_id": str(uuid4())}) == set()
+    assert model_sharing.registry_filter({}) is None
+
+
 @pytest.fixture
 def world(tmp_path, monkeypatch):
     monkeypatch.setenv("STRATFORGE_ENV", "development")
@@ -289,6 +297,7 @@ def test_a_shared_owner_binding_is_allowed_by_the_grant_not_by_the_caller(world,
         idempotency_key="owner-binding-share", resolve_binding=lambda *a: configured)
     service.set_sharing(context=owner, model_id=bound["id"], shared=True)
     monkeypatch.setattr(agent_registry, "get_agent", lambda identity: dict(configured))
+    monkeypatch.setattr(agent_registry, "get_api_key", lambda identity: SECRET)
     model, account, profile = service._owner_connection(guest, model_sharing.get(bound["id"]))
     grant = model_sharing.Grant(model_sharing.get(bound["id"]), caller_user_uuid=str(guest.user_uuid))
     seen = []
@@ -545,3 +554,50 @@ def test_a_user_without_ai_access_cannot_reach_a_shared_model(two_accounts):
         gateway.mutate(gateway.access(guest), "models", offered["id"], "task",
             {"idempotency_key": "scenario-guest-nocap", "payload": {"rubric_key": "json_arithmetic",
                                                                     "input_text": "[1, 2, 3]"}})
+
+
+@pytest.mark.parametrize("revoke_at", ["credential", "response"])
+def test_registry_revoke_at_transmission_and_inflight_usage(world, monkeypatch, revoke_at):
+    service, owner, guest = world["service"], world["owner"], world["guest"]
+    configured = {"id": "AGT-RACECHECK01", "name": "Shared race", "provider": "deepseek",
+        "model": "deepseek-v4-pro", "base_url": "https://api.deepseek.com",
+        "pricing_status": "configured", "endpoint_type": "chat", "role": "general",
+        "enabled": True, "key_configured": True}
+    bound = service.bind_existing_model(context=owner, payload={"registry_id": configured["id"],
+        "persona_id": world["model"]["persona_id"]}, idempotency_key="race-binding",
+        resolve_binding=lambda *a: configured)
+    service.set_sharing(context=owner, model_id=bound["id"], shared=True)
+    monkeypatch.setattr(agent_registry, "get_agent", lambda *a, **k: dict(configured))
+    monkeypatch.setattr(agent_registry, "record_usage", lambda row: None)
+    monkeypatch.setattr(agent_registry, "clear_cooldown", lambda *a: None)
+    monkeypatch.setattr(universal_llm, "estimate_request_cost", lambda *a, **k:
+        {"estimated_max_cost_usd": .01, "estimated_input_tokens": 10})
+    monkeypatch.setattr(universal_llm, "_cost", lambda *a: .001)
+    def reserve(*a, **k):
+        universal_llm._RESERVATIONS["race"] = {}
+        return "race"
+    monkeypatch.setattr(universal_llm, "_reserve", reserve)
+    def key(*a):
+        if revoke_at == "credential":
+            service.set_sharing(context=owner, model_id=bound["id"], shared=False)
+        return SECRET
+    monkeypatch.setattr(agent_registry, "get_api_key", key)
+    transmissions = []
+    def respond(*a, **k):
+        transmissions.append(1)
+        service.set_sharing(context=owner, model_id=bound["id"], shared=False)
+        return "ok", {"input_tokens": 10, "output_tokens": 5}
+    monkeypatch.setattr(universal_llm, "_openai_compatible", respond)
+    with universal_llm.usage_scope({"user_id": str(guest.user_uuid),
+            "workspace_id": guest.scope.workspace_id, "conversation_id": "race-chat"}):
+        if revoke_at == "credential":
+            with pytest.raises(universal_llm.UniversalLLMError, match="общего доступа"):
+                universal_llm.invoke_agent(configured["id"], "hello", cache_mode="off")
+            assert not transmissions
+        else:
+            assert universal_llm.invoke_agent(configured["id"], "hello", cache_mode="off")["response"] == "ok"
+            usage = service.shared_usage(context=owner)["by_others"]
+            assert usage["total"]["calls"] == 1
+            assert usage["total"]["input_tokens"] == 10
+            assert usage["recent"][0]["task"] == "race-chat"
+    assert universal_llm._TRANSMIT_CHECK.get() is None

@@ -5348,6 +5348,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             if path == "/api/dev/preview/exit":
+                preview_sandbox.finish_preview()
                 self._clear_session_cookie()
                 self._clear_device_credential_cookie()
                 self._clear_dev_preview_mode_cookie()
@@ -9414,6 +9415,25 @@ class Handler(BaseHTTPRequestHandler):
                 return
             time.sleep(0.25)
 
+    def _preview_shared_chat(self, body, *, stream):
+        from . import preview_shared_models
+        from .ai_control_center.states import ContractError
+        try:
+            with preview_sandbox.data_operation():
+                result = preview_shared_models.chat(self, body)
+            if stream:
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self._sse_write("final", result)
+                self._sse_write("done", {"ok": True})
+            else:
+                self._json(HTTPStatus.OK, result)
+        except ContractError:
+            self._err(HTTPStatus.FORBIDDEN, "Shared model call unavailable.", code="preview_shared_call_denied")
+
     def _ai_lab_orchestrator_sync(self, body: Dict[str, Any], *,
                                   scope: Dict[str, Any],
                                   mirror_to_telegram: bool) -> None:
@@ -9546,10 +9566,16 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/ai-lab/orchestrator/message/stream":
+            if preview_sandbox.enabled():
+                self._preview_shared_chat(body, stream=True)
+                return
             self._ai_lab_orchestrator_stream(body, scope=self._ai_conversation_scope())
             return
 
         if path == "/api/ai-lab/orchestrator/message":
+            if preview_sandbox.enabled():
+                self._preview_shared_chat(body, stream=False)
+                return
             self._ai_lab_orchestrator_sync(
                 body, scope=self._ai_conversation_scope(), mirror_to_telegram=True,
             )

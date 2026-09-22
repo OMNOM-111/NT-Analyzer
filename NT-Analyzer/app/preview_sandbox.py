@@ -57,6 +57,14 @@ SCENARIOS: Dict[str, Dict[str, str]] = {
         "label": "Обычный активный пользователь",
         "description": "Активный synthetic user с доступом только до конца сессии.",
     },
+    "shared_models_user": {
+        "label": "Новый пользователь · общие модели",
+        "description": "Реальная регистрация и trial, своё пространство, без собственных моделей. Подключение своих моделей и автоматизация запрещены.",
+    },
+    "ai_denied_user": {
+        "label": "Пользователь без доступа к AI",
+        "description": "Своё пространство и подтверждённая сессия; AI запрещён для проверки отказов доступа.",
+    },
     "trusted_device": {
         "label": "Пользователь с доверенным устройством",
         "description": "Активный synthetic user на постоянно доверенном клиенте.",
@@ -75,6 +83,7 @@ _LOCK = threading.RLock()
 _DATA_LIFECYCLE_LOCK = threading.RLock()
 _ENTRY_CONSUMED = False
 _NETWORK_GUARD_INSTALLED = False
+_EXIT_REQUESTED = threading.Event()
 _RUNTIME_CLOCK: Optional[threading.Thread] = None
 _RUNTIME_CLOCK_DIRS: List[Path] = []
 _RUNTIME_CLOCK_STOP = threading.Event()
@@ -276,21 +285,34 @@ def exit_url() -> str:
 
 
 def install_network_guard() -> None:
-    """Block every outbound socket from the Preview child process.
+    """Block outbound sockets except an explicitly issued Local model bridge.
 
     The HTTP server uses bind/accept and is unaffected.  Domain code may still
     mutate its isolated local stores, while Telegram, e-mail, payment, broker,
-    cloud-model and other network calls are technically unable to leave it.
+    cloud-model and other arbitrary network calls cannot leave it. The two
+    shared-model QA profiles may call only their parent's exact loopback port;
+    that authenticated service exposes catalog/invoke, never a general proxy.
     """
     global _NETWORK_GUARD_INSTALLED
     require_enabled()
     if _NETWORK_GUARD_INSTALLED:
         return
 
+    original_connect = socket.socket.connect
+    original_create = socket.create_connection
+    bridge = urlparse(os.environ.get("STRATFORGE_PREVIEW_MODEL_BRIDGE", ""))
+    bridge_address = (("127.0.0.1", bridge.port) if bridge.scheme == "http"
+                      and bridge.hostname == "127.0.0.1" and bridge.port else None)
+
     def blocked_connect(_sock: socket.socket, _address: Any) -> None:
+        if bridge_address and _address == bridge_address:
+            return original_connect(_sock, _address)
         raise OSError(errno.EPERM, "Preview sandbox blocks outbound network connections")
 
     def blocked_create_connection(*_args: Any, **_kwargs: Any) -> socket.socket:
+        address = _args[0] if _args else _kwargs.get("address")
+        if bridge_address and address == bridge_address:
+            return original_create(*_args, **_kwargs)
         raise OSError(errno.EPERM, "Preview sandbox blocks outbound network connections")
 
     socket.socket.connect = blocked_connect  # type: ignore[assignment]
@@ -323,6 +345,10 @@ def external_side_effect_blocked(method: str, path: str) -> bool:
     if not enabled():
         return False
     clean_path = str(path or "")
+    if clean_path in {"/api/ai-lab/orchestrator/message", "/api/ai-lab/orchestrator/message/stream"}:
+        from . import preview_shared_models
+        if preview_shared_models.enabled():
+            return False
     if any(clean_path.startswith(prefix) for prefix in _BLOCKED_PREFIXES):
         return True
     return str(method or "").upper() not in {"GET", "HEAD"} and clean_path in _BLOCKED_MUTATIONS
@@ -404,8 +430,6 @@ def _find_user_by_public(public: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
 
 def _mark_preview_user(user_id: int) -> Dict[str, Any]:
-    from . import permissions
-
     with account_auth._LOCK:
         doc = account_auth._read_doc()
         user = account_auth._user(doc, user_id)
@@ -420,21 +444,15 @@ def _mark_preview_user(user_id: int) -> Dict[str, Any]:
             "is_preview_user": True,
             "virtual_preset": "preview_sandbox",
             "preview_sandbox_id": _safe_id(),
-            "role": "full_control",
-            "status": "active",
-            "ux_mode": "professional",
-            "ux_mode_set_at_utc": user.get("ux_mode_set_at_utc") or _now(),
-            # Preview is for full product walkthroughs. These grants remain
-            # scoped to this synthetic data root; strict owner-only surfaces
-            # stay owner-only in permissions.resolve and real external effects
-            # are independently blocked by the child process.
-            "feature_overrides": {
-                feature_id: True for feature_id in account_auth.FEATURES
-            },
-            "permission_overrides": {
-                capability_id: True for capability_id in permissions.CAPABILITY_IDS
-            },
         })
+        # Registration owns baseline role/status/entitlements. QA may restrict
+        # that baseline; marking a disposable identity never grants everything.
+        scenario = str(_STATE.get("scenario") or os.environ.get("STRATFORGE_PREVIEW_SCENARIO") or "new_user")
+        denied = {"ai_pro_models": False, "ai_automation": False}
+        if scenario == "ai_denied_user":
+            denied["ai_lab"] = False
+        if scenario in {"shared_models_user", "ai_denied_user"}:
+            user["permission_overrides"] = {**(user.get("permission_overrides") or {}), **denied}
         account_auth._write_doc(doc)
         return dict(user)
 
@@ -1192,13 +1210,15 @@ def ensure_synthetic_dataset(user_id: int, *, include_security: bool = True) -> 
         else:
             existing = {}
     if existing:
+        if str(_STATE.get("scenario") or "") in {"shared_models_user", "ai_denied_user"}:
+            return existing
         # The dataset survives re-authentication inside the same sandbox; the
         # synthetic bridge clock has to keep running with it.
         try:
             _start_runtime_clock(_runtime_dirs(workspaces.ensure_personal_workspace(
                 user_id,
                 display_name="Preview Personal Workspace",
-                require_entitlement=False,
+                require_entitlement=True,
             )))
         except Exception:
             pass
@@ -1213,12 +1233,29 @@ def ensure_synthetic_dataset(user_id: int, *, include_security: bool = True) -> 
         workspace = workspaces.ensure_personal_workspace(
             user_id,
             display_name="Preview Personal Workspace",
-            require_entitlement=False,
+            require_entitlement=True,
         )
     except Exception as exc:
         errors.append(f"workspace:{type(exc).__name__}")
 
     workspace_id = str(workspace.get("workspace_id") or "")
+    if str(_STATE.get("scenario") or "") in {"shared_models_user", "ai_denied_user"}:
+        # A new-user acceptance fixture starts empty. In particular, no seeded
+        # chat, memory, task or model can hide a broken first-use path.
+        if not workspace_id or errors:
+            raise PreviewSandboxError("Preview workspace provisioning failed.", 503,
+                                      code="preview_provisioning_failed")
+        with account_auth._LOCK:
+            doc = account_auth._read_doc()
+            stored = account_auth._user(doc, int(user_id))
+            stored["preview_dataset_version"] = 1
+            stored["preview_dataset_errors"] = []
+            account_auth._write_doc(doc)
+        with _LOCK:
+            _STATE["dataset_ready"] = True
+            _STATE["dataset_errors"] = []
+            _write_manifest()
+        return {"ok": True, "ready": True, "user_id": user_id, "errors": []}
     if workspace_id:
         try:
             pairing = workspaces.start_bridge_pairing(
@@ -1471,7 +1508,8 @@ def activate_scenario(scenario: Any, *, device_credential: str) -> Dict[str, Any
 
     generation = int(_STATE.get("generation") or 1)
     registration_credential = (
-        credential if selected in {"active_user", "trusted_device", "agent_world_operator"}
+        credential if selected in {"active_user", "trusted_device", "agent_world_operator",
+                                   "shared_models_user", "ai_denied_user"}
         else "preview-known-device-" + secrets.token_urlsafe(18)
     )
     registered = _register_synthetic_user(registration_credential, generation)
@@ -1533,6 +1571,8 @@ def activate_scenario(scenario: Any, *, device_credential: str) -> Dict[str, Any
 
 
 def enter(entry_token: Any, *, device_credential: str) -> Dict[str, Any]:
+    if _EXIT_REQUESTED.is_set():
+        raise PreviewSandboxError("Preview closed.", 410, code="preview_closed")
     consume_entry_token(entry_token)
     with _LOCK:
         _STATE["generation"] = max(1, int(_STATE.get("generation") or 0) + 1)
@@ -1549,7 +1589,18 @@ def data_operation():
     """
     require_enabled()
     with _DATA_LIFECYCLE_LOCK:
+        if _EXIT_REQUESTED.is_set():
+            raise PreviewSandboxError("Preview closed.", 410, code="preview_closed")
         yield
+
+
+def finish_preview() -> None:
+    """Revoke disposable sessions and erase data before confirming Exit."""
+    with data_operation():
+        _wipe_isolated_root()
+        with _LOCK:
+            _STATE.clear()
+        _EXIT_REQUESTED.set()
 
 
 def reset(scenario: Any, *, device_credential: str) -> Dict[str, Any]:
@@ -1619,6 +1670,6 @@ def status() -> Dict[str, Any]:
         "state": state,
         "scenarios": scenario_catalog(),
         "data_root_fingerprint": hashlib.sha256(str(isolated_root()).encode("utf-8")).hexdigest()[:16],
-        "external_side_effects": "blocked",
+        "external_side_effects": runtime_env.preview_public_metadata()["external_side_effects"],
         "exit_url": exit_url(),
     }

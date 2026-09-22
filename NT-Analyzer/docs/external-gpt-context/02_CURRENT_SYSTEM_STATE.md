@@ -95,6 +95,14 @@
   of [master status](../current/AGENT_WORLD_MASTER_STATUS.md) and
   [checkpoint evidence](../changelog/2026-09-10-external-agent-onboarding.md).
 
+Shared Models continuation (2026-09-22): **IN DEVELOPMENT** on
+`feat/shared-model-access`, recovered code `548c995a`, checkpoint `f43a50de`.
+Registration/Preview personal-workspace provisioning and restricted QA profiles
+are implemented. Live shared-model Preview passed for Chat and Agent World;
+full regression and Git closeout remain
+pending. [Canonical continuation record](../changelog/2026-09-22-shared-models-local-continuation.md).
+No Canary/Production change is included in this work.
+
 ## Historical integration evidence — 2026-09-09
 
 The preserved executable source of that historical checkpoint was

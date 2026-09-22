@@ -83,6 +83,7 @@ def preview_env(tmp_path, monkeypatch):
     account_auth._clear_doc_cache()
     security_devices._CHALLENGE_RATE.clear()
     preview_sandbox._ENTRY_CONSUMED = False
+    preview_sandbox._EXIT_REQUESTED.clear()
     preview_sandbox._STATE.clear()
     preview_sandbox._STATE.update({
         "scenario": "",
@@ -94,6 +95,7 @@ def preview_env(tmp_path, monkeypatch):
         "dataset_errors": [],
     })
     yield {"id": preview_id, "base": base, "root": root}
+    preview_sandbox._EXIT_REQUESTED.clear()
     account_auth._clear_doc_cache()
     runtime_env._data_root_cached.cache_clear()
 
@@ -321,7 +323,8 @@ def test_seeded_scenarios_cover_session_permanent_and_new_client(preview_env):
             context["device_access"]["trust_mode"],
         ) == wanted
         assert context["user"]["is_preview_user"] is True
-        assert all(context["user"]["features"].values())
+        assert not context["user"].get("permission_overrides")
+        assert not context["user"].get("feature_overrides")
         assert preview_sandbox.status()["state"]["dataset_errors"] == []
 
 
@@ -396,8 +399,46 @@ def test_owner_preview_status_advertises_isolated_scenarios(preview_env):
     assert status["architecture"] == "isolated_process"
     assert {row["id"] for row in status["sandbox_scenarios"]} == {
         "new_user", "active_user", "trusted_device", "pending_access", "agent_world_operator",
+        "shared_models_user", "ai_denied_user",
     }
     assert status["active_sandbox"] == {"running": False}
+
+
+@pytest.mark.parametrize("scenario,ai_allowed", [("shared_models_user", True), ("ai_denied_user", False)])
+def test_new_user_profiles_have_registration_workspace_and_only_selected_rights(preview_env, scenario, ai_allowed):
+    from app import permissions, subscriptions
+    result = preview_sandbox.activate_scenario(scenario, device_credential="preview-new-user-browser")
+    raw = account_auth.authenticate_session(result["session_token"])
+    user = account_auth.find_active_user(raw["user_id"])
+    assert user["initial_trial_entitlement_id"]
+    assert not user.get("is_owner") and not user.get("is_preview_operator")
+    assert subscriptions.entitlements_for_user(raw["user_id"])["entitlements"]
+    scope = workspaces.context_for_user(raw["user_id"])
+    workspace = scope["active_workspace"]
+    assert workspace["kind"] == "personal"
+    assert workspace["owner_user_id"] == raw["user_id"]
+    assert scope["active_membership"]["role"] == "owner"
+    assert not scope["uses_owner_runtime"]
+    caps = permissions.resolve_for_user_id(raw["user_id"], user)
+    assert caps["capabilities"]["ai_lab"] is ai_allowed
+    assert caps["capabilities"]["ai_pro_models"] is False
+    assert caps["capabilities"]["ai_automation"] is False
+    assert not any(caps["admin_capabilities"].values())
+    old_uuid, old_workspace = user["user_uuid"], workspace["workspace_id"]
+    preview_sandbox.reset("shared_models_user", device_credential="preview-next-user-browser")
+    assert account_auth.find_active_user_by_uuid(old_uuid) is None
+    assert not any(row["workspace_id"] == old_workspace for row in workspaces._read_doc()["workspaces"])
+
+
+def test_exit_erases_disposable_account_and_refuses_further_mutations(preview_env):
+    result = preview_sandbox.activate_scenario("shared_models_user", device_credential="preview-exit-browser")
+    assert account_auth.authenticate_session(result["session_token"])
+    preview_sandbox.finish_preview()
+    assert preview_sandbox._EXIT_REQUESTED.is_set()
+    assert not list(preview_env["root"].iterdir())
+    assert account_auth.authenticate_session(result["session_token"]) is None
+    with pytest.raises(preview_sandbox.PreviewSandboxError, match="closed"):
+        preview_sandbox.reset("shared_models_user", device_credential="preview-after-exit")
 
 
 def test_reset_does_not_accept_a_root_outside_the_preview_base(preview_env, monkeypatch):

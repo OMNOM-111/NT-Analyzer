@@ -28,6 +28,9 @@ DOMAINS = frozenset({"personas", "memory", "projects", "routines", "calendar", "
 
 
 def access(scope, *, read_only=False):
+    if preview_sandbox.enabled():
+        from ..preview_shared_models import authorize
+        return authorize(scope, read_only=read_only)
     if not isinstance(scope, dict) or not live_gateway.configured(str(scope.get("workspace_id") or "")):
         raise ContractError("agent_world_local_disabled")
     try:
@@ -120,6 +123,10 @@ def domain_admission(authorized, domain, action="read"):
 
 def repository(authorized):
     authorized["admit"]()
+    if authorized.get("preview_bridge"):
+        from .sqlite_repository import SQLiteAgentWorldRepository
+        return SQLiteAgentWorldRepository(preview_sandbox.isolated_root() / "agent-world.sqlite3",
+                                          read_only=authorized.get("read_only", False))
     backend = os.environ.get("STRATFORGE_AGENT_WORLD_STORAGE", "sqlite").strip().lower()
     if backend == "postgres":
         from ..production_storage.core import PostgresClient
@@ -192,6 +199,8 @@ def enqueue_model(authorized, *, context, task_id):
     authorized["admit"]()
     if context != authorized["context"]:
         raise ContractError("model_context_required")
+    if authorized.get("preview_bridge"):
+        return {"status": "bounded_preview_pending"}
     from .. import worker_router
     from . import execution_v2
     service = models(authorized)
@@ -233,6 +242,9 @@ def _executor(authorized, bind):
     nothing else: the same admissions, budget, grant and verifier apply.
     """
     from .model_execution import ModelExecutor
+    if authorized.get("preview_bridge"):
+        from ..preview_shared_models import execute
+        return execute
     from . import test_executor
     if test_executor.enabled(authorized["context"].scope.workspace_id):
         return test_executor.execute

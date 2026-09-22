@@ -41,6 +41,10 @@ def run(port: int) -> None:
         except (OSError, ValueError):
             pass
     print(f"[preview-sandbox] ready http://127.0.0.1:{port}/ui/", flush=True)
+    def exit_when_requested():
+        preview_sandbox._EXIT_REQUESTED.wait()
+        httpd.shutdown()
+    threading.Thread(target=exit_when_requested, daemon=True, name="preview-exit").start()
     try:
         httpd.serve_forever(poll_interval=0.2)
     finally:
