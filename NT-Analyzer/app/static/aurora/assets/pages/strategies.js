@@ -32,7 +32,7 @@ UI.ready(async function () {
   const SEVERITY_LABELS = { critical: 'критично', error: 'ошибка', warning: 'предупреждение', task: 'задача', info: 'информация' };
 
   function renderVitek() {
-    if (!vitekDoc) return;
+    if (!vitekDoc || !UI.qs('#vitek-panel')) return;
     const mode = vitekDoc.mode || 'free';
     const incidents = (vitekDoc.incidents || []).filter(row => OPEN_INCIDENTS.has(row.status) && row.owner_decision_required);
     const tasks = (vitekDoc.tasks || []).filter(row => ACTIVE_TASKS.has(row.status));
@@ -92,7 +92,7 @@ UI.ready(async function () {
   }
 
   async function loadVitek() {
-    if (vitekLoading) return;
+    if (vitekLoading || !UI.qs('#vitek-panel')) return;
     vitekLoading = true;
     try {
       [vitekDoc, timeWindows] = await Promise.all([API.http.vitekStatus(), API.http.vitekTimeWindows()]);
@@ -104,7 +104,7 @@ UI.ready(async function () {
   }
 
   async function refreshVitekStatus() {
-    if (vitekLoading || document.hidden) return;
+    if (vitekLoading || document.hidden || !UI.qs('#vitek-panel')) return;
     vitekLoading = true;
     try { vitekDoc = await API.http.vitekStatus(); renderVitek(); }
     catch (error) { /* initial loader shows connectivity errors; background refresh stays quiet */ }
@@ -320,7 +320,8 @@ UI.ready(async function () {
         finally { notesBtn.disabled = false; }
       };
       const victorBtn = UI.qs('#sd-assign-victor');
-      if (victorBtn) victorBtn.onclick = () => Victor.openAssignment({
+      if (victorBtn && typeof Victor === 'undefined') victorBtn.hidden = true;
+      else if (victorBtn) victorBtn.onclick = () => Victor.openAssignment({
         page: 'strategies', entity_type: 'strategy', entity_id: c.id,
         entity_label: c.name, url: location.pathname + location.search,
       }, { title: `Разобраться со стратегией «${c.name}»`, description: dec.reason || '' });
@@ -372,11 +373,12 @@ UI.ready(async function () {
       `<div class="tb-title"><span class="tb-kicker">${UI.esc([c.cell, c.instrument, c.originLabel].filter(Boolean).join(' · '))}</span><span class="tb-h1">${UI.esc(c.name)}</span></div>`,
       `<div class="flex wrap gap-sm"><span class="badge ai-origin-badge">${UI.icon('ai')}AI</span>${statusBadge(c)}${c.lifecycleLabel ? `<span class="tag">${UI.esc(c.lifecycleLabel)}</span>` : ''}<span class="tag">попыток: ${c.attempts || 1}</span></div>
        ${c.archiveReason ? `<p class="muted" style="margin-top:12px;font-size:12.5px"><strong>Причина архива:</strong> ${UI.esc(c.archiveReason)}</p>` : ''}
-       <div class="flex wrap gap-sm" style="margin-top:12px"><a class="btn primary" href="ai-lab.html?exp=${encodeURIComponent(c.experimentId || '')}">${UI.icon('ai')}Открыть в AI Lab</a><button class="btn" id="ai-card-assign-victor">Поручить Виктору разобраться</button></div>
+       <div class="flex wrap gap-sm" style="margin-top:12px"><a class="btn primary" href="ai-command-center.html#tab=research">${UI.icon('ai')}Открыть в AI Центре</a><button class="btn" id="ai-card-assign-victor">Поручить Виктору разобраться</button></div>
        <h4 style="margin:16px 0 8px">История попыток по ячейке ${UI.esc(c.cell || '')}</h4><div id="ai-cell-hist"><div class="state-loading"><span class="spinner"></span>Загрузка…</div></div>`
     );
     const victorBtn = UI.qs('#ai-card-assign-victor');
-    if (victorBtn) victorBtn.onclick = () => Victor.openAssignment({
+    if (victorBtn && typeof Victor === 'undefined') victorBtn.hidden = true;
+    else if (victorBtn) victorBtn.onclick = () => Victor.openAssignment({
       page: 'strategies', entity_type: 'research', entity_id: c.experimentId || c.id,
       entity_label: c.name, url: location.pathname + location.search,
     }, { title: `Разобраться с исследованием «${c.name}»`, description: c.archiveReason || '' });
@@ -446,23 +448,27 @@ UI.ready(async function () {
     UI.qs('#rejected-btn').onclick = openArchiveDrawer;
     UI.qs('#add-root-btn').onclick = openAddRoot;
     UI.qs('#add-cell-btn').onclick = openAddCell;
-    UI.qs('#vitek-scan').onclick = async () => {
-      const button = UI.qs('#vitek-scan'); button.disabled = true;
-      try { await API.http.vitekScan(false); UI.toast('Витёк завершил проверку'); await loadVitek(); }
-      catch (error) { UI.reportError(error); }
-      finally { button.disabled = false; }
-    };
-    UI.qs('#vitek-rest').onclick = async () => {
-      const raw = prompt('На сколько часов дать Витьку отдых? Критические события всё равно будут сообщаться.', '2');
-      if (raw == null) return; const hours = Number(raw.replace(',', '.'));
-      if (!Number.isFinite(hours) || hours <= 0) { UI.toast('Укажите положительное количество часов'); return; }
-      try { await API.http.vitekRest({ duration_minutes: Math.round(hours * 60), reason: 'Отдых задан владельцем в приложении' }); UI.toast('Витёк перешёл в режим отдыха'); await loadVitek(); }
-      catch (error) { UI.reportError(error); }
-    };
-    UI.qs('#vitek-resume').onclick = async () => {
-      try { await API.http.vitekResume(); UI.toast('Витёк вернулся к работе'); await loadVitek(); }
-      catch (error) { UI.reportError(error); }
-    };
+    // The duty panel moved to the AI Center; these controls answer only
+    // while the old panel is on the page (see LEGACY_SURFACES_AUDIT.md).
+    if (UI.qs('#vitek-panel')) {
+      UI.qs('#vitek-scan').onclick = async () => {
+        const button = UI.qs('#vitek-scan'); button.disabled = true;
+        try { await API.http.vitekScan(false); UI.toast('Витёк завершил проверку'); await loadVitek(); }
+        catch (error) { UI.reportError(error); }
+        finally { button.disabled = false; }
+      };
+      UI.qs('#vitek-rest').onclick = async () => {
+        const raw = prompt('На сколько часов дать Витьку отдых? Критические события всё равно будут сообщаться.', '2');
+        if (raw == null) return; const hours = Number(raw.replace(',', '.'));
+        if (!Number.isFinite(hours) || hours <= 0) { UI.toast('Укажите положительное количество часов'); return; }
+        try { await API.http.vitekRest({ duration_minutes: Math.round(hours * 60), reason: 'Отдых задан владельцем в приложении' }); UI.toast('Витёк перешёл в режим отдыха'); await loadVitek(); }
+        catch (error) { UI.reportError(error); }
+      };
+      UI.qs('#vitek-resume').onclick = async () => {
+        try { await API.http.vitekResume(); UI.toast('Витёк вернулся к работе'); await loadVitek(); }
+        catch (error) { UI.reportError(error); }
+      };
+    }
     UI.qs('#time-window-root').onchange = event => { selectedWindowRoot = event.target.value; renderTimeWindows(); };
     UI.pageActions(`<button class="btn sm" id="pa-cleanup">${UI.icon('eraser')}Очистить NinjaTrader</button>`);
     const cb = UI.qs('#pa-cleanup'); if (cb) cb.onclick = ntCleanup;

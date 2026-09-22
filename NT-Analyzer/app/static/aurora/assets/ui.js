@@ -1963,6 +1963,12 @@
     });
   }
   const STUDENT_NAV_IDS = new Set(['practice', 'community']);
+  // Screens of the previous architecture. Once the Agent World is on they
+  // leave the rail: the working path runs through the AI Center, and these
+  // stay reachable by their own address only, for сверка (owner, 20.09.2026).
+  // «Документы» is not one of them: it is the product's own documentation base
+  // - architecture, laws, rules, decisions, history - and keeps its place.
+  const LEGACY_NAV_IDS = new Set(['agents']);
 
   function isStudentContour(auth) {
     const source = auth || {};
@@ -2022,6 +2028,13 @@
     qsa('.rail-item[data-nav]').forEach(item => {
       const id = item.dataset.nav;
       item.removeEventListener('click', lockedNavClick);
+      if (worldEnabled && LEGACY_NAV_IDS.has(id)) {
+        item.hidden = true;
+        item.classList.remove('rail-locked');
+        const legacyLock = item.querySelector('.rail-lock');
+        if (legacyLock) legacyLock.remove();
+        return;
+      }
       if (uxMode === 'beginner') {
         item.hidden = !STUDENT_NAV_IDS.has(id);
         item.classList.remove('rail-locked');
@@ -2050,7 +2063,11 @@
       // Match the actual legacy file, not data-page="ai" (also used by the
       // new center), so the canonical page can never redirect to itself.
       const legacyAIPage = /(?:^|\/)(ai-lab|ai-agents)\.html$/.exec(location.pathname || '');
-      if (legacyAIPage) {
+      // `?legacy=1` is the developer's way in for сверка: the screen opens as
+      // it was, read-only (assets/legacy-guard.js), and is never linked from
+      // the working path (owner, 20.09.2026).
+      const forArchive = /(?:^|[?&])legacy=1(?:&|$)/.test(location.search || '');
+      if (legacyAIPage && !forArchive) {
         location.replace('ai-command-center.html' + (location.search || '')
           + '#tab=' + (legacyAIPage[1] === 'ai-agents' ? 'agents' : 'overview'));
         return true;
@@ -9094,7 +9111,7 @@
   function orchPersonaOptions(personas, selected, error) {
     const people = Array.isArray(personas) ? personas : [];
     const main = people.filter(person => person.main_assistant === true);
-    const defaultLabel = main.length === 1 ? `Главный: ${main[0].title || main[0].name || 'Persona'}${main[0].status === 'active' ? '' : ' · приостановлен'}` : main.length > 1 ? 'Главный помощник: требуется уточнение' : 'Авто · главный помощник не назначен';
+    const defaultLabel = main.length === 1 ? `Заместитель: ${main[0].title || main[0].name || 'Persona'}${main[0].status === 'active' ? '' : ' · приостановлен'}` : main.length > 1 ? 'Правая рука: требуется уточнение' : 'Авто · заместитель не назначен';
     const options = [`<option value="">${esc(defaultLabel)}</option>`];
     people.forEach(person => {
       const id = String(person.id || '');
@@ -10097,7 +10114,7 @@
     deliver_report: 'Доставка отчёта',
     vitek_task: 'Поручение Виктора',
     vitek_activate_task: 'Виктор принял поручение',
-    vitek_add_task: 'Поручение передано Управляющему',
+    vitek_add_task: 'Поручение передано Заместителю',
     vitek_create_incident_task: 'Поручение создано',
     vitek_set_plan: 'План сохранён',
     vitek_scan: 'Проверка системы',

@@ -2,7 +2,7 @@
 from uuid import UUID
 
 from .. import account_auth, permissions, workspaces
-from . import live_gateway as gateway, live_charts, domain_gateway, goals, overview_snapshot, overview_summaries
+from . import duty_bridge, live_gateway as gateway, live_charts, domain_gateway, goals, legacy_view, overview_snapshot, overview_summaries
 from .live_backtests import LiveBacktestService
 from .states import ContractError
 
@@ -100,6 +100,23 @@ def handle_get(handler, path, qs):
                 handler._json(200, domain_gateway.history_projection(authorized, overview_snapshot.fresh(authorized, build)))
         elif route == "goal":
             handler._json(200, {"goal": goals.read(authorized)})
+        elif route == "duty":
+            # The duty controller's own questions, brought by the deputy.
+            handler._json(200, duty_bridge.state(authorized))
+        elif route.startswith("legacy"):
+            # The frozen old registry, read-only: what was there, whether the
+            # archive still matches its checksums, and where the migration stands.
+            limit = int((qs.get("limit") or ["100"])[0])
+            if route == "legacy":
+                handler._json(200, legacy_view.overview(authorized))
+            elif route == "legacy/agents":
+                handler._json(200, legacy_view.agents(authorized, (qs.get("archive") or [None])[0], limit))
+            elif route == "legacy/calls":
+                handler._json(200, legacy_view.calls(authorized, limit))
+            elif route == "legacy/report":
+                handler._json(200, legacy_view.report(authorized))
+            else:
+                handler._err(404, "Раздел архива не найден.", code="legacy_route_not_found")
         elif route == "tasks":
             handler._json(200, domain_gateway.history_projection(authorized, {"items": overview_snapshot.fresh(authorized, build)["tasks"], "next_cursor": None, "read_limit": 200}, domain="tasks"))
         elif route.startswith("tasks/") and len(route.split("/")) == 2:
@@ -145,6 +162,25 @@ def handle_post(handler, path):
         if route == "goal":
             authorized = domain_gateway.from_handler(handler)
             handler._json(200, {"goal": goals.save(authorized, body.get("goal") if isinstance(body.get("goal"), dict) else body)})
+            return
+        if route.startswith("duty/"):
+            # Answering goes back through the engine that asked, unchanged.
+            authorized = domain_gateway.from_handler(handler)
+            action = route.split("/", 1)[1]
+            user_id = (authorized.get("chat_scope") or {}).get("user_id") or "owner"
+            if action == "decide":
+                handler._json(200, duty_bridge.decide(authorized, body.get("incident_id"), body.get("decision"),
+                                                      note=str(body.get("note") or ""), user_id=user_id))
+            elif action == "answer":
+                handler._json(200, duty_bridge.answer(authorized, body.get("task_id"), str(body.get("answer") or "")))
+            elif action == "pause":
+                handler._json(200, duty_bridge.pause(authorized, body.get("minutes") or 0, str(body.get("reason") or "")))
+            elif action == "resume":
+                handler._json(200, duty_bridge.resume(authorized))
+            elif action == "check":
+                handler._json(200, duty_bridge.check(authorized))
+            else:
+                handler._err(404, "Действие Заместителя не найдено.", code="duty_action_not_found")
             return
         if route == "backtests":
             authorized = gateway.from_handler(handler)

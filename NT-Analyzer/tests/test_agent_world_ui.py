@@ -1022,14 +1022,14 @@ def test_publication_prepare_does_not_accept_memory_arbitrary_urls_or_invalid_id
     assert evaluate(f"(() => {{try {{ui.domainPayload('publications','prepare',{{source:{json.dumps(source)}}});return false;}}catch (_){{return true;}}}})()") is True
 
 
-def test_owner_questions_exclude_system_test_checks_and_open_the_managers_chat():
+def test_owner_questions_exclude_system_test_checks_and_open_the_deputys_chat():
     script = SCRIPT.read_text(encoding="utf-8")
     assert "const ownerFacing = task => task?.synthetic !== true && !DIAGNOSTIC_CLASSES.has(" in script
     problems = script.split("function problemsBody()", 1)[1].split("function modelSummaryGroups()", 1)[0]
     assert "rows(overview.tasks).filter(ownerFacing)" in problems
     assert 'data-aw-ask="' in problems and "Вопросов к вам нет" in problems
-    ask = script.split("async function askManager(", 1)[1].split("async function runDemo()", 1)[0]
-    # The task's own dialogue first; otherwise the Manager's chat with a brief to finish.
+    ask = script.split("async function askDeputy(", 1)[1].split("async function runDemo()", 1)[0]
+    # The task's own dialogue first; otherwise the deputy's chat with a brief to finish.
     assert "API.aiControlCenterTaskChat(id, {})" in ask and "UI.openSFChat({ conversationType: 'ai' })" in ask
     assert "input.value = " in ask and "send" not in ask.lower()
 
@@ -1037,7 +1037,7 @@ def test_owner_questions_exclude_system_test_checks_and_open_the_managers_chat()
 def test_hiring_asks_only_for_a_face_and_a_name():
     script = SCRIPT.read_text(encoding="utf-8")
     hire = script.split("async function hire(form)", 1)[1].split("function renderModels()", 1)[0]
-    assert "const payload = { name: chosen, avatar_key: face, ...(slot.key === 'manager' ? { main_assistant: true } : { team_role: slot.key }) };" in hire
+    assert "const payload = { name: chosen, avatar_key: face, team_role: slot.key };" in hire
     assert "API.aiControlCenterDomainAction('personas', 'new', 'create'" in hire
     assert "'activate'" in hire and "expected_revision: item.revision" in hire
     # A Persona hired into a place sits only there, whatever its face.
@@ -1062,19 +1062,40 @@ def test_team_forms_itself_and_lists_the_staff_in_one_table():
     auto = script.split("async function autoTeam(button)", 1)[1].split("function staffRow(", 1)[0]
     # Every free place, a random unused name and the standard face; confirmed first.
     assert "UI.confirmDialog" in auto and "root.crypto.getRandomValues" in auto
-    assert "avatar_key: slot.key === 'manager' ? 'vitek' : ''" in auto and "team_role: slot.key" in auto
+    assert "avatar_key: slot.key === 'deputy' ? 'vitek' : ''" in auto and "team_role: slot.key" in auto
     table = script.split("function staffTable(agents)", 1)[1].split("function renderAgents()", 1)[0]
     for column in ["Агент", "Задач", "Рейтинг", "Одобрено / отклонено", "Модели под агентом", "Последняя работа"]:
         assert f"<th>{column}</th>" in table, column
     assert "const standardFace = () =>" in script
 
 
-def test_models_show_where_they_worked_and_registry_roles_are_not_pins():
+def test_models_show_where_they_worked_and_never_an_old_registry_role():
+    """The old positions were archived: the working view shows facts, not them."""
     script = SCRIPT.read_text(encoding="utf-8")
-    assert "роль в старом реестре" in script and "закреплена: " not in script
+    assert "роль в старом реестре" not in script and "закреплена: " not in script
+    table = script.split("function labModelRow(", 1)[1].split("function labModelTable(", 1)[0]
+    assert "model.by_role" in table and "model.role" not in table
     rules = script.split("function distribution(models)", 1)[1].split("function labModelRow(", 1)[0]
+    assert "переведены в архив" in rules
     assert "Предложение правил — ждёт вашего утверждения" in rules
     assert "только проверенные модели" in rules
+
+
+def test_the_legacy_archive_is_read_only_and_apart_from_the_working_views():
+    script = SCRIPT.read_text(encoding="utf-8")
+    # It lives in the separate tab, never among the five planned views.
+    assert "function legacyCard()" in script and "legacyCard()}</div>`;" in script
+    card = script.split("function legacyCard()", 1)[1].split("const LEGACY_VIEWS", 1)[0]
+    assert "Legacy / Архив" in card and "Только для чтения" in card
+    assert "ни рейтинги текущих назначений, ни исполнение задач его не читают" in card
+    body = script.split("function legacyBody(", 1)[1].split("function agentPhase", 1)[0]
+    # The old position is readable here, and stated as history.
+    assert "Старая должность" in body and "Сознательно не перенесено" in body
+    assert "API.aiControlCenterLegacyReport(" in script and "data-aw-legacy" in script
+
+    # The panel paints into the shared drawer body, or it would stay a skeleton.
+    opener = script.split("async function openLegacy(", 1)[1].split("function legacyBody(", 1)[0]
+    assert "qs('.drawer-b', currentDrawer)" in opener and "aw-inspector" in opener
 
 
 def test_research_shows_the_lab_in_place_without_links_out():
@@ -1102,3 +1123,32 @@ def test_the_goal_is_written_and_changed_from_the_corner():
     # A date without a time is a calendar day, read in the owner's timezone.
     assert "new Date(parts[0], parts[1] - 1, parts[2])" in script
 
+
+
+def test_an_agent_with_a_real_role_stands_in_the_hierarchy():
+    """The projection sends `application_role`; reading `role_key` left the
+    owner's own agents outside the scheme, with every place looking free."""
+    script = SCRIPT.read_text(encoding="utf-8")
+    assert "const roleKeyOf = agent => String(agent?.application_role || agent?.role_key || '').toLowerCase();" in script
+    slots = script.split("const TEAM_SLOTS = Object.freeze([", 1)[1].split("]);", 1)[0]
+    assert "agent.role_key ===" not in slots
+    assert "roleKeyOf(agent) === 'backtest_researcher'" in slots
+    assert "roleKeyOf(agent) === 'chart_researcher'" in slots
+
+
+def test_the_owner_is_the_manager_and_speaks_to_their_deputy():
+    """Owner's decision of 20.09.2026: no agent stands between them and the team."""
+    script = SCRIPT.read_text(encoding="utf-8")
+    assert "Управляющ" not in script
+    slots = script.split("const TEAM_SLOTS = Object.freeze([", 1)[1].split("]);", 1)[0]
+    assert "key: 'manager'" not in slots
+    # The deputy is the lead place, the right hand, and the one the owner writes to.
+    lead = [line for line in slots.splitlines() if "key: 'deputy'" in line]
+    assert len(lead) == 1 and "lead: true" in lead[0] and "ваша правая рука" in lead[0]
+    assert "agent.main_assistant === true" in lead[0]
+    # The chain, stated once where the owner reads it.
+    assert "управляющий здесь вы: поручение идёт Заместителю" in script
+    assert "историю ведёт Секретарь" in script
+    # The page's own entry to the chat names the right hand, not a manager.
+    page = PAGE.read_text(encoding="utf-8")
+    assert "Написать Заместителю" in page and "Управляющ" not in page

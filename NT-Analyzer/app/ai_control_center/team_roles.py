@@ -4,14 +4,21 @@ A place is a position in the hierarchy with its duties written once here, so
 hiring a Persona needs only a face and a name. A place grants no capability,
 credential or permission; application adapters stay governed by
 application_roles and the server's own admission.
+
+The owner is the manager of this project; there is no agent above the team
+standing between them and it (owner's decision of 20.09.2026). The Заместитель
+is the owner's right hand and the one place the owner speaks to directly:
+`LEAD` names it, and a Persona hired there becomes the main assistant.
 """
 from .states import ContractError
 
+LEAD = "deputy"
+
 TEAM_ROLES = {
     "deputy": {"title": "Заместитель", "dept": "staff",
-               "duty": "Принимает задачи от Управляющего, распределяет их по отделам, проверяет результаты исполнителей, сжимает итог и передаёт Управляющему. Спорные вопросы отправляет судьям."},
+               "duty": "Правая рука владельца: принимает поручения напрямую от него, распределяет работу по отделам, контролирует выполнение, сжимает итог и возвращает его владельцу. Спорные вопросы отправляет судьям."},
     "secretary": {"title": "Секретарь", "dept": "staff",
-                  "duty": "Ведёт протокол и журнал: фиксирует решения, вердикты судей и итоги задач, чтобы любой агент мог восстановить контекст."},
+                  "duty": "Параллельно фиксирует всю историю и действия системы: поручения, решения, вердикты судей и итоги задач, чтобы любой агент мог восстановить контекст."},
     "researcher": {"title": "Исследователь", "dept": "dev",
                    "duty": "Формулирует гипотезы и режимы рынка для новых стратегий по общим правилам разработки стратегий и урокам Лаборатории."},
     "quant_analyst": {"title": "Квант-аналитик", "dept": "dev",
