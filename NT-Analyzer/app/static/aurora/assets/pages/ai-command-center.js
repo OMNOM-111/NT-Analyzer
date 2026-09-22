@@ -32,25 +32,28 @@
   // The owner's team scheme (docs/product/AI_CENTER_OWNER_RULES.md, section 4). A slot
   // shows the persona explicitly assigned to that job; an empty slot stays empty.
   const avatarKeyOf = agent => String(agent?.avatar_key || '').toLowerCase();
+  // The application role the server actually sends. It used to be read as
+  // `role_key`, a field no projection produces, so an agent with a real role
+  // - the owner's Толик and Иван among them - sat outside the hierarchy.
+  const roleKeyOf = agent => String(agent?.application_role || agent?.role_key || '').toLowerCase();
   // `key` is the place a Persona is hired into (app/ai_control_center/team_roles.py);
   // `name` is the suggested name offered when hiring, from the owner's scheme.
   const placed = (key, extra) => agent => agent.team_role === key || Boolean(extra && extra(agent));
   const TEAM_SLOTS = Object.freeze([
-    { key: 'manager', dept: 'lead', lead: true, title: 'Управляющий', note: 'ваша правая рука', name: 'Витёк', match: agent => agent.main_assistant === true || ['vitek', 'manager'].includes(avatarKeyOf(agent)) },
-    { key: 'deputy', dept: 'staff', lead: true, title: 'Заместитель', note: 'курирует всех, докладывает', name: 'Олег', match: placed('deputy', agent => agent.role_key === 'deputy') },
-    { key: 'secretary', dept: 'staff', title: 'Секретарь', note: 'протокол, журнал', name: 'Лера', match: placed('secretary', agent => agent.role_key === 'secretary') },
-    { key: 'researcher', dept: 'dev', title: 'Исследователь', note: 'гипотезы, режимы рынка', name: 'Сева', match: placed('researcher', agent => agent.role_key === 'researcher') },
-    { key: 'quant_analyst', dept: 'dev', title: 'Квант-аналитик', note: 'статистика, признаки', name: 'Толик', match: placed('quant_analyst', agent => agent.role_key === 'quant_analyst') },
-    { key: 'ninjascript_coder', dept: 'dev', title: 'Кодер NinjaScript', note: 'код стратегии', name: 'Артём', match: placed('ninjascript_coder', agent => agent.role_key === 'ninjascript_coder') },
-    { key: 'code_reviewer', dept: 'dev', title: 'Ревьюер кода', note: 'compile, качество', name: 'Дина', match: placed('code_reviewer', agent => agent.role_key === 'code_reviewer') },
-    { key: 'backtester', dept: 'dev', title: 'Бэктестер', note: 'Strategy Analyzer', name: 'Гоша', match: placed('backtester', agent => agent.role_key === 'backtest_researcher') },
-    { key: 'optimizer', dept: 'dev', title: 'Оптимизатор', note: 'walk-forward, стресс', name: 'Паша', match: placed('optimizer', agent => agent.role_key === 'optimizer') },
-    { key: 'accountant', dept: 'ops', title: 'Бухгалтер', note: 'P&L, комиссии, учёт', name: 'Марина', match: placed('accountant', agent => agent.role_key === 'accountant' || avatarKeyOf(agent) === 'marina') },
-    { key: 'news_analyst', dept: 'ops', title: 'Новостной аналитик', note: 'календарь, заголовки', name: 'Никита', match: placed('news_analyst', agent => agent.role_key === 'news_analyst' || avatarKeyOf(agent) === 'nikita') },
-    { key: 'chart_operator', dept: 'ops', title: 'Оператор графиков', note: 'рабочий стол, TopstepX', name: 'Иван', match: placed('chart_operator', agent => agent.role_key === 'chart_researcher' || avatarKeyOf(agent) === 'ivan') },
-    { key: 'judge_statistics', dept: 'judges', title: 'Судья статистики', note: 'оверфит, значимость', name: 'Судья статистики', match: placed('judge_statistics', agent => agent.role_key === 'judge_statistics') },
-    { key: 'judge_risk', dept: 'judges', title: 'Судья риска', note: 'просадка, лимиты', name: 'Судья риска', match: placed('judge_risk', agent => agent.role_key === 'judge_risk') },
-    { key: 'chief_arbiter', dept: 'judges', title: 'Главный арбитр', note: 'финальный вердикт', name: 'Главный арбитр', match: placed('chief_arbiter', agent => agent.role_key === 'chief_arbiter') },
+    { key: 'deputy', dept: 'lead', lead: true, title: 'Заместитель', note: 'ваша правая рука', name: 'Витёк', match: placed('deputy', agent => agent.main_assistant === true || roleKeyOf(agent) === 'deputy' || ['vitek', 'manager'].includes(avatarKeyOf(agent))) },
+    { key: 'secretary', dept: 'staff', title: 'Секретарь', note: 'история и действия системы', name: 'Лера', match: placed('secretary', agent => roleKeyOf(agent) === 'secretary') },
+    { key: 'researcher', dept: 'dev', title: 'Исследователь', note: 'гипотезы, режимы рынка', name: 'Сева', match: placed('researcher', agent => roleKeyOf(agent) === 'researcher') },
+    { key: 'quant_analyst', dept: 'dev', title: 'Квант-аналитик', note: 'статистика, признаки', name: 'Толик', match: placed('quant_analyst', agent => roleKeyOf(agent) === 'quant_analyst') },
+    { key: 'ninjascript_coder', dept: 'dev', title: 'Кодер NinjaScript', note: 'код стратегии', name: 'Артём', match: placed('ninjascript_coder', agent => roleKeyOf(agent) === 'ninjascript_coder') },
+    { key: 'code_reviewer', dept: 'dev', title: 'Ревьюер кода', note: 'compile, качество', name: 'Дина', match: placed('code_reviewer', agent => roleKeyOf(agent) === 'code_reviewer') },
+    { key: 'backtester', dept: 'dev', title: 'Бэктестер', note: 'Strategy Analyzer', name: 'Гоша', match: placed('backtester', agent => roleKeyOf(agent) === 'backtest_researcher') },
+    { key: 'optimizer', dept: 'dev', title: 'Оптимизатор', note: 'walk-forward, стресс', name: 'Паша', match: placed('optimizer', agent => roleKeyOf(agent) === 'optimizer') },
+    { key: 'accountant', dept: 'ops', title: 'Бухгалтер', note: 'P&L, комиссии, учёт', name: 'Марина', match: placed('accountant', agent => roleKeyOf(agent) === 'accountant' || avatarKeyOf(agent) === 'marina') },
+    { key: 'news_analyst', dept: 'ops', title: 'Новостной аналитик', note: 'календарь, заголовки', name: 'Никита', match: placed('news_analyst', agent => roleKeyOf(agent) === 'news_analyst' || avatarKeyOf(agent) === 'nikita') },
+    { key: 'chart_operator', dept: 'ops', title: 'Оператор графиков', note: 'рабочий стол, TopstepX', name: 'Иван', match: placed('chart_operator', agent => roleKeyOf(agent) === 'chart_researcher' || avatarKeyOf(agent) === 'ivan') },
+    { key: 'judge_statistics', dept: 'judges', title: 'Судья статистики', note: 'оверфит, значимость', name: 'Судья статистики', match: placed('judge_statistics', agent => roleKeyOf(agent) === 'judge_statistics') },
+    { key: 'judge_risk', dept: 'judges', title: 'Судья риска', note: 'просадка, лимиты', name: 'Судья риска', match: placed('judge_risk', agent => roleKeyOf(agent) === 'judge_risk') },
+    { key: 'chief_arbiter', dept: 'judges', title: 'Главный арбитр', note: 'финальный вердикт', name: 'Главный арбитр', match: placed('chief_arbiter', agent => roleKeyOf(agent) === 'chief_arbiter') },
   ]);
   // A retired or archived Persona has left the team.
   const RETIRED_PERSONA = new Set(['retired', 'archived']);
@@ -112,7 +115,7 @@
   const OPEN_PHASES = Object.freeze(['awaiting_review', 'awaiting_decision']);
   const ATTENTION_PHASES = Object.freeze(['awaiting_review', 'awaiting_decision', 'failed']);
   const AVATAR_KEYS = Object.freeze(['vitek', 'manager', 'marina', 'tolik', 'nikita', 'ivan']);
-  const AVATAR_LABELS = Object.freeze({ vitek: 'Виктор', manager: 'Управляющий', marina: 'Марина', tolik: 'Толик', nikita: 'Никита', ivan: 'Иван' });
+  const AVATAR_LABELS = Object.freeze({ vitek: 'Виктор', manager: 'Олег', marina: 'Марина', tolik: 'Толик', nikita: 'Никита', ivan: 'Иван' });
   const PERSONA_VOICE_PROFILES = Object.freeze({ ...AVATAR_LABELS, deputy: 'Заместитель', secretary: 'Секретарь' });
   const PERSONA_DEFAULTS = Object.freeze({ voice_profile_id: '', voice_mode: 'browser', voice_speed: 1, voice_language: 'ru-RU', animation_mode: 'auto', expression_preset: 'neutral', lip_sync_mode: 'auto' });
   const RUBRIC_LABELS = Object.freeze({ connection_exact: 'Проверка соединения', json_arithmetic: 'Арифметика · JSON', extract_facts: 'Извлечение фактов', assistant_response: 'Ответ помощника · ручная проверка', court_vote: 'Голос Court', backtest_spec: 'План бэктеста', chart_spec: 'План графика', application_execution: 'Соответствие результата приложения', decision_outcome: 'Исход одобренного решения', ninjatrader_historical_backtest: 'Исторический бэктест NinjaTrader', desktop_chart_snapshot: 'Снимок графика Рабочего стола' });
@@ -282,7 +285,7 @@
     if (!['create', 'update'].includes(action)) return [];
     if (domain === 'personas') return [field('name', 'Имя персоны', 'text', { required: true, max: 160 }),
       field('aliases', 'Обращения по имени (до пяти)', 'aliases', { max: 405, optionalIfMissing: true, hint: 'Одно имя или прозвище на строку. В SF Chat можно написать «@Имя, задание». Уникальные обращения не дают новых прав и не меняют историю.' }),
-      field('main_assistant', 'Главный помощник', 'select', { optionalIfMissing: true, boolean: true, default: 'false', options: [['false', 'Нет — выбор в SF Chat или обращение по имени'], ['true', 'Да — когда другой помощник не выбран']], hint: 'Один главный помощник в вашем рабочем пространстве. Чтобы сменить его, сначала явно снимите этот выбор у прежней Persona и сохраните, затем назначьте новую. Приостановленный помощник не заменяется автоматически.' }),
+      field('main_assistant', 'Правая рука владельца', 'select', { optionalIfMissing: true, boolean: true, default: 'false', options: [['false', 'Нет — выбор в SF Chat или обращение по имени'], ['true', 'Да — когда другой помощник не выбран']], hint: 'Одна правая рука в вашем рабочем пространстве. Чтобы сменить его, сначала явно снимите этот выбор у прежней Persona и сохраните, затем назначьте новую. Приостановленный помощник не заменяется автоматически.' }),
       field('description', 'Назначение', 'textarea', { max: 4000 }), field('style', 'Стиль общения', 'textarea', { max: 1000 }), field('avatar_key', 'Лицо персоны', 'select', { sendEmpty: true, options: [['', 'Без изображения — буква имени'], ...AVATAR_KEYS.map(key => [key, AVATAR_LABELS[key]])], hint: 'Выбирается явно. Имя персоны — свободный текст и само по себе не выдаёт лицо другого агента. Смена модели сохраняет выбранное лицо.' }), field('application_role', 'Роль в приложении', 'select', { sendEmpty: true, options: [['', 'Не назначена'], ['backtest_researcher', 'Бэктестирование'], ['chart_researcher', 'Рабочий стол и графики']], hint: 'Явное назначение для команд SF Chat. Имя можно менять. Роль не выдаёт прав, ключей или торгового доступа. Одна активная / приостановленная Persona на роль.' }), ...personaVoiceFields(catalog)];
     const title = field('title', 'Название', 'text', { required: true, max: 160 });
     const description = field('description', 'Описание', 'textarea', { max: 4000, sendEmpty: true });
@@ -478,7 +481,7 @@
       persona_aliases_ambiguous: 'Обращения должны различаться, в том числе без учёта регистра.',
       persona_alias_repeats_name: 'Обращение повторяет имя Persona. Имя уже можно использовать без дополнительного alias.',
       persona_alias_already_assigned: 'Это обращение уже относится к другой вашей Persona. Измените его; существующие имена и история сохранены.',
-      persona_main_already_assigned: 'Главный помощник уже назначен. Сначала явно снимите этот выбор у прежней Persona и сохраните, затем назначьте новую.',
+      persona_main_already_assigned: 'Правая рука уже назначена. Сначала явно снимите этот выбор у прежней Persona и сохраните, затем назначьте новую.',
     };
     if (Object.prototype.hasOwnProperty.call(messages, code)) return messages[code];
     if (error?.status === 403 || error?.status === 401) return 'Сервер не разрешил действие в текущем рабочем пространстве. Права и бюджет не изменены.';
@@ -692,7 +695,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     const configured = personaCanSpeak(persona), staticFace = view.animation_mode === 'static' || !AVATAR_KEYS.includes(view.avatar_key);
     const fields = [
       ['Обращения в SF Chat', rows(persona.aliases).join(', ') || 'Имя Persona; дополнительных обращений нет'],
-      ['Главный помощник', persona.main_assistant === true ? 'Да · когда другая Persona не выбрана' : 'Нет'],
+      ['Правая рука владельца', persona.main_assistant === true ? 'Да · когда другая Persona не выбрана' : 'Нет'],
       ['Голосовой профиль', view.voice_label || 'Голос не выбран'],
       ['Запрошенный звук', view.voice_mode === 'existing_tts' ? 'Существующий серверный TTS, если разрешён; иначе голос устройства' : 'Локальный голос устройства'],
       ['Язык / скорость', (view.voice_language === 'en-US' ? 'English' : 'Русский') + ' · ×' + (number(view.voice_speed) ?? 1)],
@@ -1030,7 +1033,8 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const lessons = [...rows(own.latest).filter(item => item.memory_class === 'verified_lesson').map(item => ({ id: item.id, title: item.title, when: item.created_at, record: true })),
         ...rows(base.latest).map(item => ({ title: item.title, when: item.updated_at, note: item.document }))].slice(0, 3);
       return `<div class="aw-nums">${bnum('Фрагменты памяти', count(sum(own.records, base.fragments)) + plus, day(own.records_day))}${bnum('Уроков извлечено', count(sum(own.verified_lessons, base.lessons)) + plus, day(own.lessons_day))}`
-        + `<span title="Наши разработанные стратегии из исследований; образцы эталонной библиотеки сюда не входят">${bnum('Стратегий в памяти', count(sum(own.strategies, research.unavailable ? 0 : research.experiments)))}</span>${bnum('Источники данных', count(sum(own.sources, base.documents)))}</div>`
+        + `<span title="Наши разработанные стратегии из исследований; образцы эталонной библиотеки сюда не входят">${bnum('Стратегий в памяти', count(sum(own.strategies, research.unavailable ? 0 : research.experiments)))}</span>${bnum('Источники данных', count(sum(own.sources, base.documents)))}`
+        + `${number(base.reports) > 0 ? `<span title="Ежедневные и недельные отчёты команды владельцу">${bnum('Отчётов команды', count(base.reports))}</span>` : ''}</div>`
         + `<div class="aw-subtle">Последние уроки</div>`
         + (lessons.length ? lessons.map(item => item.record
           ? `<button class="aw-lesson" data-aw-domain-open="memory" data-aw-entity="${esc(item.id || '')}"><time>${esc(clock(item.when))}</time><span class="aw-clamp">${esc(item.title || 'Запись')}</span></button>`
@@ -1047,9 +1051,9 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const when = task => task.updated_at || task.created_at || '';
       const ask = { crit: 'Не получилось', warn: 'Нужно ваше решение', info: 'Готов результат' };
       const list = levels.slice().sort(([a], [b]) => String(when(b)).localeCompare(String(when(a)))).slice(0, 5)
-        .map(([task, level]) => `<button class="aw-alert-line aw-al-${level}" data-aw-ask="${esc(taskId(task))}" title="${esc([taskTitle(task), task.reason, 'Нажмите — Управляющий обсудит это с вами в чате'].filter(Boolean).join('. '))}"><span aria-hidden="true">${level === 'warn' ? '▲' : '●'}</span><time>${esc(clock(when(task)))}</time><span class="aw-clamp">${esc(ask[level])}: ${esc(taskTitle(task))}${task.reason ? ` <span class="aw-muted">— ${esc(task.reason)}</span>` : ''}</span></button>`);
-      return `<div class="aw-sev"><div class="aw-sev-crit" title="Что-то пошло не так, Управляющему нужна ваша помощь"><small>Крити\u00ADческие</small><b>${count(total('crit'))}</b></div><div class="aw-sev-warn" title="Управляющий ждёт вашего решения"><small>Предупре\u00ADждения</small><b>${count(total('warn'))}</b></div><div class="aw-sev-info" title="Готов результат, который нужно посмотреть"><small>Информа\u00ADционные</small><b>${count(total('info'))}</b></div></div>`
-        + (list.length ? list.join('') : '<div class="aw-calm"><span class="aw-clean-mark" aria-hidden="true">✓</span><span>Вопросов к вам нет. Если Управляющему понадобится ваше решение или что-то пойдёт не так, вопрос появится здесь.</span></div>');
+        .map(([task, level]) => `<button class="aw-alert-line aw-al-${level}" data-aw-ask="${esc(taskId(task))}" title="${esc([taskTitle(task), task.reason, 'Нажмите — Заместитель обсудит это с вами в чате'].filter(Boolean).join('. '))}"><span aria-hidden="true">${level === 'warn' ? '▲' : '●'}</span><time>${esc(clock(when(task)))}</time><span class="aw-clamp">${esc(ask[level])}: ${esc(taskTitle(task))}${task.reason ? ` <span class="aw-muted">— ${esc(task.reason)}</span>` : ''}</span></button>`);
+      return `<div class="aw-sev"><div class="aw-sev-crit" title="Что-то пошло не так, Заместителю нужна ваша помощь"><small>Крити\u00ADческие</small><b>${count(total('crit'))}</b></div><div class="aw-sev-warn" title="Заместитель ждёт вашего решения"><small>Предупре\u00ADждения</small><b>${count(total('warn'))}</b></div><div class="aw-sev-info" title="Готов результат, который нужно посмотреть"><small>Информа\u00ADционные</small><b>${count(total('info'))}</b></div></div>`
+        + (list.length ? list.join('') : '<div class="aw-calm"><span class="aw-clean-mark" aria-hidden="true">✓</span><span>Вопросов к вам нет. Если Заместителю понадобится ваше решение или что-то пойдёт не так, вопрос появится здесь.</span></div>');
     }
     function modelSummaryGroups() {
       const summary = overview?.summaries?.models;
@@ -1118,22 +1122,153 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const shownWork = (active.length ? active : recent).slice(0, 5);
       const workBody = shownWork.length ? `<div class="aw-row-list">${shownWork.map(taskRow).join('')}</div>`
         : tasks.length ? `<div class="aw-calm"><span>Сейчас ничего не выполняется. Задачи, которые ждут вас, — в блоке рядом.</span></div>`
-          : smallEmpty('Задач пока нет. Напишите Управляющему, чтобы дать команде первое поручение.');
+          : smallEmpty('Задач пока нет. Напишите Заместителю, чтобы дать команде первое поручение.');
       return `<div class="aw-work-queue"><div class="aw-column aw-column-work">${panel('Нужно ваше действие', queue, `<span class="aw-count">${count(alerts.length)}</span>`)}${panel(active.length ? 'Сейчас в работе' : 'Последние задачи', workBody)}</div>`
         + `<div class="aw-column aw-column-results">${panel('Последние результаты', outcomes.length ? `<div class="aw-outcomes">${outcomes.map(outcomeCard).join('')}</div>` : smallEmpty('Результатов пока нет. Отчёты, снимки и ответы появятся здесь с указанием источника.'))}</div></div>`;
     }
     let showTests = false;
+    const duty = () => cachedDomain('duty') || null;
+    function dutyQuestions() {
+      const state = duty();
+      const questions = rows(state?.questions);
+      if (!state || state.unavailable) return '';
+      if (!questions.length) return `<section class="aw-bcard aw-duty"><header class="aw-bcard-h"><span class="aw-icbox aw-t-green">${icon('check')}</span><h2>Решения</h2>`
+        + `<span class="aw-bcard-more aw-muted">${esc(state.mode === 'free' ? 'команда свободна' : state.message || '')}</span></header>`
+        + `<div class="aw-bcard-b"><div class="aw-calm"><span class="aw-clean-mark" aria-hidden="true">✓</span><span>Решений от вас сейчас не ждут. Заместитель принесёт вопрос сюда, как только он появится.</span></div></div></section>`;
+      return `<section class="aw-bcard aw-duty"><header class="aw-bcard-h"><span class="aw-icbox aw-t-red">${icon('alert')}</span><h2>Нужно ваше решение</h2>`
+        + `<span class="aw-bcard-more aw-muted">принёс Заместитель · ${count(state.question_count)}</span></header><div class="aw-bcard-b"><div class="aw-stack">`
+        + questions.map(dutyCard).join('') + '</div></div></section>';
+    }
+    function dutyCard(question) {
+      const buttons = question.kind === 'incident'
+        ? rows(question.decisions).map(choice => `<button class="btn sm${choice.value === 'create_task' ? ' primary' : ''}" data-aw-duty-decide="${esc(question.id)}" data-aw-decision="${esc(choice.value)}">${esc(choice.label)}</button>`).join('')
+        : `<button class="btn sm primary" data-aw-duty-answer="${esc(question.id)}">Ответить</button>`;
+      return `<article class="aw-duty-card aw-al-${esc(question.level || 'info')}"><div class="aw-duty-head"><strong>${esc(question.title)}</strong>`
+        + `<time>${esc(question.at_utc ? clock(question.at_utc) : '')}</time></div>`
+        + (question.detail ? `<p class="aw-duty-detail">${esc(String(question.detail).slice(0, 400))}</p>` : '')
+        + (question.recommendation ? `<p class="aw-muted">Предложение: ${esc(question.recommendation)}</p>` : '')
+        + `<div class="aw-actions">${buttons}</div></article>`;
+    }
+    async function dutyDecide(id, decision, button) {
+      if (button) button.disabled = true;
+      try {
+        await API.aiControlCenterDutyDecide(id, decision, '');
+        announce('Решение передано Заместителю.'); domainCache.delete('duty'); await refresh();
+      } catch (reason) { UI.toast(reason?.message || 'Заместитель не смог применить решение.'); if (button) button.disabled = false; }
+    }
+    async function dutyAnswer(id) {
+      const text = await UI.promptDialog?.({ title: 'Ответ Заместителю', label: 'Что ответить по этому поручению?', confirmText: 'Отправить' });
+      if (!text) return;
+      try {
+        await API.aiControlCenterDutyAnswer(id, String(text));
+        announce('Ответ передан.'); domainCache.delete('duty'); await refresh();
+      } catch (reason) { UI.toast(reason?.message || 'Ответ не принят.'); }
+    }
+    async function dutyControl(action, button) {
+      if (button) button.disabled = true;
+      try {
+        if (action === 'pause') await API.aiControlCenterDutyPause(60, 'Решение владельца');
+        else if (action === 'resume') await API.aiControlCenterDutyResume();
+        else await API.aiControlCenterDutyCheck();
+        announce(action === 'pause' ? 'Команда на паузе.' : action === 'resume' ? 'Команда вернулась к работе.' : 'Проверка запущена.');
+        domainCache.delete('duty'); await refresh();
+      } catch (reason) { UI.toast(reason?.message || 'Не удалось выполнить.'); } finally { if (button) button.disabled = false; }
+    }
+    function teamControl() {
+      const state = duty();
+      if (!state || state.unavailable) return '';
+      const resting = state.resting?.active;
+      const working = rows(state.working).filter(row => row.working);
+      return `<div class="aw-team-control"><span class="aw-team-state${resting ? ' aw-warn' : ''}">${resting ? 'Команда на паузе' : working.length ? `Сейчас работают: ${esc(working.map(row => row.name).join(', '))}` : 'Команда свободна'}</span>`
+        + `<span class="aw-team-buttons">${resting ? '<button class="btn sm primary" data-aw-duty="resume">Вернуть к работе</button>' : '<button class="btn sm" data-aw-duty="pause">Дать паузу на час</button>'}`
+        + `<button class="btn sm" data-aw-duty="check">Проверить сейчас</button></span></div>`;
+    }
     function renderWork() {
       const tests = workRows.filter(task => !ownerFacing(task)).length;
       const filters = { all: 'Все', attention: 'Нужно ваше действие', active: 'В работе', waiting: 'Ждут результата', review: 'Ждут решения', completed: 'Завершённые', failed: 'Ошибки' };
       // A separate view for what the five planned views do not cover: checking
       // and accepting results, the full task list and the extra tools.
       content.innerHTML = `<div class="aw-work-view"><div class="aw-work-intro"><div><h2>Задачи</h2><p>Вопросы к вам, результаты на приём и все поручения команды.</p></div></div>`
+        + dutyQuestions()
         + workQueue()
         + `<div class="aw-toolbar"><div class="aw-filters" aria-label="Фильтр задач">${Object.entries(filters).map(([key, label]) => `<button class="aw-filter" data-aw-filter="${key}" aria-pressed="${filter === key}">${label}</button>`).join('')}</div><input type="search" id="aw-task-search" class="aw-search" placeholder="Найти задачу или агента…" aria-label="Поиск задач" maxlength="160" value="${esc(query)}"></div>`
         + `<div id="aw-work-table">${taskTable(workRows.filter(task => (showTests || ownerFacing(task)) && taskMatches(task, filter, query)))}</div>`
         + (tests ? `<p class="aw-tests-toggle"><button class="aw-link-button" data-aw-show-tests aria-pressed="${showTests}">${showTests ? 'Скрыть тестовые проверки системы' : `Показать тестовые проверки системы (${count(tests)})`}</button> <span class="aw-muted">— они выполняются сами и не требуют вашего участия.</span></p>` : '')
-        + `${nextCursor ? '<div class="aw-pagination"><button class="btn" id="aw-load-more">Показать ещё</button></div>' : ''}${realWorkHint()}</div>`;
+        + `${nextCursor ? '<div class="aw-pagination"><button class="btn" id="aw-load-more">Показать ещё</button></div>' : ''}${realWorkHint()}${legacyCard()}</div>`;
+    }
+    // Legacy / Архив: the old «AI агенты» registry, frozen and read-only. It is
+    // kept here, outside the five planned views, because it is not part of the
+    // working system: nothing routes, rates or executes from it any more.
+    // The screens of the previous architecture: out of the working path,
+    // readable by their own address for сверка, unable to change anything.
+    const LEGACY_SCREENS = Object.freeze([
+      ['ai-agents.html?legacy=1', 'AI Agents', 'старый реестр моделей, ключей и квот — теперь архив и вкладка «Модели»'],
+      ['ai-lab.html?legacy=1', 'AI Lab', 'прежний исследовательский контур — теперь вкладка «Исследования»'],
+    ]);
+    function legacyScreens() {
+      return `<h3>Экраны прежней архитектуры</h3><p class="aw-muted">Убраны из рабочего пути. Открыть можно для сверки: смотреть — да, изменить оттуда что-либо — нет.</p>`
+        + `<ul class="aw-legacy-list">${LEGACY_SCREENS.map(([href, title, note]) => `<li><a href="${esc(href)}" target="_blank" rel="noopener">${esc(title)}</a> — ${esc(note)}</li>`).join('')}</ul>`;
+    }
+    function legacyCard() {
+      const legacy = overview?.summaries?.legacy;
+      if (!legacy || legacy.unavailable) return '';
+      if (!legacy.archived) return `<section class="aw-bcard aw-legacy"><header class="aw-bcard-h"><span class="aw-icbox aw-t-gray">${icon('archive')}</span><h2>Legacy / Архив</h2></header>`
+        + `<div class="aw-bcard-b">${legacyScreens()}</div></section>`;
+      const when = legacy.frozen_at_utc ? clock(legacy.frozen_at_utc) : '';
+      return `<section class="aw-bcard aw-legacy"><header class="aw-bcard-h"><span class="aw-icbox aw-t-gray">${icon('archive')}</span><h2>Legacy / Архив</h2>`
+        + `<span class="aw-bcard-more aw-muted">старый реестр «AI агенты»${when ? ' · снят ' + esc(when) : ''}</span></header><div class="aw-bcard-b">`
+        + `<p class="aw-muted">Только для чтения. Ни маршрутизация, ни рейтинги текущих назначений, ни исполнение задач его не читают.</p>`
+        + `<div class="aw-legacy-nums"><span><b>${count(legacy.models)}</b> моделей</span><span><b>${count(legacy.calls)}</b> вызовов в истории</span>`
+        + `<span class="${legacy.reconciled ? 'aw-ok' : 'aw-warn'}">${legacy.reconciled ? 'сверка сошлась' : 'сверка не сошлась'}</span></div>`
+        + `<div class="aw-actions"><button class="btn sm" data-aw-legacy="agents">Как было устроено</button><button class="btn sm" data-aw-legacy="calls">История работ</button><button class="btn sm" data-aw-legacy="report">Отчёт сверки</button></div>`
+        + legacyScreens()
+        + `</div></section>`;
+    }
+    const LEGACY_VIEWS = { agents: 'Старый реестр: как было устроено', calls: 'Старый реестр: история работ', report: 'Сверка: архив → миграция → новый реестр' };
+    async function openLegacy(view) {
+      ++detailGeneration; detailKind = 'legacy'; actionForm = null;
+      const mine = detailGeneration;
+      openDrawer(LEGACY_VIEWS[view] || 'Legacy / Архив', '<div class="aw-skeleton-lines"></div>', { size: 'wide' });
+      let data = null, failed = '';
+      try {
+        data = view === 'agents' ? await API.aiControlCenterLegacyAgents() : view === 'calls' ? await API.aiControlCenterLegacyCalls() : await API.aiControlCenterLegacyReport();
+      } catch (reason) { failed = reason?.message || 'Архив сейчас недоступен.'; }
+      if (mine !== detailGeneration || !currentDrawer) return;
+      const body = qs('.drawer-b', currentDrawer);
+      if (!body) return;
+      const inner = failed ? `<p class="aw-empty">${esc(failed)}</p>`
+        : `<p class="aw-muted aw-legacy-note">Архив, только для чтения. Старые должности и назначения здесь — история; в работающей системе они не действуют.</p>` + legacyBody(view, data);
+      body.innerHTML = `<div class="aw-inspector">${inner}</div>`;
+    }
+    function legacyBody(view, data) {
+      if (view === 'agents') {
+        const items = rows(data?.items);
+        if (!items.length) return smallEmpty('В архиве нет записей о моделях.');
+        return `<div class="aw-table-wrap"><table class="aw-lab-table aw-legacy-table"><thead><tr><th>Модель</th><th>Старая должность</th><th>Порядок</th><th>Группа ротации</th><th>Состояние тогда</th><th>Перенесена как факт</th></tr></thead><tbody>`
+          + items.map(row => `<tr><td><strong>${esc(row.name || row.model || '—')}</strong><small>${esc(providerLabel(row.provider))} · ${esc(row.model || '')}</small></td>`
+            + `<td>${esc(labRole(row.role) || '—')}${row.purpose ? `<small>${esc(row.purpose)}</small>` : ''}</td><td class="aw-num-cell">${row.priority == null ? '—' : count(row.priority)}</td>`
+            + `<td>${esc(row.rotation_group || '—')}</td><td>${row.enabled ? 'включена' : 'выключена'}${row.disabled_reason ? `<small>${esc(row.disabled_reason)}</small>` : ''}</td>`
+            + `<td>${row.migrated_as_fact ? 'да' : '<span class="aw-muted">нет</span>'}</td></tr>`).join('') + '</tbody></table></div>';
+      }
+      if (view === 'calls') {
+        const items = rows(data?.items);
+        if (!items.length) return smallEmpty('В истории архива нет вызовов.');
+        return `<div class="aw-table-wrap"><table class="aw-lab-table aw-legacy-table"><thead><tr><th>Когда</th><th>Модель</th><th>Под какой ролью</th><th>Задача</th><th>Итог</th><th>Токенов</th><th>Стоимость</th></tr></thead><tbody>`
+          + items.map(row => `<tr><td>${esc(row.at_utc ? clock(row.at_utc) : '—')}</td><td>${esc(row.model_name_at_the_time || row.model || '—')}${row.orphan ? '<small>модели уже нет в реестре</small>' : ''}</td>`
+            + `<td>${esc(labRole(row.legacy_role) || '—')}</td><td>${esc(row.purpose || '—')}</td>`
+            + `<td class="${row.status === 'success' ? 'aw-ok' : 'aw-warn'}">${esc(row.status || '—')}${row.error ? `<small>${esc(String(row.error).slice(0, 80))}</small>` : ''}</td>`
+            + `<td class="aw-num-cell">${count(row.total_tokens)}</td><td class="aw-num-cell">${esc(usd(row.cost_usd))}</td></tr>`).join('') + '</tbody></table></div>';
+      }
+      const report = data?.report;
+      if (!report) return smallEmpty('Отчёт сверки ещё не построен.');
+      const pair = (label, value) => `<div class="aw-legacy-pair"><span>${esc(label)}</span><b>${esc(String(value))}</b></div>`;
+      return `<div class="aw-legacy-report">`
+        + `<h3>Было в старой системе</h3><div class="aw-legacy-grid">${pair('моделей', report.archive.agents)}${pair('записей о работе', report.archive.usage_rows)}${pair('оценок', report.archive.rating_entries)}${pair('архив сходится', report.archive.verified ? 'да' : 'нет')}</div>`
+        + `<h3>Перенесено как история</h3><div class="aw-legacy-grid">${pair('моделей', report.migrated_as_history.models)}${pair('вызовов', report.migrated_as_history.calls)}${pair('связей «модель ↔ старая роль»', report.migrated_as_history.provenance_links)}${pair('оценок', report.migrated_as_history.ratings)}</div>`
+        + `<h3>Сознательно не перенесено</h3><ul class="aw-legacy-list">${rows(report.not_migrated_on_purpose).map(row => `<li><b>${esc(row.field)}</b> — ${esc(row.reason)}${row.count ? ` (${count(row.count)})` : ''}</li>`).join('')}</ul>`
+        + `<h3>Создано в новой системе</h3><div class="aw-legacy-grid">${pair('файлов реестра', report.new_entities.registry_files)}${pair('новых должностей', report.new_entities.agent_roles_created)}${pair('закреплений моделей', report.new_entities.model_pins_created)}</div>`
+        + `<h3>Потери и ошибочные закрепления</h3><div class="aw-legacy-grid">${pair('моделей потеряно', rows(report.losses.models_missing).length)}${pair('вызовов потеряно', report.losses.calls_missing)}${pair('вызовов без модели', report.losses.orphan_calls)}${pair('моделей с должностью', rows(report.wrong_pins.models_with_a_position).length)}${pair('действующих старых связей', report.wrong_pins.active_legacy_links)}</div>`
+        + `<p class="${report.ok ? 'aw-ok' : 'aw-warn'}">${report.ok ? 'Сверка сошлась: новый реестр — единственный рабочий.' : 'Сверка не сошлась: новый реестр рабочим не считается.'}</p></div>`;
     }
     const agentPhase = agent => {
       const status = String(agent?.status || '');
@@ -1177,8 +1312,8 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const scope = domainScope();
       // The owner's research catalogue belongs to the AI Lab; it is read only
       // when the Исследования tab opens and only through the Lab's own route.
-      const lab = { lab_research: API.aiResearches, knowledge: API.aiKnowledgeBase }[key];
-      const request = key in { lab_research: 1, knowledge: 1 }
+      const lab = { lab_research: API.aiResearches, knowledge: API.aiKnowledgeBase, duty: API.aiControlCenterDuty }[key];
+      const request = key in { lab_research: 1, knowledge: 1, duty: 1 }
         ? (lab ? lab({ signal }) : Promise.reject({ status: 404 }))
         : API.aiControlCenterDomain(key, { limit: 50 }, { signal });
       const read = request
@@ -1258,8 +1393,8 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       let hired = 0;
       try {
         for (const slot of free) {
-          const chosen = slot.key === 'manager' && !taken.has('Витёк') ? 'Витёк' : names.shift() || `${slot.title} ${hired + 1}`;
-          const payload = { name: chosen, avatar_key: slot.key === 'manager' ? 'vitek' : '', ...(slot.key === 'manager' ? { main_assistant: true } : { team_role: slot.key }) };
+          const chosen = slot.key === 'deputy' && !taken.has('Витёк') ? 'Витёк' : names.shift() || `${slot.title} ${hired + 1}`;
+          const payload = { name: chosen, avatar_key: slot.key === 'deputy' ? 'vitek' : '', team_role: slot.key };
           const created = await API.aiControlCenterDomainAction('personas', 'new', 'create', { payload, idempotency_key: root.crypto.randomUUID() });
           const item = created?.item;
           if (item?.id && rows(item.actions).includes('activate')) {
@@ -1301,9 +1436,9 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     }
     function renderAgents() {
       const agents = rows(overview.agents);
-      const hint = '<span class="aw-bcard-hint">вы общаетесь только с Управляющим; он передаёт задачи Заместителю, тот — отделам, спорное уходит судьям</span>';
+      const hint = '<span class="aw-bcard-hint">управляющий здесь вы: поручение идёт Заместителю, он распределяет работу, контролирует и возвращает итог; спорное — судьям, историю ведёт Секретарь</span>';
       content.innerHTML = agents.length
-        ? bcard('Иерархия', 'users', 'green', autoTeamButton(agents) + teamChart(agents), hint) + bcard('Персонал', 'users', 'blue', staffTable(agents))
+        ? bcard('Иерархия', 'users', 'green', teamControl() + autoTeamButton(agents) + teamChart(agents), hint) + bcard('Персонал', 'users', 'blue', staffTable(agents))
         : bcard('Иерархия', 'users', 'green', empty('Команда пока пуста', 'Сформируйте команду автоматически или нажмите на свободное место в схеме.', '<button class="btn primary" data-aw-auto-team>Сформировать команду автоматически</button>'), hint);
     }
     // The agent card is one element of the page: filled when a face or a card
@@ -1344,7 +1479,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     function openHire(key, anchor) {
       const pop = qs('#aw-agent-pop'), slot = TEAM_SLOTS.find(value => value.key === key);
       if (!pop || !slot) return;
-      const faces = [['', 'Стандартное фото'], ...AVATAR_KEYS.filter(face => slot.key === 'manager' || !['vitek', 'manager'].includes(face)).map(face => [face, AVATAR_LABELS[face] || face])];
+      const faces = [['', 'Стандартное фото'], ...AVATAR_KEYS.filter(face => slot.key === 'deputy' || !['vitek', 'manager'].includes(face)).map(face => [face, AVATAR_LABELS[face] || face])];
       pop.innerHTML = `<form id="aw-hire-form" data-slot="${esc(slot.key)}"><div class="aw-pop-head"><div><b>${esc(slot.title)}</b><small>${esc(slot.note)} — обязанности уже заложены в должность</small></div><button type="button" class="aw-pop-x" data-aw-pop-close aria-label="Закрыть">×</button></div>`
         + `<p class="aw-pop-now">Выберите лицо и имя — больше ничего заполнять не нужно.</p>`
         + `<div class="aw-hire-faces" role="radiogroup" aria-label="Лицо агента">${faces.map(([face, label], index) => `<label class="aw-hire-face" title="${esc(label)}"><input type="radio" name="face" value="${esc(face)}"${index === 1 || (!face && faces.length === 1) ? ' checked' : ''}>${face && UI.agentAvatarHtml ? UI.agentAvatarHtml(face, { size: 'sm' }) : `<span class="aw-person-face">${standardFace()}</span>`}</label>`).join('')}</div>`
@@ -1365,7 +1500,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const slot = TEAM_SLOTS.find(value => value.key === form.dataset.slot), error = form.querySelector('.aw-hire-error');
       const chosen = String(form.elements.name.value || '').trim(), face = form.querySelector('input[name="face"]:checked')?.value || '';
       if (!slot || !chosen) { error.textContent = 'Введите имя.'; error.hidden = false; return; }
-      const payload = { name: chosen, avatar_key: face, ...(slot.key === 'manager' ? { main_assistant: true } : { team_role: slot.key }) };
+      const payload = { name: chosen, avatar_key: face, team_role: slot.key };
       form.querySelectorAll('button, input').forEach(input => { input.disabled = true; });
       try {
         const created = await API.aiControlCenterDomainAction('personas', 'new', 'create', { payload, idempotency_key: root.crypto.randomUUID() });
@@ -1384,7 +1519,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     }
     // The owner's model roster (the AI agents registry): what each model is
     // for, how often it works, how well, what it costs and how much quota is left.
-    const LAB_ROLES = Object.freeze({ orchestrator: 'Управляющий', chief_agent: 'Главный агент Лаборатории', backtest_analyst: 'Аналитик бэктестов',
+    const LAB_ROLES = Object.freeze({ orchestrator: 'Оркестратор (старая роль)', chief_agent: 'Главный агент Лаборатории', backtest_analyst: 'Аналитик бэктестов',
       strategy_analyst: 'Аналитик стратегий', coder: 'Кодер', optimizer: 'Оптимизатор', accountant: 'Бухгалтер', news: 'Новостной аналитик',
       telegram_assistant: 'Помощник в Telegram', embedding: 'Поиск по памяти', general: 'Общие запросы' });
     const labRole = key => LAB_ROLES[key] || (machineKey(key) ? 'Другое' : String(key || 'Общие запросы'));
@@ -1409,16 +1544,16 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (model.billing_mode === 'free_tier') return { used: null, text: `бесплатно · ${count(model.requests_today)} запросов сегодня` };
       return { used: null, text: 'лимит не задан' };
     }
-    // The old AI agents registry carries a role per model. It is shown as such,
-    // not as a pin: a pin is the owner's own decision, not yet recorded anywhere.
-    const pinnedRole = model => ['general', '', undefined, null].includes(model.role) ? '' : model.role;
+    // The old registry's roles were archived: they are history, readable in
+    // Legacy / Архив, and never shown here as a pinning. What a model actually
+    // did - "где работала" - comes from the usage log, which is a fact.
     // Proposed distribution cycle (owner's confirmation pending, rules 3.3):
     // every text model tries every open job, jobs with responsibility take only
     // proven models, and special-purpose models stay in their own function.
-    const PLACE_COLUMNS = Object.freeze([['orchestrator', 'Управляющий', 'responsible'], ['strategy_analyst', 'Исследователь', 'open'], ['coder', 'Кодер', 'open'],
+    const PLACE_COLUMNS = Object.freeze([['orchestrator', 'Заместитель', 'responsible'], ['strategy_analyst', 'Исследователь', 'open'], ['coder', 'Кодер', 'open'],
       ['backtest_analyst', 'Бэктестер', 'open'], ['optimizer', 'Оптимизатор', 'open'], ['accountant', 'Бухгалтер', 'responsible'],
       ['news_analyst', 'Новости', 'open'], ['risk_manager', 'Судьи', 'responsible']]);
-    const SPECIAL = model => /embedding|tts|whisper|dall|image/i.test(String(model.model || '')) || model.role === 'embedding';
+    const SPECIAL = model => /embedding|tts|whisper|dall|image/i.test(String(model.model || '')) || model.endpoint_type === 'embeddings';
     const proven = model => model.requests >= 20 && model.ok / model.requests >= 0.9;
     function placeCell(model, [role, , kind]) {
       const row = rows(model.by_role).find(value => value.role === role || (role === 'news_analyst' && value.role === 'news'));
@@ -1429,10 +1564,10 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     }
     function distribution(models) {
       const live = models.filter(model => model.enabled);
-      return `<ol class="aw-rules"><li><b>Закрепление важнее всего.</b> Если вы или пользователь закрепили модель за должностью, она работает только там. Роли из старого реестра «AI агенты» пока закреплением не считаются — оставить их или снять, решите вы.</li>`
+      return `<ol class="aw-rules"><li><b>Закрепление важнее всего.</b> Если вы или пользователь закрепили модель за должностью, она работает только там. Роли из старого реестра «AI агенты» переведены в архив: это история, на распределение они не влияют.</li>`
         + `<li><b>Пробный круг.</b> Новая модель получает по 3 пробные задачи в каждой открытой должности: Исследователь, Кодер, Бэктестер, Оптимизатор, Новости.</li>`
         + `<li><b>Дальше — по рейтингу.</b> В должность идёт модель с лучшим успехом именно под этой должностью; 10% задач — на пробу других, чтобы рейтинг не застывал.</li>`
-        + `<li><b>Ответственные должности</b> — Управляющий, Бухгалтер, Судьи — только проверенные модели: от 20 вызовов и успех от 90%.</li>`
+        + `<li><b>Ответственные должности</b> — Заместитель, Бухгалтер, Судьи — только проверенные модели: от 20 вызовов и успех от 90%.</li>`
         + `<li><b>Специальные модели</b> (поиск по памяти, озвучка) в текстовые должности не попадают.</li></ol>`
         + `<p class="aw-muted aw-hint-line">Предложение правил — ждёт вашего утверждения. Ниже — как они ложатся на текущие модели: процент — успех под должностью (число вызовов), «проба» — будет пробовать, «после проверки» — пока не допущена.</p>`
         + `<div class="aw-table-wrap"><table class="aw-lab-table aw-place-table"><thead><tr><th>Модель</th>${PLACE_COLUMNS.map(([, title]) => `<th>${esc(title)}</th>`).join('')}</tr></thead>`
@@ -1441,10 +1576,9 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     function labModelRow(model) {
       const rate = labRate(model), left = quota(model);
       const worked = rows(model.by_role).slice(0, 3).map(row => `${labRole(row.role)} ${row.requests >= 3 ? pct(row.ok / row.requests * 100) : 'NEW'} (${count(row.requests)})`);
-      const pin = pinnedRole(model);
       return `<tr class="aw-lab-row${model.enabled ? '' : ' aw-lab-off'}" data-aw-lab-model="${esc(model.id)}" tabindex="0">`
         + `<td><div class="aw-lab-name"><span class="aw-icbox aw-t-cyan">${esc(String(model.name || model.model || '?').slice(0, 1).toUpperCase())}</span><span><strong>${esc(model.name || model.model)}</strong><small>${esc(providerLabel(model.provider))} · ${esc(model.model || '')}${model.enabled ? '' : ' · выключена'}</small></span></div></td>`
-        + `<td>${worked.length ? esc(worked.join(', ')) : '<span class="aw-muted">ещё не работала</span>'}${pin ? `<small class="aw-pin" title="Роль, записанная в старом реестре «AI агенты»; закреплением её считать нельзя, пока вы не подтвердите">роль в старом реестре: ${esc(labRole(pin))}</small>` : ''}</td>`
+        + `<td>${worked.length ? esc(worked.join(', ')) : '<span class="aw-muted">ещё не работала</span>'}</td>`
         + `<td class="aw-num-cell">${count(model.requests_month)}<small>всего ${count(model.requests)}</small></td>`
         + `<td class="aw-num-cell"><b class="aw-rate aw-rate-${rateTone(rate)}" title="${esc(model.requests ? `Успешно ${model.ok} из ${model.requests} вызовов` : 'Вызовов ещё не было')}">${rate == null ? (model.requests ? 'NEW' : '—') : esc(pct(rate * 100))}</b>${model.errors ? `<small>ошибок ${count(model.errors)}</small>` : ''}</td>`
         + `<td class="aw-num-cell">${esc(usd(model.spend_month_usd))}<small>всего ${esc(usd(model.spend_all_time_usd))}</small></td>`
@@ -1471,7 +1605,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         + `<p class="aw-model-spend"><span class="aw-muted">Квота:</span> ${esc(left.text)}${model.credit_expires_at_utc ? ` · <span class="aw-muted">грант до</span> ${esc(date(model.credit_expires_at_utc))}` : ''}</p>${left.used == null ? '' : `<span class="aw-use aw-use-lg"><span style="width:${Math.round(left.used)}%"></span></span>`}`
         + `<p class="aw-model-spend"><span class="aw-muted">Тариф:</span> ${number(model.input_price_usd_per_m) || number(model.output_price_usd_per_m) ? `${esc(usd(model.input_price_usd_per_m))} за 1 млн входных токенов, ${esc(usd(model.output_price_usd_per_m))} за 1 млн выходных` : model.billing_mode === 'free_tier' ? 'бесплатный доступ' : 'не указан'}</p>`
         + byRole + recent
-        + `<div class="aw-actions"><a class="btn sm" href="ai-agents.html">Ключи и настройки — «AI агенты»</a></div>`, { size: 'model' });
+        + `<div class="aw-actions"><button class="btn sm" data-aw-connect-model>Подключить ещё модель</button></div>`, { size: 'model' });
     }
     // Connecting a model: provider, model, key and how it is paid for. The key
     // goes straight to the encrypted store; the model then checks itself with
@@ -1687,19 +1821,21 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     const MEMORY_GONE = new Set(['revoked', 'expired', 'archived', 'retired', 'superseded']);
     let graphOpen = false;
     const KNOWLEDGE_GROUPS = Object.freeze([['rule', 'Правила разработки стратегий', 'rule'], ['registry', 'Реестр наших стратегий — история и статусы на июнь 2026', 'strategy'],
-      ['lesson', 'Уроки', 'concept'], ['reference', 'Эталонная библиотека — образцы из открытых источников, не наши стратегии', 'ref'], ['data', 'Материалы исследований', 'data']]);
-    const KNOWLEDGE_SHORT = Object.freeze({ rule: 'Правила', registry: 'Наши стратегии', lesson: 'Уроки', reference: 'Эталоны', data: 'Исследования', memory: 'Записи команды' });
+      ['lesson', 'Уроки', 'concept'], ['reference', 'Эталонная библиотека — образцы из открытых источников, не наши стратегии', 'ref'], ['data', 'Материалы исследований', 'data'],
+      ['report', 'Отчёты команды — что было сделано по дням и неделям', 'report']]);
+    const KNOWLEDGE_SHORT = Object.freeze({ rule: 'Правила', registry: 'Наши стратегии', lesson: 'Уроки', reference: 'Эталоны', data: 'Исследования', report: 'Отчёты', memory: 'Записи команды' });
     function renderMemory() {
       const memory = cachedDomain('memory'), knowledge = cachedDomain('knowledge');
       const summary = overview?.summaries?.memory, brief = overview?.summaries?.knowledge;
       const all = '';
-      const legend = '<div class="aw-graph-legend"><span class="aw-lg-rule">● правила</span><span class="aw-lg-strategy">● наши стратегии</span><span class="aw-lg-concept">● уроки</span><span class="aw-lg-ref">● эталоны (открытые источники)</span><span class="aw-lg-data">● материалы исследований</span><span class="aw-lg-context">● записи команды</span><span class="aw-muted">· потяните граф мышью, чтобы повернуть</span></div>';
+      const legend = '<div class="aw-graph-legend"><span class="aw-lg-rule">● правила</span><span class="aw-lg-strategy">● наши стратегии</span><span class="aw-lg-concept">● уроки</span><span class="aw-lg-ref">● эталоны (открытые источники)</span><span class="aw-lg-data">● материалы исследований</span><span class="aw-lg-report">● отчёты команды</span><span class="aw-lg-context">● записи команды</span><span class="aw-muted">· потяните граф мышью, чтобы повернуть</span></div>';
       if (!memory || !knowledge) { content.innerHTML = bcard('Память и уроки', 'brain', 'violet', memoryBody(summary, brief), all) + bcard('Граф знаний', 'layers', 'cyan', loadingBlock('Загружаем память…')); return; }
       const records = memory.unavailable ? [] : items(memory).filter(record => !MEMORY_GONE.has(String(record.status || '')));
       const base = knowledge.unavailable ? [] : rows(knowledge.items);
-      const graph = records.length + base.length >= 3 ? knowledgeGraph(base, records, graphOpen) : smallEmpty('Граф знаний появится, когда в памяти накопится хотя бы три записи и связи между ними.');
+      const drawn = records.length + base.length >= 3;
+      const graph = drawn ? knowledgeGraph(base, records, graphOpen) : smallEmpty('Граф знаний появится, когда в памяти накопится хотя бы три записи и связи между ними.');
       content.innerHTML = bcard('Память и уроки', 'brain', 'violet', memoryBody(summary, brief), all)
-        + bcard('Граф знаний', 'layers', 'cyan', graph + legend, records.length + base.length >= 3 ? `<button class="btn sm" data-aw-graph-toggle aria-pressed="${graphOpen}">${graphOpen ? 'Свернуть граф' : 'Раскрыть граф'}</button>` : '')
+        + bcard('Граф знаний', 'layers', 'cyan', graph + (drawn ? legend : ''), drawn ? `<button class="btn sm" data-aw-graph-toggle aria-pressed="${graphOpen}">${graphOpen ? 'Свернуть граф' : 'Раскрыть граф'}</button>` : '')
         + (base.length ? bcard('База знаний', 'archive', 'gray', knowledgeList(base)) : knowledge.unavailable ? '' : bcard('База знаний', 'archive', 'gray', smallEmpty('Документов базы знаний пока нет.')));
       mountGraph3d();
     }
@@ -1980,13 +2116,18 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     async function loadTab(append, options = {}) {
       const request = ++generation;
       if (!overview?.enabled) {
-        content.innerHTML = empty('AI Центр пока выключен', 'Новый интерфейс включается сервером для конкретного окружения и рабочего пространства. Текущие AI Lab и подключения остаются доступны.', '<a class="btn" href="ai-lab.html">Исследования</a><a class="btn" href="ai-agents.html">Подключения и модели</a>');
+        content.innerHTML = empty('AI Центр пока выключен', 'Новый интерфейс включается сервером для конкретного окружения и рабочего пространства. Как только он включится, здесь появятся ваши модели, задачи и память.');
         content.setAttribute('aria-busy', 'false'); return;
       }
       content.setAttribute('aria-busy', 'true');
       try {
         if (tab === 'overview') preserveView(content, renderOverview);
-        else if (tab === 'agents') preserveView(content, renderAgents);
+        else if (tab === 'agents') {
+          // The deputy's own state - who works, whether the team rests.
+          if (!cachedDomain('duty')) await loadDomain('duty');
+          if (request !== generation || disposed) return;
+          preserveView(content, renderAgents);
+        }
         else if (tab === 'work') {
           let result = options.workResult;
           if (!result) {
@@ -1998,6 +2139,9 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
           if (options.background && backgroundReadBlocked()) return;
           workRows = append ? workRows.concat(items(result)) : items(result);
           nextCursor = result?.next_cursor || null;
+          // The questions the deputy brings from the duty controller.
+          if (!cachedDomain('duty')) await loadDomain('duty');
+          if (request !== generation || disposed) return;
           preserveView(content, renderWork);
         }
         else if (TAB_DATA[tab]) {
@@ -2669,7 +2813,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     // A question from the list opens the chat with the Manager: the task's own
     // dialogue when the server can build one, otherwise the Manager's chat with
     // a short brief typed in for the owner to finish and send.
-    async function askManager(id, button) {
+    async function askDeputy(id, button) {
       const task = rows(overview?.tasks).find(row => taskId(row) === id);
       if (button) button.disabled = true;
       try {
@@ -2724,10 +2868,14 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (target.hasAttribute('data-aw-auto-team')) { void autoTeam(target); return; }
       if (target.hasAttribute('data-aw-new-research')) { openNewResearch(); return; }
       if (target.hasAttribute('data-aw-goal')) { openGoal(); return; }
+      if (target.hasAttribute('data-aw-legacy')) { void openLegacy(target.getAttribute('data-aw-legacy')); return; }
+      if (target.hasAttribute('data-aw-duty-decide')) { void dutyDecide(target.getAttribute('data-aw-duty-decide'), target.getAttribute('data-aw-decision'), target); return; }
+      if (target.hasAttribute('data-aw-duty-answer')) { void dutyAnswer(target.getAttribute('data-aw-duty-answer')); return; }
+      if (target.hasAttribute('data-aw-duty')) { void dutyControl(target.getAttribute('data-aw-duty'), target); return; }
       if (target.dataset.awResearch) { researchPick = Number(target.dataset.awResearch) || 0; renderResearch(); return; }
       if (target.hasAttribute('data-aw-open-log')) { toggleLog(true); qs('#aw-log-toggle')?.focus?.(); return; }
       if (target.hasAttribute('data-aw-graph-toggle')) { graphOpen = !graphOpen; renderMemory(); return; }
-      if (target.dataset.awAsk) { askManager(target.dataset.awAsk, target); return; }
+      if (target.dataset.awAsk) { askDeputy(target.dataset.awAsk, target); return; }
       if (target.hasAttribute('data-aw-show-tests')) { showTests = !showTests; renderWork(); return; }
       if (target.tagName === 'A' || target.dataset.awTaskChat || target.dataset.awFollowupChat || target.dataset.awChartChat || target.hasAttribute('data-aw-real-chat')) stopPersonaAudio();
       // A control may carry both: open the tab already narrowed to that filter.

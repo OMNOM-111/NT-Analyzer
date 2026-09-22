@@ -571,6 +571,7 @@ div.aw-act { cursor: default; }
 .aw-graph-halo { opacity: .12; }
 .aw-graph-item { cursor: pointer; }
 .aw-g-strategy { fill: #60a5fa; } .aw-g-concept { fill: #a78bfa; } .aw-g-rule { fill: #fbbf24; } .aw-g-data { fill: #2dd4bf; } .aw-g-context { fill: #34d399; } .aw-g-hub { fill: #94a3b8; }
+.aw-g-report { fill: #f472b6; } .aw-lg-report { color: #f472b6; }
 .aw-graph-more { margin: 6px 0 0; font-size: 11.5px; }
 .aw-goal-title { font-size: 14px; font-weight: 650; line-height: 1.35; }
 .aw-goal-bar { height: 6px; border-radius: 4px; background: var(--bg-3); overflow: hidden; margin-top: 9px; }
@@ -686,3 +687,30 @@ div.aw-act { cursor: default; }
 @media (max-width: 860px) { .aw-stage-arrow { display: none; } }
 .aw-rd-full { padding: 12px 16px 16px; border-top: 1px solid var(--line); }
 .aw-rd-full h3 { margin: 0 0 8px; font-size: 12.5px; font-weight: 650; color: var(--tx); text-transform: none; letter-spacing: 0; }
+
+/* Legacy / Архив: kept visibly apart from the working views - read-only history. */
+.aw-legacy { margin-top: 18px; border-style: dashed; }
+.aw-legacy-nums { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin: 4px 0 12px; font-size: 13px; }
+.aw-legacy-nums b { font-size: 15px; }
+.aw-legacy-note { margin: 0 0 12px; }
+.aw-legacy-report h3 { margin: 16px 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.aw-legacy-report h3:first-child { margin-top: 0; }
+.aw-legacy-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.aw-legacy-pair { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--card-2); font-size: 13px; }
+.aw-legacy-pair span { color: var(--muted); }
+.aw-legacy-list { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.7; }
+
+.aw-legacy-table td small { display: block; color: var(--muted); font-size: 11.5px; line-height: 1.45; margin-top: 2px; }
+
+/* The deputy's own items: decisions the owner owes, and the team's state. */
+.aw-duty { margin-bottom: 16px; }
+.aw-duty-card { border: 1px solid var(--line); border-left-width: 3px; border-radius: 12px; padding: 12px 14px; background: var(--card-2); }
+.aw-duty-card.aw-al-crit { border-left-color: var(--neg); }
+.aw-duty-card.aw-al-warn { border-left-color: var(--warn, #f59e0b); }
+.aw-duty-card.aw-al-info { border-left-color: var(--line); }
+.aw-duty-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.aw-duty-head time { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.aw-duty-detail { margin: 6px 0; font-size: 13px; line-height: 1.55; }
+.aw-team-control { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 13px; }
+.aw-team-buttons { display: flex; gap: 8px; }
+.aw-team-state { color: var(--muted); }

@@ -109,7 +109,7 @@ const plain = value => JSON.parse(JSON.stringify(value));
     env.orchRenderPersonaPicker();
     if (human) assert.equal(elements.get('#orch-model-picker').hidden, true);
     else {
-      assert.match(elements.get('#orch-model-picker').innerHTML, /Главный: Марина/);
+      assert.match(elements.get('#orch-model-picker').innerHTML, /Заместитель: Марина/);
       assert.doesNotMatch(elements.get('#orch-model-picker').innerHTML, /<img onerror/);
       assert.equal(elements.get('#orch-persona-select').disabled, state.sending);
       elements.get('#orch-persona-select').handlers.change({target: {value: SECOND}});

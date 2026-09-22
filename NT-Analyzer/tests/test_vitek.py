@@ -1293,40 +1293,48 @@ def test_poll_once_consumes_events_without_legacy_full_scan(tmp_path, monkeypatc
 
 
 def test_vitek_ui_and_background_install_contracts() -> None:
+    """The duty controller keeps working; its owner-facing path moved.
+
+    The owner retired the old chief-of-staff surfaces on 20.09.2026: its
+    questions, its pause and its check now reach the owner through the deputy
+    in the AI Center (docs/current/LEGACY_SURFACES_AUDIT.md). What the engine
+    itself does - events, time windows, incident decisions, the background
+    install - is unchanged and still pinned here.
+    """
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
     aurora = root / "app" / "static" / "aurora"
     html = (aurora / "strategies.html").read_text(encoding="utf-8")
     overview = (aurora / "index.html").read_text(encoding="utf-8")
-    ai_lab = (aurora / "assets" / "pages" / "ai-lab.js").read_text(encoding="utf-8")
     victor = (aurora / "assets" / "victor.js").read_text(encoding="utf-8")
     js = (root / "app" / "static" / "aurora" / "assets" / "pages" / "strategies.js").read_text(encoding="utf-8")
+    center = (aurora / "assets" / "pages" / "ai-command-center.js").read_text(encoding="utf-8")
     server = (root / "app" / "server.py").read_text(encoding="utf-8")
     installer = (root / "tools" / "install-vitek-background.ps1").read_text(encoding="utf-8")
 
-    assert "Виктор · правая рука руководителя" in html
-    assert "Виктор · ваша правая рука" in overview
-    assert 'data-victor-center' in overview
+    # The old surfaces are out of the working path, not renamed and not deleted.
+    assert "Виктор · правая рука руководителя" not in html
+    assert 'id="vitek-agents"' not in html and "vitek-panel" not in html
     assert "Создать отдельный чат и поручить Виктору" in victor
-    assert "aiOrchestratorCreateConversation" in victor
-    assert "aiOrchestratorMessage" in victor
-    assert "Поручить Виктору разобраться" in js and "Поручить Виктору разобраться" in ai_lab
     for page in aurora.glob("*.html"):
         content = page.read_text(encoding="utf-8")
-        # The root mode choice must load before the professional Aurora shell;
-        # it intentionally has no owner/Orchestrator assistant surface.
-        if page.name == "mode-entry.html":
-            assert "assets/victor.js" not in content
-        else:
-            assert "assets/victor.js" in content, page.name
-    assert 'id="vitek-agents"' in html
-    assert "Временные окна стратегий" in html
-    assert "vitekIncidentDecision" in js
-    assert "vitekPlan" in js
+        legacy_screen = page.name in {"ai-agents.html", "ai-lab.html"}
+        assert ("assets/victor.js" in content) is legacy_screen, page.name
+        if legacy_screen:
+            assert "assets/legacy-guard.js" in content, page.name
+
+    # The owner answers the same engine, now through the deputy.
+    assert "API.aiControlCenterDutyDecide(" in center and "API.aiControlCenterDutyPause(" in center
+    assert "Нужно ваше решение" in center and "принёс Заместитель" in center
+
+    # The code that painted the old panel stays, inert without it.
+    assert "vitekIncidentDecision" in js and "vitekPlan" in js
     assert "setInterval(refreshVitekStatus, 10000)" in js
     assert "setInterval(refreshVitekStatus, 3000)" not in js
-    assert "получает события автоматически" in js
+    assert "if (vitekLoading || !UI.qs('#vitek-panel')) return;" in js
+
+    # The engine and its install are untouched.
     assert '"/api/vitek/time-windows"' in server
     assert '"/api/vitek/events"' in server
     legacy_domain_block = server.split('if path == "/api/ai-lab/domain-agents/message":', 1)[1].split("return", 1)[0]
@@ -1335,6 +1343,8 @@ def test_vitek_ui_and_background_install_contracts() -> None:
     assert "ai_domain_agents.answer" not in legacy_domain_block
     assert "New-ScheduledTaskTrigger -AtLogOn" in installer
     assert "RestartCount 999" in installer
+    # Nothing on the overview claims a chief of staff of its own any more.
+    assert "data-victor-center" not in overview
 
 
 def test_owner_dialogue_hides_internal_codes_and_uses_verified_strategy_threshold(tmp_path, monkeypatch) -> None:

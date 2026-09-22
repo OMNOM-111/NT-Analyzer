@@ -43,6 +43,8 @@ PUBLIC_DOCUMENT_IDS = frozenset({
     "ai-staff-index", "ai-staff-vitek", "ai-staff-chief", "ai-staff-dialogue",
     "ai-staff-marina", "ai-staff-tolik", "ai-staff-nikita", "ai-staff-ivan",
     "ai-staff-recovery", "north-star-2026",
+    # The architecture in force: the AI Center rules the product is built to.
+    "ai-center-rules",
     *(f"legal-{number:02d}" for number in range(9)),
 })
 

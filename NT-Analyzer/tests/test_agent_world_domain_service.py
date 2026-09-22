@@ -741,3 +741,20 @@ def test_hiring_into_a_team_place_needs_only_a_name_and_brings_the_duties(env):
         create(env, payload={"name": "Кто-то", "team_role": "trader"}, key="hire-invalid-001")
     plain = create(env, payload={"name": "Без места"}, key="hire-plain-001")["item"]
     assert "team_role" not in plain
+
+
+def test_the_deputy_is_the_one_the_owner_speaks_to_and_there_is_only_one(env):
+    """The owner manages the project; their right hand is the Заместитель."""
+    from app.ai_control_center.team_roles import LEAD, TEAM_ROLES
+    assert LEAD == "deputy"
+    right_hand = create(env, payload={"name": "Витёк", "team_role": "deputy"}, key="hire-deputy-001")["item"]
+    assert right_hand["team_role"] == "deputy" and right_hand["main_assistant"] is True
+    # The duties are the owner's chain, written once in the place itself.
+    assert "напрямую" in TEAM_ROLES["deputy"]["duty"] and "судьям" in TEAM_ROLES["deputy"]["duty"]
+    # A place below the lead never becomes the assistant the owner addresses.
+    other = create(env, payload={"name": "Лера", "team_role": "secretary"}, key="hire-secretary-001")["item"]
+    assert other.get("main_assistant", False) is False
+    # A second right hand is refused, so no message is ever ambiguous.
+    act(env, right_hand)
+    with pytest.raises(ContractError, match="persona_main_exists"):
+        create(env, payload={"name": "Второй", "team_role": "deputy"}, key="hire-deputy-002")

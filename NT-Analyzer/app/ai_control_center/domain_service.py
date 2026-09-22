@@ -207,24 +207,38 @@ class DomainService:
                 raise
             return replay
 
+    def _refuse_second_main_assistant(self, context):
+        from .persona_identity import _LIVE_STATES, normalize_fields
+        page = self.repository.list(context=context, kind=EntityKind.PERSONA, page=PageRequest(limit=100))
+        for row in page.items:
+            if row.header.owner_user_uuid != context.user_uuid or row.status not in _LIVE_STATES:
+                continue
+            if normalize_fields(self._json(context, row.profile)).get("main_assistant", False):
+                raise ContractError("persona_main_exists")
+
     def _create_input(self, domain, payload):
         if domain == "personas":
             from .application_roles import role_key
             from .presentation import avatar_key
             from .persona_voice import VOICE_FIELDS, normalize_fields
             from .persona_identity import IDENTITY_FIELDS, normalize_fields as normalize_identity
-            from .team_roles import TEAM_ROLES, team_role
+            from .team_roles import LEAD, TEAM_ROLES, team_role
             data = _fields(payload, ("name",), ("description", "style", "application_role", "team_role", "avatar_key", *VOICE_FIELDS, *IDENTITY_FIELDS))
             place = team_role(data.get("team_role", ""))
             # A place in the team carries its duties; hiring needs only a face
             # and a name, and an explicit description still wins.
             description = data.get("description", "") or (TEAM_ROLES[place]["duty"] if place else "")
+            identity = normalize_identity(data)
+            # The owner is the manager of this project and speaks to their right
+            # hand directly, so the Заместитель is the assistant they address.
+            if place == LEAD:
+                identity = {**identity, "main_assistant": True}
             return {"name": _text(data["name"], limit=160), "description": _text(description, empty=True),
                     **({"team_role": place} if place else {}),
                     "style": _text(data.get("style", ""), limit=1000, empty=True),
                     "application_role": role_key(data.get("application_role", "")),
                     "avatar_key": avatar_key(data.get("avatar_key", "")),
-                    **normalize_identity(data),
+                    **identity,
                     **{key: value for key, value in normalize_fields(data).items() if key in data}}
         if domain == "memory":
             data = _fields(payload, ("title", "content", "purpose", "retention_days"),
@@ -268,6 +282,10 @@ class DomainService:
     def create(self, *, context, admit, domain, payload, idempotency_key):
         self._guard(context, admit, write=True)
         data = self._create_input(domain, payload)
+        if domain == "personas" and data.get("main_assistant") is True:
+            # One right hand at a time: a second one would make every message
+            # ambiguous, so the existing choice is kept and this hire refused.
+            self._refuse_second_main_assistant(context)
         key, operation = self._key(context, idempotency_key), "domain." + domain + ".create"
         identity = self._id(context, operation + ":" + key)
         if domain == "memory":

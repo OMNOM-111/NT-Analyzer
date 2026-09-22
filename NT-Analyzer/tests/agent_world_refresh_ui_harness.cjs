@@ -29,6 +29,8 @@ const env = {
   drawTask:()=>calls.push(['task',env.detail.display_status,env.quietDrawer]),
   openProfile:()=>calls.push(['profile',env.quietDrawer]),
   empty:()=>'', items:r=>r.items, rows:v=>Array.isArray(v)?v:[],
+  cachedDomain:key=>key==='duty'?{questions:[],working:[]}:null,
+  loadDomain:async key=>{calls.push(['domain',key]);return {items:[]};},
   UI:{closeDrawer:()=>{drawer.open=false;calls.push('close');}},
   API:{
     aiControlCenterOverview:async()=>{calls.push('read-overview'); return {enabled:true,scope,stats:{active_tasks:0},agents:[{id:'agent'}],tasks:[{id:'task',display_status:'awaiting_review'}]};},

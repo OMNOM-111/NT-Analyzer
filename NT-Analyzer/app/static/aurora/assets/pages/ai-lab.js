@@ -696,7 +696,8 @@ UI.ready(async function () {
     const cancel = UI.qs('#ed-cancel');
     if (cancel) cancel.onclick = async () => { if (!confirm('Отменить эксперимент ' + id + '?')) return; try { await API.http.aiCancel({ experiment_id: id }); UI.toast('Отмена запрошена'); UI.closeDrawer(); refreshRun(); } catch (er) { UI.reportError(er); } };
     const victor = UI.qs('#ed-assign-victor');
-    if (victor) victor.onclick = () => Victor.openAssignment({
+    if (victor && typeof Victor === 'undefined') victor.hidden = true;
+    else if (victor) victor.onclick = () => Victor.openAssignment({
       page: 'ai-lab', entity_type: 'research', entity_id: id,
       entity_label: e.class_name || id, url: location.pathname + location.search,
     }, {
