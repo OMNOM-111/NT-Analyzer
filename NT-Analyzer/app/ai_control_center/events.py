@@ -24,6 +24,7 @@ EVENT_TYPES = frozenset("stratforge.ai." + value for value in (
     "execution.started", "execution.completed", "execution.failed", "execution.deviated", "execution.changed",
     "outcome.verified", "outcome.changed", "evaluation.recorded", "memory.promoted",
     "memory.revoked", "memory.changed", "persona.changed", "agent_role.changed",
+    "knowledge_entity.changed", "relationship.changed", "knowledge_source.changed",
     "provider_account.changed", "model.changed", "external_agent_connection.changed",
     "strategy_project.changed", "routine.changed", "calendar_item.changed",
     "court_case.changed", "court_vote.recorded",

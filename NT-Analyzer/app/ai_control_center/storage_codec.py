@@ -25,6 +25,7 @@ from .states import ContractError, EntityKind
 _RECORD_TYPES = {cls.KIND: cls for cls in (
     c.Persona, c.AgentRole, c.ProviderAccount, c.Model, c.Intent, c.Task,
     c.Contribution, c.Decision, c.Execution, c.Outcome, c.Memory,
+    c.KnowledgeEntity, c.Relationship, c.KnowledgeSource,
     StrategyProject, Routine, CalendarItem, CourtCase, CourtVote, Evaluation, ExternalAgentConnection,
 )}
 MAX_RECORD_BYTES = 256 * 1024

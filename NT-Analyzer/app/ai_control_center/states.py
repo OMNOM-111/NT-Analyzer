@@ -25,6 +25,9 @@ class EntityKind(str, Enum):
     EXECUTION = "execution"
     OUTCOME = "outcome"
     MEMORY = "memory"
+    KNOWLEDGE_ENTITY = "knowledge_entity"
+    RELATIONSHIP = "relationship"
+    KNOWLEDGE_SOURCE = "knowledge_source"
     STRATEGY_PROJECT = "strategy_project"
     ROUTINE = "routine"
     CALENDAR_ITEM = "calendar_item"
@@ -79,6 +82,12 @@ TRANSITIONS = MappingProxyType({
         disputed=("verified", "rejected", "superseded")),
     EntityKind.MEMORY: _graph(
         draft=("active", "revoked", "expired"), active=("superseded", "revoked", "expired")),
+    EntityKind.KNOWLEDGE_ENTITY: _graph(
+        active=("merged", "retired")),
+    EntityKind.RELATIONSHIP: _graph(
+        active=("superseded", "revoked", "expired")),
+    EntityKind.KNOWLEDGE_SOURCE: _graph(
+        active=("retired",)),
     EntityKind.STRATEGY_PROJECT: _graph(draft=("active", "archived"), active=("archived",)),
     EntityKind.ROUTINE: _graph(proposed=("accepted", "dismissed"), accepted=("dismissed",)),
     EntityKind.CALENDAR_ITEM: _graph(proposed=("accepted", "dismissed"), accepted=("dismissed",)),
@@ -94,6 +103,8 @@ INITIAL_STATES = MappingProxyType({
     EntityKind.INTENT: "draft", EntityKind.TASK: "planned",
     EntityKind.CONTRIBUTION: "draft", EntityKind.DECISION: "proposed",
     EntityKind.EXECUTION: "requested", EntityKind.OUTCOME: "pending", EntityKind.MEMORY: "draft",
+    EntityKind.KNOWLEDGE_ENTITY: "active", EntityKind.RELATIONSHIP: "active",
+    EntityKind.KNOWLEDGE_SOURCE: "active",
     EntityKind.STRATEGY_PROJECT: "draft", EntityKind.ROUTINE: "proposed",
     EntityKind.CALENDAR_ITEM: "proposed", EntityKind.COURT_CASE: "open",
     EntityKind.COURT_VOTE: "recorded", EntityKind.EVALUATION: "recorded",
@@ -117,6 +128,9 @@ EDITABLE_STATES = MappingProxyType({
     EntityKind.EXECUTION: frozenset({"requested", "queued", "running", "review"}),
     EntityKind.OUTCOME: frozenset({"pending", "disputed"}),
     EntityKind.MEMORY: frozenset({"draft"}),
+    EntityKind.KNOWLEDGE_ENTITY: frozenset({"active"}),
+    EntityKind.RELATIONSHIP: frozenset({"active"}),
+    EntityKind.KNOWLEDGE_SOURCE: frozenset({"active"}),
     EntityKind.STRATEGY_PROJECT: frozenset({"draft", "active"}),
     EntityKind.ROUTINE: frozenset({"proposed"}),
     EntityKind.CALENDAR_ITEM: frozenset({"proposed"}),

@@ -17,6 +17,16 @@
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
+- Development delta 2026-09-21: isolated branch `codex/unified-memory-service`
+  introduces one disabled-by-default `MemoryService` for Chief/chat/specialist
+  context, additive entity/source/relationship records on the existing generic
+  SQLite/PostgreSQL ledger, stable source/version/fragment IDs, ranked token
+  context, conflict/TTL handling, and loss-accounted JSONL migration. Existing
+  `Memory` is unchanged. Protected Local, runtime data and servers were not
+  touched; no PostgreSQL runtime or release acceptance is claimed. Canonical
+  external-model context and all write cutover flags remain OFF. See
+  [ADR-0013](../adr/0013-unified-agent-world-memory.md).
+
 - Current Agent World candidate: `2debb2d62ab1af9cba4da2e8d9bbaee9832316d2` on the final-acceptance
   branch; AW-FINAL-1 CLOSED by independent verification (2026-09-14). After `ai_automation`
   withdrawal the accepted graph stays completed/accepted (same review hash, Evaluation and SF Chat

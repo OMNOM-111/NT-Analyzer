@@ -163,7 +163,11 @@ def test_the_archive_is_inert_in_the_running_system():
     """Router, coordinator, rating and execution paths must not read the archive."""
     import pathlib
     root = pathlib.Path(__file__).resolve().parents[1] / "app"
+    # What matters is who imports the archive module - the word itself is also
+    # a label of the memory layer's own read-only history, which is not this.
+    import re
+    importer = re.compile(r"^\s*(from\s+\S*ai_lab\s+import\s+[^\n]*\blegacy_archive\b"
+                          r"|from\s+\S*legacy_archive\s+import|import\s+\S*legacy_archive\b)", re.M)
     readers = {path.relative_to(root).as_posix() for path in root.rglob("*.py")
-               if "legacy_archive" in path.read_text(encoding="utf-8", errors="replace")}
-    assert readers == {"ai_lab/legacy_archive.py", "ai_control_center/legacy_migration.py",
-                       "ai_control_center/legacy_view.py"}
+               if importer.search(path.read_text(encoding="utf-8", errors="replace"))}
+    assert readers == {"ai_control_center/legacy_migration.py", "ai_control_center/legacy_view.py"}

@@ -15,6 +15,16 @@
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 
+- Isolated memory handoff (2026-09-21): `codex/unified-memory-service` adds the
+  common read facade, context builder, stable identifiers, typed graph records,
+  reconciliation and reversible write routing described in
+  [ADR-0013](../adr/0013-unified-agent-world-memory.md). All new flags are OFF;
+  JSONL remains the live writer and later becomes read-only only after an exact
+  PASS reconciliation. Do not restart Local 8765, migrate owner data, enable
+  external-memory egress, or touch Canary/Production without separate owner
+  authorization. Next activation steps are measured shadow read, reviewed
+  migration report, dual write, then archive-only canonical write.
+
 - Current state: AW-FINAL-1 CLOSED on code `2debb2d6`, task branch
   `codex/agent-world-final-acceptance`, PR #287; later branch commits are documentation only.
   Verified on the exact SHA: CI `34863855186` (Static PASS, Ubuntu 5802/0/128, Windows attempt 3 5799 passed / 0 failed / 131 skipped, 1:54:34 (attempts 1-2 cancelled at the 120-minute job limit under shared-host load with 0 failures; not counted)),
