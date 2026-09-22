@@ -1,4 +1,4 @@
-# Shared Models — Local continuation checkpoint
+# Shared Models — disposable Preview and Local acceptance
 
 Status: IN DEVELOPMENT. Verification: PENDING; not release acceptance.
 
@@ -34,7 +34,7 @@ after and restore them. Run focused, related and full regression tests.
 Release impact: Local only; no server, Canary or Production changes authorized.
 No merge or release acceptance is claimed by this checkpoint.
 
-## Continuation changes under verification
+## Implementation and interim checks
 
 - Registry calls recheck shared access at transmission, including retry/stream
   transport. The admitted share remains attached to accounting if its owner
@@ -49,7 +49,7 @@ No merge or release acceptance is claimed by this checkpoint.
   Neither profile grants model ownership, automation or administrative rights.
 - Focused validation: Preview 25 passed; sharing plus registration/device
   lifecycle 44 passed. Related pre-bridge regression: 910 passed / 7 skipped.
-  Latest Preview/shared/gateway focused suite: 98 passed. Full regression pending.
+  Intermediate Preview/shared/gateway suite: 98 passed; final results below.
 
 ## Previous QA permission restored
 
@@ -84,7 +84,7 @@ Preview lifetime: 32 calls, USD 0.25 and 30 minutes maximum; existing model caps
 also apply. Keys/settings stay in Local. Minimal owner billing usage survives
 Preview cleanup; caller chats, memory, tasks, sessions and private stores do not.
 No server, Canary or Production deployment took place. Live integration was
-tested from current source; Local 8765 runtime switching is still pending.
+tested first from current source; final Local activation and HTTP acceptance are below.
 
 ## Permission denial and reset acceptance
 
@@ -109,16 +109,65 @@ ceiling) from profiles with blocked external actions.
 Local access before-switch snapshot: 2 users, 1 workspace, 3 memberships;
 SHA256 of selected roles/status/permission overrides/workspace memberships:
 `dfcdf0b471112eb88388f3651350b5a5efb6082c172935de1209658af3011ccd`.
-Credentials and sessions are excluded from the snapshot. Comparison after
-switching is pending.
+Credentials and sessions are excluded from the snapshot. The after-switch/E2E
+snapshot has exactly the same hash, users, workspaces and memberships.
 
 Implementation checkpoint: `780aae65`; draft PR:
 https://github.com/OMNOM-111/NT-Analyzer/pull/291.
 Post-correction focused Preview/shared/gateway/compatibility suite: 182 passed.
-Full regression is in progress. Its architecture-import allowlist now names the
+The architecture-import allowlist now names the
 explicit Preview composition adapter, without relaxing pure core IO checks.
 
 Linux CI on `de98a799`: 6033 passed, 131 skipped, 2 failed because the gateway
 scenario fixture used the host Windows-only secret store. The fixture now uses
 the existing in-memory test secret store on every platform; production key
-storage is unchanged. The complete CI suite is being rerun after that correction.
+storage is unchanged. The corrected fixture passed 22 focused tests; the complete
+Linux rerun passed as recorded below.
+
+## Final Local acceptance — 2026-09-22T23:33Z
+
+- Runtime source: `c9a9d7e6a3080988af1c90ff65f2520b0e74cc70`, clean detached
+  `agent-world-local-runtime`; branch source `feat/shared-model-access`.
+- Local identity: `development`, `Preview=false`, port 8765,
+  build `dev-0.10.0-beta.96-c9a9d7e6a308`; previous source `548c995ac82489bdcb4916ca07ca4e4ce9fc59da`.
+- No active NT/Chief/worker jobs before switching. Isolated-copy rehearsal kept
+  identity/workspace and counts (21 jobs, 27 worker jobs, 3149 conversations),
+  SQLite integrity OK, external traffic blocked; no owner data was migrated.
+- The final acceptance called **POST /api/dev/preview/launch on Local 8765**,
+  exactly the owner picker's endpoint, then used its single-use entry URL.
+  Preview `c1df718633e50ecc118243ac`, disposable caller
+  `b11d286e-603b-4728-82d3-245de4afc7f4`, own personal workspace, zero own models.
+- Real Agent World + AI Chat calls: 2 calls, 203 input / 9 output tokens,
+  USD 0.000031, no unknown cost; caller and owner usage agreed and remained separate.
+- Owner connection read refused; no key/endpoint in catalog. Sharing off returned
+  HTTP 403 for the next call, existing task history remained. Exit removed the
+  entire container; parent status `active_sandbox.running=false`.
+- Sharing before/after: false/false. Access snapshot before/after matched exactly.
+  Negative/reset and foreign chat/task/memory isolation evidence is above.
+
+## Final validation and closeout boundary
+
+- Full Linux CI on exact runtime source `c9a9d7e6`: **6035 passed, 131 skipped**,
+  [job evidence](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/35796332035/job/106976373946).
+- Full Windows coverage on backend `de98a799`: **6032 passed, 134 skipped**,
+  all 6166 unique collected cases reconciled, none missing or unresolved.
+  This is aggregate coverage, not a clean first attempt: a diagnostic stack-dump
+  crash required repeating one partition; the temporary runner split an ordered
+  isolation pair and lacked a multiprocessing main guard. The ordered module
+  passed 13/13 and five affected process/file tests passed through normal pytest.
+  Runtime code was not changed for these runner errors. `c9a9d7e6` changes only
+  the portable credential fixture, Preview banner copy and evidence after this backend.
+- Focused Preview/shared/gateway/compatibility: 182 passed; related pre-bridge
+  chat/router/model/registration baseline: 910 passed, 7 skipped.
+- Exact `c9a9d7e6` bundle: 631 files; static scan inside bundle, shipped runtime
+  reads, Python compilation and JavaScript syntax PASS. External Context Pack PASS.
+- HTTP acceptance is real-provider evidence; no browser/visual acceptance is claimed.
+- IMPLEMENTATION COMPLETE for the requested Local Shared Models / disposable QA scope.
+  Draft [PR #291](https://github.com/OMNOM-111/NT-Analyzer/pull/291) is pushed;
+  self-hosted Windows/legacy CI jobs remain queued. No merge/release acceptance
+  or Canary/Production promotion is claimed. Source runtime data stays excluded
+  from commits; only minimal owner billing history survives disposable Preview.
+
+The Local acceptance stage is closed. Git closeout is the scoped source/history
+on `feat/shared-model-access` and PR #291; queued external CI remains an explicit
+merge/release blocker, not an unreported Local test pass.

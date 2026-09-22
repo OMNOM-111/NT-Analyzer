@@ -3,13 +3,13 @@
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (clean beta.96 runtime; real handoff/manual delivery and original report/PNG verified, exact-code CI PASS)
-- Local verification UTC: 2026-09-05T19:05:43Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
+- Local source verified SHA: c9a9d7e6a3080988af1c90ff65f2520b0e74cc70 (clean beta.96 runtime; Shared Models and disposable Preview HTTP acceptance, exact-code Linux CI PASS)
+- Local verification UTC: 2026-09-22T23:33:16Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
 - Protected Local program snapshot: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. New unified-source evidence is separate below; full-program/owner acceptance remains open.
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Protected Local branch snapshot: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; the active final branch is identified below, while #285 is an accepted integration input
-- Version: `0.10.0-beta.96`, `pre_release`; clean `2b6d0112` active on Local 8765, no Canary/Production promotion
+- Version: `0.10.0-beta.96`, `pre_release`; clean `c9a9d7e6` active on Local 8765, no Canary/Production promotion
 - Integration state: scoped model/domain/Chat/NT/Desktop, real fact handoff, manual discussion, separate application observations, Consensus and Court verified; owner-dependent and full-program work remain
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
@@ -211,8 +211,11 @@ temporary `ai_lab` override was restored to its recorded baseline. Live shared
 model invocation in Preview passed (Chat + Agent World, usage/revoke/cleanup).
 Real HTTP QA also confirmed denied AI access, a fresh identity/workspace after
 reset, retained restrictions and container deletion; focused suite: 182 passed.
-Full regression and Git closeout remain
-pending. [Canonical continuation record](../changelog/2026-09-22-shared-models-local-continuation.md).
+Local scope is BETA: owner launch endpoint E2E passed, access settings before/after
+matched; full Linux 6035/131 skipped and Windows coverage 6032/134 skipped passed
+with runner-related retries documented. Draft PR #291 contains the continuation;
+self-hosted CI is queued, so merge/release acceptance remains open.
+[Canonical continuation record](../changelog/2026-09-22-shared-models-local-continuation.md).
 
 ## Resume point — 2026-09-09
 

@@ -13,6 +13,10 @@ connections remain blocked. The bridge expires after 30 minutes and allows at
 most 32 calls / USD 0.25 while preserving the model's own caps. Exit removes the
 child's data/process/container; minimal owner usage accounting remains. No
 Canary/Production deployment or release identity changed.
+Local 8765 now runs clean `c9a9d7e6a3080988af1c90ff65f2520b0e74cc70`, build
+`dev-0.10.0-beta.96-c9a9d7e6a308`, Development, Preview=false. The owner Preview
+launch endpoint passed real-provider acceptance and cleanup; owner access settings
+matched the before snapshot exactly. This is a Local code switch, not a release artifact.
 [Canonical evidence](../changelog/2026-09-22-shared-models-local-continuation.md).
 
 ## Only supported release model

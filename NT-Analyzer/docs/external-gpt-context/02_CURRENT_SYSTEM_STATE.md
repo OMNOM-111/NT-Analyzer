@@ -3,14 +3,14 @@
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
 - Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (clean beta.96 runtime; real handoff/manual delivery and original report/PNG verified, exact-code CI PASS)
-- Local verification UTC: 2026-09-05T19:05:43Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
+- Local source verified SHA: c9a9d7e6a3080988af1c90ff65f2520b0e74cc70 (clean beta.96 runtime; Shared Models and disposable Preview HTTP acceptance, exact-code Linux CI PASS)
+- Local verification UTC: 2026-09-22T23:33:16Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
 - Protected Local program snapshot: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. New unified-source evidence is separate below; full-program/owner acceptance remains open.
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`; not released to Canary/Production
-- Active Local 8765: clean `2b6d0112bef88c5bfb73970de64ec5518443e56b`, build `dev-0.10.0-beta.96-2b6d0112bef8`, original owner data, Preview=false
-- Active Agent World branch: `codex/agent-world-final-acceptance`, integrating shared #285 and native P1-5 histories; protected Local still uses `codex/agent-world-owner-preview` code 2b6d0112 from the separate #282/#281/#280 stack. Nothing is deployed. Current ownership is in [master status](../current/AGENT_WORLD_MASTER_STATUS.md); preserved independent review is in [AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md).
+- Active Local 8765: clean `c9a9d7e6a3080988af1c90ff65f2520b0e74cc70`, build `dev-0.10.0-beta.96-c9a9d7e6a308`, original owner access settings unchanged, Preview=false.
+- Active Shared Models source branch: `feat/shared-model-access`, draft PR #291. It continues recovered `548c995a`; [current Local acceptance](../changelog/2026-09-22-shared-models-local-continuation.md) supersedes earlier Local runtime identities below. Historical Agent World review remains in [AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md).
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production
@@ -95,14 +95,16 @@
   of [master status](../current/AGENT_WORLD_MASTER_STATUS.md) and
   [checkpoint evidence](../changelog/2026-09-10-external-agent-onboarding.md).
 
-Shared Models continuation (2026-09-22): **IN DEVELOPMENT** on
+Shared Models continuation (2026-09-22): **BETA (Local)** on
 `feat/shared-model-access`, recovered code `548c995a`, checkpoint `f43a50de`.
 Registration/Preview personal-workspace provisioning and restricted QA profiles
 are implemented. Live shared-model Preview passed for Chat and Agent World;
 ordinary Preview profiles retain real permissions; the denied-AI profile, reset
 to a fresh identity/workspace and disposable cleanup passed real Local HTTP QA.
-full regression and Git closeout remain
-pending. [Canonical continuation record](../changelog/2026-09-22-shared-models-local-continuation.md).
+Full Linux regression: 6035 passed / 131 skipped; Windows full coverage after
+runner-related retries: 6032 passed / 134 skipped. Local owner launch endpoint
+acceptance and cleanup passed; self-hosted CI jobs remain queued in draft PR #291.
+[Canonical continuation record](../changelog/2026-09-22-shared-models-local-continuation.md).
 No Canary/Production change is included in this work.
 
 ## Historical integration evidence — 2026-09-09

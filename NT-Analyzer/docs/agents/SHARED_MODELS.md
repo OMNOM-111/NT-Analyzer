@@ -2,8 +2,9 @@
 
 Актуально на 2026-09-22.
 
-Статус: **IN DEVELOPMENT**. Живой Local-сценарий через disposable Preview пройден;
-полный regression и Git closeout ещё не завершены.
+Статус: **BETA (Local)**. Живой сценарий через owner Preview endpoint и полный
+regression пройдены; [проверки и ограничения](../changelog/2026-09-22-shared-models-local-continuation.md).
+На Canary/Production функция этой задачей не публиковалась.
 
 Базовый контракт общего доступа к подключённым моделям. Тарифов, кнопок выдачи
 моделей и квот на пользователя здесь нет — это отдельный этап.
