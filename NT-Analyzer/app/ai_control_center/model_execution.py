@@ -56,11 +56,10 @@ class PrivateRegistry:
 
     def get_agent(self, agent_id, public=True):
         self._own(agent_id)
+        # The agent id names this one connection, so its limits count every
+        # call made through it -- its owner's and, when shared, other people's.
         rows = [row for row in self.usage_reader(agent_id=self.agent_id, limit=100_000)
-                if row.get("workspace_id") == self.context.scope.workspace_id
-                and str(row.get("user_uuid") or row.get("user_id")) in {
-                    str(self.context.user_uuid), str(self.profile.get("compatibility_user_id", ""))}
-                and row.get("agent_id") == self.agent_id]
+                if row.get("agent_id") == self.agent_id]
         now = datetime.now(timezone.utc)
         day = now.replace(hour=0, minute=0, second=0, microsecond=0)
         month = day.replace(day=1)
@@ -106,6 +105,21 @@ class PrivateRegistry:
         self.usage_writer(clean)
 
 
+def shared_registry_binding(model, profile):
+    """The owner's registry model behind a shared binding, checked as the owner's own is."""
+    registry_id = profile.get("existing_registry_id")
+    try:
+        row = agent_registry.get_agent(registry_id)
+    except agent_registry.AgentRegistryError:
+        raise ContractError("model_owner_binding_unavailable") from None
+    if (not row.get("enabled") or not row.get("key_configured") or row.get("endpoint_type") != "chat"
+            or row.get("pricing_status") not in {"free", "configured", "estimated"}):
+        raise ContractError("model_owner_binding_unavailable")
+    if row.get("provider") != model.provider_key or row.get("model") != model.model_key:
+        raise ContractError("model_owner_binding_changed")
+    return registry_id
+
+
 class ModelExecutor:
     def __init__(self, *, budget_limits, secrets=None, pricing=None, owner_binding=None,
                  usage_reader=None, usage_writer=None):
@@ -116,16 +130,25 @@ class ModelExecutor:
         self.usage_reader, self.usage_writer = usage_reader, usage_writer
 
     def __call__(self, *, context, model, account, profile, prompt, system_prompt, request_id,
-                 conversation_id, max_output_tokens, purpose, cancelled, admit):
+                 conversation_id, max_output_tokens, purpose, cancelled, admit, shared=None, acting_agent=None):
         with universal_llm.invocation_policy(allow_hidden_retries=False):
             return self._invoke(context=context, model=model, account=account, profile=profile, prompt=prompt,
                 system_prompt=system_prompt, request_id=request_id, conversation_id=conversation_id,
-                max_output_tokens=max_output_tokens, purpose=purpose, cancelled=cancelled, admit=admit)
+                max_output_tokens=max_output_tokens, purpose=purpose, cancelled=cancelled, admit=admit,
+                shared=shared, acting_agent=acting_agent)
 
     def _invoke(self, *, context, model, account, profile, prompt, system_prompt, request_id,
-                conversation_id, max_output_tokens, purpose, cancelled, admit):
+                conversation_id, max_output_tokens, purpose, cancelled, admit, shared=None, acting_agent=None):
+        """``shared`` is a revocable call grant on somebody else's connection.
+
+        ``model``/``account``/``profile`` are then the owner's records, read by
+        the service; the caller never saw them. The grant is checked with every
+        admission, so a share turned off stops the call before transmission.
+        """
         def check():
             admit(context, "provider_transmit", 0.0)
+            if shared is not None:
+                shared.check()
             if callable(cancelled) and cancelled():
                 raise ContractError("model_cancelled")
 
@@ -133,7 +156,8 @@ class ModelExecutor:
         if profile.get("credential_source") == "owner_registry_binding":
             return self._owner(context=context, model=model, profile=profile, prompt=prompt,
                 system_prompt=system_prompt, conversation_id=conversation_id,
-                max_output_tokens=max_output_tokens, purpose=purpose, check=check, admit=admit, request_id=request_id)
+                max_output_tokens=max_output_tokens, purpose=purpose, check=check, admit=admit, request_id=request_id,
+                shared=shared, acting_agent=acting_agent)
         if not callable(self.budget_limits):
             raise ContractError("model_budget_exhausted")
         limits = self.budget_limits(context, model, profile)
@@ -143,10 +167,12 @@ class ModelExecutor:
         adapter = PrivateRegistry(context=context, model=model, account=account, profile=profile,
             limits=limits, secrets=self.secrets, revalidate=check, pricing=pricing,
             usage_reader=self.usage_reader, usage_writer=self.usage_writer)
+        if shared is not None:
+            adapter.shared_grant = dict(shared.share)
         with universal_llm.registry_scope(adapter):
             result = self._call(adapter.agent_id, context=context, prompt=prompt, system_prompt=system_prompt,
                 conversation_id=conversation_id, max_output_tokens=max_output_tokens, purpose=purpose,
-                check=check, admit=admit, request_id=request_id)
+                check=check, admit=admit, request_id=request_id, acting_agent=acting_agent)
             # Some malicious endpoints echo their Authorization credential.
             # Never persist that echo as a model artifact or display it in chat.
             key = self.secrets.get_secret(account.credential.key)
@@ -154,12 +180,20 @@ class ModelExecutor:
                 raise ContractError("model_provider_response_invalid")
             return result
 
-    def _owner(self, *, context, model, profile, **kwargs):
-        if not callable(self.owner_binding):
+    def _owner(self, *, context, model, profile, shared=None, **kwargs):
+        if shared is not None:
+            # Somebody else's call through the owner's registry binding: the
+            # grant, not the caller's identity, is what allows it.
+            def resolve(*_):
+                shared.check()
+                return shared_registry_binding(model, profile)
+        elif callable(self.owner_binding):
+            resolve = self.owner_binding
+        else:
             raise ContractError("model_owner_binding_denied")
         # The root checks current Local owner identity and an exact server
         # allowlist; it returns one registry ID, never a credential.
-        agent_id = self.owner_binding(context, model, profile)
+        agent_id = resolve(context, model, profile)
         if not isinstance(agent_id, str) or not agent_id:
             raise ContractError("model_owner_binding_denied")
         configured = agent_registry.get_agent(agent_id)
@@ -170,7 +204,7 @@ class ModelExecutor:
         previous_check = kwargs["check"]
         def revalidate_binding():
             previous_check()
-            if self.owner_binding(context, model, profile) != agent_id:
+            if resolve(context, model, profile) != agent_id:
                 raise ContractError("model_owner_binding_changed")
             current = agent_registry.get_agent(agent_id)
             if current.get("provider") != model.provider_key or current.get("model") != model.model_key:
@@ -180,7 +214,7 @@ class ModelExecutor:
 
     @staticmethod
     def _call(agent_id, *, context, prompt, system_prompt, conversation_id, max_output_tokens,
-              purpose, check, admit, request_id):
+              purpose, check, admit, request_id, acting_agent=None):
         estimate = universal_llm.estimate_request_cost(agent_id, prompt, system_prompt=system_prompt,
                                                       max_output_tokens=max_output_tokens)["estimated_max_cost_usd"]
         check()
@@ -190,7 +224,7 @@ class ModelExecutor:
         try:
             with universal_llm.usage_scope({"user_id": str(context.user_uuid),
                     "workspace_id": context.scope.workspace_id, "conversation_id": conversation_id,
-                    "request_source": "agent_world." + str(request_id)}):
+                    "request_source": "agent_world." + str(request_id), "acting_agent": acting_agent}):
                 result = universal_llm.invoke_agent(agent_id, prompt, system_prompt=system_prompt,
                     max_output_tokens=max_output_tokens, timeout=60, request_role="general",
                     purpose=purpose, cache_mode="off")

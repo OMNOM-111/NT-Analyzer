@@ -87,7 +87,8 @@ def usage_scope(context: Optional[Dict[str, Any]] = None):
     """
     clean = {
         key: (context or {}).get(key)
-        for key in ("user_id", "user_name", "workspace_id", "conversation_id", "request_source")
+        for key in ("user_id", "user_name", "workspace_id", "conversation_id", "request_source",
+                    "acting_agent")
         if (context or {}).get(key) not in (None, "")
     }
     steps: List[Dict[str, Any]] = []
@@ -104,6 +105,16 @@ def current_participation() -> List[Dict[str, Any]]:
     """Return the participation steps for the active usage_scope, if any."""
     steps = _PARTICIPATION_STEPS.get()
     return list(steps) if isinstance(steps, list) else []
+
+
+def shared_registry_filter() -> Optional[set]:
+    """Which registry models this request may use: None means all of them.
+
+    The sharing rule lives in the AI centre; this module is the one place the
+    AI Lab already crosses that boundary, so routing asks here.
+    """
+    from ..ai_control_center import model_sharing
+    return model_sharing.registry_filter(dict(_USAGE_CONTEXT.get() or {}))
 
 
 def current_usage_context() -> Dict[str, Any]:
@@ -140,7 +151,19 @@ def note_participation(step: Dict[str, Any]) -> None:
 
 
 def _record_usage(row: Dict[str, Any]) -> None:
-    _registry().record_usage({**row, **dict(_USAGE_CONTEXT.get() or {})})
+    context = dict(_USAGE_CONTEXT.get() or {})
+    registry = _registry()
+    registry.record_usage({**row, **context})
+    # A call through somebody else's shared connection is also written to the
+    # sharing ledger, naming both people. Accounting above already succeeded
+    # and must never be undone by the second write.
+    try:
+        from ..ai_control_center import model_sharing
+        grant = getattr(registry, "shared_grant", None) if registry is not agent_registry else None
+        if registry is agent_registry or grant is not None:
+            model_sharing.observe(row, context, grant=grant)
+    except Exception:
+        pass
     steps = _PARTICIPATION_STEPS.get()
     if isinstance(steps, list):
         note_participation({
@@ -815,6 +838,12 @@ def invoke_agent(
     if not clean_prompt or len(clean_prompt) > 20_000:
         raise UniversalLLMError("Test prompt обязателен и должен быть короче 20 000 символов.")
     agent = _registry().get_agent(agent_id)
+    if _REGISTRY_CONTEXT.get() is None:
+        # The global registry holds the owner's own connections. A request made
+        # for anybody else may use only the ones the owner has shared.
+        from ..ai_control_center import model_sharing
+        if not model_sharing.registry_allowed(agent_id, dict(_USAGE_CONTEXT.get() or {})):
+            raise UniversalLLMError("Эта модель не открыта для общего доступа.")
     resolved_type = agent_registry.infer_endpoint_type(
         str(agent.get("provider") or ""), str(agent.get("model") or ""), str(agent.get("base_url") or "")
     )

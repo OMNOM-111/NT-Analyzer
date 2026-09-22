@@ -64,7 +64,7 @@ const env = {ORCH: state, esc, qs: selector => elements.get(selector) || null, i
 };
 env.window = {API: env.API};
 vm.createContext(env);
-const names = ['orchPersonaOptions', 'orchLoadPersonaModels', 'orchNeedsModelChoice', 'orchRenderPersonaPicker', 'orchLoadPersonas', 'orchPersonaTransport', 'orchPendingPersonaFace', 'orchFailure', 'orchErrorHtml', 'orchSend', 'orchRenderAuthRequired'];
+const names = ['orchPersonaOptions', 'orchLoadPersonaModels', 'orchModelServes', 'orchNeedsModelChoice', 'orchRenderPersonaPicker', 'orchLoadPersonas', 'orchPersonaTransport', 'orchPendingPersonaFace', 'orchFailure', 'orchErrorHtml', 'orchSend', 'orchRenderAuthRequired'];
 names.forEach(name => vm.runInContext(extract(name), env));
 const plain = value => JSON.parse(JSON.stringify(value));
 (async () => {

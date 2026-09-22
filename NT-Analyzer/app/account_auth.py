@@ -2038,6 +2038,16 @@ def find_active_user(user_id: Any) -> Optional[Dict[str, Any]]:
         return None
 
 
+def find_active_user_by_uuid(user_uuid: Any) -> Optional[Dict[str, Any]]:
+    """The active account behind a canonical user UUID, as ``find_active_user``."""
+    with _LOCK:
+        user = _user_by_uuid(_read_doc_reference(), user_uuid)
+        if not user:
+            return None
+        uid = user.get("user_id") or user.get("id")
+    return find_active_user(uid)
+
+
 def _require_owner_in_doc(doc: Dict[str, Any], owner_id: Any) -> Dict[str, Any]:
     try:
         uid = int(owner_id or 0)

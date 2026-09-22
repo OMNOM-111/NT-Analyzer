@@ -147,7 +147,10 @@ def _model_admit(authorized, context, operation, estimate):
     if authorized.get("read_only"):
         raise ContractError("model_history_read_only")
     current = refresh_authority(authorized, read_only=False)
-    if not current["chat_scope"]["capabilities"].get("ai_pro_models"):
+    # Calling a connection somebody else shares needs AI access, not the right
+    # to connect models of one's own; the share and the budget still apply.
+    required = "ai_lab" if str(operation).startswith("shared_") else "ai_pro_models"
+    if not current["chat_scope"]["capabilities"].get(required):
         raise ContractError("model_capability_required")
     if not ai_budgets.check_budget(context.scope.workspace_id, estimate).get("ok"):
         raise ContractError("model_budget_exhausted")
@@ -1118,6 +1121,8 @@ def mutate(authorized, domain, identity, action, body):
             return model_chat.start(authorized, service, identity, payload, key, test=action == "test")
         if action == "disconnect" and not payload:
             return service.disconnect(context=context, model_id=identity)
+        if action in {"share", "unshare"} and not payload:
+            return service.set_sharing(context=context, model_id=identity, shared=action == "share")
     elif domain in {"model_tasks", "tasks"} and action == "handoff":
         if set(payload) != {"target_model_id"}:
             raise ContractError("invalid_domain_request")

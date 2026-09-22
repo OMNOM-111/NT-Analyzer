@@ -1060,6 +1060,55 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const known = summary && !summary.unavailable ? rows(summary.items).map(item => ({ model: item.model, provider: item.provider, connections: item.connections, active: item.active })) : undefined;
       return modelGroupsFromTasks(rows(overview.tasks), known);
     }
+    // Own connections and the ones other people share with this person. A
+    // shared one carries only its name; the connection stays with its owner.
+    function modelConnections(data) { return items(data).concat(rows(data?.shared)); }
+    function shareSection(group, data) {
+      const own = group.connections.filter(item => item.ownership !== 'shared');
+      const theirs = group.connections.filter(item => item.ownership === 'shared');
+      const usage = data?.shared_usage || {};
+      const ownIds = new Set(own.map(item => item.id)), theirIds = new Set(theirs.map(item => item.id));
+      const tokens = row => `${count(row.input_tokens)} / ${count(row.output_tokens)}`;
+      const spend = row => row.cost_unknown_calls ? `${esc(cost(row.cost_usd))} + ${count(row.cost_unknown_calls)} без цены` : esc(cost(row.cost_usd));
+      let html = '';
+      if (own.length) {
+        const switchable = own.some(item => rows(item.actions).some(action => action === 'share' || action === 'unshare'));
+        const on = own.some(item => item.shared === true);
+        html += `<label class="aw-switch-row"><input type="checkbox" data-aw-share-group="${esc(group.id)}"${on ? ' checked' : ''}${data && switchable ? '' : ' disabled'}> Поделиться</label>`
+          + `<p class="aw-muted aw-hint-line">${on ? 'Включено: другие пользователи могут вызывать эту модель. Ключ и настройки подключения остаются у вас. Выключение сразу запрещает новые чужие вызовы; история сохраняется.'
+            : 'Выключено: модель доступна только вам. Если включить, другие пользователи смогут её вызывать, а ключ и настройки подключения останутся у вас.'}</p>`;
+        const used = rows(usage.by_others?.by_caller).filter(row => ownIds.has(row.model_id));
+        html += used.length ? `<h4>Использование другими</h4><table class="aw-mini-table"><thead><tr><th>Кто</th><th>Вызовов</th><th>Токены вх/вых</th><th>Стоимость</th><th>Последний</th></tr></thead><tbody>${used.map(row => `<tr><td>${esc(row.caller_name || 'Пользователь')}</td><td>${count(row.calls)}</td><td>${tokens(row)}</td><td>${spend(row)}</td><td>${esc(date(row.last_at))}</td></tr>`).join('')}</tbody></table><p class="aw-muted">Отдельно от ваших собственных запросов. Чужие чаты, память и задачи здесь не видны.</p>`
+          : on ? '<p class="aw-muted">Другие пользователи этой моделью ещё не пользовались.</p>' : '';
+      }
+      if (theirs.length) {
+        html += `<p class="aw-note">${esc(theirs[0].note || 'Общая модель: ключ и настройки подключения остаются у владельца.')}</p>`;
+        const mine = rows(usage.mine_through_others?.by_model).filter(row => theirIds.has(row.model_id));
+        if (mine.length) {
+          const sum = key => mine.reduce((total, row) => total + (number(row[key]) || 0), 0);
+          html += `<p class="aw-model-spend"><span class="aw-muted">Ваши вызовы через общую модель:</span> ${count(sum('calls'))} · токены ${count(sum('input_tokens'))} / ${count(sum('output_tokens'))} · ${esc(cost(sum('cost_usd')))}</p>`;
+        }
+      }
+      return html;
+    }
+    async function toggleShare(input) {
+      const id = input.dataset.awShareGroup, wanted = input.checked, data = cachedDomain('models');
+      const targets = items(data).filter(item => String(item.model) === id && item.ownership !== 'shared'
+        && rows(item.actions).includes(wanted ? 'share' : 'unshare'));
+      if (!targets.length) { input.checked = !wanted; return; }
+      input.disabled = true;
+      try {
+        for (const item of targets) await API.aiControlCenterDomainAction('models', item.id, wanted ? 'share' : 'unshare', { payload: {}, idempotency_key: root.crypto.randomUUID() });
+        announce(wanted ? 'Модель открыта для общего доступа. Ключ и настройки остаются у вас.' : 'Общий доступ закрыт: новые чужие вызовы запрещены, история сохранена.');
+      } catch (_) {
+        input.checked = !wanted;
+        announce('Общий доступ не изменён. Повторите попытку.', true);
+      }
+      domainCache.delete('models');
+      await loadDomain('models');
+      openModelGroup(id);
+      await refresh({ background: true });
+    }
     function modelRows(groups) {
       if (!groups.length) return smallEmpty('Моделей пока нет. Подключите модель по API — она проверится одним запросом.');
       // The bar is the model's share of the team's tasks; spend against a limit
@@ -1068,7 +1117,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       return groups.map(group => {
         const share = total ? Math.round(group.stats.total / total * 100) : 0;
         return `<button class="aw-mrow" data-aw-model-group="${esc(group.id)}"><span class="aw-icbox aw-t-cyan">${esc(prettyModel(group.id).slice(0, 1))}</span>`
-          + `<span class="aw-mrow-main"><strong>${esc(prettyModel(group.id))}</strong>${rated(group.stats) ? '' : ' <span class="aw-chip aw-chip-new">новая · без рейтинга</span>'}`
+          + `<span class="aw-mrow-main"><strong>${esc(prettyModel(group.id))}</strong>${rated(group.stats) ? '' : ' <span class="aw-chip aw-chip-new">новая · без рейтинга</span>'}${group.connections.length && group.connections.every(item => item.ownership === 'shared') ? ' <span class="aw-chip">общая</span>' : group.connections.some(item => item.shared === true) ? ' <span class="aw-chip">вы делитесь</span>' : ''}`
           + `<small>${group.stats.total ? esc(plural(group.stats.total, 'задача', 'задачи', 'задач')) : 'ещё не работала'} · ${esc(providerLabel(group.provider))} · ${esc(plural(group.connectionCount, 'подключение', 'подключения', 'подключений'))}</small>`
           + `<span class="aw-use" title="Доля задач команды: ${share}%"><span style="width:${share}%"></span></span></span>`
           + `<span class="aw-rate aw-rate-${rated(group.stats) ? rateTone(group.stats.rate) : 'none'}" title="${esc(rateTitle(group.stats))}">${rated(group.stats) ? esc(pct(group.stats.rate * 100)) : '—'}</span></button>`;
@@ -1693,13 +1742,13 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const data = cachedDomain('models');
       if (!data) { content.innerHTML = bcard('Подключённые модели', 'cpu', 'cyan', loadingBlock('Загружаем подключённые модели…')); return; }
       if (data.unavailable) { content.innerHTML = bcard('Подключённые модели', 'cpu', 'cyan', readError({ status: data.unavailable })); return; }
-      content.innerHTML = bcard('Подключённые модели', 'cpu', 'cyan', modelRows(modelGroupsFromTasks(rows(overview.tasks), items(data))), '<button class="aw-link-button" data-aw-connect-model>+ подключить модель</button>')
+      content.innerHTML = bcard('Подключённые модели', 'cpu', 'cyan', modelRows(modelGroupsFromTasks(rows(overview.tasks), modelConnections(data))), '<button class="aw-link-button" data-aw-connect-model>+ подключить модель</button>')
         + '<p class="aw-muted aw-hint-line">Нажмите на модель: расход, токены, рейтинг, под каким агентом работала лучше и хуже всего, «поделиться со всеми» и «выключить».</p>';
     }
     function openModelGroup(id) {
       const data = cachedDomain('models');
       const summary = overview?.summaries?.models;
-      const connections = data && !data.unavailable ? items(data) : summary && !summary.unavailable ? rows(summary.items) : undefined;
+      const connections = data && !data.unavailable ? modelConnections(data) : summary && !summary.unavailable ? rows(summary.items) : undefined;
       const group = modelGroupsFromTasks(rows(overview?.tasks), connections).find(entry => entry.id === id);
       if (!group) return;
       ++detailGeneration; detailKind = 'model_group'; actionForm = null;
@@ -1713,7 +1762,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         + `<p class="aw-model-spend"><span class="aw-muted">Расход:</span> ${stats.spent == null ? 'не измерен' : esc(cost(stats.spent))} · <span class="aw-muted">токены и лимиты пока не учитываются</span></p>`
         + (best ? `<p class="aw-model-best">Лучше всего: <b class="aw-rate-good">${esc(name(best.agent))} ${esc(pct(best.rate * 100))}</b>${worst && worst !== best ? ` · хуже всего: <b class="aw-rate-low">${esc(name(worst.agent))} ${esc(pct(worst.rate * 100))}</b>` : ''}</p>` : '')
         + table
-        + `<label class="aw-switch-row" title="Появится вместе с общей моделью владельца"><input type="checkbox" disabled> Поделиться со всеми пользователями (только владелец) · в разработке</label>`
+        + shareSection(group, data && !data.unavailable ? data : null)
         + `<label class="aw-switch-row" title="Включение и выключение — в подключениях модели"><input type="checkbox" disabled ${group.activeCount > 0 ? 'checked' : ''}> Модель включена</label>`
         + `<p class="aw-muted"><code class="aw-model-code">${esc(group.id)}</code></p>`, { size: 'card' });
     }
@@ -2855,6 +2904,8 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (labRow && shell.contains(labRow)) { openLabModel(labRow.dataset.awLabModel); return; }
       const graphRecord = event.target.closest?.('[data-aw-graph-record]');
       if (graphRecord && shell.contains(graphRecord) && graphRecord.dataset.awGraphRecord) { openDomain('memory').then(() => openDomainItem(graphRecord.dataset.awGraphRecord)); return; }
+      const shareSwitch = event.target.closest?.('input[data-aw-share-group]');
+      if (shareSwitch && currentDrawer?.contains(shareSwitch)) { void toggleShare(shareSwitch); return; }
       const target = event.target.closest('button, a');
       if (!target) return;
       const inside = shell.contains(target) || (currentDrawer && currentDrawer.contains(target) && target.closest('.aw-inspector'));

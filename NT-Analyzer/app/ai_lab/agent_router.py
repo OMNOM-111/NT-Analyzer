@@ -75,6 +75,11 @@ def candidates(
         and not agent.get("cooldown_active")
         and (allow_paid or agent.get("billing_mode") == "free_tier")
     ]
+    # Somebody other than the owner is routed only among shared connections;
+    # the invocation itself refuses the rest again.
+    allowed = universal_llm.shared_registry_filter()
+    if allowed is not None:
+        rows = [agent for agent in rows if str(agent.get("id") or "") in allowed]
     level = str(complexity or "auto").strip().lower()
     provider_order = COMPLEXITY_PROVIDER_ORDER.get(level)
     def provider_rank(agent: Dict[str, Any]) -> int:
@@ -147,6 +152,9 @@ def invoke_role(
         allow_paid=allow_paid,
     )
     if not route:
+        if universal_llm.shared_registry_filter() is not None:
+            raise AgentRouterError("Нет доступной модели: подключите свою модель или дождитесь, "
+                                   "когда владелец откроет общую.")
         raise AgentRouterError(f"Нет доступной enabled-модели для роли {role}.")
     attempts: List[Dict[str, Any]] = []
     last_error = ""

@@ -9130,9 +9130,11 @@
     try {
       const data = await API.http.aiControlCenterDomain('models', {limit: 100}, {retries: 0});
       if (generation !== ORCH.personaGeneration || persona !== ORCH.personaId) return;
-      ORCH.personaModels = Array.isArray(data?.items) ? data.items : [];
-      if (!ORCH.personaModels.some(model => model.id === ORCH.selectedModelId && model.status === 'active' && model.persona_id === persona && model.execution_available === true)) ORCH.selectedModelId = '';
-      const available = ORCH.personaModels.some(model => model.persona_id === persona && model.status === 'active' && model.execution_available === true);
+      // A connection somebody shares is not bound to a Persona: any of this
+      // person's Personas may speak through it. Its key stays with its owner.
+      ORCH.personaModels = (Array.isArray(data?.items) ? data.items : []).concat(Array.isArray(data?.shared) ? data.shared : []);
+      if (!ORCH.personaModels.some(model => model.id === ORCH.selectedModelId && model.status === 'active' && orchModelServes(model, persona) && model.execution_available === true)) ORCH.selectedModelId = '';
+      const available = ORCH.personaModels.some(model => orchModelServes(model, persona) && model.status === 'active' && model.execution_available === true);
       ORCH.personaError = !available ? 'Нет проверенных доступных подключений этой Persona.'
         : reason === 'ambiguous' ? 'Выберите подключение в списке и отправьте сообщение ещё раз.' : '';
     } catch (_) {
@@ -9140,6 +9142,9 @@
       ORCH.personaModels = []; ORCH.selectedModelId = ''; ORCH.personaError = 'Подключения не загружены. Повторите выбор модели.';
     }
     orchRenderPersonaPicker();
+  }
+  function orchModelServes(model, persona) {
+    return model?.persona_id === persona || model?.ownership === 'shared';
   }
   function orchNeedsModelChoice(error) {
     return String(error?.code || error?.error || error?.message || error || '').includes('persona_model_ambiguous');
@@ -9150,8 +9155,8 @@
     const hidden = orchIsHumanConversation(ORCH.currentId) || isGuest() || ORCH.aiAvailable === false;
     wrap.hidden = hidden; wrap.setAttribute('aria-hidden', String(hidden));
     if (hidden) return;
-    const availableModels = (ORCH.personaModels || []).filter(model => model.persona_id === ORCH.personaId && model.status === 'active' && model.execution_available === true);
-    const modelPicker = ORCH.personaId ? `<div><button class="btn sm" id="orch-load-models" type="button">Выбрать модель</button>${availableModels.length ? `<label>Подключение <select class="btn sm" id="orch-persona-model" style="max-width:100%"><option value="">Без явного выбора (только одно подключение)</option>${availableModels.map(model => `<option value="${esc(model.id)}"${model.id === ORCH.selectedModelId ? ' selected' : ''}>${esc(model.label || model.title)}${model.can_execute_test_only === true ? ' · SYNTHETIC' : ''}</option>`).join('')}</select></label>` : ''}<small style="display:block">Смена подключения действует на следующее сообщение; Persona, лицо и история сохраняются.</small></div>` : '';
+    const availableModels = (ORCH.personaModels || []).filter(model => orchModelServes(model, ORCH.personaId) && model.status === 'active' && model.execution_available === true);
+    const modelPicker = ORCH.personaId ? `<div><button class="btn sm" id="orch-load-models" type="button">Выбрать модель</button>${availableModels.length ? `<label>Подключение <select class="btn sm" id="orch-persona-model" style="max-width:100%"><option value="">Без явного выбора (только одно подключение)</option>${availableModels.map(model => `<option value="${esc(model.id)}"${model.id === ORCH.selectedModelId ? ' selected' : ''}>${esc(model.label || model.title)}${model.ownership === 'shared' ? ' · общая' : ''}${model.can_execute_test_only === true ? ' · SYNTHETIC' : ''}</option>`).join('')}</select></label>` : ''}<small style="display:block">Смена подключения действует на следующее сообщение; Persona, лицо и история сохраняются.</small></div>` : '';
     const html = orchPersonaOptions(ORCH.personas, ORCH.personaId, ORCH.personaError) + modelPicker;
     if (wrap._personaHtml !== html) {
       wrap._personaHtml = html; wrap.innerHTML = html;
@@ -9207,7 +9212,7 @@
         || !(Array.isArray(personas) ? personas : []).some(person => person.id === selected && person.status === 'active')) throw new Error('Выбранная Persona недоступна. Обновите список и выберите помощника.');
     const result = { persona_id: selected };
     if (selectedModel) {
-      if (!models.some(model => model.id === selectedModel && model.persona_id === selected && model.status === 'active' && model.execution_available === true)) throw new Error('Выбранное подключение недоступно. Обновите список моделей.');
+      if (!models.some(model => model.id === selectedModel && orchModelServes(model, selected) && model.status === 'active' && model.execution_available === true)) throw new Error('Выбранное подключение недоступно. Обновите список моделей.');
       result.selected_model_id = selectedModel;
     }
     return result;
