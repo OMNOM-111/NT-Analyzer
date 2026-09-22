@@ -1063,9 +1063,9 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     // Own connections and the ones other people share with this person. A
     // shared one carries only its name; the connection stays with its owner.
     function modelConnections(data) { return items(data).concat(rows(data?.shared)); }
-    function shareSection(group, data) {
-      const own = group.connections.filter(item => item.ownership !== 'shared');
-      const theirs = group.connections.filter(item => item.ownership === 'shared');
+    function shareSection(connections, reopen, data) {
+      const own = connections.filter(item => item.ownership !== 'shared');
+      const theirs = connections.filter(item => item.ownership === 'shared');
       const usage = data?.shared_usage || {};
       const ownIds = new Set(own.map(item => item.id)), theirIds = new Set(theirs.map(item => item.id));
       const tokens = row => `${count(row.input_tokens)} / ${count(row.output_tokens)}`;
@@ -1074,7 +1074,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (own.length) {
         const switchable = own.some(item => rows(item.actions).some(action => action === 'share' || action === 'unshare'));
         const on = own.some(item => item.shared === true);
-        html += `<label class="aw-switch-row"><input type="checkbox" data-aw-share-group="${esc(group.id)}"${on ? ' checked' : ''}${data && switchable ? '' : ' disabled'}> Поделиться</label>`
+        html += `<label class="aw-switch-row"><input type="checkbox" data-aw-share="${esc(own.map(item => item.id).join(','))}" data-aw-share-reopen="${esc(reopen)}"${on ? ' checked' : ''}${data && switchable ? '' : ' disabled'}> Поделиться</label>`
           + `<p class="aw-muted aw-hint-line">${on ? 'Включено: другие пользователи могут вызывать эту модель. Ключ и настройки подключения остаются у вас. Выключение сразу запрещает новые чужие вызовы; история сохраняется.'
             : 'Выключено: модель доступна только вам. Если включить, другие пользователи смогут её вызывать, а ключ и настройки подключения останутся у вас.'}</p>`;
         const used = rows(usage.by_others?.by_caller).filter(row => ownIds.has(row.model_id));
@@ -1092,8 +1092,9 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       return html;
     }
     async function toggleShare(input) {
-      const id = input.dataset.awShareGroup, wanted = input.checked, data = cachedDomain('models');
-      const targets = items(data).filter(item => String(item.model) === id && item.ownership !== 'shared'
+      const wanted = input.checked, data = cachedDomain('models');
+      const chosen = new Set(String(input.dataset.awShare || '').split(',').filter(Boolean));
+      const targets = items(data).filter(item => chosen.has(item.id)
         && rows(item.actions).includes(wanted ? 'share' : 'unshare'));
       if (!targets.length) { input.checked = !wanted; return; }
       input.disabled = true;
@@ -1106,8 +1107,19 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       }
       domainCache.delete('models');
       await loadDomain('models');
-      openModelGroup(id);
+      const reopen = String(input.dataset.awShareReopen || '');
+      if (reopen.startsWith('lab:')) openLabModel(reopen.slice(4));
+      else if (reopen.startsWith('group:')) openModelGroup(reopen.slice(6));
       await refresh({ background: true });
+    }
+    // The Lab lists registry models; a share belongs to the connection bound to
+    // one of them, so the switch appears only where such a connection exists.
+    function labShareSection(model) {
+      const data = cachedDomain('models');
+      if (!data || data.unavailable) return '';
+      const bound = items(data).filter(item => item.registry_id && item.registry_id === model.id);
+      if (!bound.length) return '';
+      return shareSection(bound, 'lab:' + model.id, data);
     }
     function modelRows(groups) {
       if (!groups.length) return smallEmpty('Моделей пока нет. Подключите модель по API — она проверится одним запросом.');
@@ -1654,6 +1666,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         + `<p class="aw-model-spend"><span class="aw-muted">Квота:</span> ${esc(left.text)}${model.credit_expires_at_utc ? ` · <span class="aw-muted">грант до</span> ${esc(date(model.credit_expires_at_utc))}` : ''}</p>${left.used == null ? '' : `<span class="aw-use aw-use-lg"><span style="width:${Math.round(left.used)}%"></span></span>`}`
         + `<p class="aw-model-spend"><span class="aw-muted">Тариф:</span> ${number(model.input_price_usd_per_m) || number(model.output_price_usd_per_m) ? `${esc(usd(model.input_price_usd_per_m))} за 1 млн входных токенов, ${esc(usd(model.output_price_usd_per_m))} за 1 млн выходных` : model.billing_mode === 'free_tier' ? 'бесплатный доступ' : 'не указан'}</p>`
         + byRole + recent
+        + labShareSection(model)
         + `<div class="aw-actions"><button class="btn sm" data-aw-connect-model>Подключить ещё модель</button></div>`, { size: 'model' });
     }
     // Connecting a model: provider, model, key and how it is paid for. The key
@@ -1762,7 +1775,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         + `<p class="aw-model-spend"><span class="aw-muted">Расход:</span> ${stats.spent == null ? 'не измерен' : esc(cost(stats.spent))} · <span class="aw-muted">токены и лимиты пока не учитываются</span></p>`
         + (best ? `<p class="aw-model-best">Лучше всего: <b class="aw-rate-good">${esc(name(best.agent))} ${esc(pct(best.rate * 100))}</b>${worst && worst !== best ? ` · хуже всего: <b class="aw-rate-low">${esc(name(worst.agent))} ${esc(pct(worst.rate * 100))}</b>` : ''}</p>` : '')
         + table
-        + shareSection(group, data && !data.unavailable ? data : null)
+        + shareSection(group.connections, 'group:' + group.id, data && !data.unavailable ? data : null)
         + `<label class="aw-switch-row" title="Включение и выключение — в подключениях модели"><input type="checkbox" disabled ${group.activeCount > 0 ? 'checked' : ''}> Модель включена</label>`
         + `<p class="aw-muted"><code class="aw-model-code">${esc(group.id)}</code></p>`, { size: 'card' });
     }
@@ -2904,7 +2917,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (labRow && shell.contains(labRow)) { openLabModel(labRow.dataset.awLabModel); return; }
       const graphRecord = event.target.closest?.('[data-aw-graph-record]');
       if (graphRecord && shell.contains(graphRecord) && graphRecord.dataset.awGraphRecord) { openDomain('memory').then(() => openDomainItem(graphRecord.dataset.awGraphRecord)); return; }
-      const shareSwitch = event.target.closest?.('input[data-aw-share-group]');
+      const shareSwitch = event.target.closest?.('input[data-aw-share]');
       if (shareSwitch && currentDrawer?.contains(shareSwitch)) { void toggleShare(shareSwitch); return; }
       const target = event.target.closest('button, a');
       if (!target) return;

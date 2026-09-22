@@ -382,6 +382,7 @@ class ModelService:
             "execution_available": connected or can_execute_test_only,
             "connection_verification": "test_executor_only" if test_only else "provider_verified" if connected else "not_verified",
             "credential_source": profile.get("credential_source"),
+            "registry_id": profile.get("existing_registry_id"),
             "credentials_configured": active, "base_url": profile["base_url"], "synthetic": False,
             "last_test": last_test,
             "actions": (["test", "task", "disconnect"] + (["unshare"] if shared else ["share"] if shareable else [])
