@@ -100,8 +100,25 @@ with AI chat allowed and model ownership/automation still denied. Exit removed
 the disposable container. This negative/reset check made no provider calls and
 changed no owner permissions or memberships.
 
+Additional real HTTP isolation checks passed: a known owner conversation yielded
+no messages to the disposable caller; a known owner task was refused. The new
+account had only its normal empty default chat, no model tasks and no memory.
+The persistent Preview banner now distinguishes paid shared calls (USD 0.25
+ceiling) from profiles with blocked external actions.
+
+Local access before-switch snapshot: 2 users, 1 workspace, 3 memberships;
+SHA256 of selected roles/status/permission overrides/workspace memberships:
+`dfcdf0b471112eb88388f3651350b5a5efb6082c172935de1209658af3011ccd`.
+Credentials and sessions are excluded from the snapshot. Comparison after
+switching is pending.
+
 Implementation checkpoint: `780aae65`; draft PR:
 https://github.com/OMNOM-111/NT-Analyzer/pull/291.
 Post-correction focused Preview/shared/gateway/compatibility suite: 182 passed.
 Full regression is in progress. Its architecture-import allowlist now names the
 explicit Preview composition adapter, without relaxing pure core IO checks.
+
+Linux CI on `de98a799`: 6033 passed, 131 skipped, 2 failed because the gateway
+scenario fixture used the host Windows-only secret store. The fixture now uses
+the existing in-memory test secret store on every platform; production key
+storage is unchanged. The complete CI suite is being rerun after that correction.
