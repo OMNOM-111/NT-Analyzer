@@ -209,6 +209,8 @@ Disposable Preview profiles now use registration trial/personal-workspace
 provisioning without blanket permission grants. The old observer QA account's
 temporary `ai_lab` override was restored to its recorded baseline. Live shared
 model invocation in Preview passed (Chat + Agent World, usage/revoke/cleanup).
+Real HTTP QA also confirmed denied AI access, a fresh identity/workspace after
+reset, retained restrictions and container deletion; focused suite: 182 passed.
 Full regression and Git closeout remain
 pending. [Canonical continuation record](../changelog/2026-09-22-shared-models-local-continuation.md).
 

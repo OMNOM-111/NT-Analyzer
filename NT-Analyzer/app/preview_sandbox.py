@@ -187,7 +187,16 @@ def control_authorized(value: Any) -> bool:
 
 
 def synthetic_product_access_allowed(context: Dict[str, Any]) -> bool:
-    """Allow the full user product only inside the isolated Preview child.
+    """Allow full fixture access only for the explicit synthetic operator.
+
+    Ordinary Preview profiles keep their provisioned permissions.
+    """
+    scenario = str(_STATE.get("scenario") or os.environ.get("STRATFORGE_PREVIEW_SCENARIO") or "new_user")
+    return scenario == "agent_world_operator" and synthetic_identity_allowed(context)
+
+
+def synthetic_identity_allowed(context: Dict[str, Any]) -> bool:
+    """Identify a disposable user without granting product permissions.
 
     The environment flag alone is insufficient: the authenticated row must be
     a non-owner synthetic identity stamped for this exact sandbox.

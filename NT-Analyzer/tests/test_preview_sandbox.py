@@ -136,7 +136,7 @@ def test_preview_runtime_identity_and_cookie_names_are_isolated(preview_env):
     }
 
 
-def test_full_product_preview_access_requires_current_non_owner_synthetic_identity(preview_env):
+def test_full_product_preview_access_requires_explicit_operator_and_current_identity(preview_env):
     matching = {
         "is_owner": False,
         "user": {
@@ -145,6 +145,10 @@ def test_full_product_preview_access_requires_current_non_owner_synthetic_identi
             "preview_sandbox_id": preview_env["id"],
         },
     }
+    for scenario in ("new_user", "active_user", "shared_models_user", "ai_denied_user"):
+        preview_sandbox._STATE["scenario"] = scenario
+        assert preview_sandbox.synthetic_product_access_allowed(matching) is False
+    preview_sandbox._STATE["scenario"] = "agent_world_operator"
     assert preview_sandbox.synthetic_product_access_allowed(matching) is True
     assert preview_sandbox.synthetic_product_access_allowed({
         **matching, "is_owner": True,

@@ -67,8 +67,8 @@ called against Local with the `shared_models_user` profile. The new account went
 through email registration, confirmed device, initial trial and its own personal
 workspace. Provider transport was real, not the test executor.
 
-- Preview ID: `03c9a0aa418c5e0af4141646`.
-- Disposable caller UUID: `0f1f5a04-6dad-4949-9960-4f7bc6c64591`.
+- Preview ID: `c565debd62396a279afb062c`.
+- Disposable caller UUID: `6f7deaed-458a-4d88-a031-00a0440c851b`.
 - Connection: `9a3b3c33-7d75-500b-9f6e-82fcbec3381e`, DeepSeek Flash.
 - One direct Agent World task and one AI Chat request completed.
 - Owner and caller usage both reported 2 calls, 203 input / 9 output tokens,
@@ -85,3 +85,23 @@ also apply. Keys/settings stay in Local. Minimal owner billing usage survives
 Preview cleanup; caller chats, memory, tasks, sessions and private stores do not.
 No server, Canary or Production deployment took place. Live integration was
 tested from current source; Local 8765 runtime switching is still pending.
+
+## Permission denial and reset acceptance
+
+Real HTTP testing caught an older server-side Preview blanket capability grant.
+Only the explicitly selected synthetic Agent World operator retains fixture
+access; identity validation alone no longer grants product permissions. Ordinary
+profiles use the same entitlement and permission resolution as real users.
+After this fix, the full live shared-only flow above passed again.
+
+The `ai_denied_user` profile returned HTTP 403 for both model catalog and chat.
+Reset to `shared_models_user` created a new UUID and a new personal workspace,
+with AI chat allowed and model ownership/automation still denied. Exit removed
+the disposable container. This negative/reset check made no provider calls and
+changed no owner permissions or memberships.
+
+Implementation checkpoint: `780aae65`; draft PR:
+https://github.com/OMNOM-111/NT-Analyzer/pull/291.
+Post-correction focused Preview/shared/gateway/compatibility suite: 182 passed.
+Full regression is in progress. Its architecture-import allowlist now names the
+explicit Preview composition adapter, without relaxing pure core IO checks.

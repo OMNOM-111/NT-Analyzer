@@ -35,7 +35,7 @@ LIMITATIONS = [
 def request_context(raw: dict, *, control_authorized: bool) -> RequestContext:
     """Accept authenticated server context only; never a browser body/query."""
     if (not runtime_env.is_development() or not control_authorized
-            or not preview_sandbox.synthetic_product_access_allowed(raw)):
+            or not preview_sandbox.synthetic_identity_allowed(raw)):
         raise ContractError("agent_world_preview_required")
     preview_sandbox.require_enabled()  # validates the isolated root too
     if raw.get("device_confirmation_state") != "active":

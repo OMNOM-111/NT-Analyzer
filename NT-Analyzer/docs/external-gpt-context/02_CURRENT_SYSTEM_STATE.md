@@ -99,6 +99,8 @@ Shared Models continuation (2026-09-22): **IN DEVELOPMENT** on
 `feat/shared-model-access`, recovered code `548c995a`, checkpoint `f43a50de`.
 Registration/Preview personal-workspace provisioning and restricted QA profiles
 are implemented. Live shared-model Preview passed for Chat and Agent World;
+ordinary Preview profiles retain real permissions; the denied-AI profile, reset
+to a fresh identity/workspace and disposable cleanup passed real Local HTTP QA.
 full regression and Git closeout remain
 pending. [Canonical continuation record](../changelog/2026-09-22-shared-models-local-continuation.md).
 No Canary/Production change is included in this work.

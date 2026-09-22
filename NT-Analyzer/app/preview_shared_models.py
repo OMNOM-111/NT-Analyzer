@@ -180,7 +180,7 @@ def authorize(scope, *, read_only=False):
     if (not user or user.get("user_uuid") != str(scope.get("user_uuid"))
             or state.get("current_user_id") != uid or state.get("current_session_id") != sid
             or not account_auth.local_session_is_active(sid, uid)
-            or not preview_sandbox.synthetic_product_access_allowed({"user": user})):
+            or not preview_sandbox.synthetic_identity_allowed({"user": user})):
         raise ContractError("preview_bridge_identity_required")
     workspace = workspaces.require_workspace_writer(uid, workspace_id=scope.get("workspace_id"))
     if workspace.get("owner_user_id") != uid or workspace.get("kind") != "personal":
