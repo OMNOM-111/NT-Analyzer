@@ -51,6 +51,10 @@ def envelope(authorized, detail, *, request_id, pending=False):
     if not pending and human_review.get("status") in {"pending", "accepted", "rejected", "blocked"}:
         text += "\nПроверка владельцем: " + {"pending": "ожидается", "accepted": "результат принят",
             "rejected": "результат отклонён", "blocked": "недоступна до устранения блокировки"}[human_review["status"]] + "."
+    deputy = task.get("conversation_role") == "deputy"
+    if deputy:
+        text = ("Принял поручение. Готовлю результат." if pending else
+                result_text if verified else "Не удалось выполнить поручение. Причину можно посмотреть в задаче.")
     actual = None if pending else detail.get("actual_model")
     provider = "local_test_executor" if provenance["synthetic"] else task.get("provider")
     return {"scope": authorized["chat_scope"], "conversation_id": task["conversation_id"], "request_id": request_id,
@@ -59,7 +63,7 @@ def envelope(authorized, detail, *, request_id, pending=False):
             "human_review": human_review, "result_received": task.get("result_received") is True,
             "verification_status": task.get("verification_status"), "text": text,
             "verification_scope": "transport_only" if response_only else "task_contract",
-            "agent_id": task.get("persona_id"), "agent_name": task.get("lead", {}).get("display_name") or task.get("model_label"),
+            "agent_id": "vitek" if deputy else task.get("persona_id"), "agent_name": "Заместитель" if deputy else task.get("lead", {}).get("display_name") or task.get("model_label"),
             "actual_model": actual, "provider": provider, "configured_provider": task.get("provider"),
             "executor": None if pending else detail.get("executor"),
             "external_call": None if pending else detail.get("external_call"),
@@ -88,7 +92,7 @@ def envelope(authorized, detail, *, request_id, pending=False):
 
 
 def start(authorized, service, model_id, payload, key, *, test=False, conversation_id=None, user_message=None, persona=None,
-          model_selection=None):
+          model_selection=None, deputy=False):
     if test and payload:
         raise ContractError("model_connection_input_not_allowed")
     model = service.model_detail(context=authorized["context"], model_id=model_id)
@@ -104,7 +108,7 @@ def start(authorized, service, model_id, payload, key, *, test=False, conversati
             kwargs["_persona"] = persona
         if model_selection is not None:
             kwargs["_model_selection"] = model_selection
-        detail = service.test(**kwargs) if test else service.start_task(**kwargs, payload=payload)
+        detail = service.test(**kwargs) if test else service.start_task(**kwargs, payload=payload, **({"_deputy": True} if deputy else {}))
         created.update(detail)
         return envelope(authorized, detail, request_id=key, pending=True)
     reply = chief_agent.run_agent_world_live_request(message=text, request_id=key, conversation_id=cid,

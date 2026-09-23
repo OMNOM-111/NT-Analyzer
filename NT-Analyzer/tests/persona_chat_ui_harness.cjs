@@ -6,8 +6,8 @@ const source = fs.readFileSync(path.join(__dirname, '../app/static/aurora/assets
 const scenario = JSON.parse(fs.readFileSync(0, 'utf8'));
 const names = ['orchPersonaId', 'orchPersonaViews', 'orchSpeechPersona', 'orchSpeechHtml', 'orchLoadPersonaAudio',
   'orchSpeechState', 'wireOrchSpeech', 'agentSpeakStop', 'agentAvatarId', 'agentAvatarUrl', 'agentAvatarHtml',
-  'wireAgentFaces', 'orchMessageHtml', 'orchSaveCurrentId'];
-if (scenario.mode.startsWith('canonical_review_')) names.push('orchIsAgentWorldMessage', 'orchInferKind', 'orchFulfillmentOf',
+  'wireAgentFaces', 'orchMessageHtml', 'orchSaveCurrentId', 'orchInferKind'];
+if (scenario.mode.startsWith('canonical_review_')) names.push('orchIsAgentWorldMessage', 'orchFulfillmentOf',
   'orchRatingHtml', 'orchFooterHtml', 'orchAwaitHtml');
 if (scenario.mode === 'late_face_asset_stays_stopped') names.push('agentFacePlay', 'agentFacePause');
 function functionSource(name) {

@@ -398,3 +398,12 @@ and trial page navigation passed. Owner Chat pages 181 saved messages without
 large-history rendering timeouts; collapse/reopen and console checks passed on
 the actual Local origin. Final native Windows regression passed: 6044 passed / 134 skipped / 0 failures; bundle/context/root-secret checks PASS.
 Market-data/trading permissions are unchanged. TopStep strategy tab is IN DEVELOPMENT. Canonical evidence: [new-user Local completion](../changelog/2026-09-23-new-user-local-completion.md).
+
+
+Local UX follow-up (2026-09-23): model checks now show progress/result inside
+an open card, with collapsible diagnostics and no duplicate connection button.
+New-user Preview conversations use a scoped Deputy response without creating
+Task/review records; explicit text work retains the task lifecycle and usage.
+[Change and verification record](../changelog/2026-09-23-model-card-deputy-chat-ux.md).
+Manual acceptance of this follow-up is recorded there separately from the
+previous 6044/134 baseline. No Canary/Production activation is authorized.

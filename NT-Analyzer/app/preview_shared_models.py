@@ -145,7 +145,7 @@ class Bridge:
                 result = ModelExecutor(budget_limits=_private_limits)(context=ctx, model=model, account=account,
                     profile=profile, prompt=body["prompt"], system_prompt=body["system_prompt"],
                     request_id=body["task_id"], conversation_id=body["task_id"], max_output_tokens=512,
-                    purpose="preview_shared_model", cancelled=lambda: self.closed, admit=admit,
+                    purpose="assistant_conversation" if body["task_id"].startswith("conversation:") else "preview_shared_model", cancelled=lambda: self.closed, admit=admit,
                     shared=grant, acting_agent=body["agent"])
             safe = {key: result.get(key) for key in ("ok", "response", "actual_model", "request_id",
                 "input_tokens", "output_tokens", "cost_usd", "cost_known", "elapsed_sec")}
@@ -212,7 +212,7 @@ def execute(**kwargs):
         "workspace_id": context.scope.workspace_id, "task_id": str(kwargs["request_id"]),
         "agent": str(kwargs.get("acting_agent") or "Preview assistant"),
         "prompt": kwargs["prompt"], "system_prompt": kwargs["system_prompt"]})
-    model_sharing.observe({**result, "status": "success", "purpose": "preview_shared_model"},
+    model_sharing.observe({**result, "status": "success", "purpose": kwargs.get("purpose") or "preview_shared_model"},
         {"user_id": str(context.user_uuid), "workspace_id": context.scope.workspace_id,
          "request_source": "agent_world." + str(kwargs["request_id"]),
          "acting_agent": str(kwargs.get("acting_agent") or "Preview assistant")}, grant=grant.share)
@@ -297,13 +297,13 @@ class SharedDomains:
         return run_task(authorized, service, identity, payload, key, test=action == "test")
 
 
-def run_task(authorized, service, identity, payload, key, *, conversation_id=None, user_message=None, test=False):
+def run_task(authorized, service, identity, payload, key, *, conversation_id=None, user_message=None, test=False, deputy=False):
     from .ai_control_center import model_chat
     detail = service.model_detail(context=authorized["context"], model_id=identity)
     if detail.get("ownership") != "shared":
         raise ContractError("preview_bridge_shared_only")
     task = model_chat.start(authorized, service, identity, payload, key,
-        conversation_id=conversation_id, user_message=user_message, test=test)
+        conversation_id=conversation_id, user_message=user_message, test=test, deputy=deputy)
     service.execute(context=authorized["context"], task_id=task["id"])
     done = service.task_detail(context=authorized["context"], task_id=task["id"])
     model_chat.publish(authorized, done)
@@ -323,8 +323,13 @@ def chat(handler, body):
     identity = body.get("selected_model_id") or available[0]["id"]
     if identity not in {row["id"] for row in available}:
         raise ContractError("model_share_not_found")
+    from .ai_control_center import deputy_chat
+    if not deputy_chat.is_work_request(body["message"]):
+        return deputy_chat.reply(authorized, service, identity, message=body["message"],
+            conversation_id=str(body.get("conversation_id") or "preview-shared-chat"),
+            request_id=str(body.get("request_id") or "preview-chat-" + secrets.token_hex(12)))
     done = run_task(authorized, service, identity,
         {"rubric_key": "assistant_response", "input_text": body["message"]},
         str(body.get("request_id") or "preview-chat-" + secrets.token_hex(12)),
-        conversation_id=str(body.get("conversation_id") or "preview-shared-chat"), user_message=body["message"])
+        conversation_id=str(body.get("conversation_id") or "preview-shared-chat"), user_message=body["message"], deputy=True)
     return model_chat.publish(authorized, done)

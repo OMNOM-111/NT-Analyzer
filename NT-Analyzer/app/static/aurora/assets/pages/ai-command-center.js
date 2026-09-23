@@ -1139,17 +1139,62 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         announce('Общий доступ включён. Ключ и настройки остаются у владельца.');
       } catch (_) { input.checked = false; input.disabled = false; announce('Не удалось открыть общий доступ. Проверьте подключение модели.', true); }
     }
-    async function testRegistry(button) {
+    function modelTestControls(id, registry = false) {
+      return `<div class="aw-model-test"><div class="aw-actions"><button class="btn sm" ${registry ? 'data-aw-registry-test' : 'data-aw-inline-test'}="${esc(id)}">Проверить модель</button></div><div data-aw-test-result role="status" aria-live="polite"></div></div>`;
+    }
+    function modelTestOutcome(result, registry = false) {
+      const task = result?.task || result || {};
+      const ok = registry ? result?.ok === true && result?.application_cache_hit !== true && !!String(result?.response || '').trim() : task.status === 'succeeded' && result?.evaluation?.passed === true && result?.synthetic !== true;
+      const pending = !registry && ['planned', 'ready', 'queued', 'running', 'waiting', 'verifying'].includes(task.status);
+      const code = String(result?.error_code || task.error_code || result?.error || '');
+      const reason = /revoked|share.*denied|share.*not/.test(code) ? 'Владелец закрыл доступ к модели.'
+        : /budget|quota|429|limit/.test(code) ? 'Исчерпан лимит запросов или расходов. Проверьте лимиты подключения.'
+        : /key|auth|401|403|credential/.test(code) ? 'Провайдер не разрешил запрос. Проверьте ключ и доступ к модели.'
+        : /timeout|timed.out/.test(code) ? 'Модель не ответила вовремя. Провайдер может быть временно недоступен.'
+        : /inactive|disabled/.test(code) ? 'Подключение модели выключено.'
+        : /json|response_invalid/.test(code) ? 'Провайдер вернул некорректный ответ.'
+        : 'Не удалось получить корректный ответ. Проверьте подключение и доступность провайдера.';
+      return { ok, pending, text: ok ? 'Модель отвечает, всё работает.' : pending ? 'Проверяем… Ожидаем ответ модели.' : reason,
+        details: { status: task.status || (ok ? 'success' : 'failed'),
+          model: result?.actual_model || undefined, error: code || undefined,
+          response: String(result?.result_text || result?.response || '').slice(0, 1000) || undefined } };
+    }
+    async function testModelInline(button, registry = false) {
+      if (button.disabled) return;
+      const box = button.closest('.aw-model-test')?.querySelector('[data-aw-test-result]');
+      if (!box) return;
+      const show = view => { box.innerHTML = `<p class="${view.ok ? 'aw-good-text' : view.pending ? 'aw-muted' : 'aw-bad-text'}">${esc(view.text)}</p>${view.details ? `<details><summary>Технические детали</summary><pre>${esc(JSON.stringify(view.details, null, 2))}</pre></details>` : ''}`; };
       button.disabled = true; button.textContent = 'Проверяем…';
+      show({ pending: true, text: 'Проверяем… Отправляем короткий запрос этой модели.' });
       try {
-        const result = await API.aiAgentTest(button.dataset.awRegistryTest);
-        announce(result?.ok === true ? 'Модель ответила на короткий тест.' : 'Проверка не пройдена: ' + String(result?.error || 'ответ не получен'), result?.ok !== true);
-        await refresh();
-      } catch (_) { announce('Проверка недоступна: проверьте состояние подключения и доступ к провайдеру.', true); }
-      finally { button.disabled = false; button.textContent = 'Проверить модель'; }
+        let result;
+        if (registry) result = await API.aiAgentTest(button.dataset.awRegistryTest);
+        else {
+          result = button.dataset.awTestTask
+            ? await API.aiControlCenterDomainItem('model_tasks', button.dataset.awTestTask, { signal })
+            : await API.aiControlCenterDomainAction('models', button.dataset.awInlineTest, 'test', { payload: {}, idempotency_key: root.crypto.randomUUID() });
+          const id = result?.id || result?.task?.id;
+          if (id) button.dataset.awTestTask = id;
+          for (let attempt = 0; modelTestOutcome(result).pending && attempt < 45 && box.isConnected && !disposed; attempt++) {
+            show(modelTestOutcome(result));
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            if (!box.isConnected || disposed) return;
+            result = await API.aiControlCenterDomainItem('model_tasks', id, { signal });
+          }
+        }
+        const view = modelTestOutcome(result, registry);
+        show(view.pending ? { ...view, text: 'Проверка ещё выполняется. Можно обновить результат; новый запрос модели не отправится.' } : view);
+        if (!view.pending) delete button.dataset.awTestTask;
+        domainCache.delete('models');
+      } catch (error) {
+        if (error?.name !== 'AbortError') show(modelTestOutcome({ error: error?.code || error?.message || 'connection_unavailable' }, true));
+      } finally {
+        button.disabled = false;
+        button.textContent = button.dataset.awTestTask ? 'Обновить результат проверки' : 'Проверить модель';
+      }
     }
     function modelCallButtons(connections) {
-      return connections.map(item => `<div class="aw-actions">${rows(item.actions).includes('test') ? `<button class="btn sm" data-aw-card-model="${esc(item.id)}" data-aw-card-action="test">Проверить модель</button>` : ''}${rows(item.actions).includes('task') ? `<button class="btn sm" data-aw-card-model="${esc(item.id)}" data-aw-card-action="task">Дать задание</button>` : ''}</div>`).join('');
+      return connections.map(item => `${rows(item.actions).includes('test') ? modelTestControls(item.id) : ''}${rows(item.actions).includes('task') ? `<div class="aw-actions"><button class="btn sm" data-aw-card-model="${esc(item.id)}" data-aw-card-action="task">Дать задание</button></div>` : ''}`).join('');
     }
     function modelRows(groups) {
       if (!groups.length) return smallEmpty('Моделей пока нет. Подключите модель по API — она проверится одним запросом.');
@@ -1697,8 +1742,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         + `<p class="aw-model-spend"><span class="aw-muted">Тариф:</span> ${number(model.input_price_usd_per_m) || number(model.output_price_usd_per_m) ? `${esc(usd(model.input_price_usd_per_m))} за 1 млн входных токенов, ${esc(usd(model.output_price_usd_per_m))} за 1 млн выходных` : model.billing_mode === 'free_tier' ? 'бесплатный доступ' : 'не указан'}</p>`
         + byRole + recent
         + labShareSection(model)
-        + `<div class="aw-actions"><button class="btn sm" data-aw-registry-test="${esc(model.id)}">Проверить модель</button></div>`
-        + `<div class="aw-actions"><button class="btn sm" data-aw-connect-model>Подключить ещё модель</button></div>`, { size: 'model' });
+        + modelTestControls(model.id, true), { size: 'model' });
     }
     // Connecting a model: provider, model, key and how it is paid for. The key
     // goes straight to the encrypted store; the model then checks itself with
@@ -2959,7 +3003,8 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (registryShare && currentDrawer?.contains(registryShare)) { void shareRegistry(registryShare); return; }
       const target = event.target.closest('button, a');
       if (!target) return;
-      if (currentDrawer?.contains(target) && target.dataset.awRegistryTest) { void testRegistry(target); return; }
+      if (currentDrawer?.contains(target) && target.dataset.awRegistryTest) { void testModelInline(target, true); return; }
+      if (currentDrawer?.contains(target) && target.dataset.awInlineTest) { void testModelInline(target); return; }
       if (currentDrawer?.contains(target) && target.dataset.awCardModel) {
         const id = target.dataset.awCardModel, action = target.dataset.awCardAction;
         void openDomain('models').then(() => openDomainItem(id)).then(() => openDomainAction(action, id)); return;

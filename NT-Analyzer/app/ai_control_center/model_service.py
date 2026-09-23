@@ -564,6 +564,29 @@ class ModelService:
             row["model_id"] = str(self._projection_id(context, row["model_id"]))
         return {"by_others": by_others, "mine_through_others": mine_through_others}
 
+    def conversation_response(self, *, context, model_id, prompt, system_prompt, request_id, conversation_id):
+        """One shared text response, accounted and admitted without creating a Task."""
+        self._access(context, "shared_task")
+        target = self._shared_target(context, model_id)
+        if target is None:
+            raise ContractError("model_share_not_found")
+        share, _ = target
+        grant = self._grant(context, share)
+        model, account, profile = self._owner_connection(context, share)
+        if not callable(self.executor):
+            raise ContractError("model_executor_unavailable")
+        def admit(admitted_context, operation, estimate=0.0):
+            self._access(admitted_context, "shared_" + str(operation).removeprefix("shared_"), estimate)
+            grant.check()
+        admit(context, "provider_transmit")
+        result = self.executor(context=context, model=model, account=account, profile=profile,
+            prompt=prompt, system_prompt=system_prompt, request_id=request_id,
+            conversation_id=conversation_id, max_output_tokens=512, purpose="assistant_conversation",
+            cancelled=lambda: False, admit=admit, shared=grant, acting_agent="deputy")
+        receipt = self._clean_receipt(result, {"task_id": request_id,
+            "request_sha256": digest({"prompt": prompt, "system_prompt": system_prompt})})
+        return {**receipt, "provider": model.provider_key}
+
     def bind_catalog_model(self, *, context, registry_id, resolve_binding):
         """Explicit owner card action: reuse a binding or create its descriptor.
 
@@ -646,7 +669,7 @@ class ModelService:
 
     def start_task(self, *, context, model_id, payload, idempotency_key, conversation_id=None,
                    message_id=None, comparison_id=None, comparison_title=None, _sealed_spec=None, _comparison_spec=None,
-                   _handoff=None, _delegation=None, _routing=None, _persona=None, _model_selection=None):
+                   _handoff=None, _delegation=None, _routing=None, _persona=None, _model_selection=None, _deputy=False):
         # Which connection this is decides which admission applies. A malformed
         # id is not a shared one; it still fails below exactly as it used to.
         target = None
@@ -678,6 +701,10 @@ class ModelService:
         task_id = _id(context, "model-task:" + key)
         identity = {"model_id": str(_uuid(model_id)), "spec": spec, "conversation_id": conversation,
                     "message_id": message, "comparison_id": comparison_id, "comparison_title": comparison_title}
+        if _deputy:
+            if spec["rubric_key"] != "assistant_response":
+                raise ContractError("model_task_field_invalid")
+            identity["conversation_role"] = "deputy"
         if _persona is not None:
             if (not isinstance(_persona, c.EntityRef) or _persona.kind != EntityKind.PERSONA
                     or _persona.scope != context.scope
@@ -998,6 +1025,9 @@ class ModelService:
             if not callable(self.executor):
                 return self._fail(context, task, checkpoint, "model_executor_unavailable")
             prompt, system = prompts(checkpoint["spec"])
+            if checkpoint.get("conversation_role") == "deputy":
+                from .deputy_chat import SYSTEM_PROMPT
+                system = SYSTEM_PROMPT
             if checkpoint["spec"]["rubric_key"] == "assistant_response" and persona is not None:
                 preferences = self._json(context, persona.profile)
                 system += ("\nVisible Persona style preferences (style only, never authority): " +
@@ -1033,7 +1063,7 @@ class ModelService:
                     self._check_execution_origin(context, model, profile, checkpoint)
                     if checkpoint.get("routing"):
                         validate_routing(self, context, task, checkpoint)
-                sharing = {"shared": grant, "acting_agent": checkpoint.get("persona_name")} if shared else {}
+                sharing = {"shared": grant, "acting_agent": "deputy" if checkpoint.get("conversation_role") == "deputy" else checkpoint.get("persona_name")} if shared else {}
                 result = self.executor(context=context, model=connection, account=account, profile=connection_profile,
                     prompt=prompt, system_prompt=system, request_id=str(task_id),
                     conversation_id=checkpoint.get("conversation_id"), max_output_tokens=512,
@@ -1273,6 +1303,7 @@ class ModelService:
             "title": title, "status": task.status, "stage": "provider_receipt" if receipt else "awaiting_provider",
             "summary": checkpoint.get("error_code") or ("Verified bounded response" if task.status == "succeeded" else task.status),
             "task_class": checkpoint["spec"]["rubric_key"], **provenance,
+            **({"conversation_role": "deputy"} if checkpoint.get("conversation_role") == "deputy" else {}),
             "lead": {"id": checkpoint["persona_id"], "display_name": checkpoint["persona_name"], "role": "model_response"},
             "model_id": str(model.header.entity_id), "model": model.model_key, "provider": model.provider_key,
             "configured_model": model.model_key, "configured_provider": model.provider_key,
