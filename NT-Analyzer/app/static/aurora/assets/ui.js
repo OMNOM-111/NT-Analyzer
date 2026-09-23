@@ -1656,7 +1656,7 @@
       const bar = el(`<div id="dev-view-as-banner" class="dev-view-as-banner preview-sandbox-banner" role="status" aria-live="polite">
         <span class="dev-view-as-tag">PREVIEW / TEST USER</span>
         <span class="dev-view-as-role">${esc(scenarioLabels[scenario] || scenario)}</span>
-        <span class="dev-view-as-note">${scenario === 'shared_models_user' ? 'Временные данные · реальные shared-запросы за счёт владельца · до $0.25' : 'Только synthetic data · внешние действия заблокированы'}${PREVIEW_CONTEXT.promo_code ? ` · промокод ${esc(PREVIEW_CONTEXT.promo_code)}` : ''}</span>
+        <span class="dev-view-as-note">${PREVIEW_CONTEXT.external_side_effects === 'shared_models_only' ? 'Временные данные · реальные shared-запросы за счёт владельца · до $0.25' : 'Только synthetic data · внешние действия заблокированы'}${PREVIEW_CONTEXT.promo_code ? ` · промокод ${esc(PREVIEW_CONTEXT.promo_code)}` : ''}</span>
         <span class="preview-sandbox-actions">
           <button class="btn sm" type="button" data-preview-control="reset">Reset Preview</button>
           <button class="btn sm" type="button" data-preview-control="new-user">New Preview User</button>

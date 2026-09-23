@@ -82,14 +82,14 @@ CAPABILITY_NAV: Dict[str, tuple] = {
     "paper_commands":   ("trading",),
     "practice_trading": ("practice",),
     "community":        ("community",),
-    "live_read":        ("performance",),
+    "live_read":        ("performance", "topstep"),
     "live_commands":    (),
     "personal_nt":      (),
 }
 
 # Nav sections not tied to any subscription capability. Locked for non-owners
 # unless the owner grants them explicitly per user (feature_overrides).
-_OWNER_ONLY_NAV = ("topstep",)
+_OWNER_ONLY_NAV = ()
 _STRICT_OWNER_ONLY_NAV = ("agents",)
 
 # Shown on a locked section in the authenticated account baseline.

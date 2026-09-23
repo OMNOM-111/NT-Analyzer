@@ -43,7 +43,7 @@ _ACTIVE = frozenset({"planned", "ready", "running", "waiting", "blocked"})
 # A caller's local record of a connection somebody else shares with them. It
 # holds only what the share descriptor shows; the connection stays with its owner.
 SHARED_SOURCE = "shared_model_access"
-_SHARED_RUBRICS = frozenset({"assistant_response", "json_arithmetic", "extract_facts"})
+_SHARED_RUBRICS = frozenset({"assistant_response", "connection_exact", "json_arithmetic", "extract_facts"})
 _SHARED_PERSONA_NAME = "Общая модель"
 
 
@@ -416,6 +416,8 @@ class ModelService:
         with _LOCK:
             model = self._get(context, EntityKind.MODEL, model_id)
             profile = self._json(context, model.profile)
+            if profile.get("source") != "private_model_connection":
+                raise ContractError("model_share_action_not_allowed")
             account = self._get(context, EntityKind.PROVIDER_ACCOUNT, profile["provider_account_id"])
             if account.status != "retired":
                 self._change(context, account, "retired")
@@ -520,7 +522,7 @@ class ModelService:
             "revision": record.header.revision if record else 0,
             "created_at": record.header.created_at.isoformat() if record else None,
             "updated_at": record.header.updated_at.isoformat() if record else descriptor.get("updated_at"),
-            "actions": ["task"] if live else [],
+            "actions": ["test", "task"] if live else [],
             "note": ("Общая модель: вы можете вызывать её, ключ и настройки подключения остаются у владельца."
                      if live else "Владелец закрыл общий доступ. Ваша история сохранена, новые вызовы недоступны.")}
 
@@ -561,6 +563,29 @@ class ModelService:
         for row in mine_through_others["by_model"]:
             row["model_id"] = str(self._projection_id(context, row["model_id"]))
         return {"by_others": by_others, "mine_through_others": mine_through_others}
+
+    def bind_catalog_model(self, *, context, registry_id, resolve_binding):
+        """Explicit owner card action: reuse a binding or create its descriptor.
+
+        The trusted resolver authorizes the registry entry before any write.
+        No credentials are copied and no role or routing assignment is made.
+        """
+        self._access(context, "owner_bind")
+        binding = resolve_binding(context, registry_id)
+        with _LOCK:
+            for model in self._all(context, EntityKind.MODEL):
+                profile = self._json(context, model.profile)
+                if profile.get("existing_registry_id") == registry_id and model.status == "active":
+                    return self.model_detail(context=context, model_id=model.header.entity_id)
+            persona_id = _id(context, "catalog-connection-persona:" + registry_id)
+            policy = self._put(context, _POLICY)
+            persona = self._ensure(context, c.Persona, persona_id, persona_id, policy,
+                display_name=binding["name"][:80],
+                profile=self._put(context, {"description": "Подключение модели без назначения должности"}))
+            self._walk(context, persona, "active")
+            return self.bind_existing_model(context=context,
+                payload={"registry_id": registry_id, "persona_id": str(persona_id)},
+                idempotency_key="catalog-binding:" + registry_id, resolve_binding=resolve_binding)
 
     def bind_existing_model(self, *, context, payload, idempotency_key, resolve_binding):
         """Root-only callback resolves one approved ID; never list global models."""
@@ -641,7 +666,8 @@ class ModelService:
         if target is not None and (spec["rubric_key"] not in _SHARED_RUBRICS or any(value is not None for value in
                 (_routing, _handoff, _delegation, _sealed_spec, _comparison_spec, comparison_id, comparison_title))):
             # Somebody else's connection answers bounded direct requests only:
-            # no connection tests, judging, routing or chained work on it.
+            # no judging, routing or chained work on it. A short text test uses
+            # the same grant, budget and usage accounting as an ordinary call.
             raise ContractError("model_share_action_not_allowed")
         # Court invokes judge() synchronously with a sealed server-side packet.
         # Enqueuing the same call races the separate worker process; its in-flight

@@ -24,7 +24,7 @@ from .ai_control_center.states import ContractError
 
 def enabled():
     return (preview_sandbox.enabled()
-            and os.environ.get("STRATFORGE_PREVIEW_SCENARIO") in {"shared_models_user", "ai_denied_user"}
+            and os.environ.get("STRATFORGE_PREVIEW_SCENARIO") != "agent_world_operator"
             and bool(os.environ.get("STRATFORGE_PREVIEW_MODEL_BRIDGE"))
             and bool(os.environ.get("STRATFORGE_PREVIEW_MODEL_TOKEN")))
 
@@ -273,7 +273,7 @@ class SharedDomains:
         return authorized, service
 
     def list(self, domain, identity=None, **kwargs):
-        if domain not in {"models", "model_tasks"}:
+        if domain not in {"models", "model_tasks", "tasks"}:
             return self.base.list(domain, identity=identity, **kwargs)
         authorized, service = self._open()
         context = authorized["context"]
@@ -289,20 +289,20 @@ class SharedDomains:
     def mutate(self, domain, identity, action, body):
         if domain not in {"models", "model_tasks"}:
             return self.base.mutate(domain, identity, action, body)
-        if domain != "models" or action != "task":
+        if domain != "models" or action not in {"task", "test"}:
             raise ContractError("preview_bridge_shared_only")
         payload, key = self.base._envelope(body)
         authorized, service = self._open()
-        return run_task(authorized, service, identity, payload, key)
+        return run_task(authorized, service, identity, payload, key, test=action == "test")
 
 
-def run_task(authorized, service, identity, payload, key, *, conversation_id=None, user_message=None):
+def run_task(authorized, service, identity, payload, key, *, conversation_id=None, user_message=None, test=False):
     from .ai_control_center import model_chat
     detail = service.model_detail(context=authorized["context"], model_id=identity)
     if detail.get("ownership") != "shared":
         raise ContractError("preview_bridge_shared_only")
     task = model_chat.start(authorized, service, identity, payload, key,
-        conversation_id=conversation_id, user_message=user_message)
+        conversation_id=conversation_id, user_message=user_message, test=test)
     service.execute(context=authorized["context"], task_id=task["id"])
     done = service.task_detail(context=authorized["context"], task_id=task["id"])
     model_chat.publish(authorized, done)

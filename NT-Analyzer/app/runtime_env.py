@@ -501,7 +501,7 @@ def preview_public_metadata() -> Dict[str, Any]:
         "scenario": scenario,
         "label": "PREVIEW / TEST USER",
         "synthetic": True,
-        "external_side_effects": ("shared_models_only" if scenario in {"shared_models_user", "ai_denied_user"}
+        "external_side_effects": ("shared_models_only" if scenario != "agent_world_operator"
                                   and os.environ.get("STRATFORGE_PREVIEW_MODEL_BRIDGE")
                                   and os.environ.get("STRATFORGE_PREVIEW_MODEL_TOKEN") else "blocked"),
         "promo_code": str(os.environ.get("STRATFORGE_PREVIEW_PROMO_CODE") or ""),

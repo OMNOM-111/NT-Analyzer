@@ -2061,6 +2061,26 @@ def _agent_world_request_key(value: str) -> str:
     return "aw.live." + hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def recover_conversation_reply(conversation_id, request_id, *, scope):
+    """Read the persisted reply for one scoped ingress; never execute a model."""
+    if not isinstance(request_id, str) or not 1 <= len(request_id) <= 120:
+        raise ChiefAgentError("Invalid request identity")
+    rows = conversation_messages(conversation_id, limit=200, scope=scope)
+    keys = {request_id, _agent_world_request_key(request_id)}
+    ingress = [row for row in rows if row.get("request_id") in keys]
+    task_ids = {action.get("task_id") for row in ingress for action in row.get("actions") or []
+                if action.get("task_id")}
+    replies = [row for row in rows if row.get("role") == "assistant" and
+        (row.get("request_id") in keys or any(action.get("task_id") in task_ids
+            for action in row.get("actions") or []))]
+    if not replies:
+        return None
+    message = replies[-1]
+    return {"ok": True, "conversation_id": conversation_id, "reply": message.get("content", ""),
+        "message": message, "agent": message.get("agent_id"), "model": message.get("model"),
+        "actions": message.get("actions", []), "recovered_from_history": True}
+
+
 def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery: bool = False,
                                  _delivery_job: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Append/recover a scoped real-result projection; never send Telegram.

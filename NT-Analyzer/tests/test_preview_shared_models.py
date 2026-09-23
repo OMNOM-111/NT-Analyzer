@@ -37,6 +37,13 @@ def test_disposable_shared_chat_uses_real_model_lifecycle_and_revokes(preview_en
     result = preview_shared_models.chat(handler, {"message": "Hello", "request_id": "preview-fixture-chat"})
     assert "Preview reply" in result["reply"]
     assert len(calls) == 1 and calls[0]["user_uuid"] == raw["user_uuid"]
+    from app.ai_lab import chief_agent
+    recovered = chief_agent.recover_conversation_reply(result["conversation_id"], "preview-fixture-chat",
+        scope=handler._ai_conversation_scope())
+    assert recovered["message"]["message_id"] == result["message"]["message_id"]
+    assert recovered["recovered_from_history"] is True and len(calls) == 1
+    assert chief_agent.recover_conversation_reply(result["conversation_id"], "unrelated-request",
+        scope=handler._ai_conversation_scope()) is None
     auth = preview_shared_models.authorize({**handler._ai_conversation_scope(), "auth_session_id": raw["session_id"]})
     service = domain_gateway.models(auth)
     assert service.models(context=auth["context"])["items"] == []
@@ -47,6 +54,8 @@ def test_disposable_shared_chat_uses_real_model_lifecycle_and_revokes(preview_en
         preview_shared_models.chat(handler, {"message": "Again", "request_id": "preview-fixture-after"})
     assert len(calls) == 1
     assert service.tasks(context=auth["context"])["items"]
+    assert chief_agent.recover_conversation_reply(result["conversation_id"], "preview-fixture-chat",
+        scope=handler._ai_conversation_scope())["reply"] == result["reply"]
     preview_sandbox.finish_preview()
     with pytest.raises(ContractError):
         preview_shared_models.authorize({**handler._ai_conversation_scope(), "auth_session_id": raw["session_id"]})

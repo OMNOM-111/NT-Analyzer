@@ -425,7 +425,10 @@ def test_new_user_profiles_have_registration_workspace_and_only_selected_rights(
     assert not scope["uses_owner_runtime"]
     caps = permissions.resolve_for_user_id(raw["user_id"], user)
     assert caps["capabilities"]["ai_lab"] is ai_allowed
-    assert caps["capabilities"]["ai_pro_models"] is False
+    assert caps["capabilities"]["ai_pro_models"] is True
+    assert caps["capabilities"]["charts_realtime"] is True
+    assert caps["nav"]["desktop"] is True
+    assert caps["nav"]["topstep"] is True
     assert caps["capabilities"]["ai_automation"] is False
     assert not any(caps["admin_capabilities"].values())
     old_uuid, old_workspace = user["user_uuid"], workspace["workspace_id"]

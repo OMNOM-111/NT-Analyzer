@@ -152,14 +152,32 @@ def test_a_new_user_without_models_works_through_the_shared_one(world):
 def test_a_shared_model_answers_direct_requests_only(world):
     service, guest = world["service"], world["guest"]
     item = shared_one(world)
-    with pytest.raises(ContractError, match="share_action_not_allowed"):
-        service.test(context=guest, model_id=item["id"], idempotency_key="guest-probe-1")
+    probe = service.test(context=guest, model_id=item["id"], idempotency_key="guest-probe-1")
+    assert probe["task_class"] == "connection_exact"
     for action in (service.disconnect, lambda **kw: service.set_sharing(**kw, shared=False)):
         with pytest.raises(ContractError):
             action(context=guest, model_id=item["id"])
     # The owner's own id is refused outright, even while the share is on.
     with pytest.raises(ContractError, match="not_found"):
         guest_task(world, world["model"]["id"])
+
+
+def test_catalog_card_binding_reuses_the_connection_without_copying_credentials(world):
+    service, owner = world["service"], world["owner"]
+    descriptor = {"id": "AGT-ABCDEFGHIJKL", "name": "Existing model", "provider": "github_models",
+                  "model": "microsoft/phi-4", "base_url": "https://models.github.ai"}
+    calls = []
+    def resolve(ctx, identity):
+        assert ctx == owner and identity == descriptor["id"]
+        calls.append(identity)
+        return descriptor
+    first = service.bind_catalog_model(context=owner, registry_id=descriptor["id"], resolve_binding=resolve)
+    second = service.bind_catalog_model(context=owner, registry_id=descriptor["id"], resolve_binding=resolve)
+    assert first["id"] == second["id"] and len(calls) >= 2
+    assert first["registry_id"] == descriptor["id"] and "share" in first["actions"]
+    assert first["credential_source"] == "owner_registry_binding"
+    service.set_sharing(context=owner, model_id=first["id"], shared=True)
+    assert service.shared_models(context=world["guest"])
 
 
 def test_share_off_blocks_the_next_call_and_keeps_all_history(world):

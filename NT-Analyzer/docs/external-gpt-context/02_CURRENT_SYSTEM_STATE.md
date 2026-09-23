@@ -390,3 +390,8 @@ beta.87 changelog closeout.
   `sf_connector_installations_workspace_id_fkey`.
 - Earlier draft legal labels are obsolete; the current package is official product documentation.
 - A StratForge product trial is not a provider/exchange redistribution grant.
+
+Local new-user follow-up is IN DEVELOPMENT after d9c53860; ordinary Preview trial,
+registry-card test/sharing, shared catalog rendering, saved Chat receipt recovery,
+and the TopStep strategy tab are being verified. Market-data/trading permissions
+are unchanged. Canonical evidence: [new-user Local completion](../changelog/2026-09-23-new-user-local-completion.md).

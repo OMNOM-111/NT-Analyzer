@@ -66,6 +66,12 @@ def _handle_get(handler, path: str, qs: dict) -> None:
                     "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
             return
         context, snapshot, service = _open(handler)
+        from .. import preview_shared_models
+        if preview_shared_models.enabled() and (route == "tasks" or route.startswith("tasks/")):
+            identity = route.split("/", 1)[1] if "/" in route else None
+            result = gateway.domain_service_for(handler).list("tasks", identity=identity)
+            handler._json(200, result)
+            return
         if route == "overview":
             handler._json(200, gateway.enrich(service.overview(context=context), context, snapshot))
         elif route == "tasks":

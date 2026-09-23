@@ -344,7 +344,7 @@ def launch_sandbox(actor_user_id: Any, scenario: Any, *, origin: Any) -> Dict[st
         control_token=control_token, port=port,
     )
     bridge = None
-    if selected in {"shared_models_user", "ai_denied_user"}:
+    if selected != "agent_world_operator":
         from .preview_shared_models import Bridge
         bridge = Bridge(preview_id)
         env["STRATFORGE_PREVIEW_MODEL_BRIDGE"] = bridge.url

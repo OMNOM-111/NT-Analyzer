@@ -59,7 +59,7 @@ SCENARIOS: Dict[str, Dict[str, str]] = {
     },
     "shared_models_user": {
         "label": "Новый пользователь · общие модели",
-        "description": "Реальная регистрация и trial, своё пространство, без собственных моделей. Подключение своих моделей и автоматизация запрещены.",
+        "description": "Обычный стартовый trial, своё пространство, без собственных моделей. Доступны модели, которыми поделился владелец.",
     },
     "ai_denied_user": {
         "label": "Пользователь без доступа к AI",
@@ -457,11 +457,8 @@ def _mark_preview_user(user_id: int) -> Dict[str, Any]:
         # Registration owns baseline role/status/entitlements. QA may restrict
         # that baseline; marking a disposable identity never grants everything.
         scenario = str(_STATE.get("scenario") or os.environ.get("STRATFORGE_PREVIEW_SCENARIO") or "new_user")
-        denied = {"ai_pro_models": False, "ai_automation": False}
         if scenario == "ai_denied_user":
-            denied["ai_lab"] = False
-        if scenario in {"shared_models_user", "ai_denied_user"}:
-            user["permission_overrides"] = {**(user.get("permission_overrides") or {}), **denied}
+            user["permission_overrides"] = {**(user.get("permission_overrides") or {}), "ai_lab": False}
         account_auth._write_doc(doc)
         return dict(user)
 
@@ -1219,7 +1216,7 @@ def ensure_synthetic_dataset(user_id: int, *, include_security: bool = True) -> 
         else:
             existing = {}
     if existing:
-        if str(_STATE.get("scenario") or "") in {"shared_models_user", "ai_denied_user"}:
+        if str(_STATE.get("scenario") or "") in {"new_user", "shared_models_user", "ai_denied_user"}:
             return existing
         # The dataset survives re-authentication inside the same sandbox; the
         # synthetic bridge clock has to keep running with it.
@@ -1248,7 +1245,7 @@ def ensure_synthetic_dataset(user_id: int, *, include_security: bool = True) -> 
         errors.append(f"workspace:{type(exc).__name__}")
 
     workspace_id = str(workspace.get("workspace_id") or "")
-    if str(_STATE.get("scenario") or "") in {"shared_models_user", "ai_denied_user"}:
+    if str(_STATE.get("scenario") or "") in {"new_user", "shared_models_user", "ai_denied_user"}:
         # A new-user acceptance fixture starts empty. In particular, no seeded
         # chat, memory, task or model can hide a broken first-use path.
         if not workspace_id or errors:

@@ -1123,6 +1123,9 @@ def mutate(authorized, domain, identity, action, body):
         return _mechanism_gateway().mutate(authorized, service, domain, identity, action, payload,
             expected_revision=body.get("expected_revision"), idempotency_key=key)
     if domain == "models":
+        if identity == "new" and action == "bind_catalog" and set(payload) == {"registry_id"}:
+            return service.bind_catalog_model(context=context, registry_id=payload["registry_id"],
+                resolve_binding=lambda ctx, rid: owner_binding(authorized, rid) if ctx == context else None)
         if identity == "new" and action == "connect":
             return service.connect(context=context, payload=payload, idempotency_key=key)
         if identity == "new" and action == "bind_existing":

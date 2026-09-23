@@ -189,12 +189,21 @@
   async function streamOrchestrator(message, conversationId, agent, handlers, options) {
     const path = '/api/ai-lab/orchestrator/message/stream';
     const h = handlers || {};
+    const requestId = mutationRequestId('orchestrator');
+    const recover = async () => {
+      const saved = await getJSON('/api/ai-lab/orchestrator/conversations/' + encodeURIComponent(conversationId || 'default')
+        + '?request_id=' + encodeURIComponent(requestId), { retries: 1 });
+      if (!saved?.receipt?.ok) return null;
+      h.onFinal && h.onFinal(saved.receipt);
+      return { ok: true, final: true, recovered: true };
+    };
+    try {
     const res = await fetch(path, {
       method: 'POST',
       headers: requestHeaders({ 'Content-Type': 'application/json', Accept: 'text/event-stream' }),
       body: JSON.stringify({
         message, conversation_id: conversationId || 'default', agent: agent || '',
-        request_id: mutationRequestId('orchestrator'),
+        request_id: requestId,
         ...personaChatOptions(options),
       }),
     });
@@ -248,9 +257,19 @@
     }
     if (streamError) return { ok: false, error: streamError, terminal: 'error' };
     if (!sawFinal || !sawDone) {
+      const saved = await recover();
+      if (saved) return saved;
       return { ok: false, error: 'Соединение прервалось до получения ответа.', terminal: 'eof' };
     }
     return { ok: true, final: sawFinal, done: sawDone };
+    } catch (error) {
+      // An interrupted POST may already have persisted its answer. Recovery is
+      // a scoped read with the exact original identity, never a second POST.
+      if (!(error instanceof HttpError) || error.status >= 500) {
+        try { const saved = await recover(); if (saved) return saved; } catch (_) { /* keep the original error */ }
+      }
+      throw error;
+    }
   }
 
   // Endpoint map mirrors app/server.py exactly.
@@ -447,6 +466,7 @@
     telegramDisconnectGroup: () => send('/api/telegram/group/disconnect', 'POST', {}),
     telegramDisconnect: () => send('/api/telegram/disconnect', 'POST', {}),
     topstepStatus: (o) => getJSON('/api/topstep/status', o),
+    topstepStrategyStatus: (o) => getJSON('/api/topstep/strategy-status', o),
     news: (q, o) => getJSON('/api/news' + qs(q), o),
     newsLive: (q, o) => getJSON('/api/news/live' + qs(q), o),
     externalAgentsStatus: (o) => getJSON('/api/ai-lab/external-agents/status', o),

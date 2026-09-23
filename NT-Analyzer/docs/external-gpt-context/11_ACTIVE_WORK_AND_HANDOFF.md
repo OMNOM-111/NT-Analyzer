@@ -571,3 +571,8 @@ release, Canary/Production activation, paid external call or trade is authorized
 - [Environments and release](04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md)
 - [AI agents and automation](07_AI_AGENTS_AND_AUTOMATION.md)
 - [Market data and Connector](06_MARKET_DATA_TRADING_CONNECTOR.md)
+
+Local new-user follow-up is IN DEVELOPMENT after d9c53860; ordinary Preview trial,
+registry-card test/sharing, shared catalog rendering, saved Chat receipt recovery,
+and the TopStep strategy tab are being verified. Market-data/trading permissions
+are unchanged. Canonical evidence: [new-user Local completion](../changelog/2026-09-23-new-user-local-completion.md).

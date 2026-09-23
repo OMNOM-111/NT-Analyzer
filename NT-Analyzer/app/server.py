@@ -8128,6 +8128,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"telegram group status failed: {e}")
             return
 
+        if path == "/api/topstep/strategy-status":
+            self._json(HTTPStatus.OK, {"phase": "IN DEVELOPMENT", "configured": False,
+                "live_actions_enabled": False, "read_only": True, "transport": "Не подключён",
+                "username_configured": False, "api_key_configured": False,
+                "note": "Подключение разработанных стратегий к TopStep находится в разработке. Торговые операции недоступны. Источник котировок Рабочего стола настраивается отдельно."})
+            return
         if path == "/api/topstep/status":
             self._json(HTTPStatus.OK, integrations.topstep_status())
             return
@@ -9062,6 +9068,10 @@ class Handler(BaseHTTPRequestHandler):
                 limit = 200
             try:
                 scope = self._ai_conversation_scope()
+                if qs.get("request_id"):
+                    self._json(HTTPStatus.OK, {"ok": True, "receipt": ai_chief_agent.recover_conversation_reply(
+                        conversation_id, qs["request_id"][0], scope=scope)})
+                    return True
                 self._json(HTTPStatus.OK, {
                     "ok": True,
                     "conversation_id": conversation_id,
