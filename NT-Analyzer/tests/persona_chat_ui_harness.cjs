@@ -77,6 +77,18 @@ const flushTimers = () => { const fns = [...timers.values()]; timers.clear(); fn
 
 (async () => {
   switch (scenario.mode) {
+    case 'conversation_and_text_deliverable': {
+      row.message_kind = 'chat';
+      let html = sandbox.orchMessageHtml(row);
+      assert.ok(!html.includes('orch-msg-model'));
+      row.message_kind = 'task'; row.model = 'model pending';
+      html = sandbox.orchMessageHtml(row); assert.ok(!html.includes('model pending'));
+      row.message_kind = 'report'; row.model = 'actual-model'; row.content = 'A useful plan. '.repeat(80);
+      row.actions = [{task_class: 'assistant_response'}]; sandbox.orchAgentWorldTaskId = () => 'a-task';
+      html = sandbox.orchMessageHtml(row);
+      assert.ok(html.includes(row.content)); assert.ok(!html.includes('Полное сообщение и данные результата'));
+      break;
+    }
     case 'binding_is_silent':
       bind(); await flush(); assert.equal(requests.length, 0); assert.equal(spoken.length, 0); assert.equal(scripts.length, 0); break;
     case 'hover_is_silent':

@@ -70,7 +70,10 @@ def test_disposable_shared_chat_uses_real_model_lifecycle_and_revokes(preview_en
     assert handler.response[0] == 200 and handler.response[1]["items"]
     assert len(calls) == 1
     # Ordinary conversation uses the same grant, usage and history, but no Task/review.
-    before_tasks = len(service.tasks(context=auth["context"])["items"])
+    task_rows = service.tasks(context=auth["context"])["items"]
+    assert task_rows[0]["display_title"] == "Заместитель · Подготовь краткий план проверки стратегии"
+    assert task_rows[0]["lead"]["display_name"] == "Заместитель"
+    before_tasks = len(task_rows)
     foreign = {**handler._ai_conversation_scope(), "workspace_id": "foreign-workspace"}
     chief_agent._append_conversation("user", "technical-owner-sentinel", source="app",
         path=chief_agent._conversation_file("ordinary", scope=foreign), scope=foreign)

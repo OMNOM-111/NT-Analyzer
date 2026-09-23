@@ -6,7 +6,7 @@ import subprocess
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-CASES = ["binding_is_silent", "hover_is_silent", "saved_message_metadata_not_dom_text_or_model",
+CASES = ["conversation_and_text_deliverable", "binding_is_silent", "hover_is_silent", "saved_message_metadata_not_dom_text_or_model",
     "model_independent_identity", "renamed_persona_preserves_old_label", "missing_persona_is_not_vitek_or_technical_uuid",
     "unconfigured_or_suspended_has_no_action", "legacy_uses_local_preset_not_owner_transport", "human_no_persona_speech",
     "explicit_stop_during_pending_transport", "shared_playback_stops_other_persona_surface", "module_loading_cancel_is_safe",

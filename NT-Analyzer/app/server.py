@@ -7691,7 +7691,7 @@ class Handler(BaseHTTPRequestHandler):
                     for row in ai_chief_agent.list_conversations(scope=self._ai_conversation_scope()):
                         item = dict(row)
                         item["conversation_type"] = "ai"
-                        item["subtitle"] = "AI · Виктор и агенты"
+                        item["subtitle"] = "AI · Заместитель"
                         item["unread_count"] = max(0, int(notice_map.get(str(item.get("conversation_id") or ""), 0) or 0))
                         conversations.append(item)
                 # Newest first inside each group, with pinned AI topics always
@@ -7745,7 +7745,7 @@ class Handler(BaseHTTPRequestHandler):
                         raise sf_chat.SFChatError("Диалог не найден.", 404)
                     conversation = dict(conversation)
                     conversation["conversation_type"] = "ai"
-                    conversation["subtitle"] = "AI · Виктор и агенты"
+                    conversation["subtitle"] = "AI · Заместитель"
                     out = {"ok": True, "conversation": conversation, "messages": messages}
                 self._json(HTTPStatus.OK, out)
             except (community.CommunityError, sf_chat.SFChatError, ai_chief_agent.ChiefAgentError) as exc:

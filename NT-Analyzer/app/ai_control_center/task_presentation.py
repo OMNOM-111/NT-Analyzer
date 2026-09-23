@@ -102,7 +102,7 @@ def project(task: dict, *, evaluation=None, human_review=None) -> dict:
     person = (task.get("lead") or {}).get("display_name") or ""
     return {**task, "ledger_status": raw, "display_status": display,
             "status_label": STATES[display], "display_status_label": STATES[display], "task_class_label": label,
-            "display_title": (person + " · " if person else "") + label if technical in TASK_CLASSES else task.get("title", "Задание"),
+            "display_title": (person + " · " if person else "") + label if technical in TASK_CLASSES and task.get("conversation_role") != "deputy" else task.get("title", "Задание"),
             "provider_result_received": provider_result, "application_result_required": application_required,
             "application_result_received": application_result, "result_received": result,
             "verification_status": "failed" if failed_check else "passed" if application_result or not application_required and isinstance(evaluation, dict) and evaluation.get("passed") is True else "pending",

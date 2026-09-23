@@ -9126,7 +9126,7 @@
   orchApplySkin(orchLoadSkin());
   // Model selection is an internal responsibility of Vitek and the Manager.
   const ORCH_MODES = {
-    auto:     { label: 'Авто',         agent: '',          sub: 'подбирает модель под задачу',      ph: 'Напишите задачу обычным текстом…' },
+    auto:     { label: 'Авто',         agent: '',          sub: 'подбирает модель под задачу',      ph: 'Напишите сообщение…' },
   };
   function orchLoadMode() {
     return 'auto';
@@ -9134,7 +9134,7 @@
   function orchPersonaOptions(personas, selected, error) {
     const people = Array.isArray(personas) ? personas : [];
     const main = people.filter(person => person.main_assistant === true);
-    const defaultLabel = main.length === 1 ? `Заместитель: ${main[0].title || main[0].name || 'Persona'}${main[0].status === 'active' ? '' : ' · приостановлен'}` : main.length > 1 ? 'Правая рука: требуется уточнение' : 'Авто · заместитель не назначен';
+    const defaultLabel = main.length === 1 ? `Заместитель: ${main[0].title || main[0].name || 'Persona'}${main[0].status === 'active' ? '' : ' · приостановлен'}` : main.length > 1 ? 'Правая рука: требуется уточнение' : 'Заместитель';
     const options = [`<option value="">${esc(defaultLabel)}</option>`];
     people.forEach(person => {
       const id = String(person.id || '');
@@ -9143,7 +9143,7 @@
       options.push(`<option value="${esc(id)}"${id === selected ? ' selected' : ''}${person.status === 'active' ? '' : ' disabled'}>${esc(title)}${person.main_assistant === true ? ' · главный' : ''}${person.status === 'active' ? '' : ' · приостановлен'}</option>`);
     });
     if (selected && !people.some(person => person.id === selected)) options.push(`<option value="${esc(selected)}" selected disabled>Выбранная Persona недоступна — выберите другую</option>`);
-    return `<label for="orch-persona-select">Помощник <select class="btn sm" id="orch-persona-select" style="max-width:100%;min-width:0">${options.join('')}</select></label> <button class="btn sm" id="orch-persona-refresh" type="button" title="Обновить список Persona">Обновить</button><small style="display:block;overflow-wrap:anywhere">${esc(error || 'Выбирается личность, не модель. Доступны только поддерживаемые задания; имя не даёт новых прав.')}</small>`;
+    return `<label for="orch-persona-select">Помощник <select class="btn sm" id="orch-persona-select" style="max-width:100%;min-width:0">${options.join('')}</select></label> <button class="btn sm" id="orch-persona-refresh" type="button" title="Обновить список Persona">Обновить</button><small style="display:block;overflow-wrap:anywhere">${esc(error || 'Обсудите идею, задайте вопрос или поручите работу.')}</small>`;
   }
   async function orchLoadPersonaModels(reason = '') {
     // Loads only this Persona's connections; the server still decides which
@@ -9355,7 +9355,7 @@
             <form class="orch-input" id="orch-form" autocomplete="off">
               <button class="orch-attach" id="orch-attach" type="button" title="Прикрепить изображение" aria-label="Прикрепить изображение" hidden>${icon('paperclip')}</button>
               <input id="orch-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
-              <textarea id="orch-text" rows="1" maxlength="6000" placeholder="Напишите задачу обычным текстом…" ${offline ? 'disabled' : ''}></textarea>
+              <textarea id="orch-text" rows="1" maxlength="6000" placeholder="Напишите сообщение…" ${offline ? 'disabled' : ''}></textarea>
               <button class="orch-mic" id="orch-mic" type="button" title="Голосовой ввод" aria-label="Голосовой ввод" hidden>${icon('mic')}</button>
               <button class="orch-send" id="orch-send" type="submit" title="Отправить" aria-label="Отправить" ${offline ? 'disabled' : ''}>${icon('send')}</button>
             </form>
@@ -9698,7 +9698,7 @@
       return;
     }
     sub.textContent = current
-      ? String(current.subtitle || 'AI · Виктор и агенты')
+      ? String(current.subtitle || 'AI · Заместитель')
       : 'Люди и AI-помощники';
   }
   function orchRenderWorkState() {
@@ -10293,7 +10293,7 @@
     if (!id) return '';
     const savedTransport = (row.actions || []).some(action => action?.verification_scope === 'transport_only'
       || action?.verification?.scope === 'transport_only' || action?.task_class === 'assistant_response');
-    const savedNote = savedTransport ? '<small>Сохранённая проверка относится только к получению текста. Содержание автоматически не оценено; профессиональный рейтинг не изменяется.</small>' : '';
+    const savedNote = savedTransport ? '<details><summary>Технические детали проверки</summary><small>Сохранённая проверка относится только к получению текста. Содержание автоматически не оценено; профессиональный рейтинг не изменяется.</small></details>' : '';
     if (!row._awLatest) return savedNote;
     const task = row._awTask;
     if (!task) return `<div class="orch-aw-task">Текущее состояние задачи недоступно. Проверка не считается завершённой.${savedNote}</div>`;
@@ -10302,7 +10302,7 @@
     const transportOnly = savedTransport || task.verification_scope === 'transport_only' || [task.task_class, task.rubric_key].includes('assistant_response');
     const verification = { passed: 'пройдена', failed: 'не пройдена', pending: 'ожидается' }[task.verification_status] || 'не получена';
     const verificationText = transportOnly ? `Техническая проверка получения ответа: ${verification}. Содержание автоматически не оценено; требуется отдельное решение человека. В профессиональный рейтинг не входит.` : `Автоматическая проверка: ${verification}. Приёмка владельцем — отдельное решение.`;
-    return `<section class="orch-aw-task" data-aw-chat-task="${esc(id)}" data-aw-state="${esc(task.display_status)}"><strong>${esc(task.display_title || 'Задача Agent World')}</strong><p>${esc(task.display_status_label || task.status_label || 'Состояние не получено')}</p><p>${esc(task.result_label || '')}</p><small>${esc(verificationText)}</small>${actions.includes('review_result') && review.status === 'pending' ? `<div class="orch-aw-actions"><button type="button" class="btn sm" data-aw-chat-review="accept" data-aw-task-id="${esc(id)}">Проверено: принять</button><button type="button" class="btn sm" data-aw-chat-review="reject" data-aw-task-id="${esc(id)}">Проверено: отклонить</button></div>` : ''}<a class="btn sm" href="/ui/ai-command-center.html#tab=work&task=${encodeURIComponent(id)}">Задача, история и действия</a></section>`;
+    return `<section class="orch-aw-task" data-aw-chat-task="${esc(id)}" data-aw-state="${esc(task.display_status)}"><strong>${esc(task.display_title || 'Задача Agent World')}</strong><p>${esc(task.display_status_label || task.status_label || 'Состояние не получено')}</p><p>${esc(task.result_label || '')}</p><details><summary>Технические детали проверки</summary><small>${esc(verificationText)}</small></details>${actions.includes('review_result') && review.status === 'pending' ? `<div class="orch-aw-actions"><button type="button" class="btn sm" data-aw-chat-review="accept" data-aw-task-id="${esc(id)}">Проверено: принять</button><button type="button" class="btn sm" data-aw-chat-review="reject" data-aw-task-id="${esc(id)}">Проверено: отклонить</button></div>` : ''}<a class="btn sm" href="/ui/ai-command-center.html#tab=work&task=${encodeURIComponent(id)}">Задача, история и действия</a></section>`;
   }
   function wireOrchAgentWorld(container, messages, cid) {
     qsa('[data-aw-chat-review]', container).forEach(button => button.addEventListener('click', async () => {
@@ -10518,8 +10518,9 @@
     const model = String(row.model || '').trim();
     const provider = String(row.provider || '').trim();
     const conversational = !isUser && orchInferKind(row) === 'chat';
-    const head = isUser ? '' : `<div class="orch-msg-card-head"><span class="orch-msg-author">${esc(agentLabel)}</span>${model && !conversational ? `<span class="orch-msg-model">модель: ${esc(model)}${provider ? ` (${esc(provider)})` : ''}</span>` : ''}${orchAwaitHtml(row)}</div>`;
-    const technical = orchAgentWorldTaskId(row) && (String(row.content || '').length > 500 || /^\s*[\[{]/.test(row.content || ''));
+    const head = isUser ? '' : `<div class="orch-msg-card-head"><span class="orch-msg-author">${esc(agentLabel)}</span>${model && model !== 'model pending' && !conversational ? `<span class="orch-msg-model">модель: ${esc(model)}${provider ? ` (${esc(provider)})` : ''}</span>` : ''}${orchAwaitHtml(row)}</div>`;
+    const textDeliverable = (row.actions || []).some(action => action?.task_class === 'assistant_response');
+    const technical = orchAgentWorldTaskId(row) && ((!textDeliverable && String(row.content || '').length > 500) || /^\s*[\[{]/.test(row.content || ''));
     const body = technical ? `<details class="orch-msg-body orch-aw-details"><summary>Полное сообщение и данные результата</summary><pre>${esc(row.content || '')}</pre></details>` : `<div class="orch-msg-body">${esc(row.content || '')}</div>`;
     return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}"${personaId ? ` data-persona-id="${esc(personaId)}"` : ''}>${face}<div class="orch-msg-stack">${head}${body}${media}${actions}${footer}${orchSpeechHtml(row)}</div></div>`;
   }

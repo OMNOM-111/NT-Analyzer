@@ -1297,14 +1297,17 @@ class ModelService:
         rubric_key = checkpoint["spec"]["rubric_key"]
         # The owner reads this title; the rubric key stays machine-readable in
         # task_class and in the technical details of the inspector.
-        title = f"{checkpoint['persona_name']} · {presentation.rubric_label(rubric_key)}"
+        speaker = "Заместитель" if checkpoint.get("conversation_role") == "deputy" else checkpoint["persona_name"]
+        title = ("Заместитель · " + " ".join(checkpoint["spec"]["input"].split())[:120]
+                 if checkpoint.get("conversation_role") == "deputy" else
+                 f"{speaker} · {presentation.rubric_label(rubric_key)}")
         task_dto = {"id": str(task.header.entity_id), "task_id": str(task.header.entity_id),
             "revision": task.header.revision,
             "title": title, "status": task.status, "stage": "provider_receipt" if receipt else "awaiting_provider",
             "summary": checkpoint.get("error_code") or ("Verified bounded response" if task.status == "succeeded" else task.status),
             "task_class": checkpoint["spec"]["rubric_key"], **provenance,
             **({"conversation_role": "deputy"} if checkpoint.get("conversation_role") == "deputy" else {}),
-            "lead": {"id": checkpoint["persona_id"], "display_name": checkpoint["persona_name"], "role": "model_response"},
+            "lead": {"id": checkpoint["persona_id"], "display_name": speaker, "role": "model_response"},
             "model_id": str(model.header.entity_id), "model": model.model_key, "provider": model.provider_key,
             "configured_model": model.model_key, "configured_provider": model.provider_key,
             "response_provider": "local_test_executor" if provenance["synthetic"] else model.provider_key if receipt else None,

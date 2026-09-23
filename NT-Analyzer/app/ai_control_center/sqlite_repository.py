@@ -190,7 +190,10 @@ class SQLiteAgentWorldRepository:
 
     def _connect(self):
         connection = sqlite3.connect(self.path.as_uri() + "?mode=ro" if self.read_only else str(self.path),
-                                     timeout=10, isolation_level=None, uri=self.read_only)
+                                     timeout=10, isolation_level=None, uri=self.read_only,
+                                     # Reads are still one slot per thread. Their finalizer can
+                                     # run on the Preview cleanup thread after the request ends.
+                                     check_same_thread=not self.read_only)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("PRAGMA busy_timeout=10000")
