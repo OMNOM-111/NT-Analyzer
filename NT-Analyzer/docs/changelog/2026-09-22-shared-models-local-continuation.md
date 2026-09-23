@@ -1,6 +1,6 @@
 # Shared Models — disposable Preview and Local acceptance
 
-Status: IN DEVELOPMENT. Verification: PENDING; not release acceptance.
+Historical continuation record. Current Local BETA status and final verification are in [new-user Local completion](2026-09-23-new-user-local-completion.md); the intermediate pending checks below are preserved as history.
 
 ## Recovered source
 

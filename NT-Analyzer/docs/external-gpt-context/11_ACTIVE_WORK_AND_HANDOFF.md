@@ -3,19 +3,19 @@
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: c9a9d7e6a3080988af1c90ff65f2520b0e74cc70 (clean beta.96 runtime; Shared Models and disposable Preview HTTP acceptance, exact-code Linux CI PASS)
-- Local verification UTC: 2026-09-22T23:33:16Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
-- Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
-- Protected Local program snapshot: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. New unified-source evidence is separate below; full-program/owner acceptance remains open.
+- Local source verified SHA: 0a9bcf095382cabe0783620e503768188957ede5 (clean beta.96 runtime; actual owner/new-user browser acceptance; native Windows regression 6044 passed / 134 skipped / 0 failures)
+- Local verification UTC: 2026-09-23T04:09:32Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
+- Historical UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
+- Historical protected Local program snapshot: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 was active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. New unified-source evidence is separate below; full-program/owner acceptance remains open.
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Protected Local branch snapshot: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; the active final branch is identified below, while #285 is an accepted integration input
-- Version: `0.10.0-beta.96`, `pre_release`; clean `c9a9d7e6` active on Local 8765, no Canary/Production promotion
+- Version: `0.10.0-beta.96`, `pre_release`; clean `0a9bcf09` active on Local 8765, no Canary/Production promotion
 - Integration state: scoped model/domain/Chat/NT/Desktop, real fact handoff, manual discussion, separate application observations, Consensus and Court verified; owner-dependent and full-program work remain
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 
-Local chart recovery (2026-09-23), branch `codex/fix-local-chart-gateway`: fix the supervisor origin collision, verify Local consumption and real bars after activation, then close the scoped PR. Preserve TopstepX/SignalR and entitlement gates. Saved MBT 08-26 and the empty MNQ probe remain separate contract/provider observations. [Canonical incident](../changelog/2026-09-23-local-chart-gateway.md).
+Local chart recovery (2026-09-23), branch `codex/fix-local-chart-gateway`: the supervisor origin correction is preserved in active Local 0a9bcf09; owner Desktop TopstepX charts were verified. The separate chart PR keeps its own closeout. Preserve TopstepX/SignalR and entitlement gates. Saved MBT 08-26 and the empty MNQ probe remain separate contract/provider observations. [Canonical incident](../changelog/2026-09-23-local-chart-gateway.md).
 
 - Isolated memory handoff (2026-09-21): `codex/unified-memory-service` adds the
   common read facade, context builder, stable identifiers, typed graph records,
@@ -205,7 +205,7 @@ Local chart recovery (2026-09-23), branch `codex/fix-local-chart-gateway`: fix t
   `db85773f` and the two that differ are changelogs, so the review binds to
   that commit.
 
-Shared Models continuation (2026-09-22): continue `feat/shared-model-access` from
+Historical Shared Models continuation (2026-09-22): continue `feat/shared-model-access` from
 recovered `548c995a` and checkpoint `f43a50de`; do not restart implementation.
 Disposable Preview profiles now use registration trial/personal-workspace
 provisioning without blanket permission grants. The old observer QA account's
@@ -543,22 +543,18 @@ Memory/Social, own-key and final owner acceptance remain open.
 
 ## Next safe step
 
-Save the owned Persona/V2 and read-only refresh correction after focused and
-mandatory short gates; the completed e45 full/PG receipts remain bound to e45.
-Prepare the next isolated 8804 cold backup and exact immutable source, then
-repeat selected Persona Chat → result → pending review → explicit decision and
-error → safe new attempt with matching counters and preserved history. Continue
-Memory, Coordinator/Router/Court, projects, scheduler, Preview and Social-prepare
-routes and their remaining new-code checks, not a fresh general audit.
+Review the updated draft PR #291, continued from the isolated
+`codex/shared-model-local-completion` checkout. Local code `0a9bcf09` has
+6044 passed / 134 skipped / 0 failures, bundle/context gates PASS and actual
+owner/new-user browser acceptance. Remote CI and owner review remain separate. Actual Local activation,
+disposable registration and short real shared-model requests were explicitly
+authorized and completed. The original owner access projection is unchanged;
+DeepSeek sharing is restored off and disposable Preview roots were removed.
 
-**Do not switch/restart Local 8765 or migrate its working DB.** Registration
-consent/device trust, the separate user's private key and a specific permanent
-real Social publication remain with the owner. No key is copied from owner
-storage; none of these holds blocks other implementation. Model quality,
-application report/PNG evidence, human review and design acceptance are separate.
-Record exact-SHA CI and owner acceptance honestly; empty PR checks, synthetic
-transport and historical reports do not certify the complete program. No merge,
-release, Canary/Production activation, paid external call or trade is authorized.
+This scoped Local acceptance does not close the whole Agent World program or
+its separate owner visual/provider/voice/remote-agent acceptance. Unified-memory
+migration and write-cutover flags remain off. Do not merge, release, activate
+Canary/Production, alter live trading or migrate owner data under this scope.
 
 ## Canonical evidence
 
@@ -572,8 +568,10 @@ release, Canary/Production activation, paid external call or trade is authorized
 - [AI agents and automation](07_AI_AGENTS_AND_AUTOMATION.md)
 - [Market data and Connector](06_MARKET_DATA_TRADING_CONNECTOR.md)
 
-Local new-user follow-up continues after d9c53860, with checkpoints fdd40f90,
-20ddf9dc and a06db104. Manual registration, shared test/task/Chat, owner usage,
-revoke, disposable cleanup and trial page navigation passed. Final regression
-and Memory-summary verification are in progress. Market-data/trading permissions
-are unchanged. TopStep strategy tab remains IN DEVELOPMENT. Canonical evidence: [new-user Local completion](../changelog/2026-09-23-new-user-local-completion.md).
+Local new-user follow-up: runtime `0a9bcf09` preserves d9c53860 and checkpoints
+fdd40f90, 20ddf9dc, a06db104, 687b7b0d and fc737e96. Manual registration, shared
+test/task/Chat, separate owner usage, revoke, isolated Memory, disposable cleanup
+and trial page navigation passed. Owner Chat pages 181 saved messages without
+large-history rendering timeouts; collapse/reopen and console checks passed on
+the actual Local origin. Final native Windows regression passed: 6044 passed / 134 skipped / 0 failures; bundle/context/root-secret checks PASS.
+Market-data/trading permissions are unchanged. TopStep strategy tab is IN DEVELOPMENT. Canonical evidence: [new-user Local completion](../changelog/2026-09-23-new-user-local-completion.md).

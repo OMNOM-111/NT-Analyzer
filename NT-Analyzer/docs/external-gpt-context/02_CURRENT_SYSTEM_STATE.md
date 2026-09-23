@@ -3,21 +3,21 @@
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
 - Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: c9a9d7e6a3080988af1c90ff65f2520b0e74cc70 (clean beta.96 runtime; Shared Models and disposable Preview HTTP acceptance, exact-code Linux CI PASS)
-- Local verification UTC: 2026-09-22T23:33:16Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
-- Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
-- Protected Local program snapshot: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. New unified-source evidence is separate below; full-program/owner acceptance remains open.
+- Local source verified SHA: 0a9bcf095382cabe0783620e503768188957ede5 (clean beta.96 runtime; actual owner/new-user browser acceptance; native Windows regression 6044 passed / 134 skipped / 0 failures)
+- Local verification UTC: 2026-09-23T04:09:32Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
+- Historical UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
+- Historical protected Local program snapshot: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 was active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. New unified-source evidence is separate below; full-program/owner acceptance remains open.
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`; not released to Canary/Production
-- Active Local 8765: clean `c9a9d7e6a3080988af1c90ff65f2520b0e74cc70`, build `dev-0.10.0-beta.96-c9a9d7e6a308`, original owner access settings unchanged, Preview=false.
-- Active Shared Models source branch: `feat/shared-model-access`, draft PR #291. It continues recovered `548c995a`; [current Local acceptance](../changelog/2026-09-22-shared-models-local-continuation.md) supersedes earlier Local runtime identities below. Historical Agent World review remains in [AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md).
+- Active Local 8765: clean `0a9bcf095382cabe0783620e503768188957ede5`, build `dev-0.10.0-beta.96-0a9bcf095382`, original owner access settings unchanged, Preview=false.
+- Active Shared Models work branch: `codex/shared-model-local-completion`, continuing draft PR #291 (`feat/shared-model-access`). It preserves the existing WIP ancestry; [current Local acceptance](../changelog/2026-09-23-new-user-local-completion.md) supersedes earlier Local runtime identities below. Historical Agent World review remains in [AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md).
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
 - Current live release: `0.10.0-beta.87`, accepted Canary and Production
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
-Local chart incident (2026-09-23): the pinned Local supervisor claimed the Production public origin and isolated its chart gateway. The scoped correction uses the actual loopback listener; targeted tests PASS, Local activation pending. Production supplied real MET candles during an authorized read. [Incident and exact scope](../changelog/2026-09-23-local-chart-gateway.md).
+Local chart incident (2026-09-23): the pinned Local supervisor claimed the Production public origin and isolated its chart gateway. The scoped correction uses the actual loopback listener; targeted tests PASS; correction preserved in active Local 0a9bcf09, owner Desktop TopstepX charts verified. Production supplied real MET candles during an authorized read. [Incident and exact scope](../changelog/2026-09-23-local-chart-gateway.md).
 
 - Development delta 2026-09-21: isolated branch `codex/unified-memory-service`
   introduces one disabled-by-default `MemoryService` for Chief/chat/specialist
@@ -97,7 +97,7 @@ Local chart incident (2026-09-23): the pinned Local supervisor claimed the Produ
   of [master status](../current/AGENT_WORLD_MASTER_STATUS.md) and
   [checkpoint evidence](../changelog/2026-09-10-external-agent-onboarding.md).
 
-Shared Models continuation (2026-09-22): **BETA (Local)** on
+Historical Shared Models continuation (2026-09-22): **BETA (Local)** on
 `feat/shared-model-access`, recovered code `548c995a`, checkpoint `f43a50de`.
 Registration/Preview personal-workspace provisioning and restricted QA profiles
 are implemented. Live shared-model Preview passed for Chat and Agent World;
@@ -356,13 +356,13 @@ on ef4006eb; actual historical bars are not labelled LIVE.
 
 | Subsystem | Status | Current fact | Remaining limit |
 | --- | --- | --- | --- |
-| Agent World | `IN DEVELOPMENT` | Protected Local stays on 2b6d0112; unified PR #285 saved e45 full 5416/119 skips, fresh PG 69/41/7 and actual runtime/RLS PASS. New Persona/V2 and live-refresh corrections are separate WIP after actual browser failures | New-code gates and integrated browser route remain, not completed e45 tests. Ordinary-user key, real external results, specific permanent Social publication and owner visual acceptance remain separate. See the canonical matrix |
+| Agent World | `IN DEVELOPMENT` | Current Local 0a9bcf09 has Shared Models BETA and verified disposable new-user flows; historical unified PR #285 saved e45 full 5416/119 skips, fresh PG 69/41/7 and actual runtime/RLS PASS. New Persona/V2 and live-refresh corrections are separate WIP after actual browser failures | New-code gates and integrated browser route remain, not completed e45 tests. Ordinary-user key, real external results, specific permanent Social publication and owner visual acceptance remain separate. See the canonical matrix |
 | Auth / owner identity | `BETA` in Unified Local | `0.10.0-beta.96` has one three-step registration contract for Telegram, Google and e-mail, a stable StratForge handle shared by profile/SF Social/SF Chat, final clickwrap consent and the existing shared environment-routed provider architecture. Owner Preview uses the same state transitions with sandbox-only synthetic credentials | Not present in the deployed beta.87 artifact; live real-provider acceptance and immutable Canary/Production promotion remain separate gates |
 | Device confirmation / trusted access | `BETA` in Unified Local | Every new unknown human browser/app access starts as a two-minute pending session. The first freshly authenticated device can choose permanent trust or current-session-only without a redundant second OTP; later unknown clients still use confirmed Telegram or verified e-mail. Machine → Client → Session grouping remains proof-based | Integrated and browser-verified in Local beta.96, but not present in deployed beta.87; real-provider acceptance and release promotion remain separate gates |
 | Legacy UI / Telegram Mini App | `DEPRECATED` | Merged main serves Aurora only; legacy UI, Mini App, remote-access and tunnel routes fail with HTTP 410. Classic assets are available only in a separate localhost read-only Legacy Viewer. Telegram `/start` uses a normal URL button | beta.87 is live in Canary and Production; historical snapshots remain until owner review |
 | User entry and trial access | `BETA` in Unified Local | Anonymous product access is removed. Every verified account receives the same full product with a default five-hour active-use starting grant; idle time is not charged. Profile/security remain available after exhaustion | Not present in deployed beta.87; product access does not grant third-party market-data redistribution rights |
 | Admin / Release Center | `BETA` | A versioned release/change record is visible with title, summary, PRs, SHA, build/artifact, stage, checks, duration and environment identity. Production approval/promotion fails closed without title, summary, source SHA and verification PASS | beta.87 acceptance is recorded; any application change starts a new artifact cycle |
-| Test isolation | `AVAILABLE` | Protected 2b6d0112 retains its recorded 4235/44 and exact-code CI. Separate clean e45 immutable full 5416/119 skips and disposable PG 69/41/7 plus authenticated runtime/restart/RLS are hash-bound to e45 | 119 generic skips stay explicit; the new DB runs supplement them. Three shell/POSIX cases remain unavailable on this Windows run. Neither old CI nor e45 PASS certifies subsequent WIP or real provider/browser acceptance |
+| Test isolation | `AVAILABLE` | Current Local 0a9bcf09: native Windows 6044 passed / 134 skipped / 0 failures across all 288 test files; real disposable Preview and owner/user isolation verified | 134 skips stay explicit. Historical e45 PostgreSQL/runtime receipts remain bound to e45; no new PostgreSQL or Production acceptance is claimed. See the new-user Local completion record |
 | Market data / TopstepX | `BETA` | TopstepX remains the primary independent read-only history/realtime chart source; the accepted gateway/SignalR/cache/failover/rendering baseline was not changed by PR #254/#255 or the beta.86 release-record work | cross-user owner-feed redistribution remains `EXTERNAL BLOCKED` without written authority |
 | Charts / fan-out | `BETA` | Browser clients consume same-origin StratForge market-data WebSockets; provider credentials are not delivered to browsers and consumers do not create their own TopstepX loginKey/SignalR sessions | broader design acceptance is separate from this Connector closeout |
 | NinjaTrader / Connector | `BETA` | Production Connector on VMNINJA is `0.4.2-dev.20`; SERVER BACKTEST, cancel state machine, device catalog, account snapshot and Connector LIVE/GRACE/OFFLINE presentation are accepted | public installer distribution remains `EXTERNAL BLOCKED` on authorized Authenticode material |
@@ -391,8 +391,10 @@ beta.87 changelog closeout.
 - Earlier draft legal labels are obsolete; the current package is official product documentation.
 - A StratForge product trial is not a provider/exchange redistribution grant.
 
-Local new-user follow-up continues after d9c53860, with checkpoints fdd40f90,
-20ddf9dc and a06db104. Manual registration, shared test/task/Chat, owner usage,
-revoke, disposable cleanup and trial page navigation passed. Final regression
-and Memory-summary verification are in progress. Market-data/trading permissions
-are unchanged. TopStep strategy tab remains IN DEVELOPMENT. Canonical evidence: [new-user Local completion](../changelog/2026-09-23-new-user-local-completion.md).
+Local new-user follow-up: runtime `0a9bcf09` preserves d9c53860 and checkpoints
+fdd40f90, 20ddf9dc, a06db104, 687b7b0d and fc737e96. Manual registration, shared
+test/task/Chat, separate owner usage, revoke, isolated Memory, disposable cleanup
+and trial page navigation passed. Owner Chat pages 181 saved messages without
+large-history rendering timeouts; collapse/reopen and console checks passed on
+the actual Local origin. Final native Windows regression passed: 6044 passed / 134 skipped / 0 failures; bundle/context/root-secret checks PASS.
+Market-data/trading permissions are unchanged. TopStep strategy tab is IN DEVELOPMENT. Canonical evidence: [new-user Local completion](../changelog/2026-09-23-new-user-local-completion.md).

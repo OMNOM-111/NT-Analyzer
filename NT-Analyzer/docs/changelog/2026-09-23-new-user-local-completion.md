@@ -1,6 +1,8 @@
 # New-user Local completion
 
-Status: IN DEVELOPMENT. Verification: PENDING. No release or deployment approval.
+Status: BETA (Local). Verification: PASS for the scoped new-user/Shared Models workflow. No merge, release or deployment approval.
+
+Final runtime code: `0a9bcf095382cabe0783620e503768188957ede5`. Task branch: `codex/shared-model-local-completion`; continuation PR: [#291](https://github.com/OMNOM-111/NT-Analyzer/pull/291), head branch `feat/shared-model-access`. Earlier checkpoints below are historical; the final evidence section supersedes their pending checks.
 
 ## Preserved source
 
@@ -9,7 +11,7 @@ chart gateway correction d9c538605e8e6cade81524fc1b41850b7f500980. Work proceeds
 `codex/shared-model-local-completion`, an isolated checkout of that exact ancestry.
 The original branch and all dirty runtime/governance/cache files remain intact.
 
-## Changes under verification
+## Implemented changes
 
 - Ordinary Preview registration gets the existing initial trial and its own empty
   personal workspace. The shared-model bridge serves ordinary Preview scenarios;
@@ -60,10 +62,61 @@ The follow-up real DeepSeek test returned `CONNECTION_OK`, provider model `deeps
 
 Native Windows regression completed all 6172 collected cases: 6034 passed, 134 skipped, one outdated TopStep route assertion (corrected), and three transient Windows sharing-violation failures in the encrypted account-store atomic replacement. The affected account writer now uses a unique temporary name and bounded PermissionError retries; persistent refusal preserves the previous encrypted file/cache and cleans its temporary file. Account tests: 80 passed.
 
-Final owner Chat QA exposed an unresponsive renderer when opening the default history. Its API responds in 0.06 seconds but the 181 assistant messages instantiate 181 video decoders. History avatars now use first-frame PNG posters from the existing checked-in WebM assets and attach video only during explicit speech, releasing it on stop. Other animated agent cards retain their current behavior. Chat/Persona/result focused tests: 132 passed. Browser confirmation and final regression are pending at this checkpoint.
+Final owner Chat QA exposed an unresponsive renderer when opening the default history. Its API responds in 0.06 seconds and its 181 assistant messages each mounted a video element. Decoder allocation was not measured. History avatars now use first-frame PNG posters from the existing checked-in WebM assets and attach video only during explicit speech, releasing it on stop. Other animated agent cards retain their current behavior. Chat/Persona/result focused tests: 132 passed. Browser confirmation and final regression are pending at this checkpoint.
 
 ## Owner history follow-up
 
 The poster change alone did not resolve browser control timeouts. Read-only localhost tracing confirmed that rendering completed and polling continued; the failure was associated with the large rendered history, not a slow history API or stopped JavaScript loop. SF Chat now displays 30 AI messages per history page with explicit Older/Newer controls. All 181 existing messages were traversed through seven pages in the browser without a timeout; one active page stays bounded and the persisted conversation is unchanged. Human-chat cursor pagination remains unchanged. Reply submission returns to the newest AI page. This supplements the inert avatar posters and keeps the approved faces and layout.
 
 Manual Memory verification on 687b7b0: fresh Preview showed zero memory/lessons/strategies/sources and only the still-shared Gemini model. Its disposable directory was removed by Exit Preview. Owner Memory retained 160 fragments, 24 lessons, 22 strategies and 117 sources; owner Desktop retained TopstepX charts, Social retained existing posts, Documents retained owner editing, and Tasks retained its historical records.
+
+
+## Final runtime browser verification
+
+Active Local: `0a9bcf095382cabe0783620e503768188957ede5`, build
+`dev-0.10.0-beta.96-0a9bcf095382`, clean detached runtime; Preview=false.
+On the actual http://127.0.0.1:8765 origin, owner Chat opens the newest 30 of
+181 saved messages, goes to the preceding page and back, collapses and reopens.
+Browser warning/error log is empty. The read-only diagnostic localhost proxy
+was stopped after verification; no diagnostic tracing is part of shipped code.
+Pre-activation bundle checks passed all four gates for 639 files. Final native
+Windows regression runs against this exact runtime code; results pending.
+
+
+Final disposable UI repeat on `0a9bcf09`: owner Preview picker -> new user with
+shared models -> Professional -> ordinary 5-hour trial -> Models. Only the
+still-shared Gemini appeared; revoked DeepSeek did not. A real Gemini connection
+test returned CONNECTION_OK; Open in SF Chat showed that saved reply. Memory
+showed zero fragments, lessons, strategies and sources. Browser warning/error
+log was empty. Exit returned to owner Local and removed all 36 disposable files
+in Preview `6ef22e4b18408dd4bcf3c663` and its process (48472). No owner sharing or
+permission setting was changed during this final repeat.
+
+
+## Final verification and Local closeout
+
+- Full native Windows regression on runtime code `0a9bcf09`: **6044 passed,
+  134 skipped, 0 failed, 0 errors**. All 288 test files were covered exactly
+  once across four disjoint whole-file groups; no module was split or excluded.
+  Parts: 1474/29, 1285/11, 1718/93 and 1567/1 (passed/skipped).
+  Longest part: 3154 seconds. Skipped cases remain skipped, not counted as PASS.
+- Related Chat/router/models/Preview suite: 270 passed. Latest focused Chat
+  checks: 41 passed. Earlier relevant checkpoint suites are recorded above.
+- Exact production-content bundle: 639 files; static scan inside bundle,
+  shipped runtime document reads, Python compilation and JavaScript syntax PASS.
+  Root-level secret scan: zero findings. External GPT Context validator PASS;
+  its historical deployment-anchor warning is not a new Production assertion.
+- Actual Local runtime checkout is clean and stays at the tested runtime SHA.
+  Final documentation-only changes do not activate or rebuild Local.
+- Final one-click Preview cleanup and the full prior manual route are documented
+  above. After the last Preview, the owner access projection again matched
+  before exactly: 2 users, 1 workspace, 3 memberships, SHA256
+  `dfcdf0b471112eb88388f3651350b5a5efb6082c172935de1209658af3011ccd`.
+- Existing original checkout remains on `feat/shared-model-access` at 77eda536
+  with its pre-existing runtime/governance/cache data preserved outside staging.
+  Only the isolated task checkout supplies the source/documentation commits.
+
+Local implementation and verification are complete. Git closeout continues the
+existing draft PR #291; no merge or whole-program Agent World acceptance is
+implied. Remote CI is separate from these exact-code Local receipts.
+Server, Canary and Production were not touched.
