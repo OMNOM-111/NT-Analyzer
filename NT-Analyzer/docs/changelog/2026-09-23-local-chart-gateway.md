@@ -41,7 +41,7 @@ launcher change, and no contract is silently substituted.
   are unchanged. No extra direct upstream connection is enabled.
 - Verification: supervisor/gateway 41 passed; TopstepX/failover/access/cache
   fan-out 62 passed. Tests used disposable state, not owner runtime data.
-- External context validation PASS; pre-release bundle gates PASS (631 files,
+- External context validation PASS; pre-release bundle gates PASS (632 tracked files on final rerun,
   static scan, runtime reads, Python compilation and shipped JavaScript syntax).
 
 ## Publication and remaining acceptance
