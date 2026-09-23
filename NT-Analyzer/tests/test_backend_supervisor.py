@@ -143,3 +143,41 @@ def test_development_profile_forces_dev_channel_when_version_json_is_beta(tmp_pa
     assert values["APP_VERSION"] == "0.10.0-beta.1"
     assert values["RELEASE_CHANNEL"] == "dev"
     assert values["STRATFORGE_RELEASE_CHANNEL"] == "dev"
+
+
+@pytest.mark.parametrize("port", [8765, 18825])
+def test_real_development_profile_can_consume_hub_without_self_loop(tmp_path, monkeypatch, port):
+    from app import owner_market_data_gateway as gateway
+
+    (tmp_path / "VERSION.json").write_text(json.dumps({
+        "version": "1.2.3", "build_date": "2026-09-22",
+    }), encoding="utf-8")
+    for name in tuple(os.environ):
+        if name.startswith(("STRATFORGE_", "NTA_")) or name == "DEPLOYMENT_ENV":
+            monkeypatch.delenv(name, raising=False)
+    values = backend_supervisor.configure_development_profile(
+        tmp_path, port=port, apply_environment=False,
+    )
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN", "test-gateway-token-only")
+    monkeypatch.setattr(gateway, "_LOCAL_BIND_PORT", port)
+
+    assert values["STRATFORGE_PUBLIC_ORIGIN"] == f"http://127.0.0.1:{port}"
+    assert gateway.gateway_url() == "https://app.stratforges.com"
+    assert gateway.effective_role() == "consumer"
+    assert not gateway.should_open_direct_hub()
+    assert gateway.points_at_self(f"http://localhost:{port}")
+    assert not gateway.points_at_self(gateway.gateway_url())
+
+    monkeypatch.delenv("NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN")
+    assert gateway.effective_role() == "isolated"
+
+
+def test_development_cli_passes_actual_port_to_profile(monkeypatch):
+    calls = {}
+    monkeypatch.setattr(backend_supervisor, "configure_development_profile",
+                        lambda **kwargs: calls.update(kwargs))
+    monkeypatch.setattr(backend_supervisor, "supervise", lambda **kwargs: 0)
+    assert backend_supervisor.main(["--development-profile", "--port", "18825"]) == 0
+    assert calls["port"] == 18825

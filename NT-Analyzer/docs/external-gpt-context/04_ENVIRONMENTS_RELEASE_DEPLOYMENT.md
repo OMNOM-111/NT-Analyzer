@@ -7,14 +7,16 @@
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: DONE
 
+Development supervisor origin correction (2026-09-23): default identity is the actual `http://127.0.0.1:<port>` listener, never the Production hub hostname. An explicitly configured Development HTTPS origin is supported. This prevents false gateway self-loop isolation while preserving true self-loop rejection. [Incident and verification](../changelog/2026-09-23-local-chart-gateway.md). No server release is included.
+
 Local-only Preview change (2026-09-22): the two shared-model QA profiles may call
 one authenticated parent loopback service for catalog/invoke only. Other outbound
 connections remain blocked. The bridge expires after 30 minutes and allows at
 most 32 calls / USD 0.25 while preserving the model's own caps. Exit removes the
 child's data/process/container; minimal owner usage accounting remains. No
 Canary/Production deployment or release identity changed.
-Local 8765 now runs clean `c9a9d7e6a3080988af1c90ff65f2520b0e74cc70`, build
-`dev-0.10.0-beta.96-c9a9d7e6a308`, Development, Preview=false. The owner Preview
+Local 8765 now runs clean `d9c538605e8e6cade81524fc1b41850b7f500980`, build
+`dev-0.10.0-beta.96-d9c538605e8e`, Development, Preview=false. The owner Preview
 launch endpoint passed real-provider acceptance and cleanup; owner access settings
 matched the before snapshot exactly. This is a Local code switch, not a release artifact.
 [Canonical evidence](../changelog/2026-09-22-shared-models-local-continuation.md).

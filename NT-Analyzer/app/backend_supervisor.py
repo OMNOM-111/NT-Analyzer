@@ -24,7 +24,7 @@ CRASH_WINDOW_SECONDS = 10 * 60
 SAFE_MODE_SECONDS = 15 * 60
 CRASH_THRESHOLD = 3
 MAX_BACKOFF_SECONDS = 60
-DEFAULT_DEVELOPMENT_PUBLIC_ORIGIN = "https://app.stratforges.com"
+DEFAULT_DEVELOPMENT_PUBLIC_ORIGIN = ""
 
 
 def _now_dt() -> datetime:
@@ -67,6 +67,7 @@ def configure_development_profile(
     root: Optional[Path] = None,
     *,
     public_origin: str = DEFAULT_DEVELOPMENT_PUBLIC_ORIGIN,
+    port: int = 8765,
     apply_environment: bool = True,
 ) -> Dict[str, str]:
     """Install the explicit local-development environment for Task Scheduler.
@@ -87,9 +88,20 @@ def configure_development_profile(
     # Development supervisor always forces RELEASE_CHANNEL=dev at runtime.
     from urllib.parse import urlparse
 
-    parsed = urlparse(str(public_origin or "").strip())
-    if parsed.scheme != "https" or not parsed.hostname or parsed.path not in {"", "/"}:
-        raise RuntimeError("Development public origin must be an HTTPS origin without a path.")
+    # This process owns its loopback listener, not the Production hub. Claiming
+    # Production as our public origin makes the gateway self-loop guard reject
+    # the real upstream, leaving a credentialed developer copy isolated.
+    origin = str(public_origin or "").strip() or f"http://127.0.0.1:{int(port)}"
+    parsed = urlparse(origin)
+    local_http = parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost"}
+    if (not (parsed.scheme == "https" or local_http) or not parsed.hostname
+            or parsed.path not in {"", "/"} or parsed.query or parsed.fragment
+            or parsed.username or parsed.password):
+        raise RuntimeError("Development public origin must be loopback HTTP or HTTPS without path, query or credentials.")
+    # Accessing .port also rejects malformed/out-of-range ports.
+    origin_port = parsed.port
+    if not 1 <= int(port) <= 65535 or (local_http and origin_port is None):
+        raise RuntimeError("Development loopback origin requires a valid explicit port.")
     hostname = parsed.hostname.lower()
     computer = str(os.environ.get("COMPUTERNAME") or "local").strip() or "local"
     revision, dirty = _checkout_identity(project_root)
@@ -121,7 +133,7 @@ def configure_development_profile(
         "STRATFORGE_REGION": "local",
         "STRATFORGE_BIND_HOST": "127.0.0.1",
         "STRATFORGE_ALLOWED_HOSTS": f"127.0.0.1,localhost,{hostname}",
-        "STRATFORGE_PUBLIC_ORIGIN": f"https://{hostname}",
+        "STRATFORGE_PUBLIC_ORIGIN": origin.rstrip("/"),
         "STRATFORGE_DEVELOPMENT_DATA_ROOT": str(project_root / "data"),
         "STRATFORGE_DATA_ROOT": str(project_root / ".stratforge-production-data-disabled"),
         "STRATFORGE_DATABASE_ID": "development-sqlite",
@@ -134,7 +146,7 @@ def configure_development_profile(
         "STRATFORGE_LIVE_TRADING_ALLOWED": "0",
         "STRATFORGE_REAL_PAYMENTS_ALLOWED": "0",
         "STRATFORGE_DEVELOPMENT_ORIGIN": (
-            os.environ.get("STRATFORGE_DEVELOPMENT_ORIGIN") or "http://127.0.0.1:8765"
+            os.environ.get("STRATFORGE_DEVELOPMENT_ORIGIN") or f"http://127.0.0.1:{int(port)}"
         ),
         "STRATFORGE_CANARY_ORIGIN": (
             os.environ.get("STRATFORGE_CANARY_ORIGIN") or "https://canary.stratforges.com"
@@ -413,11 +425,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument(
         "--development-public-origin",
         default=DEFAULT_DEVELOPMENT_PUBLIC_ORIGIN,
-        help="canonical HTTPS origin allowed by the Development background task",
+        help="explicit Development origin; defaults to the local HTTP listener",
     )
     args = parser.parse_args(argv)
     if args.development_profile:
-        configure_development_profile(public_origin=args.development_public_origin)
+        configure_development_profile(public_origin=args.development_public_origin,
+                                      port=max(1, min(65535, args.port)))
     return supervise(
         port=max(1, min(65535, args.port)),
         retry_seconds=max(1, args.retry_seconds), max_starts=max(0, args.max_starts),
