@@ -46,12 +46,12 @@ def test_qa_drawer_offset_tracks_actual_banner_height_and_resets():
 const assert=require('node:assert/strict');
 const helper=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
 let bottom=45, present=true, value;
-const qs=()=>present?{getBoundingClientRect:()=>({bottom})}:null;
+const qsa=selector=>{assert.equal(selector,'#impersonation-banner, #dev-view-as-banner');return present?[{getBoundingClientRect:()=>({bottom})}]:[];};
 const document={body:{style:{setProperty:(key,v)=>{assert.equal(key,'--qa-drawer-top');value=v;}}}};
-const sync=new Function('qs','document',helper);
-sync(qs,document); assert.equal(value,'45px');
-bottom=91.3; sync(qs,document); assert.equal(value,'92px');
-present=false; sync(qs,document); assert.equal(value,'0px');
+const sync=new Function('qsa','document',helper);
+sync(qsa,document); assert.equal(value,'45px');
+bottom=91.3; sync(qsa,document); assert.equal(value,'92px');
+present=false; sync(qsa,document); assert.equal(value,'0px');
 '''
     result = subprocess.run(["node", "-e", script], input=json.dumps(helper), text=True, capture_output=True, timeout=15)
     assert result.returncode == 0, result.stdout + result.stderr

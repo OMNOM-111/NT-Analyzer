@@ -221,6 +221,16 @@ def _handle_post(handler, path: str) -> None:
             if set(body) - {"image_data_url"}:
                 raise ContractError("invalid_chat_fields")
             task_id = UUID(route.split("/")[1])
+            from .. import preview_shared_models
+            if preview_shared_models.enabled():
+                detail = gateway.domain_service_for(handler).list("tasks", identity=str(task_id))
+                cid = (detail.get("task") or {}).get("conversation_id")
+                if not cid:
+                    raise ContractError("task_conversation_unavailable")
+                if body:
+                    raise ContractError("invalid_chat_fields")
+                handler._json(200, {"conversation_id": cid})
+                return
             task = service.task_detail(context=context, entity_id=task_id)
             if task is None:
                 handler._err(404, "Задача не найдена.", code="task_not_found")

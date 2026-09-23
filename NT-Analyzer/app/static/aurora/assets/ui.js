@@ -1559,8 +1559,8 @@
 
   let impersonationLayoutCleanup = null;
   function syncImpersonationLayout() {
-    const bar = qs('#impersonation-banner');
-    const bottom = bar ? Math.max(0, Math.ceil(bar.getBoundingClientRect().bottom)) : 0;
+    const bars = qsa('#impersonation-banner, #dev-view-as-banner');
+    const bottom = Math.max(0, ...bars.map(bar => Math.ceil(bar.getBoundingClientRect().bottom)));
     document.body.style.setProperty('--qa-drawer-top', bottom + 'px');
   }
   function renderImpersonationBanner(auth) {
@@ -1638,7 +1638,10 @@
     return isDevelopmentEnv() && !!(CURRENT_AUTH && CURRENT_AUTH.is_owner);
   }
 
+  let previewLayoutCleanup = null;
   function renderDevPreviewBanner() {
+    if (previewLayoutCleanup) previewLayoutCleanup();
+    previewLayoutCleanup = null;
     const old = qs('#dev-view-as-banner');
     if (old) old.remove();
     document.documentElement.classList.remove('dev-view-as-active', 'preview-sandbox-active');
@@ -1666,6 +1669,10 @@
       </div>`);
       document.body.appendChild(bar);
       document.documentElement.classList.add('preview-sandbox-active');
+      syncImpersonationLayout();
+      const previewResize = new ResizeObserver(syncImpersonationLayout);
+      previewResize.observe(bar);
+      previewLayoutCleanup = () => previewResize.disconnect();
       const run = async (button, action) => {
         qsa('[data-preview-control]', bar).forEach(item => { item.disabled = true; });
         try {

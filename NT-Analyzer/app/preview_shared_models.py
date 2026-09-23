@@ -51,12 +51,13 @@ class Bridge:
 
             def do_POST(self):
                 try:
-                    if not hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + bridge.token):
-                        raise ContractError("preview_bridge_denied")
                     size = int(self.headers.get("Content-Length", "0"))
                     if not 2 <= size <= 50000 or self.path not in {"/catalog", "/invoke"}:
                         raise ContractError("preview_bridge_invalid_request")
-                    body = json.loads(self.rfile.read(size))
+                    encoded_body = self.rfile.read(size)
+                    if not hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + bridge.token):
+                        raise ContractError("preview_bridge_denied")
+                    body = json.loads(encoded_body)
                     result = bridge.dispatch(self.path, body)
                     code = 200
                 except Exception as exc:

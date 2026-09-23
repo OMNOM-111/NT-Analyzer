@@ -1801,7 +1801,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         : '<p class="aw-muted">Новая модель: рейтинг появится после первых проверенных задач.</p>';
       openDrawer(prettyModel(group.id), `<div class="aw-model-head"><span class="aw-icbox aw-t-cyan aw-icbox-lg">${esc(prettyModel(group.id).slice(0, 1))}</span><div><b>${esc(prettyModel(group.id))}</b><small>${esc(providerLabel(group.provider))} · ${esc(plural(group.connectionCount, 'подключение', 'подключения', 'подключений'))}, активных ${count(group.activeCount)}</small></div></div>`
         + `<div class="aw-nums aw-nums-3">${bnum('Задач', stats.total ? count(stats.total) : '—')}${bnum('Токенов', '—')}${bnum('Рейтинг', rated(stats) ? pct(stats.rate * 100) : stats.ok + stats.bad ? 'NEW' : '—')}</div>`
-        + `<p class="aw-model-spend"><span class="aw-muted">Расход:</span> ${stats.spent == null ? 'не измерен' : esc(cost(stats.spent))} · <span class="aw-muted">токены и лимиты пока не учитываются</span></p>`
+        + `<p class="aw-model-spend"><span class="aw-muted">Расход:</span> ${stats.spent == null ? 'не измерен' : esc(cost(stats.spent))} · <span class="aw-muted">измеренный расход сохранённых задач</span></p>`
         + (best ? `<p class="aw-model-best">Лучше всего: <b class="aw-rate-good">${esc(name(best.agent))} ${esc(pct(best.rate * 100))}</b>${worst && worst !== best ? ` · хуже всего: <b class="aw-rate-low">${esc(name(worst.agent))} ${esc(pct(worst.rate * 100))}</b>` : ''}</p>` : '')
         + table
         + shareSection(group.connections, 'group:' + group.id, data && !data.unavailable ? data : null)

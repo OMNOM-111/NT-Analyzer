@@ -445,6 +445,9 @@ def test_new_user_profiles_have_registration_workspace_and_only_selected_rights(
 def test_exit_erases_disposable_account_and_refuses_further_mutations(preview_env):
     result = preview_sandbox.activate_scenario("shared_models_user", device_credential="preview-exit-browser")
     assert account_auth.authenticate_session(result["session_token"])
+    from app import durable
+    with durable.connect() as connection:
+        connection.execute("SELECT 1")
     preview_sandbox.finish_preview()
     assert preview_sandbox._EXIT_REQUESTED.is_set()
     assert not list(preview_env["root"].iterdir())
@@ -602,4 +605,3 @@ def test_atomic_manifest_retries_transient_windows_reader_lock(tmp_path, monkeyp
     preview_sandbox._atomic_json(path, {"after": True})
     assert json.loads(path.read_text(encoding="utf-8")) == {"after": True}
     assert len(attempts) == 2 and not list(tmp_path.glob("*.tmp"))
-

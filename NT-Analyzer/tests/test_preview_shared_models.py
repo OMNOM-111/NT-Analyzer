@@ -34,6 +34,8 @@ def test_disposable_shared_chat_uses_real_model_lifecycle_and_revokes(preview_en
             return server.Handler._decorate_workspace_context(object(), value)
         def _json(self, status, data): self.response = (status, data)
         def _err(self, status, message, **kwargs): self.response = (status, kwargs)
+        def _check_local_post(self): return True
+        def _read_body(self): return {}
         def _preview_control_authorized(self): return True
         def _ai_conversation_scope(self):
             return {"user_id": raw["user_id"], "user_uuid": raw["user_uuid"],
@@ -60,6 +62,9 @@ def test_disposable_shared_chat_uses_real_model_lifecycle_and_revokes(preview_en
     http_api.handle_get(handler, gateway.PREFIX + "overview", {})
     assert handler.response[0] == 200, handler.response
     assert handler.response[1]["enabled"] is True
+    assert handler.response[1]["summaries"]["models"]["items"]
+    http_api.handle_post(handler, gateway.PREFIX + "tasks/" + service.tasks(context=auth["context"])["items"][0]["id"] + "/chat")
+    assert handler.response == (200, {"conversation_id": result["conversation_id"]})
     http_api.handle_get(handler, gateway.PREFIX + "tasks", {})
     assert handler.response[0] == 200 and handler.response[1]["items"]
     assert len(calls) == 1
