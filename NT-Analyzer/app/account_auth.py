@@ -697,14 +697,24 @@ def _write_doc(doc: Dict[str, Any]) -> None:
         payload = _MAGIC + base64.b64encode(secure_store._protect(plaintext))
     except secure_store.SecureStoreError as exc:
         raise AccountAuthError(str(exc), 503) from None
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = path.with_name(path.name + "." + secrets.token_hex(8) + ".tmp")
     try:
         tmp.write_bytes(payload)
         try:
             os.chmod(tmp, 0o600)
         except OSError:
             pass
-        os.replace(tmp, path)
+        # Windows scanners/readers can briefly hold the destination without
+        # FILE_SHARE_DELETE. Preserve the old encrypted document and retry only
+        # the atomic replacement; never fall back to truncating the live store.
+        for attempt in range(6):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(0.02 * (attempt + 1))
         try:
             os.chmod(path, 0o600)
         except OSError:

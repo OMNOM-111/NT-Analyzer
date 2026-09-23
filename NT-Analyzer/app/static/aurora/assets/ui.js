@@ -265,13 +265,21 @@
     if (!face) return;
     const video = face.querySelector('video');
     if (!video) return;
-    try { video.loop = false; video.pause(); if (video.currentTime) video.currentTime = 0; } catch (e) { /* ignore */ }
+    try {
+      video.loop = false; video.pause();
+      if (video.dataset.deferredSrc && video.hasAttribute('src')) {
+        video.removeAttribute('src'); video.load();
+      } else if (video.currentTime) video.currentTime = 0;
+    } catch (e) { /* ignore */ }
     face.classList.remove('playing');
   }
   function agentFacePlay(face, opts) {
     if (!face || agentFaceReduceMotion()) return;
     const video = face.querySelector('video');
     if (!video) return;
+    if (video.dataset.deferredSrc && !video.hasAttribute('src')) {
+      video.src = video.dataset.deferredSrc; video.load();
+    }
     const loop = !!(opts && opts.loop) || face.classList.contains('speaking');
     video.loop = loop;
     face.classList.add('playing');
@@ -437,7 +445,13 @@
     const attrs = speaking ? ' loop autoplay' : '';
     const style = `--face-zoom:${crop.zoom};--face-cx:${crop.cx};--face-cy:${crop.cy};`;
     const msgAttr = options.messageId ? ` data-message-id="${esc(String(options.messageId))}"` : '';
-    return `<span class="agent-face${speaking ? ' speaking' : ''}${cls}" title="${esc(label)}" data-agent-face="${esc(id)}"${msgAttr} style="${style}"><video src="${esc(src)}" muted playsinline preload="metadata"${attrs} aria-hidden="true"></video></span>`;
+    // History can contain hundreds of replies. A paused video still allocates
+    // a decoder; show the same first frame until explicit speech starts it.
+    const deferred = !speaking && String(options.cls || '').split(/\s+/).includes('orch-msg-face');
+    const media = deferred
+      ? `data-deferred-src="${esc(src)}" poster="assets/agents/${esc(id)}/poster.png" preload="none"`
+      : `src="${esc(src)}" preload="metadata"`;
+    return `<span class="agent-face${speaking ? ' speaking' : ''}${cls}" title="${esc(label)}" data-agent-face="${esc(id)}"${msgAttr} style="${style}"><video ${media} muted playsinline${attrs} aria-hidden="true"></video></span>`;
   }
   function wireAgentFaces(root) {
     qsa('.agent-face', root || document).forEach((face) => {

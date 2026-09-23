@@ -55,3 +55,9 @@ The follow-up real DeepSeek test returned `CONNECTION_OK`, provider model `deeps
 - Explicit AI-denied profile retains the trial but locks AI Lab/Agents and has no AI Center grant. No automatic admin or automation permission.
 - Browser error/warning log: empty during the final page pass. Both final shared and denied Preview sessions exited through UI and their complete disposable containers disappeared. An earlier Windows-locked disposable container was removed after its verified process stopped. Owner access before/after identical: 2 users, 1 workspace, 3 memberships, hash above.
 - Remaining verification: final Memory-summary fix, full native Windows regression completion and Git closeout. Server/Canary/Production untouched.
+
+## Regression follow-up checkpoint
+
+Native Windows regression completed all 6172 collected cases: 6034 passed, 134 skipped, one outdated TopStep route assertion (corrected), and three transient Windows sharing-violation failures in the encrypted account-store atomic replacement. The affected account writer now uses a unique temporary name and bounded PermissionError retries; persistent refusal preserves the previous encrypted file/cache and cleans its temporary file. Account tests: 80 passed.
+
+Final owner Chat QA exposed an unresponsive renderer when opening the default history. Its API responds in 0.06 seconds but the 181 assistant messages instantiate 181 video decoders. History avatars now use first-frame PNG posters from the existing checked-in WebM assets and attach video only during explicit speech, releasing it on stop. Other animated agent cards retain their current behavior. Chat/Persona/result focused tests: 132 passed. Browser confirmation and final regression are pending at this checkpoint.
