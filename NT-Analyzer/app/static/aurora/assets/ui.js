@@ -10752,6 +10752,15 @@
   function orchErrorHtml(failure) {
     return `<span class="orch-err" role="status">${esc(failure.text)}</span><details class="orch-error-details"><summary>Технические подробности</summary><p><code>${esc(failure.code)}</code>${failure.status ? ` · HTTP ${esc(failure.status)}` : ''}</p><p>Повторная отправка автоматически не выполнялась. История задач и ошибок сохраняется.</p></details>`;
   }
+  function orchHistoryWindow(messages, cid, human) {
+    if (human) return { rows: messages, remaining: 0, newer: 0 };
+    if (ORCH.historyWindowId !== cid) {
+      ORCH.historyWindowId = cid; ORCH.historyWindowOffset = 0;
+    }
+    const newer = Math.min(ORCH.historyWindowOffset || 0, Math.max(0, messages.length - 1));
+    const end = messages.length - newer, remaining = Math.max(0, end - 30);
+    return { rows: messages.slice(remaining, end), remaining, newer };
+  }
   async function orchLoadMessages(cid, silent) {
     const box = qs('#orch-msgs'); if (!box) return;
     if (!cid) return false;
@@ -10794,6 +10803,9 @@
       if (!silent) { renderError(box, e, () => orchLoadMessages(cid)); return false; }
       return false;
     }
+    if (ORCH.currentId !== cid) return;
+    const historyWindow = orchHistoryWindow(messages, cid, human);
+    messages = historyWindow.rows;
     if (!human) {
       messages = await orchAgentWorldViews(messages, cid);
       messages = await orchPersonaViews(messages, cid);
@@ -10813,6 +10825,18 @@
     box.innerHTML = messages.length ? orchMessagesHtml(messages) : (human
       ? '<div class="empty-state">Личная переписка начнётся с первого сообщения.</div>'
       : '<div class="empty-state">Начните диалог: например «Разработай простую стратегию максимально быстро».</div>');
+    if (historyWindow.remaining || historyWindow.newer) {
+      box.insertAdjacentHTML('afterbegin', `<div class="flex gap-sm">${historyWindow.remaining ? `<button type="button" class="btn sm" data-orch-history="older">Предыдущие сообщения (${historyWindow.remaining})</button>` : ''}${historyWindow.newer ? `<button type="button" class="btn sm" data-orch-history="newer">Более новые (${historyWindow.newer})</button>` : ''}</div>`);
+      qsa('[data-orch-history]', box).forEach(button => button.addEventListener('click', async () => {
+        if (ORCH.sending) return;
+        button.disabled = true;
+        ORCH.historyWindowOffset = Math.max(0, historyWindow.newer + (button.dataset.orchHistory === 'older' ? 30 : -30));
+        ORCH.messagesSignature = '';
+        await orchLoadMessages(cid, true);
+        if (ORCH.currentId === cid) box.scrollTop = 0;
+        if (button.isConnected) button.disabled = false;
+      }));
+    }
     if (ORCH.transientError && ORCH.transientError.cid === cid) {
       box.insertAdjacentHTML('beforeend', `<div class="orch-msg assistant">${orchErrorHtml(ORCH.transientError)}</div>`);
     }
@@ -10881,6 +10905,10 @@
       return;
     }
     // optimistic render: show the owner message immediately
+    if (ORCH.historyWindowOffset) {
+      ORCH.historyWindowOffset = 0; ORCH.messagesSignature = '';
+      await orchLoadMessages(ORCH.currentId).catch(() => false);
+    }
     if (box.querySelector('.empty-state')) box.innerHTML = '';
     orchAppendMessage(box, { role: 'user', content: text, timestamp_utc: new Date().toISOString(), source: 'app' });
     // Live block contains only public progress labels. Provider chain-of-thought

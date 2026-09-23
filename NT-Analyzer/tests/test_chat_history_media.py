@@ -4,6 +4,33 @@ import subprocess
 from pathlib import Path
 
 
+def test_large_history_pages_are_bounded_and_preserve_every_message():
+    root = Path(__file__).resolve().parents[1]
+    source = (root / 'app/static/aurora/assets/ui.js').read_text(encoding='utf-8')
+    function = 'function orchHistoryWindow(' + source.split('function orchHistoryWindow(', 1)[1].split('\n  async function ', 1)[0]
+    script = "const assert=require('node:assert/strict'), ORCH={};" + function + '''
+const messages=Array.from({length:181},(_,id)=>({id}));
+const original=JSON.stringify(messages), seen=new Set();
+let page=orchHistoryWindow(messages,'owner',false);
+assert.equal(page.rows.length,30); assert.equal(page.remaining,151);
+for (;;) {
+ assert.ok(page.rows.length<=30);
+ page.rows.forEach(row=>seen.add(row.id));
+ if (!page.remaining) break;
+ ORCH.historyWindowOffset=page.newer+30;
+ page=orchHistoryWindow(messages,'owner',false);
+}
+assert.equal(seen.size,181); assert.equal(JSON.stringify(messages),original);
+ORCH.historyWindowOffset=0;
+assert.equal(orchHistoryWindow(messages,'owner',false).rows.at(-1).id,180);
+ORCH.historyWindowOffset=90;
+assert.equal(orchHistoryWindow(messages,'other',false).newer,0);
+assert.equal(orchHistoryWindow(messages,'human',true).rows,messages);
+'''
+    result = subprocess.run(['node','-e',script],capture_output=True,text=True,encoding='utf-8',timeout=20)
+    assert result.returncode == 0, result.stderr
+
+
 def test_history_faces_defer_and_release_media_without_losing_the_avatar():
     root = Path(__file__).resolve().parents[1]
     source = (root / 'app/static/aurora/assets/ui.js').read_text(encoding='utf-8')
