@@ -3,13 +3,13 @@
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
 - Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 0a9bcf095382cabe0783620e503768188957ede5 (clean beta.96 runtime; actual owner/new-user browser acceptance; native Windows regression 6044 passed / 134 skipped / 0 failures)
-- Local verification UTC: 2026-09-23T04:09:32Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
+- Local source verified SHA: 9bf69e3d878fd0ec44c0c8084e062c289744c143 (clean beta.96 runtime; model-card/Deputy Chat browser acceptance, 368 focused/related tests; full 6044/134 regression belongs to prior 0a9bcf09 baseline)
+- Local verification UTC: 2026-09-23T05:56:00Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
 - Historical UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
 - Historical protected Local program snapshot: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 was active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. New unified-source evidence is separate below; full-program/owner acceptance remains open.
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`; not released to Canary/Production
-- Active Local 8765: clean `0a9bcf095382cabe0783620e503768188957ede5`, build `dev-0.10.0-beta.96-0a9bcf095382`, original owner access settings unchanged, Preview=false.
+- Active Local 8765: clean `9bf69e3d878fd0ec44c0c8084e062c289744c143`, build `dev-0.10.0-beta.96-9bf69e3d878f`, original owner access settings unchanged, Preview=false.
 - Active Shared Models work branch: `codex/shared-model-local-completion`, continuing draft PR #291 (`feat/shared-model-access`). It preserves the existing WIP ancestry; [current Local acceptance](../changelog/2026-09-23-new-user-local-completion.md) supersedes earlier Local runtime identities below. Historical Agent World review remains in [AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md).
 - Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
 - Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
@@ -17,7 +17,7 @@
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
-Local chart incident (2026-09-23): the pinned Local supervisor claimed the Production public origin and isolated its chart gateway. The scoped correction uses the actual loopback listener; targeted tests PASS; correction preserved in active Local 0a9bcf09, owner Desktop TopstepX charts verified. Production supplied real MET candles during an authorized read. [Incident and exact scope](../changelog/2026-09-23-local-chart-gateway.md).
+Local chart incident (2026-09-23): the pinned Local supervisor claimed the Production public origin and isolated its chart gateway. The scoped correction uses the actual loopback listener; targeted tests PASS; correction preserved in the 0a9bcf09 baseline and subsequent Local UX checkpoint, owner Desktop TopstepX charts verified. Production supplied real MET candles during an authorized read. [Incident and exact scope](../changelog/2026-09-23-local-chart-gateway.md).
 
 - Development delta 2026-09-21: isolated branch `codex/unified-memory-service`
   introduces one disabled-by-default `MemoryService` for Chief/chat/specialist
@@ -405,5 +405,5 @@ an open card, with collapsible diagnostics and no duplicate connection button.
 New-user Preview conversations use a scoped Deputy response without creating
 Task/review records; explicit text work retains the task lifecycle and usage.
 [Change and verification record](../changelog/2026-09-23-model-card-deputy-chat-ux.md).
-Manual acceptance of this follow-up is recorded there separately from the
-previous 6044/134 baseline. No Canary/Production activation is authorized.
+Manual acceptance, 368 final-code related tests and successful disposable cleanup
+are recorded there separately from the previous 6044/134 baseline. No Canary/Production activation is authorized.

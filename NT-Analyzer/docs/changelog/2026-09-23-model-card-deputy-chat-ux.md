@@ -1,6 +1,6 @@
 # Local: in-card model check and conversational Deputy
 
-Status: IN DEVELOPMENT — implementation checkpoint, manual acceptance pending.
+Status: AVAILABLE on Local — implementation and manual acceptance complete.
 Branch: codex/shared-model-local-completion; existing draft PR #291.
 Base: 88da89041073116a45c52abd4267c9a085489bfa (runtime 0a9bcf09).
 
@@ -61,3 +61,44 @@ Checks: related model/Chat/Preview 307 passed; Aurora/new dialogue 111 passed;
 updated work/review presentation 58 passed; Preview lifecycle and cross-thread
 reader cleanup 31 passed. Root secret scan zero findings. The activated 4d0b0156
 bundle contained 641 files and passed all four pre-release gates.
+
+
+## Final Local acceptance — 9bf69e3d878fd0ec44c0c8084e062c289744c143
+
+Fresh Preview b08e58fa96218b87b342bc45, own workspace, port 50382, created through
+Developer Preview → new user/shared models. The final browser walkthrough:
+
+- Open shared Gemini card → Check model: immediate progress, then inline success;
+  card remains open, diagnostics collapsed, no duplicate Connect button.
+- Open Deputy Chat → Привет: «Привет! Чем могу помочь?».
+- Что ты умеешь?: normal concise explanation of strategy research and text work.
+- Почему небо голубое?: ordinary short explanation, no task/review/model header.
+- Explicit three-point strategy-check plan: visible natural-language result and
+  one task named after the request, Deputy as speaker/lead, awaiting human review.
+  Pending model marker is hidden; verification details are collapsed.
+- Tasks contains exactly one real work item and one separate system connection
+  check. The three conversational turns do not create tasks.
+- Caller usage: exactly 5 calls, 1513 input + 186 output tokens, $0 known free
+  Gemini usage; purposes: 3 assistant_conversation, 1 connection_test, 1 work.
+- Browser warning/error log for this final Preview is empty. Standard Exit
+  returns to owner Local and removes its entire 37-file disposable root.
+- Before/after owner projection identical: 2 users, 1 workspace, 3 memberships,
+  SHA256 dfcdf0b471112eb88388f3651350b5a5efb6082c172935de1209658af3011ccd.
+  Sharing, owner permissions and production configuration were not changed.
+
+Final-code focused/related suite: **368 passed** (storage/scope, models/delivery,
+reader cleanup, Preview sharing, chat review, persona UI, dialogue, inline model
+checks and Aurora contracts). Earlier related suite: 307 passed; router suite:
+73 passed on the preceding checkpoint. Native full regression 6044/134 belongs
+to the previous baseline; a new full regression is not claimed for this UX diff.
+Final-code exact-content bundle: 641 files, all four pre-release gates PASS.
+Root-level secret scan: zero findings; Context Pack validation PASS.
+
+Local stays clean at 9bf69e3d; final documentation-only closeout does not restart
+it. IMPLEMENTATION COMPLETE for this scoped UX request. Draft PR #291 is retained;
+no merge, Server, Canary or Production action, or whole-program acceptance.
+
+Owner browser verification after Exit: Gemini's separate «Использование другими»
+table retains Preview b08e58fa with 5 calls, 1513/186 tokens and $0.00, exactly
+matching caller accounting. No Preview chat, memory or task content appears in
+that table. Gemini sharing remained ON throughout this follow-up.
