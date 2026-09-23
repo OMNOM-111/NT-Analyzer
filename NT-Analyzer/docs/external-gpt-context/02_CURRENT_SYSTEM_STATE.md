@@ -391,7 +391,8 @@ beta.87 changelog closeout.
 - Earlier draft legal labels are obsolete; the current package is official product documentation.
 - A StratForge product trial is not a provider/exchange redistribution grant.
 
-Local new-user follow-up is IN DEVELOPMENT after d9c53860; ordinary Preview trial,
-registry-card test/sharing, shared catalog rendering, saved Chat receipt recovery,
-and the TopStep strategy tab are being verified. Market-data/trading permissions
-are unchanged. Canonical evidence: [new-user Local completion](../changelog/2026-09-23-new-user-local-completion.md).
+Local new-user follow-up continues after d9c53860, with checkpoints fdd40f90,
+20ddf9dc and a06db104. Manual registration, shared test/task/Chat, owner usage,
+revoke, disposable cleanup and trial page navigation passed. Final regression
+and Memory-summary verification are in progress. Market-data/trading permissions
+are unchanged. TopStep strategy tab remains IN DEVELOPMENT. Canonical evidence: [new-user Local completion](../changelog/2026-09-23-new-user-local-completion.md).

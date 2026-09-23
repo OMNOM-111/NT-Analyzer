@@ -69,9 +69,10 @@ def _handle_get(handler, path: str, qs: dict) -> None:
         from .. import preview_shared_models
         if preview_shared_models.enabled() and route == "overview":
             from . import domain_gateway, overview_summaries
-            authorized, models = gateway.domain_service_for(handler)._open()
+            shared_domains = gateway.domain_service_for(handler)
+            authorized, models = shared_domains._open()
             handler._json(200, {**domain_gateway.enrich_overview(authorized, {}),
-                "summaries": overview_summaries.build(authorized)})
+                "summaries": overview_summaries.build({**authorized, "summary_reader": shared_domains.list})})
             return
         if preview_shared_models.enabled() and (route == "tasks" or route.startswith("tasks/")):
             identity = route.split("/", 1)[1] if "/" in route else None

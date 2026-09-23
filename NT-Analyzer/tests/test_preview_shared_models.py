@@ -63,6 +63,7 @@ def test_disposable_shared_chat_uses_real_model_lifecycle_and_revokes(preview_en
     assert handler.response[0] == 200, handler.response
     assert handler.response[1]["enabled"] is True
     assert handler.response[1]["summaries"]["models"]["items"]
+    assert handler.response[1]["summaries"]["memory"]["records"] == 0
     http_api.handle_post(handler, gateway.PREFIX + "tasks/" + service.tasks(context=auth["context"])["items"][0]["id"] + "/chat")
     assert handler.response == (200, {"conversation_id": result["conversation_id"]})
     http_api.handle_get(handler, gateway.PREFIX + "tasks", {})
