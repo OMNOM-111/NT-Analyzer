@@ -3,7 +3,7 @@
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
 - Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 9bf69e3d878fd0ec44c0c8084e062c289744c143 (clean beta.96 runtime; model-card/Deputy Chat browser acceptance, 368 focused/related tests; full 6044/134 regression belongs to prior 0a9bcf09 baseline)
+- Local source verified SHA: 9bf69e3d878fd0ec44c0c8084e062c289744c143 (clean beta.96 runtime; model-card/Deputy Chat browser acceptance, 368 focused/related tests; full coverage 6057 passed / 134 skipped after render-harness correction, no unresolved failures)
 - Local verification UTC: 2026-09-23T05:56:00Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
 - Historical UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
 - Historical protected Local program snapshot: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 was active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. New unified-source evidence is separate below; full-program/owner acceptance remains open.
@@ -362,7 +362,7 @@ on ef4006eb; actual historical bars are not labelled LIVE.
 | Legacy UI / Telegram Mini App | `DEPRECATED` | Merged main serves Aurora only; legacy UI, Mini App, remote-access and tunnel routes fail with HTTP 410. Classic assets are available only in a separate localhost read-only Legacy Viewer. Telegram `/start` uses a normal URL button | beta.87 is live in Canary and Production; historical snapshots remain until owner review |
 | User entry and trial access | `BETA` in Unified Local | Anonymous product access is removed. Every verified account receives the same full product with a default five-hour active-use starting grant; idle time is not charged. Profile/security remain available after exhaustion | Not present in deployed beta.87; product access does not grant third-party market-data redistribution rights |
 | Admin / Release Center | `BETA` | A versioned release/change record is visible with title, summary, PRs, SHA, build/artifact, stage, checks, duration and environment identity. Production approval/promotion fails closed without title, summary, source SHA and verification PASS | beta.87 acceptance is recorded; any application change starts a new artifact cycle |
-| Test isolation | `AVAILABLE` | Current Local 0a9bcf09: native Windows 6044 passed / 134 skipped / 0 failures across all 288 test files; real disposable Preview and owner/user isolation verified | 134 skips stay explicit. Historical e45 PostgreSQL/runtime receipts remain bound to e45; no new PostgreSQL or Production acceptance is claimed. See the new-user Local completion record |
+| Test isolation | `AVAILABLE` | Current Local 9bf69e3d: native Windows coverage 6057 passed / 134 skipped / 0 unresolved failures across all 291 files, with corrected render-port whole-file rerun; real disposable Preview and owner/user isolation verified | 134 skips stay explicit. Historical e45 PostgreSQL/runtime receipts remain bound to e45; no new PostgreSQL or Production acceptance is claimed. See the new-user Local completion record |
 | Market data / TopstepX | `BETA` | TopstepX remains the primary independent read-only history/realtime chart source; the accepted gateway/SignalR/cache/failover/rendering baseline was not changed by PR #254/#255 or the beta.86 release-record work | cross-user owner-feed redistribution remains `EXTERNAL BLOCKED` without written authority |
 | Charts / fan-out | `BETA` | Browser clients consume same-origin StratForge market-data WebSockets; provider credentials are not delivered to browsers and consumers do not create their own TopstepX loginKey/SignalR sessions | broader design acceptance is separate from this Connector closeout |
 | NinjaTrader / Connector | `BETA` | Production Connector on VMNINJA is `0.4.2-dev.20`; SERVER BACKTEST, cancel state machine, device catalog, account snapshot and Connector LIVE/GRACE/OFFLINE presentation are accepted | public installer distribution remains `EXTERNAL BLOCKED` on authorized Authenticode material |
@@ -405,5 +405,8 @@ an open card, with collapsible diagnostics and no duplicate connection button.
 New-user Preview conversations use a scoped Deputy response without creating
 Task/review records; explicit text work retains the task lifecycle and usage.
 [Change and verification record](../changelog/2026-09-23-model-card-deputy-chat-ux.md).
-Manual acceptance, 368 final-code related tests and successful disposable cleanup
-are recorded there separately from the previous 6044/134 baseline. No Canary/Production activation is authorized.
+Manual acceptance, 368 final-code related tests, successful disposable cleanup
+and full Windows coverage (6057 passed / 134 skipped; no unresolved failures)
+are recorded there. The first sweep found 24 test-port dependency failures;
+both affected whole files passed on rerun (66 tests), without runtime changes.
+No Canary/Production activation is authorized.

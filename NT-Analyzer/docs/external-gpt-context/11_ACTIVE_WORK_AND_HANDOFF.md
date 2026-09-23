@@ -3,7 +3,7 @@
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 9bf69e3d878fd0ec44c0c8084e062c289744c143 (clean beta.96 runtime; model-card/Deputy Chat browser acceptance, 368 focused/related tests; full 6044/134 regression belongs to prior 0a9bcf09 baseline)
+- Local source verified SHA: 9bf69e3d878fd0ec44c0c8084e062c289744c143 (clean beta.96 runtime; model-card/Deputy Chat browser acceptance, 368 focused/related tests; full coverage 6057 passed / 134 skipped after render-harness correction, no unresolved failures)
 - Local verification UTC: 2026-09-23T05:56:00Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
 - Historical UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
 - Historical protected Local program snapshot: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 was active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. New unified-source evidence is separate below; full-program/owner acceptance remains open.
@@ -582,5 +582,8 @@ an open card, with collapsible diagnostics and no duplicate connection button.
 New-user Preview conversations use a scoped Deputy response without creating
 Task/review records; explicit text work retains the task lifecycle and usage.
 [Change and verification record](../changelog/2026-09-23-model-card-deputy-chat-ux.md).
-Manual acceptance, 368 final-code related tests and successful disposable cleanup
-are recorded there separately from the previous 6044/134 baseline. No Canary/Production activation is authorized.
+Manual acceptance, 368 final-code related tests, successful disposable cleanup
+and full Windows coverage (6057 passed / 134 skipped; no unresolved failures)
+are recorded there. The first sweep found 24 test-port dependency failures;
+both affected whole files passed on rerun (66 tests), without runtime changes.
+No Canary/Production activation is authorized.

@@ -90,7 +90,7 @@ Final-code focused/related suite: **368 passed** (storage/scope, models/delivery
 reader cleanup, Preview sharing, chat review, persona UI, dialogue, inline model
 checks and Aurora contracts). Earlier related suite: 307 passed; router suite:
 73 passed on the preceding checkpoint. Native full regression 6044/134 belongs
-to the previous baseline; a new full regression is not claimed for this UX diff.
+to the previous baseline; the final UX regression is recorded below.
 Final-code exact-content bundle: 641 files, all four pre-release gates PASS.
 Root-level secret scan: zero findings; Context Pack validation PASS.
 
@@ -102,3 +102,40 @@ Owner browser verification after Exit: Gemini's separate «Использова�
 table retains Preview b08e58fa with 5 calls, 1513/186 tokens and $0.00, exactly
 matching caller accounting. No Preview chat, memory or task content appears in
 that table. Gemini sharing remained ON throughout this follow-up.
+
+Owner negative check: GitHub Models API / microsoft/phi-4 shows inline progress
+followed by an unavailable-response explanation. Collapsed diagnostics report
+the actual invalid JSON provider response; it does not falsely pass the check.
+
+## Full-regression follow-up
+
+The four disjoint native Windows groups cover all 291 test files. Their first
+sweep exposed 24 failures in two extracted-render test files: the port omitted
+the shipped kind classifier and its labels, which the real UI already loads.
+Commit 2046a07b adds these actual dependencies to the port without weakening
+assertions or changing runtime code. Both affected whole files then pass:
+66 passed in 25.54 seconds. All four full-sweep groups have now finished.
+
+Final reconciled coverage: **6057 passed / 134 skipped / 0 unresolved
+failures or errors**, all 291 files. The first sweep had 6033
+passed, 24 failed and 134 skipped; all 24 failed node IDs belong to the
+two whole files rerun successfully above. Their 42 already-passing cases are
+not counted twice. No collection errors or live-data guard violations occurred.
+This is full coverage with a corrected test-port rerun, not an assertion that
+the initial sweep was green. The runtime code remains exactly 9bf69e3d.
+
+| Group | First-sweep result |
+|---|---|
+| 0 | 1703 passed, 7 skipped in 1105.78s (0:18:25) |
+| 1 | 24 failed, 1253 passed, 21 skipped in 1295.13s (0:21:35) |
+| 2 | 1699 passed, 73 skipped in 3027.48s (0:50:27) |
+| 3 | 1378 passed, 33 skipped in 3145.60s (0:52:25) |
+
+Evidence: local ignored `.artifacts/ux-full-regression/` holds all four logs,
+disjoint file manifests, exit receipts and `reconciled-result.json`. The
+whole-file rerun log is `.artifacts/ux-render-harness-fixed.log`.
+The separate CI release runner (`python -m tests`) also passes all 13/13
+legacy suites; its receipt is `.artifacts/ux-legacy.log`.
+Pre-release bundle/context validation and root secret checks pass; no artifact
+is signed, deployed or promoted. Local scope is complete; draft PR #291 remains
+unmerged. Git closeout follows this verification-only record.
