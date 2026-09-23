@@ -31,7 +31,7 @@ def test_catalog_is_complete_scoped_and_drops_late_replies_after_auth_loss(mode)
     run("catalog", mode)
 
 
-@pytest.mark.parametrize("mode", ["selected", "legacy", "invalid"])
+@pytest.mark.parametrize("mode", ["selected", "legacy", "invalid", "recovery"])
 def test_real_stream_transport_has_only_optional_persona_uuid(mode):
     run("transport", mode)
 

@@ -20,6 +20,7 @@ import shutil
 import socket
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -369,9 +370,21 @@ def _now() -> str:
 
 def _atomic_json(path: Path, payload: Dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, path)
+    # Unique writer files avoid collisions; Windows may briefly hold the
+    # destination during reads or indexing. Never truncate the existing file.
+    tmp = path.with_name(path.name + "." + secrets.token_hex(8) + ".tmp")
+    try:
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        for attempt in range(6):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(.02 * (attempt + 1))
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _write_jsonl(path: Path, rows: Iterable[Dict[str, Any]]) -> None:

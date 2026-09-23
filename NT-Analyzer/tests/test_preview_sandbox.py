@@ -431,6 +431,11 @@ def test_new_user_profiles_have_registration_workspace_and_only_selected_rights(
     assert caps["nav"]["topstep"] is True
     assert caps["capabilities"]["ai_automation"] is False
     assert not any(caps["admin_capabilities"].values())
+    from app import server
+    decorated = server.Handler._decorate_workspace_context(object(), raw)
+    assert decorated["_permissions"]["nav"]["desktop"] is True
+    assert decorated["_permissions"]["nav"]["topstep"] is True
+    assert decorated["capabilities"]["charts_realtime"] is False
     old_uuid, old_workspace = user["user_uuid"], workspace["workspace_id"]
     preview_sandbox.reset("shared_models_user", device_credential="preview-next-user-browser")
     assert account_auth.find_active_user_by_uuid(old_uuid) is None
@@ -580,3 +585,21 @@ def test_scenario_users_carry_a_stratforge_handle(preview_env):
     context = account_auth.authenticate_session(result["session_token"])
     assert context["user"]["handle"], "synthetic scenario user has no handle"
     assert account_auth.normalize_handle(context["user"]["handle"])
+
+
+def test_atomic_manifest_retries_transient_windows_reader_lock(tmp_path, monkeypatch):
+    path = tmp_path / "preview-manifest.json"
+    path.write_text('{"before": true}', encoding="utf-8")
+    replace = preview_sandbox.os.replace
+    attempts = []
+    def transient(source, destination):
+        attempts.append(source)
+        if len(attempts) == 1:
+            assert path.read_text(encoding="utf-8") == '{"before": true}'
+            raise PermissionError("temporary reader lock")
+        return replace(source, destination)
+    monkeypatch.setattr(preview_sandbox.os, "replace", transient)
+    preview_sandbox._atomic_json(path, {"after": True})
+    assert json.loads(path.read_text(encoding="utf-8")) == {"after": True}
+    assert len(attempts) == 2 and not list(tmp_path.glob("*.tmp"))
+

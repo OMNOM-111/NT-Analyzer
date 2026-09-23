@@ -116,7 +116,9 @@
     role.textContent = labels[scenario] || scenario;
     const note = document.createElement('span');
     note.className = 'dev-view-as-note';
-    note.textContent = 'Только synthetic data · внешние действия заблокированы';
+    note.textContent = previewContext.external_side_effects === 'shared_models_only'
+      ? 'Временные данные · реальные shared-запросы за счёт владельца · до $0.25'
+      : 'Только synthetic data · внешние действия заблокированы';
     const actions = document.createElement('span');
     actions.className = 'preview-sandbox-actions';
     const controls = [

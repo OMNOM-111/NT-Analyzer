@@ -2432,7 +2432,10 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         body = (proposals.length ? `<div class="aw-domain-grid">${proposals.map(domainItemCard).join('')}</div>` : smallEmpty('Предложений для проверки пока нет. Создайте решение, чтобы получить независимую оценку Court.'))
           + (authorizations.length ? `<details class="aw-technical"><summary>Разрешения на выполнение задач · ${count(authorizations.length)}</summary><p class="aw-note">Записываются автоматически, когда вы разрешаете выполнить конкретный запрос. Это не решения Court.</p><div class="aw-domain-grid">${authorizations.map(domainItemCard).join('')}</div></details>` : '');
       }
-      else body = items(data).length ? `<div class="aw-domain-grid">${items(data).map(key === 'automation' ? automationGrantCard : domainItemCard).join('')}</div>` : smallEmpty('Записей пока нет. Они появятся после первого подтверждённого действия.');
+      else {
+        const visibleItems = key === 'models' ? [...items(data), ...rows(data.shared)] : items(data);
+        body = visibleItems.length ? `<div class="aw-domain-grid">${visibleItems.map(key === 'automation' ? automationGrantCard : domainItemCard).join('')}</div>` : smallEmpty('Записей пока нет. Они появятся после первого подтверждённого действия.');
+      }
       body += processIntelligencePanel(data, key);
       if (key === 'automation') {
         const admin = data.capability_admin || {}, granted = admin.granted === true;

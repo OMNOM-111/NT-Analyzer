@@ -6,7 +6,7 @@ import urllib.request
 import urllib.error
 
 from tests.test_preview_sandbox import preview_env
-from app import account_auth, preview_sandbox, preview_shared_models, workspaces
+from app import account_auth, preview_sandbox, preview_shared_models, workspaces, server
 from app.ai_control_center import domain_gateway
 from app.ai_control_center.states import ContractError
 
@@ -28,7 +28,12 @@ def test_disposable_shared_chat_uses_real_model_lifecycle_and_revokes(preview_en
                 "elapsed_sec": .01, "external_call": True, "executor": "preview_shared_local_bridge"}
     monkeypatch.setattr(preview_shared_models, "request", transport)
     class Handler:
-        _remote_context = raw
+        _remote_context = server.Handler._decorate_workspace_context(object(), raw)
+        def _cookie_value(self, _): return session["session_token"]
+        def _decorate_workspace_context(self, value):
+            return server.Handler._decorate_workspace_context(object(), value)
+        def _json(self, status, data): self.response = (status, data)
+        def _err(self, status, message, **kwargs): self.response = (status, kwargs)
         def _preview_control_authorized(self): return True
         def _ai_conversation_scope(self):
             return {"user_id": raw["user_id"], "user_uuid": raw["user_uuid"],
@@ -49,6 +54,15 @@ def test_disposable_shared_chat_uses_real_model_lifecycle_and_revokes(preview_en
     assert service.models(context=auth["context"])["items"] == []
     usage = service.shared_usage(context=auth["context"])["mine_through_others"]["total"]
     assert usage["calls"] == 1 and usage["input_tokens"] == 12 and usage["cost_usd"] == .001
+    # Real tasks must remain readable through the Preview HTTP overview, not
+    # the synthetic demo task projection (which expects persona_key).
+    from app.ai_control_center import http_api, gateway
+    http_api.handle_get(handler, gateway.PREFIX + "overview", {})
+    assert handler.response[0] == 200, handler.response
+    assert handler.response[1]["enabled"] is True
+    http_api.handle_get(handler, gateway.PREFIX + "tasks", {})
+    assert handler.response[0] == 200 and handler.response[1]["items"]
+    assert len(calls) == 1
     available[0] = False
     with pytest.raises(ContractError, match="revoked"):
         preview_shared_models.chat(handler, {"message": "Again", "request_id": "preview-fixture-after"})

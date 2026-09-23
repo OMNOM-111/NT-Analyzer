@@ -3131,7 +3131,10 @@ class Handler(BaseHTTPRequestHandler):
                 resolved["capabilities"] = resolved_caps
                 nav = dict(resolved.get("nav") or {})
                 if str(resolved.get("ux_mode") or "") == "professional":
-                    nav["desktop"] = charts_allowed
+                    # The workspace shell remains usable during the product
+                    # trial even when no market-data source is connected.
+                    # Bars and sockets still require the separate decision.
+                    nav["desktop"] = bool(nav.get("desktop") or charts_allowed)
                 resolved["nav"] = nav
                 resolved["locked_nav"] = [
                     section for section in permissions.NAV_SECTIONS

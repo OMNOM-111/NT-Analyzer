@@ -35,3 +35,9 @@ Disposable Preview was closed through Exit Preview. DeepSeek sharing was
 temporarily enabled for QA and must be restored before closeout.
 
 Server, Canary and Production remain untouched. PR and final evidence pending.
+
+## Local browser follow-up
+
+Ordinary registration was completed in the disposable UI (email fixture, agreement, temporary device, cabinet). Shared DeepSeek and Gemini appeared without owner settings. A real connection test exposed an overview crash: the Preview demo projection assumed `persona_key` on real task checkpoints. The HTTP overview now reads the real scoped domain projection; regression covers a completed shared chat followed by overview/tasks reads. Desktop navigation retains the trial entitlement independently of market-data admission. The internal model chooser includes shared entries. Preview manifest writes retry transient Windows reader locks without truncating existing state.
+
+Verification: 67 focused tests passed before fixing a test-only permissions field typo; the complete Preview module then passed 27 tests. Browser delivery recovery asserts one POST and one history GET, never a repeated model invocation. Manual acceptance and full regression remain pending.
