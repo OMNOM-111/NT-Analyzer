@@ -7,6 +7,8 @@
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: DONE
 
+Development supervisor origin correction (2026-09-23): default identity is the actual `http://127.0.0.1:<port>` listener, never the Production hub hostname. An explicitly configured Development HTTPS origin is supported. This prevents false gateway self-loop isolation while preserving true self-loop rejection. [Incident and verification](../changelog/2026-09-23-local-chart-gateway.md). No server release is included.
+
 Local-only Preview change (2026-09-22): the two shared-model QA profiles may call
 one authenticated parent loopback service for catalog/invoke only. Other outbound
 connections remain blocked. The bridge expires after 30 minutes and allows at

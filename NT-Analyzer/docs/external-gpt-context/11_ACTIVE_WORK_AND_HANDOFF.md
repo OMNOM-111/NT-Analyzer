@@ -15,6 +15,8 @@
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 
+Local chart recovery (2026-09-23), branch `codex/fix-local-chart-gateway`: fix the supervisor origin collision, verify Local consumption and real bars after activation, then close the scoped PR. Preserve TopstepX/SignalR and entitlement gates. Saved MBT 08-26 and the empty MNQ probe remain separate contract/provider observations. [Canonical incident](../changelog/2026-09-23-local-chart-gateway.md).
+
 - Isolated memory handoff (2026-09-21): `codex/unified-memory-service` adds the
   common read facade, context builder, stable identifiers, typed graph records,
   reconciliation and reversible write routing described in

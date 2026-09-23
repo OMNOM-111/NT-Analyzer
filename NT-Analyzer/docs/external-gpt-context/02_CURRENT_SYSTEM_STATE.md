@@ -17,6 +17,8 @@
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
+Local chart incident (2026-09-23): the pinned Local supervisor claimed the Production public origin and isolated its chart gateway. The scoped correction uses the actual loopback listener; targeted tests PASS, Local activation pending. Production supplied real MET candles during an authorized read. [Incident and exact scope](../changelog/2026-09-23-local-chart-gateway.md).
+
 - Development delta 2026-09-21: isolated branch `codex/unified-memory-service`
   introduces one disabled-by-default `MemoryService` for Chief/chat/specialist
   context, additive entity/source/relationship records on the existing generic
