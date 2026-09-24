@@ -1222,7 +1222,7 @@ UI.ready(async function () {
       const asOf = freshness.market_feed_as_of_utc || freshness.data_as_of_utc || source.updated_at_utc || '';
       const asOfLabel = asOf ? ` · last ${String(asOf).replace('T', ' ').slice(0, 19)}` : '';
       const diag = payload.diagnostics || {};
-      const transport = marketDataWsOk ? 'WS' : 'HTTP';
+      const transport = status === 'demo_replay' ? 'REPLAY · HTTP' : marketDataWsOk ? 'WS' : 'HTTP';
       const hashShort = diag.series_hash ? String(diag.series_hash).slice(0, 8) : '';
       const contract = payload.resolvedInstrument || payload.resolved_instrument || (rec.model.config && rec.model.config.instrument) || '';
       const extra = hashShort ? ` · #${hashShort}` : '';
@@ -1264,7 +1264,7 @@ UI.ready(async function () {
       rec._transport = transport;
       // Freeze price marker semantics for offline/stale.
       if (rec.chart && rec.chart.setLivePriceEnabled) {
-        try { rec.chart.setLivePriceEnabled(css === 'live'); } catch (e) { /* optional */ }
+        try { rec.chart.setLivePriceEnabled(css === 'live', status === 'demo_replay' ? 'DEMO' : 'OFF'); } catch (e) { /* optional */ }
       }
     } else {
       if (!rec.hasBars) {
@@ -1353,7 +1353,8 @@ UI.ready(async function () {
     if (text) {
       const bits = String(title || '').split(' · ');
       const dataAt = bits.indexOf('DATA');
-      text.textContent = dataAt >= 0 && bits[dataAt + 1] ? `DATA · ${bits[dataAt + 1]}` : (bits[1] || bits[0] || 'DATA');
+      text.textContent = bits[0] === 'DEMO' ? 'DEMO · учебные данные'
+        : dataAt >= 0 && bits[dataAt + 1] ? `DATA · ${bits[dataAt + 1]}` : (bits[1] || bits[0] || 'DATA');
     }
   }
 

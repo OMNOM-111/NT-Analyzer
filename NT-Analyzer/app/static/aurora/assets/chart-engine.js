@@ -269,10 +269,12 @@
       this._empty();
     }
 
-    setLivePriceEnabled(on) {
+    setLivePriceEnabled(on, nonLiveLabel = 'OFF') {
       const next = !!on;
-      if (this.livePriceEnabled === next) return this;
+      const label = nonLiveLabel === 'DEMO' ? 'DEMO' : 'OFF';
+      if (this.livePriceEnabled === next && this.nonLivePriceLabel === label) return this;
       this.livePriceEnabled = next;
+      this.nonLivePriceLabel = label;
       this._schedule();
       return this;
     }
@@ -964,7 +966,7 @@
         const tagColor = live ? (up ? P.up : P.down) : '#6b7280';
         ctx.strokeStyle = withA(tagColor, live ? 0.5 : 0.35); ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(plotW, y); ctx.stroke(); ctx.setLineDash([]);
-        const label = live ? fmtPrice(lastBar.c) : (`${fmtPrice(lastBar.c)} · OFF`);
+        const label = live ? fmtPrice(lastBar.c) : (`${fmtPrice(lastBar.c)} · ${this.nonLivePriceLabel || 'OFF'}`);
         // Exact values used by the canvas draw, exposed only as inert DOM
         // diagnostics for Development acceptance and regression automation.
         this.host.dataset.renderedPriceMarkerText = label;

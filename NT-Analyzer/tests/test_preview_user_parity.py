@@ -46,7 +46,7 @@ def test_public_projection_excludes_private_content_and_cannot_persist_imports(p
     assert all(row["allow_messages"] == "nobody" and row["user_id"] == 0 for row in projected["profiles"])
     assert preview_public.local_only(projected)["posts"] == []
     from app import preview_shared_models
-    monkeypatch.setattr(preview_shared_models, "enabled", lambda: True)
+    monkeypatch.setattr(preview_shared_models, "transport_enabled", lambda: True)
     monkeypatch.setattr(preview_shared_models, "request", lambda path, body: projected)
     # The child owns a separate document; overlay is live and never copied back.
     community._store_path().unlink()
@@ -93,6 +93,18 @@ def test_erasure_keeps_usage_but_removes_workspace_chat_model_secrets(preview_en
     chat.write_text('private chat and memory', encoding="utf-8")
     tenant = workspaces._tenant_root(ws)
     (tenant / "private.txt").write_text("private workspace", encoding="utf-8")
+    # Seed actual relational private revisions and a DPAPI credential, plus a
+    # different owner's sentinel, rather than only checking a sharing flag.
+    repository = SQLiteAgentWorldRepository(preview_sandbox.isolated_root() / "agent-world.sqlite3")
+    entity = str(uuid4())
+    secure_store.set_secret("aw_provider." + entity, "disposable-provider-secret")
+    with sqlite3.connect(repository.path) as db:
+        for owner, workspace, eid in ((canonical, ws, entity), ("other-owner", "other-ws", "other-entity")):
+            seq = db.execute("INSERT INTO aw_revisions(environment,workspace_id,kind,entity_id,revision,owner_uuid,visibility,payload) VALUES ('development',?,'provider_account',?,1,?,'private',?)", (workspace, eid, owner, 'private content')).lastrowid
+            db.execute("INSERT INTO aw_records VALUES ('development',?,'provider_account',?,1,?,?,'private')", (workspace, eid, seq, owner))
+            db.execute("INSERT INTO aw_artifacts VALUES ('development',?,?,?,'hash','application/json',?)", (workspace, owner, eid, b'private artifact'))
+    from app.ai_lab import agent_registry
+    agent_registry.record_usage({"user_id": uid, "user_name": "Private Name", "error": "private provider content", "input_tokens": 12, "cost_usd": .02})
     model_sharing.set_shared(environment="development", owner_workspace_id=ws, owner_user_uuid=canonical,
         model_id="owned-model", shared=True, label="own", provider="test", model_key="test", credential_source="owned")
     with model_sharing._db() as db:
@@ -102,9 +114,42 @@ def test_erasure_keeps_usage_but_removes_workspace_chat_model_secrets(preview_en
     started = account_lifecycle.start(uid, sid)
     account_lifecycle.confirm(uid, sid, challenge_id=started["challenge_id"], code=started["test_code"], confirmation="УДАЛИТЬ")
     assert not tenant.exists() and not chat.exists()
+    assert not secure_store.get_secret("aw_provider." + entity)
+    with sqlite3.connect(repository.path) as db:
+        assert db.execute("SELECT owner_uuid FROM aw_revisions").fetchall() == [("other-owner",)]
+        assert db.execute("SELECT owner_uuid FROM aw_artifacts").fetchall() == [("other-owner",)]
+    assert "Private Name" not in agent_registry.usage_path().read_text(encoding="utf-8")
+    agent_registry.record_usage({"user_id": uid, "user_name": "Private Name", "input_tokens": 9})
+    assert agent_registry.usage_rows()[-1]["user_name"] == "Удалённый пользователь"
     assert model_sharing.get("owned-model")["shared"] is False
     usage = model_sharing.owner_usage("owner")
     assert usage["by_caller"][0]["caller_name"] == "Удалённый пользователь"
     assert usage["recent"][0]["input_tokens"] == 12 and usage["recent"][0]["cost_usd"] == .02
     with pytest.raises(ContractError, match="model_caller_deleted"):
         model_sharing.require("anything", environment="development", caller_user_uuid=canonical)
+    with pytest.raises(community.CommunityError, match="удалён"):
+        community.create_social_post(uid, user_uuid=canonical, text="late private write")
+
+
+def test_failed_erasure_stays_revoked_and_is_retryable(preview_env, monkeypatch):
+    uid, canonical, sid = _registered()
+    original = account_lifecycle._erase_agent_world
+    monkeypatch.setattr(account_lifecycle, "_erase_agent_world", lambda *args: (_ for _ in ()).throw(OSError("temporary storage failure")))
+    with pytest.raises(OSError):
+        account_lifecycle.erase(uid, reason="preview_reset", automatic_preview=True)
+    assert account_auth.find_active_user(uid) is None
+    assert not account_auth.local_session_is_active(sid, uid)
+    with pytest.raises(community.CommunityError, match="удаляется"):
+        community.create_social_post(uid, text="late write")
+    monkeypatch.setattr(account_lifecycle, "_erase_agent_world", original)
+    assert account_lifecycle.erase(uid, reason="preview_reset", automatic_preview=True)["deleted"]
+    receipt = account_lifecycle.registry_rows()[0]
+    assert json.loads(receipt["security_flags"])["previously_blocked"] is False
+
+
+def test_unsupported_storage_refuses_before_freezing_identity(preview_env, monkeypatch):
+    uid, canonical, sid = _registered()
+    monkeypatch.setenv("STRATFORGE_AGENT_WORLD_STORAGE", "postgres")
+    with pytest.raises(account_auth.AccountAuthError, match="адаптер"):
+        account_lifecycle.erase(uid, reason="self_requested")
+    assert account_auth.find_active_user(uid) and account_auth.local_session_is_active(sid, uid)

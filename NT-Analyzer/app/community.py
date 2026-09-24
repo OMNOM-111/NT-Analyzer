@@ -1015,6 +1015,16 @@ def _ensure_profile_in_doc(
     if uid <= 0:
         raise CommunityError("Требуется вход.", 401)
     canonical = _resolved_user_uuid(uid, user_uuid)
+    from . import account_auth, account_lifecycle
+    with account_auth._LOCK:
+        account = account_auth._user(account_auth._read_doc_reference(), uid)
+        if (account or {}).get("deletion_pending"):
+            raise CommunityError("Аккаунт удаляется.", 403)
+    if ((canonical and canonical in account_lifecycle.deleted_ids())
+            or (not account and uid in account_lifecycle.deleted_legacy_ids())):
+        raise CommunityError("Аккаунт удалён.", 403)
+    if (account or {}).get("is_owner") and role_label == "Участник":
+        role_label = "Владелец"
     row = _profile_by_identity(doc, uid, canonical)
     now = _now_iso()
     if row is None:

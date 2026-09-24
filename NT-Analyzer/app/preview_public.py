@@ -6,7 +6,6 @@ written back to either store. There is no identity, private-feed or chat proxy.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 MARKER = "_preview_public_projection"
 
@@ -56,7 +55,7 @@ def overlay(doc):
     from . import runtime_env, preview_shared_models, dev_preview, community
     if not runtime_env.is_development():
         return doc
-    if preview_shared_models.enabled():
+    if preview_shared_models.transport_enabled():
         try:
             public = preview_shared_models.request("/social", {})
         except Exception as exc:

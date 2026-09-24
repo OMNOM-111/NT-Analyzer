@@ -15,6 +15,11 @@ const API = {
 const ctx = {API, signal: undefined, disposed: false, root: {crypto: {randomUUID: () => 'one-request'}},
     domainCache: new Map(), esc: x => String(x), setTimeout: fn => { fn(); }};
 vm.createContext(ctx); vm.runInContext(source.slice(begin, end), ctx);
+ctx.rows = value => value || [];
+vm.runInContext(source.slice(end, source.indexOf('    function modelRows(', end)), ctx);
+const multiple = ctx.modelCallButtons([{id:'shared-one', ownership:'shared', actions:['test']}, {id:'shared-two', ownership:'shared', actions:['test']}]);
+assert.match(multiple, /Общее подключение 1/); assert.match(multiple, /Общее подключение 2/);
+assert.match(multiple, /data-aw-inline-test="shared-one"/); assert.match(multiple, /data-aw-inline-test="shared-two"/);
 const success = {task: {id: 'test-id', status: 'succeeded'}, evaluation: {passed: true}, actual_model: 'real-version', result_text: 'CONNECTION_OK', synthetic: false};
 (async () => {
     let release; pendingPost = new Promise(resolve => {release = resolve;});

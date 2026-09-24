@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import re
 import secrets
 import shutil
@@ -54,9 +55,11 @@ def record_deletion(user, reason, *, preview=False):
             db.execute("""INSERT OR IGNORE INTO deleted_accounts VALUES (?,?,?,?,?,?,?,?)""",
                 (uid, int(user.get("user_id") or 0), fingerprint, str(user.get("created_at_utc") or ""),
                  account_auth._now_iso(), reason, "test-preview" if preview else "real",
-                 json.dumps({"previously_blocked": user.get("status") == "blocked"})))
+                 json.dumps({"previously_blocked": user.get("deletion_original_status", user.get("status")) == "blocked"})))
     # A late usage receipt must also resolve the deleted label at read time.
     from .ai_control_center import model_sharing
+    from .ai_lab import agent_registry
+    agent_registry.anonymize_user_usage(int(user.get("user_id") or 0))
     if model_sharing._db_path().exists():
         with model_sharing._db() as db:
             db.execute("UPDATE calls SET caller_name=? WHERE caller_user_uuid=?", ("Удалённый пользователь", uid))
@@ -70,6 +73,14 @@ def deleted_ids():
         return set()
     with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
         return {row[0] for row in db.execute("SELECT user_uuid FROM deleted_accounts")}
+
+
+def deleted_legacy_ids():
+    path = _registry_path()
+    if not path.exists():
+        return set()
+    with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
+        return {row[0] for row in db.execute("SELECT legacy_user_id FROM deleted_accounts")}
 
 
 def registry_rows():
@@ -172,7 +183,8 @@ def _erase_social(uid, canonical):
 
 def _preflight(user):
     from . import storage_router
-    if not runtime_env.is_development() or storage_router.production_enabled():
+    if (not runtime_env.is_development() or storage_router.production_enabled()
+            or os.environ.get("STRATFORGE_AGENT_WORLD_STORAGE", "sqlite").strip().lower() != "sqlite"):
         raise account_auth.AccountAuthError("Удаление доступно в Local; адаптер этого окружения ещё не принят.", 503)
     if not user or user.get("is_owner") or user.get("is_service_account"):
         raise account_auth.AccountAuthError("Этот системный аккаунт нельзя удалить.", 403)
@@ -194,6 +206,7 @@ def _freeze(uid, automatic_preview):
         # Freeze authority before touching data. On an erasure failure the
         # blocked identity survives for a safe owner retry, never active access.
         original = dict(user)
+        user.setdefault("deletion_original_status", user.get("status"))
         user["status"] = "blocked"
         user["permissions"] = {}
         user["deletion_pending"] = True

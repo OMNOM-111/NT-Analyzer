@@ -739,7 +739,7 @@
       const follow = '<button type="button" class="btn ' + (org.is_following ? 'ghost' : 'primary')
         + '" data-follow-org="' + esc(org.org_id) + '" data-following="' + (org.is_following ? '1' : '0')
         + '">' + (org.is_following ? 'Вы читаете' : 'Подписаться') + '</button>';
-      const wall = (doc.posts || []).map(postHtml).join('')
+      const wall = sortPosts(doc.posts || [], true).map(postHtml).join('')
         || renderEmpty('На странице пока тихо', 'Публикации компании появятся здесь.');
       host.innerHTML = '<div class="community-profile-hero"><div class="community-profile-cover"><span>SF</span></div>'
         + '<div class="community-avatar xxl community-org-avatar" aria-hidden="true">SF</div>'

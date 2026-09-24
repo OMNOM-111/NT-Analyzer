@@ -48,7 +48,7 @@ def identity(authorized, service=None):
     from . import domain_gateway, persona_identity
     service = service or domain_gateway.models(authorized)
     selected = persona_identity.resolve_chat(service, context=authorized["context"], message="Привет")
-    return (selected.persona_id, selected.display_name) if selected else ("manager", "Заместитель")
+    return (selected.persona_id, selected.display_name) if selected else ("deputy", "Заместитель")
 
 
 def reply(authorized, service, model_id, *, message, conversation_id, request_id):

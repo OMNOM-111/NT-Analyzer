@@ -1194,7 +1194,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       }
     }
     function modelCallButtons(connections) {
-      return connections.map(item => `${rows(item.actions).includes('test') ? modelTestControls(item.id) : ''}${rows(item.actions).includes('task') ? `<div class="aw-actions"><button class="btn sm" data-aw-card-model="${esc(item.id)}" data-aw-card-action="task">Дать задание</button></div>` : ''}`).join('');
+      return connections.map((item, index) => `${connections.length > 1 ? `<p class="aw-note">${item.ownership === 'shared' ? 'Общее подключение' : 'Подключение'} ${index + 1}</p>` : ''}${rows(item.actions).includes('test') ? modelTestControls(item.id) : ''}${rows(item.actions).includes('task') ? `<div class="aw-actions"><button class="btn sm" data-aw-card-model="${esc(item.id)}" data-aw-card-action="task">Дать задание</button></div>` : ''}`).join('');
     }
     function modelRows(groups) {
       if (!groups.length) return smallEmpty('Моделей пока нет. Подключите модель по API — она проверится одним запросом.');

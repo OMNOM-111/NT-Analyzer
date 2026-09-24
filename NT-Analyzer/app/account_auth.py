@@ -2191,6 +2191,8 @@ def set_user_status(owner_id: Any, user_id: Any, status: str) -> Dict[str, Any]:
             raise AccountAuthError("Аккаунт владельца нельзя заблокировать.", 403)
         if not _profile_complete(user) and new_status == "active":
             raise AccountAuthError("Профиль не заполнен — активировать нельзя.", 400)
+        if user.get("deletion_pending") and new_status == "active":
+            raise AccountAuthError("Удаление начато. Завершите очистку аккаунта.", 409, code="account_deletion_pending")
         user["status"] = new_status
         user["updated_at_utc"] = _now_iso()
         if new_status == "blocked":
@@ -2284,8 +2286,10 @@ def delete_user(owner_id: Any, user_id: Any) -> Dict[str, Any]:
     uid = int(user_id)
     if runtime_env.is_development():
         from . import account_lifecycle
-        account_footprint(owner_id, uid)  # Existing users.manage authority.
+        report = account_footprint(owner_id, uid)  # Existing users.manage authority.
         account_lifecycle.erase(uid, reason="owner_requested")
+        _audit("user_deleted", owner_id=int(owner_id), user_id=0,
+               extra={"deleted_user_uuid": report["user_uuid"], "deleted_legacy_user_id": uid})
         return list_users(owner_id)
     from . import workspaces
     # The workspace store is a separate document, so its refusal has to happen

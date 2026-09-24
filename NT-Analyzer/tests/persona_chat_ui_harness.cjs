@@ -35,7 +35,7 @@ const ORCH = {open: true, currentId: 'test-conversation', viewerProfileId: ''};
 const ORCH_SPEECH = {generation: 0, controller: null, module: null, message: '', button: null, status: null};
 const button = new Element(), status = new Element(), face = new Element(), video = new Element();
 button.dataset.orchSpeech = row.message_id; button.parentElement = {querySelector: () => status};
-button.closest = () => ({querySelector: () => face});
+button.closest = () => ({querySelector: selector => selector === '[data-orch-speech-status]' ? status : face});
 face.classList.add('orch-msg-face'); face.querySelector = () => video;
 video.readyState = 0; video.pause = () => {}; video.currentTime = 0;
 const requests = [], spoken = [], scripts = [], faces = [], pauses = [], timers = new Map(), domains = [];
@@ -122,13 +122,16 @@ const flushTimers = () => { const fns = [...timers.values()]; timers.clear(); fn
     }
     case 'missing_persona_is_not_vitek_or_technical_uuid': {
       row._persona = null; delete row.agent_name; const html = sandbox.orchMessageHtml(row);
-      assert.ok(!html.includes('agents/vitek/')); assert.ok(html.includes('AI-помощник')); assert.ok(html.includes('disabled'));
+      assert.ok(!html.includes('agents/vitek/')); assert.ok(html.includes('AI-помощник')); assert.ok(!html.includes('data-orch-speech='));
+      assert.ok(html.includes('Персона или её голос недоступны'));
       assert.ok(!html.includes('orch-msg-author">' + persona.id));
       assert.equal(sandbox.orchSpeechPersona(row), null); break;
     }
     case 'unconfigured_or_suspended_has_no_action':
       for (const change of [{status: 'suspended'}, {presentation: {resolved_voice_profile_id: ''}}]) {
-        assert.ok(sandbox.orchSpeechHtml({...row, _persona: {...persona, ...change}}).includes('disabled'));
+        const unavailable = {...row, _persona: {...persona, ...change}};
+        assert.ok(sandbox.orchSpeechHtml(unavailable).includes('Персона или её голос недоступны'));
+        assert.ok(!sandbox.orchMessageHtml(unavailable).includes('data-orch-speech='));
       } break;
     case 'legacy_uses_local_preset_not_owner_transport': {
       row.agent_id = 'marina'; row._persona = null; bind(); const pending = click(); await flush();

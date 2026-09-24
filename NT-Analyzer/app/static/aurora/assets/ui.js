@@ -2333,7 +2333,10 @@
     const planBadge = isOwner
       ? '<span class="badge trial">★ Золотая звезда · Основатель</span>'
       : (sub.plan_id ? `<span class="badge ${(sub.status === 'active' || sub.status === 'promo_grant' || sub.status === 'founder') ? 'live' : 'archived'}">${esc(sub.status || '')}</span>` : '');
-    const expires = sub.expires_at_utc ? ('до ' + esc(sub.expires_at_utc)) : ((sub.plan_id || isOwner) ? 'бессрочно' : '');
+    const trialUsage = me.trial_usage;
+    const expires = sub.plan_id === 'trial_full' && trialUsage && !trialUsage.granted_elsewhere
+      ? `Осталось ${esc(trialHumanTime(trialUsage.remaining_sec))} активного использования`
+      : (sub.expires_at_utc ? ('до ' + esc(sub.expires_at_utc)) : ((sub.plan_id || isOwner) ? 'бессрочно' : ''));
     const modeLabel = uxMode === 'beginner' ? 'Студент' : (uxMode === 'professional' ? 'Профессионал' : 'не выбран');
     const modeCard = isOwner
       ? `<div class="cab-card"><h4>Режим интерфейса</h4><div class="cab-kv"><span class="k">Режим</span><span class="v"><strong>Профессионал</strong> <span class="badge live">владелец</span></span></div><div class="cab-sub">Владелец всегда в режиме «Профессионал». Для проверки новичка используйте Staging → impersonation.</div></div>`

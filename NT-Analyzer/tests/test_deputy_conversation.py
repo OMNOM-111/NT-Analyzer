@@ -7,6 +7,17 @@ from app.ai_control_center.states import ContractError
 from app.ai_lab import chief_agent
 
 
+def test_deputy_fallback_survives_message_identity_normalization(monkeypatch):
+    from app.ai_control_center import persona_identity
+    monkeypatch.setattr(persona_identity, "resolve_chat", lambda *args, **kwargs: None)
+    agent_id, name = deputy_chat.identity({"context": object()}, SimpleNamespace())
+    normalized = chief_agent._agent_public_profile(name, agent_id)
+    assert normalized["agent_name"] == "Заместитель" and normalized["agent_id"] == "deputy"
+    persona = SimpleNamespace(persona_id="12345678-1234-4321-8765-123456789abc", display_name="Мой помощник")
+    monkeypatch.setattr(persona_identity, "resolve_chat", lambda *args, **kwargs: persona)
+    assert deputy_chat.identity({"context": object()}, SimpleNamespace()) == (persona.persona_id, persona.display_name)
+
+
 @pytest.mark.parametrize("text,expected", [
     ("Привет", False), ("Что ты умеешь?", False), ("Почему небо голубое?", False),
     ("Как написать стратегию?", False), ("Объясни разницу между риском и доходностью", False),

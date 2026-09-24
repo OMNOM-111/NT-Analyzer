@@ -1,6 +1,6 @@
 # Local Preview parity and account lifecycle
 
-Status: IN DEVELOPMENT — focused verification passed; manual acceptance and full regression pending.
+Status: IN DEVELOPMENT — Local walkthrough completed on e157b836; follow-up UX/erasure checks and full regression pending.
 Branch: `codex/shared-model-local-completion`; draft PR #291.
 Base: `ca8e663960c3887fbb5305163588bd82094769c4`, continued WIP.
 Release scope: Local only. Server, Canary and Production unchanged.
@@ -19,6 +19,10 @@ Release scope: Local only. Server, Canary and Production unchanged.
 - Before market edits: 58 market-data tests passed; source hashes retained locally.
 - Browser reproduction: fresh shared-model Preview, active trial, graph added; redistribution refusal and no candles confirmed.
 - 165 focused tests passed across Preview, Social, shared grants, Deputy presentation, OTP/auth and demo/lifecycle boundaries.
-- Remaining: concurrency/footprint checks, new Local manual walkthrough and full regression. Previous 6057/134 results do not certify this diff.
+- Clean checkpoint `e157b83611da09decf7ed358c0e883b40ebb2b7c` activated only on Local; copied-data rehearsal preserved identity/workspace and SQLite integrity; 645-file bundle passed all four gates.
+- Manual ordinary **new_user** registration (not a ready-made shared-model shortcut): own workspace and five active trial hours; visible demo candles; separate shared group; inline real Gemini response; normal answers to greeting/capabilities/question; only an explicit plan request created a task/review result. Avatar interaction completed browser speech playback; actual audible output was not independently recorded.
+- Social: eight existing public owner/organization posts visible; two disposable publications ordered newest-first above registration milestone, visible to owner as TEST/PREVIEW; owner private posts absent. Wrong account-deletion OTP rejected; correct fresh code erased the user, returned onboarding, and both test posts disappeared. Exit removed the disposable container; parent retained one TEST/PREVIEW deletion receipt and model usage. Owner MES/MNQ charts still rendered through TopstepX. Browser console had no unexpected error/warning during those checks.
+- Follow-up fixes: explicit DEMO header/price label; Deputy fallback label; separate numbered connection controls; profile modal ordering; active-usage time in cabinet; deletion retry cannot reactivate a frozen user; actual model secret/revision erasure and late usage anonymization.
+- 233 related tests passed after updating the avatar-control harness. Full regression identified that old harness plus a runtime-import allowlist omission, two source-introspection checks affected by files changing during the run, and a transient loopback socket failure. These complete modules passed on rerun. Remaining partitions and final follow-up run are still pending. Previous 6057/134 results do not certify this diff.
 
 Deployment impact: additive Development deletion registry and demo source. Production relational erasure is explicitly unavailable and not enabled here. No server migrations, secret replacements or release promotion.
