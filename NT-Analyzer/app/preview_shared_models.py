@@ -72,19 +72,25 @@ class Bridge:
                             self.send_error(403)
                             return
                         bridge.chart_connections.add(self.connection)
-                    def expire():
-                        try:
-                            self.connection.shutdown(socket.SHUT_RDWR)
-                        except OSError:
-                            pass
-                    expiry = threading.Timer(max(0.1, 1800 - (time.monotonic() - bridge.started)), expire)
-                    expiry.daemon = True
-                    expiry.start()
+                    stopped = threading.Event()
+                    def watch_preview():
+                        # Read-only charts follow the disposable process, not
+                        # the separate paid-model call budget/30-minute limit.
+                        while not stopped.wait(15):
+                            try:
+                                bridge.authorize_chart(bridge.token, path)
+                            except ContractError:
+                                try:
+                                    self.connection.shutdown(socket.SHUT_RDWR)
+                                except OSError:
+                                    pass
+                                return
+                    threading.Thread(target=watch_preview, daemon=True, name="preview-chart-lease").start()
                     try:
                         self._remote_context = owner_market_data_gateway.service_context()
                         market_data_ws_http.handle_websocket_upgrade(self)
                     finally:
-                        expiry.cancel()
+                        stopped.set()
                         with bridge.chart_lock:
                             bridge.chart_connections.discard(self.connection)
                     return
@@ -147,7 +153,7 @@ class Bridge:
         from . import dev_preview
         active = dev_preview._ACTIVE_SANDBOX or {}
         if (not runtime_env.is_development() or preview_sandbox.enabled()
-                or self.closed or time.monotonic() - self.started > 1800
+                or self.closed
                 or path not in {"/api/ops/runtime/bars", "/ws/market-data"}
                 or not hmac.compare_digest(str(supplied or ""), self.token)
                 or active.get("preview_id") != self.preview_id

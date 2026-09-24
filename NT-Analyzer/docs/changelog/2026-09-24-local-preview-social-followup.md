@@ -1,6 +1,6 @@
 # Local Preview exit, public profiles and model sharing visibility
 
-Status: IN DEVELOPMENT — focused implementation checks PASS; manual acceptance pending. Canonical common TopStep mirror implemented; current manual acceptance pending.
+Status: BETA — canonical common TopStep mirror and scoped manual Local acceptance PASS; final full-regression reconciliation in progress.
 Source baseline: `023fd4c40232b98fcef8f1cbd900fcabccc314cf`; branch `codex/shared-model-local-completion`; draft [PR #291](https://github.com/OMNOM-111/NT-Analyzer/pull/291).
 Scope: Local only. No Server, Canary, Production, permission-grant or provider-credential changes.
 
@@ -28,6 +28,9 @@ existing parent-owned Local bridge. Only candle history and market WebSocket
 paths are exposed; tokens are disposable, private alerts/accounts are excluded,
 and Exit closes chart sockets and releases leases. Normal provisioning and trial
 permissions remain the same as real accounts. There is no broad HTTP proxy.
+The read-only chart lease follows the active Preview process, rechecked every
+15 seconds, rather than inheriting the separate 30-minute paid-model-call limit.
+Exit closes it immediately; child-side trial/subscription revalidation remains.
 
 Repository reference: `docs/architecture/MARKET_DATA_USER_ENTITLEMENT_STRATEGY.md`.
 Earlier DEMO acceptance is historical and does not certify this live requirement.
@@ -56,6 +59,52 @@ No Server, Canary or Production changes are part of this task.
   posts visible, actual owner avatars loaded, private wall excluded, registration
   milestone present without an empty-wall message. One Exit action returned to
   the owner index at 8765 without a login or Preview loop; console errors absent.
-  Fresh-run acceptance of the final corrections remains pending.
+  The final fresh-run acceptance is recorded below.
 - Additional focused regressions: 70 PASS (gateway, access, Preview parity,
   first Desktop and chart template). Full regression is in progress.
+
+## Final manual Local walkthrough
+
+Implementation/runtime: clean `003e00d1d95ecc7e04c679fda26bf8c27d50f221`,
+`dev-0.10.0-beta.96-003e00d1d95e`, Local 8765. Final documentation closeout
+does not rebuild or restart this tested runtime.
+
+- A new user was created through the real Developer Preview picker and normal
+  Professional trial choice, with its own workspace and five active trial hours.
+  First Desktop opened an actual MBT chart automatically. Live candles and
+  changing price were visible; no DEMO source or stream error. Owner Desktop
+  painted all five current RTY/MES/MNQ/M2K/MYM December charts before and after QA.
+- Models showed empty **My models** separately from available shared Gemini.
+  The exact first connection showed inline checking, then a real successful
+  model response. The owner table showed two shared connections and private
+  labels on the others without opening cards.
+- Three normal Chat turns (greeting, capabilities, order-type question) produced
+  conversational Deputy replies. Only the explicit checklist commission created
+  a work task, persisted result and review actions. The current Deputy avatar
+  served as the speech control, with completed playback state and no separate
+  speech button. Audible output was not independently recorded. Memory remained
+  empty; Tasks contained only this user's check and commission.
+- Owner usage separately showed five Preview calls, 1530 input / 274 output
+  tokens and the configured free-model cost. With the Preview card already open,
+  owner sharing OFF refused the next call: "Владелец закрыл доступ к модели."
+  Successful usage stayed at five. Sharing was restored to its original ON.
+- Social showed all eight public owner/organization posts and loaded owner
+  photos. This owner's account name fields are empty, so its actual public
+  handle is used; no person's name was invented. Private wall entries were
+  absent. Two disposable posts appeared newest-first above registration and
+  were visible to the owner as TEST/PREVIEW. No empty-wall invitation appeared.
+- TopStep opened its existing development scaffold; Documents rendered the
+  product Charter. No unexpected console errors occurred in the checked flow.
+- One Exit returned directly to the original owner at `/ui/index.html`, without
+  login or a Preview loop. The disposable container and both posts disappeared.
+  The parent retained a `test-preview` / `preview_exit` receipt at
+  `2026-09-24T03:39:07Z`; private data was not retained in that receipt.
+- Original owner access projection stayed exactly equal before/after: two
+  users, one workspace, three memberships; SHA256
+  `dfcdf0b471112eb88388f3651350b5a5efb6082c172935de1209658af3011ccd`.
+  The verified front-month overlay update is an intentional Local source-config
+  correction, not a temporary permission change. Other pre-existing runtime
+  data and unrelated Preview directories were not removed.
+- Final related whole-module suite: **507 PASS**. Root secrets scan PASS;
+  646-file bundle passed all four artifact-content gates. Full native Windows
+  regression and the independent legacy runner are reconciled below at closeout.

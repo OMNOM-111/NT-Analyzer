@@ -84,6 +84,18 @@ def test_chart_history_projects_only_market_fields(monkeypatch):
                       "source": {"runtime_state": "LIVE"}, "history": {}, "freshness": {}}
 
 
+def test_active_preview_charts_outlive_model_budget_but_stop_with_process(monkeypatch):
+    bridge = _bridge(monkeypatch)
+    bridge.started -= 3600
+    bridge.authorize_chart(bridge.token, "/ws/market-data")
+    bridge.authorize_chart(bridge.token, "/api/ops/runtime/bars")
+    with pytest.raises(ContractError, match="preview_bridge_expired"):
+        bridge.dispatch("/catalog", {})
+    dev_preview._ACTIVE_SANDBOX["process"] = SimpleNamespace(poll=lambda: 0)
+    with pytest.raises(ContractError, match="preview_chart_capability_denied"):
+        bridge.authorize_chart(bridge.token, "/ws/market-data")
+
+
 def test_closing_preview_disconnects_chart_leases(monkeypatch):
     bridge = _bridge(monkeypatch)
     events = []
