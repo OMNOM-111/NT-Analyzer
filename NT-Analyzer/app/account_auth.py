@@ -2675,7 +2675,7 @@ def complete_profile(challenge_id: str, profile: Dict[str, Any], *,
         api_call("sendMessage", {"chat_id": int(snapshot["user_id"]), "text": (
             "Профиль заполнен. Полный доступ владельца — вернитесь в приложение."
             if snapshot.get("is_owner")
-            else "Профиль заполнен. Открыт полный пробный доступ на 7 дней — вернитесь в приложение."
+            else "Профиль заполнен. Открыт стартовый пробный доступ — вернитесь в приложение."
         )})
     elif awaiting_owner:
         _send_owner_approval(api_call, owner_chat_id, snapshot, cid)
@@ -2695,7 +2695,7 @@ def _notify_owner_new_user(api_call: Callable[..., Any], owner_chat_id: str,
             "🆕 <b>Новый пользователь StratForge AI</b>\n"
             f"<b>{label}</b> · id <code>{uid}</code> · @{html.escape(str(user.get('username') or '—'))}\n"
             f"E-mail: <code>{html.escape(str(user.get('email') or ''))}</code>\n"
-            "Открыт полный пробный доступ на 7 дней. Продлить период можно в карточке пользователя."
+            "Открыт стартовый пробный доступ. Лимит активного времени можно посмотреть в карточке пользователя."
         ),
         "reply_markup": {"inline_keyboard": [[
             {"text": "⛔ Заблокировать", "callback_data": f"account_revoke:{uid}"},
@@ -3471,7 +3471,7 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
             "login_approved": (
                 "Личность подтверждена. Вернитесь в приложение — полный доступ владельца."
                 if snapshot.get("is_owner")
-                else "Личность подтверждена. Вернитесь в приложение — открыт полный пробный доступ на 7 дней."
+                else "Личность подтверждена. Вернитесь в приложение — открыт стартовый пробный доступ."
             ),
             "account_blocked": "Доступ к StratForge AI ограничен владельцем.",
         }

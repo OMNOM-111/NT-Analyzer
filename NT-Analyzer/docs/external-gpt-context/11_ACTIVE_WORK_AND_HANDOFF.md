@@ -1,17 +1,17 @@
 # 11. Active Work and Handoff
 
-Active Local work: [Preview parity/account lifecycle](../changelog/2026-09-23-preview-parity-account-lifecycle.md). User confirmed demo/replay, no owner live redistribution. Ordinary registration permissions; public surfaces shared, private data isolated. Remaining: clean Preview/owner browser walkthrough, deletion/reset receipts and full regression. No server/Canary/Production work authorized.
+Scoped Local work completed: **BETA** — [Preview parity/account lifecycle](../changelog/2026-09-23-preview-parity-account-lifecycle.md). Demo/replay only, no owner live redistribution. Ordinary registration permissions; public surfaces shared, private data isolated. Fresh Preview/owner browser walkthrough, deletion/reset/exit receipts and full regression PASS. Test containers removed; owner access snapshot unchanged. Owner review and remote CI remain separate. No server/Canary/Production work authorized.
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 9bf69e3d878fd0ec44c0c8084e062c289744c143 (clean beta.96 runtime; model-card/Deputy Chat browser acceptance, 368 focused/related tests; full coverage 6057 passed / 134 skipped after render-harness correction, no unresolved failures)
-- Local verification UTC: 2026-09-23T05:56:00Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
+- Local source verified SHA: 2421b2108fcc9e799917052d940b766f3d265ae5 (accepted implementation; final closeout only corrects stale trial copy and documents acceptance; 6066 passed / 134 skipped across 292 files after complete affected-module reruns; real Preview/owner walkthrough PASS)
+- Local verification UTC: 2026-09-24T01:21:00Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
 - Historical UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
 - Historical protected Local program snapshot: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 was active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. New unified-source evidence is separate below; full-program/owner acceptance remains open.
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Protected Local branch snapshot: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; the active final branch is identified below, while #285 is an accepted integration input
-- Version: `0.10.0-beta.96`, `pre_release`; clean `9bf69e3d` active on Local 8765, no Canary/Production promotion
+- Version: `0.10.0-beta.96`, `pre_release`; accepted implementation `2421b210` on Local 8765 (including the final trial-copy/documentation closeout), no Canary/Production promotion
 - Integration state: scoped model/domain/Chat/NT/Desktop, real fact handoff, manual discussion, separate application observations, Consensus and Court verified; owner-dependent and full-program work remain
 - Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
