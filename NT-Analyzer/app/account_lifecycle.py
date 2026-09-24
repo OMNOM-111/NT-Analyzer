@@ -52,6 +52,15 @@ def record_deletion(user, reason, *, preview=False):
                 user_uuid TEXT PRIMARY KEY, legacy_user_id INTEGER, identifier_fingerprint TEXT NOT NULL,
                 created_at_utc TEXT NOT NULL, deleted_at_utc TEXT NOT NULL, reason TEXT NOT NULL,
                 account_type TEXT NOT NULL, security_flags TEXT NOT NULL)""")
+            if db.execute("PRAGMA user_version").fetchone()[0] < 2:
+                # The first Local Preview bridge observed the forced freeze
+                # instead of the pre-deletion status. A self-confirmed removal
+                # necessarily came from an active session. Repair only those
+                # synthetic receipts; do not infer real-account security flags.
+                db.execute("UPDATE deleted_accounts SET security_flags=? WHERE account_type='test-preview' "
+                           "AND reason='self_requested' AND security_flags=?",
+                           (json.dumps({"previously_blocked": False}), json.dumps({"previously_blocked": True})))
+                db.execute("PRAGMA user_version=2")
             db.execute("""INSERT OR IGNORE INTO deleted_accounts VALUES (?,?,?,?,?,?,?,?)""",
                 (uid, int(user.get("user_id") or 0), fingerprint, str(user.get("created_at_utc") or ""),
                  account_auth._now_iso(), reason, "test-preview" if preview else "real",
@@ -311,3 +320,20 @@ def record_terminated_preview(container, preview_id):
     """Parent receipt fallback after terminating a disposable child process."""
     for user in preview_accounts(container, preview_id):
         record_deletion(user, "preview_replaced", preview=True)
+
+
+def active_preview_identities():
+    """Parent-only identity presence for historical Preview usage attribution."""
+    from . import dev_preview
+    if not runtime_env.is_development():
+        return None
+    active = dev_preview._ACTIVE_SANDBOX
+    if not active or not dev_preview._process_alive(active):
+        return set()
+    container = dev_preview._validated_preview_container(active)
+    if not container:
+        return None  # Uncertain state is not proof of deletion.
+    try:
+        return {account_auth._user_uuid(user) for user in preview_accounts(container, active["preview_id"])}
+    except (OSError, ValueError, account_auth.AccountAuthError):
+        return None

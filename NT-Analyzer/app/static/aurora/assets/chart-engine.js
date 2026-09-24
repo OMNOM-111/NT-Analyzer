@@ -972,7 +972,15 @@
         this.host.dataset.renderedPriceMarkerText = label;
         this.host.dataset.renderedPriceMarkerColor = tagColor;
         this.host.dataset.renderedPriceMarkerLive = String(live);
-        this._axisTag(ctx, P, plotW, y, L.axisW, label, tagColor);
+        // The explicit demo suffix is wider than the normal price axis.
+        // Let only that badge extend left into the plot, never beyond canvas.
+        let tagW = L.axisW;
+        if (!live && this.nonLivePriceLabel === 'DEMO') {
+          ctx.save(); ctx.font = '10px Inter, system-ui, sans-serif';
+          tagW = Math.max(tagW, Math.ceil(ctx.measureText(label).width) + 12);
+          ctx.restore();
+        }
+        this._axisTag(ctx, P, plotW - (tagW - L.axisW), y, tagW, label, tagColor);
       }
 
       this._geometry = { start, end, vis, barW, plotW, yOf, lo, hi, main, rows: L.rows, xOf, priceBottom: L.priceBottom };

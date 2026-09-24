@@ -1083,6 +1083,8 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         const used = rows(usage.by_others?.by_caller).filter(row => ownIds.has(row.model_id));
         html += used.length ? `<h4>Использование другими</h4><table class="aw-mini-table"><thead><tr><th>Кто</th><th>Вызовов</th><th>Токены вх/вых</th><th>Стоимость</th><th>Последний</th></tr></thead><tbody>${used.map(row => `<tr><td>${esc(row.caller_name || 'Пользователь')}</td><td>${count(row.calls)}</td><td>${tokens(row)}</td><td>${spend(row)}</td><td>${esc(date(row.last_at))}</td></tr>`).join('')}</tbody></table><p class="aw-muted">Отдельно от ваших собственных запросов. Чужие чаты, память и задачи здесь не видны.</p>`
           : on ? '<p class="aw-muted">Другие пользователи этой моделью ещё не пользовались.</p>' : '';
+        const recent = rows(usage.by_others?.recent).filter(row => ownIds.has(row.model_id));
+        if (recent.length) html += `<details><summary>История общих вызовов</summary><table class="aw-mini-table"><thead><tr><th>Когда / кто</th><th>Задача / агент</th><th>Итог</th><th>Токены вх/вых</th><th>Стоимость</th></tr></thead><tbody>${recent.map(row => `<tr><td>${esc(date(row.at))}<br>${esc(row.caller_name || 'Пользователь')}</td><td>${esc(row.task || 'Разговор')}<br>${esc(row.agent || 'Проверка модели')}</td><td>${esc(row.status)}</td><td>${tokens(row)}</td><td>${row.cost_usd == null ? 'Цена неизвестна' : esc(cost(row.cost_usd))}</td></tr>`).join('')}</tbody></table><p class="aw-muted">Идентификаторы используются для учёта. Содержимое чужих поручений и диалогов не раскрывается.</p></details>`;
       }
       if (theirs.length) {
         html += `<p class="aw-note">${esc(theirs[0].note || 'Общая модель: ключ и настройки подключения остаются у владельца.')}</p>`;

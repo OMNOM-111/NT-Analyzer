@@ -121,7 +121,10 @@ class Bridge:
                              if account_auth._user_uuid(row) == uid and row.get("user_id") == user.get("user_id")), None)
             if original is None:
                 raise ContractError("preview_bridge_scope_invalid")
-            return account_lifecycle.record_deletion(original, str(body["reason"]), preview=True)
+            with self.lock:
+                result = account_lifecycle.record_deletion(original, str(body["reason"]), preview=True)
+                self.results = {key: value for key, value in self.results.items() if key[0] != uid}
+                return result
         from .ai_control_center import model_sharing, contracts as c
         from .ai_control_center.model_service import ModelService
         from .ai_control_center.model_execution import ModelExecutor
@@ -141,6 +144,9 @@ class Bridge:
             if path != "/invoke" or set(body) != {"handle", "user_uuid", "workspace_id", "task_id", "agent", "prompt", "system_prompt"}:
                 raise ContractError("preview_bridge_invalid_request")
             uid = str(UUID(body["user_uuid"]))
+            from . import account_lifecycle
+            if uid in account_lifecycle.deleted_ids():
+                raise ContractError("model_caller_deleted")
             if account_auth.find_active_user_by_uuid(uid) is not None:
                 raise ContractError("preview_bridge_existing_identity_denied")
             workspace = str(body["workspace_id"])

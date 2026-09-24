@@ -20,6 +20,15 @@ vm.runInContext(source.slice(end, source.indexOf('    function modelRows(', end)
 const multiple = ctx.modelCallButtons([{id:'shared-one', ownership:'shared', actions:['test']}, {id:'shared-two', ownership:'shared', actions:['test']}]);
 assert.match(multiple, /Общее подключение 1/); assert.match(multiple, /Общее подключение 2/);
 assert.match(multiple, /data-aw-inline-test="shared-one"/); assert.match(multiple, /data-aw-inline-test="shared-two"/);
+const shareBegin = source.indexOf('    function shareSection(');
+vm.runInContext(source.slice(shareBegin, source.indexOf('    async function toggleShare(', shareBegin)), ctx);
+Object.assign(ctx, {count: String, cost: String, date: String});
+const sharing = ctx.shareSection([{id:'mine', actions:['unshare'], shared:true}], '', {shared_usage:{by_others:{
+    by_caller:[{model_id:'mine', caller_name:'Удалённый пользователь', calls:1, input_tokens:12, output_tokens:3, cost_usd:0.02}],
+    recent:[{model_id:'mine', caller_name:'Удалённый пользователь', task:'opaque-task', agent:'deputy', status:'success', input_tokens:12, output_tokens:3, cost_usd:0.02},
+        {model_id:'someone-else', task:'foreign-private-reference'}]}}});
+assert.match(sharing, /История общих вызовов/); assert.match(sharing, /opaque-task/); assert.match(sharing, /deputy/);
+assert.doesNotMatch(sharing, /foreign-private-reference/);
 const success = {task: {id: 'test-id', status: 'succeeded'}, evaluation: {passed: true}, actual_model: 'real-version', result_text: 'CONNECTION_OK', synthetic: false};
 (async () => {
     let release; pendingPost = new Promise(resolve => {release = resolve;});

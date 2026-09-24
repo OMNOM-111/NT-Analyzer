@@ -153,3 +153,38 @@ def test_unsupported_storage_refuses_before_freezing_identity(preview_env, monke
     with pytest.raises(account_auth.AccountAuthError, match="адаптер"):
         account_lifecycle.erase(uid, reason="self_requested")
     assert account_auth.find_active_user(uid) and account_auth.local_session_is_active(sid, uid)
+
+
+def test_legacy_finished_preview_usage_is_deleted_without_invented_registry_identity(preview_env, monkeypatch):
+    monkeypatch.setattr(account_lifecycle, "active_preview_identities", lambda: {"current-preview"})
+    with model_sharing._db() as db:
+        for caller in ("current-preview", "old-preview"):
+            db.execute("INSERT INTO calls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (
+                caller, "model", "owner", "owner-ws", caller, "Preview " + caller, "test-ws",
+                "task", "deputy", "chat", "success", 12, 5, .02, 1, "2026-09-23"))
+    rows = {row["caller_user_uuid"]: row for row in model_sharing.owner_usage("owner")["by_caller"]}
+    assert rows["old-preview"]["caller_name"] == "Удалённый пользователь"
+    assert rows["current-preview"]["caller_name"] == "Preview current-preview"
+    assert account_lifecycle.registry_rows() == []  # No guessed email/fingerprint.
+
+
+def test_parent_receipt_clears_only_deleted_identity_response_cache(preview_env, monkeypatch):
+    import threading
+    import time
+    from app import dev_preview, preview_shared_models
+    uid, canonical, sid = _registered()
+    user = account_auth._user(account_auth._read_doc(), uid)
+    bridge = object.__new__(preview_shared_models.Bridge)
+    bridge.closed = False
+    bridge.started = time.monotonic()
+    bridge.preview_id = "a1b2c3d4e5f60718293a4b5c"
+    bridge.lock = threading.Lock()
+    bridge.results = {(canonical, "ws", "task"): ("hash", {"response": "private answer"}),
+                      ("other", "ws", "task"): ("hash", {"response": "other answer"})}
+    monkeypatch.setattr(account_auth, "find_active_user_by_uuid", lambda value: None)
+    monkeypatch.setattr(dev_preview, "_ACTIVE_SANDBOX", {"preview_id": bridge.preview_id})
+    monkeypatch.setattr(dev_preview, "_validated_preview_container", lambda record: preview_env)
+    monkeypatch.setattr(account_lifecycle, "preview_accounts", lambda *args: [user])
+    monkeypatch.setattr(account_lifecycle, "record_deletion", lambda *args, **kwargs: {"ok": True})
+    bridge.dispatch("/account-deleted", {"user": {key: user.get(key) for key in ("user_id", "user_uuid", "email", "created_at_utc")}, "reason": "preview_reset"})
+    assert set(bridge.results) == {("other", "ws", "task")}

@@ -316,10 +316,12 @@ def owner_usage(owner_user_uuid: str, *, limit: int = 50) -> Dict[str, Any]:
             "SELECT * FROM calls WHERE owner_user_uuid = ? AND caller_user_uuid != ? ORDER BY at DESC",
             (str(owner_user_uuid), str(owner_user_uuid))) if db is not None else [])]
     groups: Dict[tuple, List[Dict[str, Any]]] = {}
-    from ..account_lifecycle import deleted_ids
+    from ..account_lifecycle import deleted_ids, active_preview_identities
     deleted = deleted_ids()
+    active_preview = active_preview_identities() if any(row["caller_name"].startswith("Preview ") for row in rows) else None
     for row in rows:
-        if row["caller_user_uuid"] in deleted:
+        if row["caller_user_uuid"] in deleted or (active_preview is not None
+                and row["caller_name"].startswith("Preview ") and row["caller_user_uuid"] not in active_preview):
             row["caller_name"] = "Удалённый пользователь"
         groups.setdefault((row["model_id"], row["caller_user_uuid"]), []).append(row)
     by_caller = [{"model_id": model_id, "caller_user_uuid": person, "caller_name": items[0]["caller_name"],

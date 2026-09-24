@@ -1691,6 +1691,11 @@
         qsa('[data-preview-control]', bar).forEach(item => { item.disabled = true; });
         try {
           const out = await action();
+          if (['reset', 'new-user', 'exit'].includes(button.dataset.previewControl)) {
+            // This branch runs only on the disposable Preview origin.
+            // Its browser state must die with the corresponding server data.
+            try { localStorage.clear(); sessionStorage.clear(); } catch (_) { /* unavailable storage */ }
+          }
           location.assign((out && out.redirect_url) || '/ui/');
         } catch (error) {
           reportError(error);

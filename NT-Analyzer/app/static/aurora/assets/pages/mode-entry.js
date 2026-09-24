@@ -101,6 +101,9 @@
       active_user: 'Активный пользователь',
       trusted_device: 'Доверенное устройство',
       pending_access: 'Новый неподтверждённый доступ',
+      shared_models_user: 'Новый пользователь · общие модели',
+      ai_denied_user: 'Новый пользователь · AI запрещён',
+      agent_world_operator: 'Синтетический оператор Agent World',
     };
     const scenario = String(previewContext.scenario || 'new_user');
     const bar = document.createElement('div');
@@ -138,11 +141,14 @@
     });
     bar.append(tag, role, note, actions);
     document.body.appendChild(bar);
-    const run = async (action) => {
+    const run = async (action, eraseBrowserState = true) => {
       Array.from(actions.querySelectorAll('button')).forEach(button => { button.disabled = true; });
       setStatus('Обновляю Preview sandbox…');
       try {
         const out = await action();
+        if (eraseBrowserState) {
+          try { localStorage.clear(); sessionStorage.clear(); } catch (_) { /* unavailable storage */ }
+        }
         window.location.assign((out && out.redirect_url) || '/ui/');
       } catch (error) {
         setStatus((error && error.message) || 'Preview sandbox недоступен.');
@@ -151,7 +157,7 @@
     };
     actions.querySelector('[data-preview-control="reset"]').onclick = () => run(() => window.API.http.previewSandboxReset(scenario));
     actions.querySelector('[data-preview-control="new-user"]').onclick = () => run(() => window.API.http.previewSandboxNewUser());
-    actions.querySelector('[data-preview-control="new-client"]').onclick = () => run(() => window.API.http.previewSandboxSimulateClient());
+    actions.querySelector('[data-preview-control="new-client"]').onclick = () => run(() => window.API.http.previewSandboxSimulateClient(), false);
     actions.querySelector('[data-preview-control="exit"]').onclick = () => run(() => window.API.http.previewSandboxExit());
   }
 
