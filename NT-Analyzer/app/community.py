@@ -1101,7 +1101,8 @@ def _current_profile_identity(row):
         account = account_auth._user(account_auth._read_doc_reference(), uid) or {}
     name = " ".join(str(account.get(key) or "").strip() for key in ("first_name", "last_name")
                     if str(account.get(key) or "").strip() not in {"", "—", "-"})
-    name = name or str(account.get("handle") or account.get("username") or "")
+    name = name or str(account.get("google_name") or account.get("handle")
+                       or account.get("username") or row.get("username") or "")
     current = str(row.get("display_name") or "").strip()
     generated = not current or current in {"Участник", "Владелец"} or current.startswith("Участник ")
     out = dict(row)

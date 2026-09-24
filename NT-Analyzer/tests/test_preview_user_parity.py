@@ -226,3 +226,9 @@ def test_generated_social_name_refreshes_but_custom_name_survives(preview_env, m
     photo.write_bytes(b"photo")
     monkeypatch.setattr(account_auth, "avatar_file", lambda value: photo if value == uid else None)
     assert community._current_profile_identity(row)["has_avatar"] is True
+    with account_auth._LOCK:
+        doc = account_auth._read_doc()
+        account_auth._user(doc, uid).update(first_name="", last_name="", google_name="Public Google Name")
+        account_auth._write_doc(doc)
+    generated = {"user_id": uid, "display_name": "Участник 1234", "username": "chosen_handle"}
+    assert community._current_profile_identity(generated)["display_name"] == "Public Google Name"

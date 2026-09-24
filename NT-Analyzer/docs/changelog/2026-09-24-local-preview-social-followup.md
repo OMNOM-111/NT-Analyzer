@@ -36,3 +36,26 @@ No Server, Canary or Production changes are part of this task.
 ## Verification
 
 209 tests passed across complete Preview, Social, model-inline and Aurora contract modules, including new regressions for real avatars, names, registration-only walls, session preservation, stale Preview ids and response/shutdown ordering. 105 additional chat/shared/market boundary tests PASS. Real browser acceptance is recorded at closeout. Previous full-regression counts remain bound to the previous code.
+
+## Additional defects found in the real browser walkthrough
+
+- A first-ever Desktop deliberately created an empty layout. It now uses the
+  existing chart-opening path to show a live chart immediately; a saved layout
+  that the user emptied intentionally stays empty.
+- The Local owner's five index charts resolved through an older upstream catalog
+  to September contracts with no live bars. The existing Local front-month
+  overlay was refreshed for MES/MNQ/RTY/M2K/MYM only after the same gateway
+  returned real December one-minute candles for each at 2026-09-24T03:14Z.
+  The original overlay is preserved in a local artifact, never committed.
+  A bare-root history miss can retry that existing catalog's current contract;
+  explicit fixed historical contracts are never silently substituted. No new
+  provider connection or server change is involved.
+- Social now also uses the linked Google profile name when account first/last
+  name is empty, then the public handle, while preserving user-chosen names.
+- Preview run on 5292a2ec: actual MBT candles painted, eight public owner/organization
+  posts visible, actual owner avatars loaded, private wall excluded, registration
+  milestone present without an empty-wall message. One Exit action returned to
+  the owner index at 8765 without a login or Preview loop; console errors absent.
+  Fresh-run acceptance of the final corrections remains pending.
+- Additional focused regressions: 70 PASS (gateway, access, Preview parity,
+  first Desktop and chart template). Full regression is in progress.

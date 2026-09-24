@@ -270,6 +270,7 @@ UI.ready(async function () {
   viewport.appendChild(emptyEl);
 
   // ---- runtime state -----------------------------------------------------
+  let firstDesktopOpen = false;
   let store = loadStore();
   let layout = store.layouts[store.activeId];
   let template = loadTemplate();
@@ -286,7 +287,8 @@ UI.ready(async function () {
     let raw = null;
     try { raw = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch (e) { raw = null; }
     if (raw && raw.layouts && raw.activeId && raw.layouts[raw.activeId]) return migrate(raw);
-    // first ever open → single empty workspace
+    // First visit opens a real chart; an intentionally emptied saved layout stays empty.
+    firstDesktopOpen = true;
     const id = 'w' + Date.now();
     return {
       activeId: id,
@@ -2905,4 +2907,5 @@ UI.ready(async function () {
   try { localStorage.removeItem('desktop.contract-refresh-day'); } catch (e) { /* ignore */ }
   mountLayout();
   refreshContractsIfDue();
+  if (firstDesktopOpen) ensureAnyWindow().catch(() => toast('Не удалось открыть начальный график. Попробуйте «+ График».'));
 });
