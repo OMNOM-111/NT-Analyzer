@@ -141,7 +141,7 @@
     });
     bar.append(tag, role, note, actions);
     document.body.appendChild(bar);
-    const run = async (action, eraseBrowserState = true) => {
+    const run = async (action, eraseBrowserState = true, exiting = false) => {
       Array.from(actions.querySelectorAll('button')).forEach(button => { button.disabled = true; });
       setStatus('Обновляю Preview sandbox…');
       try {
@@ -149,8 +149,13 @@
         if (eraseBrowserState) {
           try { localStorage.clear(); sessionStorage.clear(); } catch (_) { /* unavailable storage */ }
         }
-        window.location.assign((out && out.redirect_url) || '/ui/');
+        window.location.replace((out && out.redirect_url) || '/ui/');
       } catch (error) {
+        if (exiting && previewContext.exit_url) {
+          try { localStorage.clear(); sessionStorage.clear(); } catch (_) { /* unavailable storage */ }
+          window.location.replace(previewContext.exit_url);
+          return;
+        }
         setStatus((error && error.message) || 'Preview sandbox недоступен.');
         renderPreviewBanner();
       }
@@ -158,7 +163,7 @@
     actions.querySelector('[data-preview-control="reset"]').onclick = () => run(() => window.API.http.previewSandboxReset(scenario));
     actions.querySelector('[data-preview-control="new-user"]').onclick = () => run(() => window.API.http.previewSandboxNewUser());
     actions.querySelector('[data-preview-control="new-client"]').onclick = () => run(() => window.API.http.previewSandboxSimulateClient(), false);
-    actions.querySelector('[data-preview-control="exit"]').onclick = () => run(() => window.API.http.previewSandboxExit());
+    actions.querySelector('[data-preview-control="exit"]').onclick = () => run(() => window.API.http.previewSandboxExit(), true, true);
   }
 
   function label(mode) { return mode === 'beginner' ? 'Студент' : 'Профессионал'; }

@@ -17,6 +17,8 @@
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
+Current follow-up: [Local Preview/Social fixes and live-source blocker](../changelog/2026-09-24-local-preview-social-followup.md). New onboarding now requires real live charts; earlier DEMO acceptance does not satisfy this requirement. Live source is EXTERNAL BLOCKED: TopStep source-policy gates false, Databento placeholder, other live adapters simulation. No provider permissions or server state changed. Social/avatar, explicit model sharing state and robust owner-session return are being verified on Local.
+
 Current scoped Local status: **BETA** — [Preview parity/account lifecycle](../changelog/2026-09-23-preview-parity-account-lifecycle.md), continuing `ca8e6639`. Demo trial charts, shared-model labelling, current Deputy/avatar speech, public Social projection and confirmed Local account erasure passed manual acceptance and regression. Preview uses normal registration/trial with disposable private stores; public posts/shared models remain common. Exit/Reset erases private data while minimal deletion receipts and anonymous usage survive. Production relational erasure is unavailable; no live TopStep redistribution was enabled.
 
 Local chart incident (2026-09-23): the pinned Local supervisor claimed the Production public origin and isolated its chart gateway. The scoped correction uses the actual loopback listener; targeted tests PASS; correction preserved in the 0a9bcf09 baseline and subsequent Local UX checkpoint, owner Desktop TopstepX charts verified. Production supplied real MET candles during an authorized read. [Incident and exact scope](../changelog/2026-09-23-local-chart-gateway.md).
@@ -400,7 +402,6 @@ and trial page navigation passed. Owner Chat pages 181 saved messages without
 large-history rendering timeouts; collapse/reopen and console checks passed on
 the actual Local origin. Final native Windows regression passed: 6044 passed / 134 skipped / 0 failures; bundle/context/root-secret checks PASS.
 Market-data/trading permissions are unchanged. TopStep strategy tab is IN DEVELOPMENT. Canonical evidence: [new-user Local completion](../changelog/2026-09-23-new-user-local-completion.md).
-
 
 Local UX follow-up (2026-09-23): model checks now show progress/result inside
 an open card, with collapsible diagnostics and no duplicate connection button.

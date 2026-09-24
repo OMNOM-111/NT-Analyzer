@@ -42,7 +42,7 @@ def run(port: int) -> None:
             pass
     print(f"[preview-sandbox] ready http://127.0.0.1:{port}/ui/", flush=True)
     def exit_when_requested():
-        preview_sandbox._EXIT_REQUESTED.wait()
+        preview_sandbox._EXIT_RESPONSE_SENT.wait()
         httpd.shutdown()
     threading.Thread(target=exit_when_requested, daemon=True, name="preview-exit").start()
     try:

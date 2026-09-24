@@ -58,3 +58,14 @@ const success = {task: {id: 'test-id', status: 'succeeded'}, evaluation: {passed
     assert.match(box.innerHTML, /Модель отвечает/);
     console.log('PASS');
 })().catch(error => {console.error(error); process.exitCode = 1;});
+
+const sharingLabelStart = source.indexOf('    function labSharingLabel(');
+vm.runInContext(source.slice(sharingLabelStart, source.indexOf('    function labModelRow(', sharingLabelStart)), ctx);
+ctx.items = doc => doc.items || [];
+let modelCatalog = {items:[{registry_id:'shared-registry',shared:true},{registry_id:'private-registry',shared:false}]};
+ctx.cachedDomain = () => modelCatalog;
+assert.equal(ctx.labSharingLabel({id:'shared-registry'}),'Общая · вы делитесь');
+assert.equal(ctx.labSharingLabel({id:'private-registry'}),'Приватная');
+assert.equal(ctx.labSharingLabel({id:'unbound'}),'Приватная');
+modelCatalog = {unavailable:true};
+assert.equal(ctx.labSharingLabel({id:'shared-registry'}),'Доступ уточняется');

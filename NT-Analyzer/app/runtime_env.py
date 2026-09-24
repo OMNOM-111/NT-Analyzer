@@ -495,11 +495,13 @@ def preview_public_metadata() -> Dict[str, Any]:
     if not preview_sandbox_enabled():
         return {"enabled": False}
     scenario = str(os.environ.get("STRATFORGE_PREVIEW_SCENARIO") or "new_user").strip()
+    from . import preview_sandbox
     return {
         "enabled": True,
         "id": str(os.environ.get("STRATFORGE_PREVIEW_ID") or ""),
         "scenario": scenario,
         "label": "PREVIEW / TEST USER",
+        "exit_url": preview_sandbox.exit_url(),
         "synthetic": True,
         "external_side_effects": ("shared_models_only" if scenario != "agent_world_operator"
                                   and os.environ.get("STRATFORGE_PREVIEW_MODEL_BRIDGE")

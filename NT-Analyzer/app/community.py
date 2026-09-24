@@ -1091,6 +1091,27 @@ def _social_blocked(doc: Dict[str, Any], left: str, right: str) -> bool:
     )
 
 
+def _current_profile_identity(row):
+    """Refresh generated placeholders from the account; preserve chosen names."""
+    if row.get("_preview_public_projection"):
+        return row
+    from . import account_auth
+    uid = _safe_int(row.get("user_id"))
+    with account_auth._LOCK:
+        account = account_auth._user(account_auth._read_doc_reference(), uid) or {}
+    name = " ".join(str(account.get(key) or "").strip() for key in ("first_name", "last_name")
+                    if str(account.get(key) or "").strip() not in {"", "—", "-"})
+    name = name or str(account.get("handle") or account.get("username") or "")
+    current = str(row.get("display_name") or "").strip()
+    generated = not current or current in {"Участник", "Владелец"} or current.startswith("Участник ")
+    out = dict(row)
+    if name and generated and not row.get("display_name_custom"):
+        out["display_name"] = name[:80]
+    if account:
+        out["has_avatar"] = account_auth.avatar_file(uid) is not None
+    return out
+
+
 def _profile_payload(
     row: Dict[str, Any], viewer_profile_id: str, *,
     followers: int, following: int, posts: int, blocked: bool,
@@ -1104,6 +1125,7 @@ def _profile_payload(
     follow predicates are supplied by the caller, because only their *source*
     differs.
     """
+    row = _current_profile_identity(row)
     pid = str(row.get("profile_id") or "")
     is_self = bool(viewer_profile_id and pid == viewer_profile_id)
     profile_visibility = str(row.get("profile_visibility") or "network")
@@ -1206,6 +1228,7 @@ def update_social_profile(
             if not clean_name or len(clean_name) > 80:
                 raise CommunityError("Имя профиля должно содержать от 1 до 80 символов.")
             row["display_name"] = clean_name
+            row["display_name_custom"] = True
         if username is not None:
             clean_username = str(username or "").strip().lstrip("@").lower()
             if not _PROFILE_USERNAME_RE.fullmatch(clean_username):
@@ -2683,7 +2706,7 @@ def social_avatar(profile_id: str) -> Optional[Path]:
     """Resolve a profile avatar internally without exposing account identifiers."""
     with _LOCK:
         row = _profile_row(_load(), profile_id)
-        if row is None or not row.get("has_avatar"):
+        if row is None:
             return None
         user_id = _safe_int(row.get("user_id"))
     if user_id <= 0:

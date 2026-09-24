@@ -289,3 +289,30 @@ def test_non_owner_cannot_mint_bootstrap(dev_store):
     with pytest.raises(dev_preview.DevPreviewError) as excinfo:
         dev_preview.mint_bootstrap_token(ordinary_uid)
     assert excinfo.value.code == "owner_required"
+
+
+@pytest.mark.parametrize("same_preview", [True, False])
+def test_return_reuses_owner_session_and_never_stops_newer_preview(dev_store, monkeypatch, same_preview):
+    from types import SimpleNamespace
+    token = account_auth.create_session_for_user(999, ip="127.0.0.1", source="local-owner", device_confirmation_required=False)["session_token"]
+    before = len(account_auth._read_doc()["sessions"])
+    headers, stopped = [], []
+    monkeypatch.setattr(dev_preview, "_ACTIVE_SANDBOX", {"preview_id":"expected" if same_preview else "newer"})
+    monkeypatch.setattr(dev_preview, "_stop_active_sandbox_locked", lambda **kw: stopped.append(kw))
+    monkeypatch.setattr(dev_preview, "return_to_developer", lambda **kw: pytest.fail("owner session replaced"))
+    handler = object.__new__(server.Handler)
+    handler.path = "/api/dev/preview/return?preview_id=expected"
+    handler.headers = {}
+    handler._extra_headers = []
+    handler._request_ips = lambda: ("127.0.0.1", "")
+    handler._is_remote_api_request = lambda: False
+    handler._cookie_value = lambda name: token
+    handler.send_response = lambda code: None
+    handler.send_header = lambda *value: headers.append(value)
+    handler.end_headers = lambda: None
+    handler._dev_preview_return()
+    assert len(account_auth._read_doc()["sessions"]) == before
+    assert not any(name == "Set-Cookie" and value.startswith(runtime_env.session_cookie_name()+"=") for name,value in headers)
+    assert account_auth.authenticate_session(token)["is_owner"]
+    assert len(stopped) == int(same_preview)
+    assert ("Location", "/ui/index.html") in headers

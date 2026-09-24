@@ -17,6 +17,8 @@ Scoped Local work completed: **BETA** — [Preview parity/account lifecycle](../
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 
+Current follow-up: [Local Preview/Social fixes and live-source blocker](../changelog/2026-09-24-local-preview-social-followup.md). New onboarding now requires real live charts; earlier DEMO acceptance does not satisfy this requirement. Live source is EXTERNAL BLOCKED: TopStep source-policy gates false, Databento placeholder, other live adapters simulation. No provider permissions or server state changed. Social/avatar, explicit model sharing state and robust owner-session return are being verified on Local.
+
 Local chart recovery (2026-09-23), branch `codex/fix-local-chart-gateway`: the supervisor origin correction is preserved in the 0a9bcf09 baseline and subsequent Local UX checkpoint; owner Desktop TopstepX charts were verified. The separate chart PR keeps its own closeout. Preserve TopstepX/SignalR and entitlement gates. Saved MBT 08-26 and the empty MNQ probe remain separate contract/provider observations. [Canonical incident](../changelog/2026-09-23-local-chart-gateway.md).
 
 - Isolated memory handoff (2026-09-21): `codex/unified-memory-service` adds the
@@ -577,7 +579,6 @@ and trial page navigation passed. Owner Chat pages 181 saved messages without
 large-history rendering timeouts; collapse/reopen and console checks passed on
 the actual Local origin. Final native Windows regression passed: 6044 passed / 134 skipped / 0 failures; bundle/context/root-secret checks PASS.
 Market-data/trading permissions are unchanged. TopStep strategy tab is IN DEVELOPMENT. Canonical evidence: [new-user Local completion](../changelog/2026-09-23-new-user-local-completion.md).
-
 
 Local UX follow-up (2026-09-23): model checks now show progress/result inside
 an open card, with collapsible diagnostics and no duplicate connection button.

@@ -1696,8 +1696,13 @@
             // Its browser state must die with the corresponding server data.
             try { localStorage.clear(); sessionStorage.clear(); } catch (_) { /* unavailable storage */ }
           }
-          location.assign((out && out.redirect_url) || '/ui/');
+          location.replace((out && out.redirect_url) || '/ui/');
         } catch (error) {
+          if (button.dataset.previewControl === 'exit' && PREVIEW_CONTEXT.exit_url) {
+            try { localStorage.clear(); sessionStorage.clear(); } catch (_) { /* unavailable storage */ }
+            location.replace(PREVIEW_CONTEXT.exit_url);
+            return;
+          }
           reportError(error);
           qsa('[data-preview-control]', bar).forEach(item => { item.disabled = false; });
           const newClient = qs('[data-preview-control="new-client"]', bar);

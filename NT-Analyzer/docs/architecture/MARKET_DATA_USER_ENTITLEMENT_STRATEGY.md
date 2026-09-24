@@ -1,6 +1,8 @@
 # StratForge Market Data Pivot: Bring Your Own Market Data (BYOMD)
 
-Local onboarding demo source: BETA (Local), [manual acceptance PASS](../changelog/2026-09-23-preview-parity-account-lifecycle.md).
+Current onboarding live-source requirement: EXTERNAL BLOCKED, see [Local source audit](../changelog/2026-09-24-local-preview-social-followup.md). The prior synthetic fallback below is historical implementation, not accepted as the ordinary-user product result. No authorized replacement source is configured yet.
+
+Historical demo implementation: [prior manual acceptance](../changelog/2026-09-23-preview-parity-account-lifecycle.md).
 An active bounded trial with chart capability and no own live provider receives
 `demo_replay` when redistribution is not authorized: deterministic synthetic
 educational candles, explicitly DEMO, never provider quotes. Normal and Preview

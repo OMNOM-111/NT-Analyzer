@@ -1711,11 +1711,18 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         + `<div class="aw-table-wrap"><table class="aw-lab-table aw-place-table"><thead><tr><th>Модель</th>${PLACE_COLUMNS.map(([, title]) => `<th>${esc(title)}</th>`).join('')}</tr></thead>`
         + `<tbody>${live.map(model => `<tr><td><strong>${esc(model.name || model.model)}</strong></td>${PLACE_COLUMNS.map(column => placeCell(model, column)).join('')}</tr>`).join('')}</tbody></table></div>`;
     }
+    function labSharingLabel(model) {
+      const data = cachedDomain('models');
+      if (!data || data.unavailable) return 'Доступ уточняется';
+      return items(data).some(item => item.registry_id === model.id && item.shared === true)
+        ? 'Общая · вы делитесь' : 'Приватная';
+    }
     function labModelRow(model) {
       const rate = labRate(model), left = quota(model);
       const worked = rows(model.by_role).slice(0, 3).map(row => `${labRole(row.role)} ${row.requests >= 3 ? pct(row.ok / row.requests * 100) : 'NEW'} (${count(row.requests)})`);
       return `<tr class="aw-lab-row${model.enabled ? '' : ' aw-lab-off'}" data-aw-lab-model="${esc(model.id)}" tabindex="0">`
         + `<td><div class="aw-lab-name"><span class="aw-icbox aw-t-cyan">${esc(String(model.name || model.model || '?').slice(0, 1).toUpperCase())}</span><span><strong>${esc(model.name || model.model)}</strong><small>${esc(providerLabel(model.provider))} · ${esc(model.model || '')}${model.enabled ? '' : ' · выключена'}</small></span></div></td>`
+        + `<td><span class="aw-chip">${esc(labSharingLabel(model))}</span></td>`
         + `<td>${worked.length ? esc(worked.join(', ')) : '<span class="aw-muted">ещё не работала</span>'}</td>`
         + `<td class="aw-num-cell">${count(model.requests_month)}<small>всего ${count(model.requests)}</small></td>`
         + `<td class="aw-num-cell"><b class="aw-rate aw-rate-${rateTone(rate)}" title="${esc(model.requests ? `Успешно ${model.ok} из ${model.requests} вызовов` : 'Вызовов ещё не было')}">${rate == null ? (model.requests ? 'NEW' : '—') : esc(pct(rate * 100))}</b>${model.errors ? `<small>ошибок ${count(model.errors)}</small>` : ''}</td>`
@@ -1727,7 +1734,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (!models.length) return smallEmpty('Моделей пока нет. Подключите модель по API — она проверится одним запросом.');
       const enabled = models.filter(model => model.enabled).length, spend = models.reduce((sum, model) => sum + (number(model.spend_month_usd) || 0), 0);
       return `<div class="aw-lab-totals"><span><b>${count(models.length)}</b> моделей</span><span><b>${count(enabled)}</b> включено</span><span><b>${esc(usd(spend))}</b> расход за месяц</span><span><b>${count(models.reduce((sum, model) => sum + (number(model.requests_month) || 0), 0))}</b> запросов за месяц</span></div>`
-        + `<div class="aw-table-wrap"><table class="aw-lab-table"><thead><tr><th>Модель</th><th>Где работала · успех</th><th>Запросов за месяц</th><th>Успех</th><th>Расход за месяц</th><th>Квота</th><th>Последний раз</th></tr></thead><tbody>${models.map(labModelRow).join('')}</tbody></table></div>`;
+        + `<div class="aw-table-wrap"><table class="aw-lab-table"><thead><tr><th>Модель</th><th>Доступ</th><th>Где работала · успех</th><th>Запросов за месяц</th><th>Успех</th><th>Расход за месяц</th><th>Квота</th><th>Последний раз</th></tr></thead><tbody>${models.map(labModelRow).join('')}</tbody></table></div>`;
     }
     function openLabModel(id) {
       const model = rows(labModels()).find(row => row.id === id);

@@ -5359,10 +5359,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._clear_device_credential_cookie()
                 self._clear_dev_preview_mode_cookie()
                 self._clear_preview_control_cookie()
-                self._json(HTTPStatus.OK, {
-                    "ok": True,
-                    "redirect_url": preview_sandbox.exit_url(),
-                })
+                try:
+                    self._json(HTTPStatus.OK, {
+                        "ok": True, "redirect_url": preview_sandbox.exit_url(),
+                    })
+                    self.wfile.flush()
+                finally:
+                    # Cleanup blocks new mutations immediately, but shutdown
+                    # must not race the response carrying the owner return URL.
+                    preview_sandbox._EXIT_RESPONSE_SENT.set()
                 return
             if path == "/api/dev/preview/identity":
                 self._json(HTTPStatus.OK, {
@@ -5462,19 +5467,32 @@ class Handler(BaseHTTPRequestHandler):
             self._err(HTTPStatus.FORBIDDEN, "loopback required", code="loopback_required")
             return
         try:
-            out = dev_preview.return_to_developer(
-                ip=client_ip or "127.0.0.1",
-                user_agent=str(self.headers.get("User-Agent") or "dev-return"),
-            )
+            current_token = self._cookie_value(runtime_env.session_cookie_name())
+            current = account_auth.authenticate_session(current_token)
+            if current and current.get("is_owner"):
+                out = {"session_token": current_token}
+            else:
+                out = dev_preview.return_to_developer(
+                    ip=client_ip or "127.0.0.1",
+                    user_agent=str(self.headers.get("User-Agent") or "dev-return"),
+                )
+            # A stale child tab can still finish its own disposable contour.
+            # The id never authorizes stopping a different, newer Preview.
+            preview_id = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("preview_id", [""])[0]
+            with dev_preview._SANDBOX_LOCK:
+                active = dev_preview._ACTIVE_SANDBOX or {}
+                if preview_id and active.get("preview_id") == preview_id:
+                    dev_preview._stop_active_sandbox_locked(remove_data=True)
         except dev_preview.DevPreviewError as exc:
             self._err(exc.status, str(exc), code=exc.code)
             return
-        self._set_session_cookie(str(out.get("session_token") or ""))
+        if not (current and current.get("is_owner")):
+            self._set_session_cookie(str(out.get("session_token") or ""))
         self._clear_dev_preview_mode_cookie()
         self.send_response(HTTPStatus.SEE_OTHER)
         for name, value in self._extra_headers:
             self.send_header(name, value)
-        self.send_header("Location", "/ui/")
+        self.send_header("Location", "/ui/index.html")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
@@ -6870,15 +6888,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(exc.status, str(exc))
                 return
             if avatar is None or not avatar.is_file():
-                self._err(HTTPStatus.NOT_FOUND, "Аватар не найден.")
-                return
-            try:
-                payload = avatar.read_bytes()
-            except OSError:
-                self._err(HTTPStatus.NOT_FOUND, "Аватар недоступен.")
-                return
-            suffix = avatar.suffix.lower()
-            mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}.get(suffix)
+                from . import preview_public
+                projected = preview_public.avatar_payload(profile_id)
+                if projected is None:
+                    self._err(HTTPStatus.NOT_FOUND, "Аватар не найден.")
+                    return
+                payload, mime = projected
+            else:
+                try:
+                    payload = avatar.read_bytes()
+                except OSError:
+                    self._err(HTTPStatus.NOT_FOUND, "Аватар недоступен.")
+                    return
+                suffix = avatar.suffix.lower()
+                mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}.get(suffix)
             if not mime:
                 self._err(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Формат аватара не поддерживается.")
                 return

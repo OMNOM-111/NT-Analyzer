@@ -84,6 +84,7 @@ def preview_env(tmp_path, monkeypatch):
     security_devices._CHALLENGE_RATE.clear()
     preview_sandbox._ENTRY_CONSUMED = False
     preview_sandbox._EXIT_REQUESTED.clear()
+    preview_sandbox._EXIT_RESPONSE_SENT.clear()
     preview_sandbox._STATE.clear()
     preview_sandbox._STATE.update({
         "scenario": "",
@@ -96,6 +97,7 @@ def preview_env(tmp_path, monkeypatch):
     })
     yield {"id": preview_id, "base": base, "root": root}
     preview_sandbox._EXIT_REQUESTED.clear()
+    preview_sandbox._EXIT_RESPONSE_SENT.clear()
     account_auth._clear_doc_cache()
     runtime_env._data_root_cached.cache_clear()
 
@@ -129,6 +131,7 @@ def test_preview_runtime_identity_and_cookie_names_are_isolated(preview_env):
         "id": preview_env["id"],
         "scenario": "new_user",
         "label": "PREVIEW / TEST USER",
+        "exit_url": f"http://127.0.0.1:8877/api/dev/preview/return?preview_id={preview_env['id']}",
         "synthetic": True,
         "external_side_effects": "blocked",
         # Named only once the sandbox has actually minted its synthetic promo.
@@ -608,3 +611,29 @@ def test_atomic_manifest_retries_transient_windows_reader_lock(tmp_path, monkeyp
     preview_sandbox._atomic_json(path, {"after": True})
     assert json.loads(path.read_text(encoding="utf-8")) == {"after": True}
     assert len(attempts) == 2 and not list(tmp_path.glob("*.tmp"))
+
+
+def test_exit_response_is_flushed_before_child_shutdown(preview_env):
+    from app import server
+    calls = []
+    handler = object.__new__(server.Handler)
+    handler._check_local_post = lambda: True
+    handler._preview_control_authorized = lambda: True
+    handler._read_body = lambda: {}
+    for name in ("_clear_session_cookie", "_clear_device_credential_cookie", "_clear_dev_preview_mode_cookie", "_clear_preview_control_cookie"):
+        setattr(handler, name, lambda: None)
+    def response(code, payload):
+        assert preview_sandbox._EXIT_REQUESTED.is_set()
+        assert not preview_sandbox._EXIT_RESPONSE_SENT.is_set()
+        assert payload["redirect_url"].endswith("preview_id=" + preview_env["id"])
+        calls.append("response")
+    def flushed():
+        assert calls == ["response"]
+        assert not preview_sandbox._EXIT_RESPONSE_SENT.is_set()
+        calls.append("flush")
+    from types import SimpleNamespace
+    handler._json = response
+    handler.wfile = SimpleNamespace(flush=flushed)
+    handler._preview_sandbox_control_post("/api/dev/preview/exit")
+    assert calls == ["response", "flush"]
+    assert preview_sandbox._EXIT_RESPONSE_SENT.is_set()

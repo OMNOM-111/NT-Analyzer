@@ -188,3 +188,41 @@ def test_parent_receipt_clears_only_deleted_identity_response_cache(preview_env,
     monkeypatch.setattr(account_lifecycle, "record_deletion", lambda *args, **kwargs: {"ok": True})
     bridge.dispatch("/account-deleted", {"user": {key: user.get(key) for key in ("user_id", "user_uuid", "email", "created_at_utc")}, "reason": "preview_reset"})
     assert set(bridge.results) == {("other", "ws", "task")}
+
+
+def test_public_projection_preserves_real_avatar_without_identity_or_path(preview_env, monkeypatch, tmp_path):
+    from app import preview_shared_models
+    community.create_social_post(41, text="public author", visibility="network")
+    doc = community._load(include_preview=False)
+    photo = tmp_path / "photo.png"
+    photo.write_bytes(b"\x89PNG\r\n\x1a\npublic-photo")
+    projected = preview_public.snapshot(doc, avatar_loader=lambda row: photo)
+    assert projected["profiles"][0]["has_avatar"] is True
+    encoded = json.dumps(projected)
+    assert str(photo) not in encoded and '"user_id": 41' not in encoded
+    monkeypatch.setattr(preview_shared_models, "transport_enabled", lambda: True)
+    monkeypatch.setattr(preview_shared_models, "request", lambda path, body: projected)
+    community._store_path().unlink()
+    community.create_social_post(99, text="my post", visibility="network")
+    public = next(post for post in community.social_feed(99)["posts"] if post["text"] == "public author")
+    assert public["author"]["avatar_url"].endswith("/avatar")
+    assert preview_public.avatar_payload(public["author"]["profile_id"]) == (photo.read_bytes(), "image/png")
+    assert preview_public.avatar_payload("unknown-private-id") is None
+    assert "_preview_avatar" not in community._store_path().read_text(encoding="utf-8")
+
+
+def test_generated_social_name_refreshes_but_custom_name_survives(preview_env, monkeypatch, tmp_path):
+    uid, canonical, _ = _registered()
+    with account_auth._LOCK:
+        doc = account_auth._read_doc()
+        user = account_auth._user(doc, uid)
+        user.update(first_name="Maria", last_name="Petrova")
+        account_auth._write_doc(doc)
+    row = {"profile_id":"public-profile", "user_id":uid, "display_name":"Участник 1234"}
+    assert community._current_profile_identity(row)["display_name"] == "Maria Petrova"
+    row.update(display_name="My chosen name", display_name_custom=True)
+    assert community._current_profile_identity(row)["display_name"] == "My chosen name"
+    photo = tmp_path / "avatar.png"
+    photo.write_bytes(b"photo")
+    monkeypatch.setattr(account_auth, "avatar_file", lambda value: photo if value == uid else None)
+    assert community._current_profile_identity(row)["has_avatar"] is True

@@ -85,6 +85,7 @@ _DATA_LIFECYCLE_LOCK = threading.RLock()
 _ENTRY_CONSUMED = False
 _NETWORK_GUARD_INSTALLED = False
 _EXIT_REQUESTED = threading.Event()
+_EXIT_RESPONSE_SENT = threading.Event()
 _RUNTIME_CLOCK: Optional[threading.Thread] = None
 _RUNTIME_CLOCK_DIRS: List[Path] = []
 _RUNTIME_CLOCK_STOP = threading.Event()
@@ -291,7 +292,7 @@ def parent_origin() -> str:
 
 
 def exit_url() -> str:
-    return parent_origin() + "/ui/"
+    return parent_origin() + "/api/dev/preview/return?preview_id=" + _safe_id()
 
 
 def install_network_guard() -> None:

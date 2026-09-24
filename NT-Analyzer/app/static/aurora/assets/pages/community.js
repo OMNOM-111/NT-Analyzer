@@ -426,10 +426,10 @@
       const posts = sortPosts(doc.posts || [], true);
       // A profile wall is chronological; registration remains its oldest entry.
       const milestone = STATE.wallTab === 'saved' ? '' : registrationCardHtml(doc.registration, profile);
-      const body = posts.map(post => postHtml(post, 'wall')).join('') || renderEmpty(
+      const body = posts.map(post => postHtml(post, 'wall')).join('') || (milestone ? '' : renderEmpty(
         STATE.wallTab === 'saved' ? 'Закладок пока нет' : 'На стене пока тихо',
         STATE.wallTab === 'saved' ? 'Сохранённые rich-публикации появятся здесь.' : 'Опубликуйте идею или подтверждённый результат.',
-      );
+      ));
       host.innerHTML = body + milestone;
       wirePostActions(host);
     } catch (error) {
