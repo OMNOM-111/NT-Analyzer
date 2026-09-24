@@ -1,6 +1,6 @@
 # Local Preview exit, public profiles and model sharing visibility
 
-Status: BETA — canonical common TopStep mirror and scoped manual Local acceptance PASS; final full-regression reconciliation in progress.
+Status: BETA — canonical common TopStep mirror and scoped manual Local acceptance PASS; full regression reconciled PASS; owner review and remote CI are separate.
 Source baseline: `023fd4c40232b98fcef8f1cbd900fcabccc314cf`; branch `codex/shared-model-local-completion`; draft [PR #291](https://github.com/OMNOM-111/NT-Analyzer/pull/291).
 Scope: Local only. No Server, Canary, Production, permission-grant or provider-credential changes.
 
@@ -61,7 +61,7 @@ No Server, Canary or Production changes are part of this task.
   the owner index at 8765 without a login or Preview loop; console errors absent.
   The final fresh-run acceptance is recorded below.
 - Additional focused regressions: 70 PASS (gateway, access, Preview parity,
-  first Desktop and chart template). Full regression is in progress.
+  first Desktop and chart template). Final regression is recorded below.
 
 ## Final manual Local walkthrough
 
@@ -107,4 +107,43 @@ does not rebuild or restart this tested runtime.
   data and unrelated Preview directories were not removed.
 - Final related whole-module suite: **507 PASS**. Root secrets scan PASS;
   646-file bundle passed all four artifact-content gates. Full native Windows
-  regression and the independent legacy runner are reconciled below at closeout.
+  regression and the independent legacy runner are reconciled below.
+
+## Final verification and operational closeout
+
+- Final runtime code: `56945ac68e94cb7ffa031ef2312dec5a9ad80a54`, clean
+  detached Local checkout, build `dev-0.10.0-beta.96-56945ac68e94`. This adds
+  only the Preview chart-lifetime correction above the full browser walkthrough.
+  Its complete affected-module rerun passed **42 tests**, including a simulated
+  active session older than 30 minutes and refusal after the child exits.
+- A third fresh Preview on that code again opened real MBT candles automatically
+  (LIVE TopstepX/WS, last observed tick 2026-09-24T03:52:57Z), with no console
+  errors. Chart maximize worked. The browser-control tool then stopped answering
+  two commands during restore/minimize verification; that final interaction is
+  not counted as PASS. No browser/application root cause is asserted.
+- The last disposable child was identified by its exact Local parent, listener
+  and Preview id, then stopped. The existing parent lifecycle closed the bridge,
+  retained the minimal deletion receipt and removed its container. No owner
+  session was replaced. The earlier complete one-click Exit walkthrough remains
+  valid for unchanged Exit code; the last cleanup is explicitly a recovery path.
+- Full native Windows inventory: **293 files / 6214 cases; 6080 passed,
+  134 skipped, zero unresolved failures**. Four disjoint whole-file partitions
+  plus complete affected-module reruns cover the final code. This is not one
+  unchanged-tree run. One source-introspection check crossed an edit; one
+  unrelated temporary queue-directory rename returned WinError 5. Their complete
+  modules passed on stable reruns (12 and 17 tests). Three newly added cases were
+  covered by complete final-module reruns. Counts exclude duplicate passes.
+  Evidence: local `.artifacts/mirror-full-regression/reconciled-result.json`.
+- Independent legacy runner: **13/13 suites PASS** on complete rerun after one
+  temporary fixture file rename failed. No trading/queue implementation was
+  changed to hide that transient failure. Related whole-module suite: 507 PASS.
+- The final runtime's 646-file artifact-content rehearsal passed all four gates;
+  root secrets scan and External GPT Context validation passed. Final docs-only
+  closeout is checked again without changing the running code.
+- Scope is Local only. The front-month overlay correction is preserved, owner
+  sharing is restored, and created test identities/containers are no longer
+  active. No Server, Canary, Production, real trades, merge or promotion.
+
+IMPLEMENTATION COMPLETE for this scoped Local follow-up. Git closeout continues
+the existing draft PR #291. STAGE CLOSED means this Local engineering scope;
+owner acceptance, remote CI and the whole Agent World program are separate.
