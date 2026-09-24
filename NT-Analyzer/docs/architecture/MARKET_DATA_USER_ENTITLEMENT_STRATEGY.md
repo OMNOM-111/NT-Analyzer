@@ -1,32 +1,28 @@
-# StratForge Market Data Pivot: Bring Your Own Market Data (BYOMD)
+# StratForge market data: personal NinjaTrader and common TopStep mirror
 
-Current onboarding live-source requirement: EXTERNAL BLOCKED, see [Local source audit](../changelog/2026-09-24-local-preview-social-followup.md). The prior synthetic fallback below is historical implementation, not accepted as the ordinary-user product result. No authorized replacement source is configured yet.
+Status: BETA in Local; manual acceptance for the current change is pending.
+Canonical change: [Local mirror and Preview corrections](../changelog/2026-09-24-local-preview-social-followup.md).
 
-Historical demo implementation: [prior manual acceptance](../changelog/2026-09-23-preview-parity-account-lifecycle.md).
-An active bounded trial with chart capability and no own live provider receives
-`demo_replay` when redistribution is not authorized: deterministic synthetic
-educational candles, explicitly DEMO, never provider quotes. Normal and Preview
-accounts use the same decision. No live upstream lease or owner fan-out is
-allowed. Both existing flags remain mandatory for `shared_trial`; expired or
-denied trial remains denied.
+## 1. Current owner-approved product contract
 
-Status: Development implementation plus connector prototypes. The owner
-TopstepX hub is accepted for the owner's own charts, while unrelated-user
-redistribution remains fail-closed. Personal credentialed connectors remain
-disabled/unverified until account-specific acceptance and contract review.
+TopStep live mirror is the common chart source for StratForge. An online personal
+NinjaTrader Connector has priority; otherwise active trial/subscription accounts
+with `charts_realtime` use the existing owner hub/consumer fan-out. Preview uses
+exactly the same provisioning and admission rules through a disposable Local
+chart capability. It receives no provider credentials or owner account data.
+There is no automatic DEMO fallback. Expired, revoked or chart-denied access is
+still denied, including periodic WebSocket revalidation.
 
-This document establishes the strategic, legal, and technical framework for the user-owned market data model. Under this architecture, StratForge remains free for the first 100 users by avoiding centralized enterprise data subscriptions, shifting the entitlement burden to the end-users.
+The owner explicitly approved application mirroring in this task. Legacy
+`remote_server_authorized` / `redistribution_authorized` diagnostics do not gate
+end-user product admission. They remain direct upstream-hosting configuration;
+no deployed server configuration or provider credential is changed by this Local
+work. The existing owner gateway remains the sole upstream connection. This
+product decision is not a claim that the agent verified a provider agreement.
 
-## 1. Strategic Goals
-
-- **No implied redistribution:** a StratForge product trial is not a provider or
-  exchange market-data grant. The owner feed is not shared with unrelated users
-  unless written authority is represented by both explicit runtime policy gates.
-- **Optional Enterprise Provider:** Databento is reclassified as `OPTIONAL_ENTERPRISE_PROVIDER`, disabled by default, not required for the MVP, and blocked from auto-failover until user-explicit shadow parity checks pass.
-- **Compliance & Anti-Scraping:** No web scraping, credential sharing, or private API interception is permitted. All user connections are authenticated using official protocols.
-- **Fair-Use Multi-Chart Fanout:** 64 charts do not create 64 upstream connections. Connections are multiplexed per unique contract at the user's adapter level.
-
----
+Databento remains optional and disabled without real credentials and acceptance;
+Yahoo delayed/history and simulated adapters cannot replace the live mirror.
+Private user-provider credentials remain encrypted and scoped to their owner.
 
 ## 2. UserMarketDataEntitlement Schema
 
@@ -53,7 +49,7 @@ Every market data stream must be validated against a user's entitlement record. 
 
 ## 3. Per-User Cache & Route Isolation
 
-To comply with exchange agreements (e.g., CME Group), data from User A must **never** be served to User B.
+Private provider data from User A must never be served to User B. The explicitly shared TopStep chart mirror has its own common scope; it contains no private account data.
 
 ### Cache Key Structure
 Cache keys are isolated per user group and workspace:
@@ -61,7 +57,8 @@ Cache keys are isolated per user group and workspace:
 md:v1:private:<workspace_id>:<user_id>:<account_id>:<provider>:<exchange>:<exact_contract>:<channel>:<timeframe>:...:epochN
 ```
 
-Shared cache keys are permitted **only** for:
+Shared cache keys are permitted for:
+- The canonical owner-approved TopStep chart mirror.
 - Instrument metadata (definitions, tick sizes, point values).
 - Trading session templates.
 - Demo/Replay sessions.
@@ -70,10 +67,9 @@ Shared cache keys are permitted **only** for:
 The Development transport admission order is fixed and fail-closed:
 
 1. owner runtime;
-2. verified private user-owned provider entitlement;
-3. fresh online personal NinjaTrader Connector bound to that user/workspace;
-4. a bounded shared trial only when both `remote_server_authorized` and
-   `redistribution_authorized` are explicitly true;
+2. fresh online personal NinjaTrader Connector bound to that user/workspace;
+3. verified private user-owned provider entitlement;
+4. common TopStep mirror for active chart-capable trial/subscription access;
 5. deny.
 
 HTTP bars/cache and WebSocket subscriptions/events use the same server-owned

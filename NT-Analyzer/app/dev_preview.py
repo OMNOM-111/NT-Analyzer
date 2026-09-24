@@ -349,6 +349,11 @@ def launch_sandbox(actor_user_id: Any, scenario: Any, *, origin: Any) -> Dict[st
     bridge = Bridge(preview_id, allow_models=selected != "agent_world_operator")
     env["STRATFORGE_PREVIEW_MODEL_BRIDGE"] = bridge.url
     env["STRATFORGE_PREVIEW_MODEL_TOKEN"] = bridge.token
+    # The disposable child consumes only public charts through a revocable
+    # Local capability. Provider credentials stay in the owner gateway.
+    env["NTA_OWNER_MARKET_DATA_GATEWAY_ROLE"] = "consumer"
+    env["NTA_OWNER_MARKET_DATA_GATEWAY_URL"] = bridge.url
+    env["NTA_OWNER_MARKET_DATA_GATEWAY_TOKEN"] = bridge.token
     command = [sys.executable, "-m", "app.preview_server", "--port", str(port)]
     creationflags = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
     log_handle = log_path.open("w", encoding="utf-8")

@@ -2025,7 +2025,10 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
                        and (lambda dt: dt is not None and (start is None or dt >= start)
                             and (end is None or dt < end))(_market_bar_time(row))]
         out["total"] = len(out["bars"])
-    if alerts_index is not None:
+    if access_source == "shared_trial":
+        # Sharing the chart feed never shares the owner's private price alerts.
+        out["alerts"] = []
+    elif alerts_index is not None:
         symbol = " ".join(str(instrument or "").strip().upper().split())
         out["alerts"] = list(alerts_index.get(symbol, []))
     elif production_mode:
@@ -3321,8 +3324,7 @@ class Handler(BaseHTTPRequestHandler):
                 ),
                 "market_data_entitlement_required": (
                     "Для live-графиков подключите собственный TopstepX или "
-                    "NinjaTrader. Продление владельцем открывает общий trial-feed "
-                    "только там, где подтверждено разрешение на redistribution."
+                    "NinjaTrader. Активная подписка или продление trial открывает общий live-mirror TopStep."
                 ),
                 "authentication_required": "Для live-графиков требуется вход.",
             }

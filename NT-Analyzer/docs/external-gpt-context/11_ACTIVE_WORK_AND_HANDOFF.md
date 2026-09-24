@@ -1,6 +1,6 @@
 # 11. Active Work and Handoff
 
-Scoped Local work completed: **BETA** — [Preview parity/account lifecycle](../changelog/2026-09-23-preview-parity-account-lifecycle.md). Demo/replay only, no owner live redistribution. Ordinary registration permissions; public surfaces shared, private data isolated. Fresh Preview/owner browser walkthrough, deletion/reset/exit receipts and full regression PASS. Test containers removed; owner access snapshot unchanged. Owner review and remote CI remain separate. No server/Canary/Production work authorized.
+Scoped Local work completed: **BETA** — [Preview parity/account lifecycle](../changelog/2026-09-23-preview-parity-account-lifecycle.md). Historical DEMO acceptance is superseded by the current live-mirror contract below. Ordinary registration permissions; public surfaces shared, private data isolated. Fresh Preview/owner browser walkthrough, deletion/reset/exit receipts and full regression PASS. Test containers removed; owner access snapshot unchanged. Owner review and remote CI remain separate. No server/Canary/Production work authorized.
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-05T12:45:49Z
@@ -17,7 +17,7 @@ Scoped Local work completed: **BETA** — [Preview parity/account lifecycle](../
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 
-Current follow-up: [Local Preview/Social fixes and live-source blocker](../changelog/2026-09-24-local-preview-social-followup.md). New onboarding now requires real live charts; earlier DEMO acceptance does not satisfy this requirement. Live source is EXTERNAL BLOCKED: TopStep source-policy gates false, Databento placeholder, other live adapters simulation. No provider permissions or server state changed. Social/avatar, explicit model sharing state and robust owner-session return are being verified on Local.
+Current follow-up: **IN DEVELOPMENT** — [Local TopStep mirror and Preview corrections](../changelog/2026-09-24-local-preview-social-followup.md). The latest owner-approved contract is personal NinjaTrader first, otherwise common live TopStep mirror for active chart-capable trial/subscription users, including disposable Preview. No DEMO fallback. Legacy source flags do not gate end-user mirror admission. Social/avatar, sharing labels and owner-session return are implemented; current manual verification pending. Local only; no Server/Canary/Production changes.
 
 Local chart recovery (2026-09-23), branch `codex/fix-local-chart-gateway`: the supervisor origin correction is preserved in the 0a9bcf09 baseline and subsequent Local UX checkpoint; owner Desktop TopstepX charts were verified. The separate chart PR keeps its own closeout. Preserve TopstepX/SignalR and entitlement gates. Saved MBT 08-26 and the empty MNQ probe remain separate contract/provider observations. [Canonical incident](../changelog/2026-09-23-local-chart-gateway.md).
 

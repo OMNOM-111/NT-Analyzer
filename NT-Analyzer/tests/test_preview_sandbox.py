@@ -439,7 +439,7 @@ def test_new_user_profiles_have_registration_workspace_and_only_selected_rights(
     assert decorated["_permissions"]["nav"]["desktop"] is True
     assert decorated["_permissions"]["nav"]["topstep"] is True
     assert decorated["capabilities"]["charts_realtime"] is True
-    assert decorated["market_data_access"]["source"] == "demo_replay"
+    assert decorated["market_data_access"]["source"] == "shared_trial"
     old_uuid, old_workspace = user["user_uuid"], workspace["workspace_id"]
     preview_sandbox.reset("shared_models_user", device_credential="preview-next-user-browser")
     assert account_auth.find_active_user_by_uuid(old_uuid) is None

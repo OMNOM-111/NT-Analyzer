@@ -11,10 +11,12 @@ import hmac
 import json
 import os
 import secrets
+import socket
 import threading
 import time
 import urllib.request
 import urllib.error
+import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from uuid import UUID, uuid5, NAMESPACE_URL
 
@@ -48,11 +50,56 @@ class Bridge:
         self.results = {}
         self.spent = 0.0
         self.last_error = None
+        self.chart_connections = set()
+        self.chart_lock = threading.Lock()
         bridge = self
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *args):
                 pass
+
+            def do_GET(self):
+                from . import owner_market_data_gateway, market_data_ws_http
+                path = urllib.parse.urlsplit(self.path).path
+                try:
+                    bridge.authorize_chart(self.headers.get(owner_market_data_gateway.TOKEN_HEADER), path)
+                except ContractError:
+                    self.send_error(403, "preview chart capability denied")
+                    return
+                if path == "/ws/market-data":
+                    with bridge.chart_lock:
+                        if bridge.closed:
+                            self.send_error(403)
+                            return
+                        bridge.chart_connections.add(self.connection)
+                    def expire():
+                        try:
+                            self.connection.shutdown(socket.SHUT_RDWR)
+                        except OSError:
+                            pass
+                    expiry = threading.Timer(max(0.1, 1800 - (time.monotonic() - bridge.started)), expire)
+                    expiry.daemon = True
+                    expiry.start()
+                    try:
+                        self._remote_context = owner_market_data_gateway.service_context()
+                        market_data_ws_http.handle_websocket_upgrade(self)
+                    finally:
+                        expiry.cancel()
+                        with bridge.chart_lock:
+                            bridge.chart_connections.discard(self.connection)
+                    return
+                try:
+                    result = bridge.chart_history(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
+                    encoded = json.dumps(result, ensure_ascii=False).encode()
+                except Exception:
+                    self.send_error(502, "chart history unavailable")
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(encoded)
 
             def do_POST(self):
                 try:
@@ -83,9 +130,58 @@ class Bridge:
 
     def close(self):
         self.closed = True
+        with self.chart_lock:
+            connections = list(self.chart_connections)
+            self.chart_connections.clear()
+        for connection in connections:
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            connection.close()
         self.server.shutdown()
         self.server.server_close()
         self.results.clear()
+
+    def authorize_chart(self, supplied, path):
+        from . import dev_preview
+        active = dev_preview._ACTIVE_SANDBOX or {}
+        if (not runtime_env.is_development() or preview_sandbox.enabled()
+                or self.closed or time.monotonic() - self.started > 1800
+                or path not in {"/api/ops/runtime/bars", "/ws/market-data"}
+                or not hmac.compare_digest(str(supplied or ""), self.token)
+                or active.get("preview_id") != self.preview_id
+                or active.get("model_bridge") is not self
+                or not dev_preview._validated_preview_container(active)
+                or active.get("process") is None or active["process"].poll() is not None):
+            raise ContractError("preview_chart_capability_denied")
+
+    @staticmethod
+    def chart_history(query):
+        from . import server, market_data_access, owner_market_data_gateway
+        def value(key, default=""):
+            return str((query.get(key) or [default])[0])[:160]
+        instrument, timeframe = value("instrument"), value("timeframe", "1m")
+        if not instrument or len(query) > 8:
+            raise ContractError("preview_chart_invalid_query")
+        result = server._market_bars_payload(
+            instrument, timeframe, max(1, min(int(value("limit", "1500")), 20000)),
+            register=False, alerts_index={}, from_ts=value("from_ts"), to_ts=value("to_ts"),
+            access_decision=market_data_access.resolve_market_data_access(owner_market_data_gateway.service_context()),
+        )
+        # Chart transport never projects alerts, account positions or orders.
+        allowed = {"instrument", "timeframe", "live", "status", "bars", "total"}
+        payload = {key: result[key] for key in allowed if key in result}
+        for name, keys in {
+            "source": {"runtime_state", "cache_hit", "history_exhausted", "native_aggregation_fallback"},
+            "history": {"requested_start_utc", "requested_end_utc", "cache_hit", "chunks", "exhausted", "native_aggregation_fallback"},
+            "freshness": {"market_feed_fresh", "market_feed_stale", "offline", "market_feed_age_sec", "signalr_heartbeat_age_sec", "quote_age_sec", "bid_ask_age_sec", "last_trade_age_sec", "market_feed_as_of_utc"},
+        }.items():
+            row = result.get(name) or {}
+            payload[name] = {key: row[key] for key in keys if key in row}
+        payload["bars"] = [{key: row[key] for key in ("t", "o", "h", "l", "c", "v", "time", "open", "high", "low", "close", "volume") if key in row}
+                           for row in payload.get("bars", []) if isinstance(row, dict)]
+        return payload
 
     def _catalog(self):
         if not self.allow_models:
