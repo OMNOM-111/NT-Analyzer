@@ -1,5 +1,14 @@
 # Multi-user accounts, subscriptions and NinjaTrader connections
 
+Local lifecycle: IN DEVELOPMENT pending [manual acceptance](../changelog/2026-09-23-preview-parity-account-lifecycle.md).
+Self-deletion requires explicit УДАЛИТЬ plus a fresh session/purpose-bound OTP.
+The common erasure service also handles disposable Preview Exit/Reset; minimal
+HMAC-protected deletion receipts survive in the parent Local security registry.
+Private workspace/chat/memory/model data is erased, sessions/shares revoked,
+historical shared usage attributed to a deleted user. Protected owner accounts
+and workspaces with other members cannot be erased. Production relational
+erasure remains unavailable; no migration or deployment is part of this change.
+
 Цель: превратить текущий личный NT-Analyzer в многопользовательское приложение,
 где ваш аккаунт NinjaTrader может оставаться учебным read-only окружением, а
 каждый другой пользователь получает собственный изолированный контур: профиль,

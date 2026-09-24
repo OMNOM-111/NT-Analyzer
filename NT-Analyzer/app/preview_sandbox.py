@@ -1616,6 +1616,8 @@ def data_operation():
 def finish_preview() -> None:
     """Revoke disposable sessions and erase data before confirming Exit."""
     with data_operation():
+        from . import account_lifecycle
+        account_lifecycle.erase_preview("preview_exit")
         _wipe_isolated_root()
         with _LOCK:
             _STATE.clear()
@@ -1628,6 +1630,8 @@ def reset(scenario: Any, *, device_credential: str) -> Dict[str, Any]:
     with data_operation():
         with _LOCK:
             generation = int(_STATE.get("generation") or 0) + 1
+        from . import account_lifecycle
+        account_lifecycle.erase_preview("preview_reset")
         _wipe_isolated_root()
         with _LOCK:
             _STATE["generation"] = generation

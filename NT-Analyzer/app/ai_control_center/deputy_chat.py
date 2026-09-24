@@ -43,6 +43,14 @@ def is_work_request(message):
         r"prepare|create|write|analyse|analyze|run)\b", text))
 
 
+def identity(authorized, service=None):
+    """Use this user's appointed main assistant, never the model donor's Persona."""
+    from . import domain_gateway, persona_identity
+    service = service or domain_gateway.models(authorized)
+    selected = persona_identity.resolve_chat(service, context=authorized["context"], message="Привет")
+    return (selected.persona_id, selected.display_name) if selected else ("manager", "Заместитель")
+
+
 def reply(authorized, service, model_id, *, message, conversation_id, request_id):
     """Persist exactly one scoped answer; ambiguous transmission is never retried."""
     scope = authorized["chat_scope"]
@@ -76,8 +84,9 @@ def reply(authorized, service, model_id, *, message, conversation_id, request_id
         result = service.conversation_response(context=authorized["context"], model_id=model_id,
             prompt=prompt, system_prompt=SYSTEM_PROMPT, request_id=call_id, conversation_id=cid)
         authorized["admit"]()
+        agent_id, agent_name = identity(authorized, service)
         saved = chief_agent._append_conversation("assistant", result["response"], source="app",
-            request_id=key, agent_id="vitek", agent_name="Заместитель", role_id="deputy",
+            request_id=key, agent_id=agent_id, agent_name=agent_name, role_id="deputy",
             model=result.get("actual_model") or "", provider=result.get("provider") or "",
             message_kind="chat", fulfillment="na", actions=[], participation_chain=[], path=path, scope=scope)
         chief_agent._touch_conversation(cid, scope=scope)

@@ -302,7 +302,7 @@
     if (ORCH_SPEECH.message) orchSpeechState({state: 'stopped'});
     ORCH_SPEECH.message = '';
     if (ORCH_SPEECH.button && ORCH_SPEECH.button.isConnected) {
-      ORCH_SPEECH.button.disabled = false; ORCH_SPEECH.button.textContent = 'Озвучить';
+      ORCH_SPEECH.button.disabled = false;
       ORCH_SPEECH.button.setAttribute('aria-pressed', 'false');
     }
     AGENT_SPEAK.gen += 1;
@@ -2360,7 +2360,8 @@
       <div class="cab-card"><h4>Доступные разделы</h4><div class="chips-in">${(uxMode === 'beginner'
         ? ['Учебный терминал', 'Community']
         : activeFeatures.map(f => f.label)
-      ).map(label => `<span class="chip-tag">${esc(label)}</span>`).join('') || '<span class="cab-sub">Разделы не назначены</span>'}</div></div>`;
+      ).map(label => `<span class="chip-tag">${esc(label)}</span>`).join('') || '<span class="cab-sub">Разделы не назначены</span>'}</div></div>
+      ${!isOwner ? `<div class="cab-card"><h4>Удалить аккаунт</h4><p class="cab-sub">Удаляются ваши рабочие области, чаты, память, модели и личные настройки. Все сессии и общие доступы прекращаются. Сохраняются только минимальный аудит удаления и статистика расходов с отметкой «удалённый пользователь».</p><button class="btn sm danger" id="cab-delete-account">Удалить аккаунт</button><div id="cab-delete-form" hidden><p>Для подтверждения получите одноразовый код через подключённый канал.</p><button class="btn sm" id="cab-delete-code">Получить код</button><label>Код подтверждения<input id="cab-delete-otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></label><label>Введите УДАЛИТЬ<input id="cab-delete-word" autocomplete="off"></label><button class="btn sm danger" id="cab-delete-confirm">Удалить навсегда</button><button class="btn sm ghost" id="cab-delete-cancel">Отмена</button></div><p id="cab-delete-status" role="status"></p></div>` : ''}`;
   }
 
   async function renderSharedQueueInto(node) {
@@ -2814,7 +2815,8 @@
       node.innerHTML = `<div class="dchart-actions" style="justify-content:flex-start"><button class="btn primary" id="users-invite">＋ Пригласить (ссылка + промокод)</button></div>
         <div class="finance-note"><strong>Хранилище:</strong> ${esc((data.storage || {}).backend || '—')} · ${data.storage && data.storage.encrypted ? 'зашифровано' : 'ещё не создано'}. После подтверждения личности новый аккаунт автоматически получает полный пробный доступ на 7 дней.</div>
         <div class="finance-note"><strong>Мониторинг:</strong> ${esc(monitorData.online_count || 0)} пользователей онлайн${monitorData.alert_count ? ` · <span class="support-alert-inline">⚠ ${esc(monitorData.alert_count)} предупреждений</span>` : ' · превышений нет'}. Показатели относятся к вкладкам StratForge AI.</div>
-        <div class="list account-user-list">${users.map(u => userRowHtml(u, catalog, planOptions, monitoring.get(String(u.user_id)))).join('') || '<div class="empty-state">Аккаунтов пока нет.</div>'}</div>`;
+        <div class="list account-user-list">${users.map(u => userRowHtml(u, catalog, planOptions, monitoring.get(String(u.user_id)))).join('') || '<div class="empty-state">Аккаунтов пока нет.</div>'}</div>
+        <details class="cab-card"><summary>Удалённые аккаунты · только чтение (${(data.deleted_accounts || []).length})</summary>${(data.deleted_accounts || []).map(row => `<div class="cab-kv"><span class="k">${row.account_type === 'test-preview' ? 'TEST/PREVIEW' : 'Аккаунт'} · deleted</span><span class="v">${esc(row.user_uuid)} · ${esc(row.deleted_at_utc)}<br>${esc(row.reason)} · fingerprint ${esc(row.identifier_fingerprint)}</span></div>`).join('') || '<p>Записей нет.</p>'}</details>`;
       const invite = qs('#users-invite', node);
       if (invite) invite.onclick = () => openAdminPanel('invites');
       qsa('[data-user-role]', node).forEach(s => s.onchange = async () => { s.disabled = true; try { await API.http.authUserRole(s.dataset.userRole, s.value); toast('Роль обновлена'); } catch (e) { reportError(e); } finally { s.disabled = false; } });
@@ -3434,6 +3436,34 @@
   }
   function renderProfileInto(cb, me) {
     cb.innerHTML = cabinetProfile(me);
+    const deleteButton = qs('#cab-delete-account', cb), deleteForm = qs('#cab-delete-form', cb);
+    let deletionChallenge = '';
+    if (deleteButton) {
+      const status = qs('#cab-delete-status', cb), sendCode = qs('#cab-delete-code', cb);
+      deleteButton.onclick = () => { deleteForm.hidden = false; deleteButton.hidden = true; };
+      qs('#cab-delete-cancel', cb).onclick = () => { deleteForm.hidden = true; deleteButton.hidden = false; deletionChallenge = ''; status.textContent = ''; };
+      sendCode.onclick = async () => {
+        sendCode.disabled = true; status.textContent = 'Отправляем код подтверждения…';
+        try {
+          const result = await API.http.accountDeleteStart({});
+          deletionChallenge = result.challenge_id;
+          status.textContent = `Код отправлен: ${result.masked_target || result.provider || ''}${result.delivery === 'preview_synthetic' ? ' · TEST-код: ' + (result.test_code || result.code || '') : ''}`;
+        } catch (error) { status.textContent = error.message || 'Не удалось отправить код.'; }
+        finally { sendCode.disabled = false; }
+      };
+      qs('#cab-delete-confirm', cb).onclick = async event => {
+        const word = qs('#cab-delete-word', cb).value, code = qs('#cab-delete-otp', cb).value;
+        if (!deletionChallenge || word !== 'УДАЛИТЬ' || !/^\d{6}$/.test(code)) { status.textContent = 'Получите код, введите 6 цифр и слово УДАЛИТЬ.'; return; }
+        event.currentTarget.disabled = true; status.textContent = 'Удаляем аккаунт и приватные данные…';
+        try {
+          await API.http.accountDeleteConfirm({challenge_id: deletionChallenge, code, confirmation: word});
+          const prefix = `desktop.workspaces.v2:${me.user?.id || me.user?.user_uuid || 'guest'}:`;
+          Object.keys(localStorage).filter(key => key.startsWith(prefix)).forEach(key => localStorage.removeItem(key));
+          status.textContent = 'Аккаунт удалён. Сессии прекращены.';
+          location.href = '/ui/';
+        } catch (error) { status.textContent = error.message || 'Не удалось завершить удаление.'; qs('#cab-delete-confirm', cb).disabled = false; }
+      };
+    }
     const personal = qs('#cab-personal-workspace', cb);
     if (personal) personal.onclick = async () => {
       const msg = qs('#cab-personal-workspace-msg', cb);
@@ -10201,7 +10231,8 @@
   }
   function orchSpeechPersona(row) {
     if (orchPersonaId(row)) return row._persona || null;
-    const ref = String(row.agent_id || row.agent_name || '').toLowerCase();
+    const ref = row.agent_id === 'vitek' && row.agent_name === 'Заместитель'
+      ? 'manager' : String(row.agent_id || row.agent_name || '').toLowerCase();
     const face = AGENT_AVATAR_IDS[ref];
     if (!face) return null;
     // Historical staff replies retain their assets. Without a persisted Persona
@@ -10217,7 +10248,7 @@
     const available = !!configured && (!orchPersonaId(row) || ['active', 'draft'].includes(persona.status));
     const hint = orchPersonaId(row) ? (available ? 'Озвучить сохранённый ответ голосом персоны' : 'Персона или её голос недоступны. История сохранена.')
       : 'Исторический ответ: локальный голос устройства, без подключения провайдера';
-    return `<div class="orch-msg-meta"><button type="button" class="btn sm ghost" data-orch-speech="${esc(row.message_id)}" aria-pressed="false" title="${esc(hint)}" ${available ? '' : 'disabled'}>Озвучить</button> <span data-orch-speech-status role="status" aria-live="polite">${available ? '' : esc(hint)}</span></div>`;
+    return `<span data-orch-speech-status role="status" aria-live="polite" class="orch-msg-meta">${available ? '' : esc(hint)}</span>`;
   }
   function orchLoadPersonaAudio() {
     if (window.PersonaAudio?.create) return Promise.resolve(window.PersonaAudio);
@@ -10242,7 +10273,7 @@
     const button = ORCH_SPEECH.button, status = ORCH_SPEECH.status;
     if (button && button.isConnected) {
       button.disabled = false;
-      button.textContent = ['preparing', 'speaking'].includes(view.state) ? 'Остановить' : 'Озвучить';
+      button.setAttribute('aria-label', ['preparing', 'speaking'].includes(view.state) ? 'Остановить озвучивание' : 'Озвучить ответ через аватар');
       button.setAttribute('aria-pressed', ['preparing', 'speaking'].includes(view.state) ? 'true' : 'false');
     }
     if (status && status.isConnected) {
@@ -10255,6 +10286,9 @@
     if (!['preparing', 'speaking'].includes(view.state)) ORCH_SPEECH.message = '';
   }
   function wireOrchSpeech(container, messages, cid) {
+    qsa('[data-orch-speech]', container).forEach(face => face.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); face.click(); }
+    }));
     qsa('[data-orch-speech]', container).forEach(button => button.addEventListener('click', async () => {
       if (ORCH.currentId !== cid || !ORCH.open) return;
       const id = button.dataset.orchSpeech, row = messages.find(item => item.message_id === id);
@@ -10264,7 +10298,7 @@
       agentSpeakStop();
       const generation = ORCH_SPEECH.generation;
       ORCH_SPEECH.message = id; ORCH_SPEECH.button = button;
-      ORCH_SPEECH.status = button.parentElement?.querySelector('[data-orch-speech-status]');
+      ORCH_SPEECH.status = button.closest('.orch-msg')?.querySelector('[data-orch-speech-status]');
       orchSpeechState({state: 'preparing'});
       try {
         const module = await orchLoadPersonaAudio();
@@ -10507,11 +10541,16 @@
       : orchFooterHtml(row, isUser);
     const media = orchAttachmentsHtml(row);
     const personaId = orchPersonaId(row), persona = row._persona;
-    const faceRef = personaId ? persona?.avatar_key : agentRef;
-    const face = isUser ? '' : personaId && !AGENT_AVATAR_IDS[faceRef]
+    const faceRef = personaId ? persona?.avatar_key : agentRef === 'vitek' && row.agent_name === 'Заместитель' ? 'manager' : agentRef;
+    let face = isUser ? '' : personaId && !AGENT_AVATAR_IDS[faceRef]
       ? `<span class="orch-human-face" title="${esc(agentLabel)} · AI-помощник">${esc(agentLabel.slice(0, 1))}</span>` : agentAvatarHtml(faceRef, {
       label: agentLabel, cls: 'orch-msg-face', messageId: row.message_id || '',
     });
+    const voice = !isUser && orchSpeechPersona(row);
+    if (face && row.message_id && row.content && voice?.presentation?.resolved_voice_profile_id
+        && (!personaId || ['active', 'draft'].includes(voice.status))) {
+      face = face.replace('<span ', `<span role="button" tabindex="0" data-orch-speech="${esc(row.message_id)}" aria-label="Озвучить ответ через аватар" aria-pressed="false" `);
+    }
     // The answer wears its own header (who answered, on which model) and, while
     // it still waits for a verdict, the approve / reject pair sits on the card
     // itself instead of inside the collapsed details panel.
@@ -10920,7 +10959,7 @@
         <div class="orch-think-live-label">${icon('spark')}<span>Передаю запрос…</span></div>
         <div class="orch-think-live-text"><span id="orch-live-think-body"></span></div>
       </div>
-      <div class="orch-msg assistant orch-live-answer" id="orch-live-body">${pendingPersona ? orchPendingPersonaFace(pendingPersona) : agentAvatarHtml('vitek', { speaking: true, label: 'Виктор', cls: 'orch-msg-face' })}<div class="orch-msg-stack"><span class="orch-dots"><i></i><i></i><i></i></span></div></div>
+      <div class="orch-msg assistant orch-live-answer" id="orch-live-body">${pendingPersona ? orchPendingPersonaFace(pendingPersona) : agentAvatarHtml('manager', { speaking: true, label: 'Заместитель', cls: 'orch-msg-face' })}<div class="orch-msg-stack"><span class="orch-dots"><i></i><i></i><i></i></span></div></div>
     </div>`);
     box.appendChild(live);
     wireAgentFaces(live);
@@ -10959,7 +10998,7 @@
         onFinal: (data) => {
           if (ORCH.currentId === cid && data && data.conversation_id) orchSaveCurrentId(data.conversation_id);
           removeThink();
-          const faceRef = (data && (data.agent_id || data.domain_agent || data.agent_name || data.agent)) || 'vitek';
+          const faceRef = (data && (data.agent_id || data.domain_agent || data.agent_name || data.agent)) || 'manager';
           const faceLabel = String((data && data.agent_name) || faceRef || 'Виктор');
           setLiveFace(faceRef, faceLabel);
           setLiveBody(esc(String((data && data.reply) || '')));

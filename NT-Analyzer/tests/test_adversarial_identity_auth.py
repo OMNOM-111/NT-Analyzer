@@ -461,17 +461,17 @@ def test_repeated_wrong_codes_are_rate_limited(store):
 # --------------------------------------------------------------------------- #
 # Deletion keeps the security record.
 # --------------------------------------------------------------------------- #
-def test_deleting_an_account_keeps_its_identity_history(store):
-    """History outlives the account on purpose: it answers "who used to hold
-    this address", which is exactly the question asked after a deletion."""
+def test_deleting_an_account_keeps_minimal_protected_security_receipt(store):
+    """Deletion retains attribution without retaining raw former identifiers."""
     _claim(ALICE_UUID, "email", "departing@example.com")
     account_auth.delete_user(999, 42)
     doc = account_auth._read_doc()
     rows = [r for r in doc.get("identity_history") or []
             if r.get("normalized_key") == "departing@example.com"]
-    assert rows, "identity history must survive account deletion"
-    assert all(not r.get("user_uuid") or r.get("state") != "active" or True
-               for r in rows)
+    assert not rows
+    from app import account_lifecycle
+    assert str(ALICE_UUID) in account_lifecycle.deleted_ids()
+    assert b"departing@example.com" not in account_lifecycle._registry_path().read_bytes()
 
 
 def test_a_deleted_account_keeps_no_live_session_or_device(store):

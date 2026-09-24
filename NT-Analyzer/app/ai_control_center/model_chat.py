@@ -53,6 +53,8 @@ def envelope(authorized, detail, *, request_id, pending=False):
             "rejected": "результат отклонён", "blocked": "недоступна до устранения блокировки"}[human_review["status"]] + "."
     deputy = task.get("conversation_role") == "deputy"
     if deputy:
+        from .deputy_chat import identity
+        deputy_id, deputy_name = identity(authorized)
         text = ("Принял поручение. Готовлю результат." if pending else
                 result_text if verified else "Не удалось выполнить поручение. Причину можно посмотреть в задаче.")
     actual = None if pending else detail.get("actual_model")
@@ -63,7 +65,7 @@ def envelope(authorized, detail, *, request_id, pending=False):
             "human_review": human_review, "result_received": task.get("result_received") is True,
             "verification_status": task.get("verification_status"), "text": text,
             "verification_scope": "transport_only" if response_only else "task_contract",
-            "agent_id": "vitek" if deputy else task.get("persona_id"), "agent_name": "Заместитель" if deputy else task.get("lead", {}).get("display_name") or task.get("model_label"),
+            "agent_id": deputy_id if deputy else task.get("persona_id"), "agent_name": deputy_name if deputy else task.get("lead", {}).get("display_name") or task.get("model_label"),
             "actual_model": actual, "provider": provider, "configured_provider": task.get("provider"),
             "executor": None if pending else detail.get("executor"),
             "external_call": None if pending else detail.get("external_call"),

@@ -75,8 +75,11 @@ def test_shared_registration_trial_requires_both_redistribution_flags() -> None:
             "redistribution_authorized": False,
         },
     )
-    assert one_flag.allowed is False
-    assert one_flag.reason == "redistribution_not_authorized"
+    assert one_flag.allowed is True
+    assert one_flag.reason == "trial_demo"
+    assert one_flag.source == "demo_replay"
+    assert one_flag.scope_id != market_data_access.OWNER_SHARED_SCOPE
+    assert not market_data_access.decision_allows_message(one_flag, {"market_data_scope": market_data_access.OWNER_SHARED_SCOPE})
 
     allowed = _resolve(
         context,

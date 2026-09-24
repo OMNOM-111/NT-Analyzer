@@ -284,6 +284,8 @@ def _stop_active_sandbox_locked(*, remove_data: bool) -> None:
     if remove_data:
         container = _validated_preview_container(record)
         if container and container.exists():
+            from . import account_lifecycle
+            account_lifecycle.record_terminated_preview(container, record["preview_id"])
             shutil.rmtree(container)
 
 
@@ -343,12 +345,10 @@ def launch_sandbox(actor_user_id: Any, scenario: Any, *, origin: Any) -> Dict[st
         root=root, base=base, entry_token=entry_token,
         control_token=control_token, port=port,
     )
-    bridge = None
-    if selected != "agent_world_operator":
-        from .preview_shared_models import Bridge
-        bridge = Bridge(preview_id)
-        env["STRATFORGE_PREVIEW_MODEL_BRIDGE"] = bridge.url
-        env["STRATFORGE_PREVIEW_MODEL_TOKEN"] = bridge.token
+    from .preview_shared_models import Bridge
+    bridge = Bridge(preview_id, allow_models=selected != "agent_world_operator")
+    env["STRATFORGE_PREVIEW_MODEL_BRIDGE"] = bridge.url
+    env["STRATFORGE_PREVIEW_MODEL_TOKEN"] = bridge.token
     command = [sys.executable, "-m", "app.preview_server", "--port", str(port)]
     creationflags = int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
     log_handle = log_path.open("w", encoding="utf-8")

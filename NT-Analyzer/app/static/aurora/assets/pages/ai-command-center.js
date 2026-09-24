@@ -1822,17 +1822,23 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     function renderModels() {
       const lab = labModels();
       const data = cachedDomain('models');
+      const own = modelConnections(data).filter(item => item.ownership !== 'shared');
+      const shared = modelConnections(data).filter(item => item.ownership === 'shared');
+      const sharedSection = () => bcard('Доступные общие модели', 'users', 'cyan',
+        '<p class="aw-muted">Доступ предоставлен другими участниками. Ключи и настройки принадлежат владельцам подключений.</p>'
+        + (shared.length ? modelRows(modelGroupsFromTasks(rows(overview.tasks), shared)) : smallEmpty('Общих моделей сейчас нет.')));
       if (lab) {
-        content.innerHTML = bcard('Подключённые модели', 'cpu', 'cyan', labModelTable(lab), '<button class="aw-link-button" data-aw-connect-model>+ подключить модель</button>')
-          + (data && !data.unavailable && modelConnections(data).some(item => !item.registry_id) ? bcard('Доступные подключения и общие модели', 'cpu', 'cyan', modelRows(modelGroupsFromTasks(rows(overview.tasks), modelConnections(data).filter(item => !item.registry_id)))) : '')
+        content.innerHTML = bcard('Мои модели', 'cpu', 'cyan', labModelTable(lab), '<button class="aw-link-button" data-aw-connect-model>+ подключить модель</button>')
+          + (own.some(item => !item.registry_id) ? bcard('Мои дополнительные подключения', 'cpu', 'cyan', modelRows(modelGroupsFromTasks(rows(overview.tasks), own.filter(item => !item.registry_id)))) : '')
+          + (data && !data.unavailable ? sharedSection() : '')
           + '<p class="aw-muted aw-hint-line">Нажмите на модель: расход, квота, тариф, под какими агентами работала, успешность и последние вызовы.</p>'
           + bcard('Распределение по должностям', 'layers', 'violet', distribution(lab));
         return;
       }
       if (!data) { content.innerHTML = bcard('Подключённые модели', 'cpu', 'cyan', loadingBlock('Загружаем подключённые модели…')); return; }
       if (data.unavailable) { content.innerHTML = bcard('Подключённые модели', 'cpu', 'cyan', readError({ status: data.unavailable })); return; }
-      content.innerHTML = bcard('Подключённые модели', 'cpu', 'cyan', modelRows(modelGroupsFromTasks(rows(overview.tasks), modelConnections(data))), '<button class="aw-link-button" data-aw-connect-model>+ подключить модель</button>')
-        + '<p class="aw-muted aw-hint-line">Нажмите на модель: расход, токены, рейтинг, под каким агентом работала лучше и хуже всего, «поделиться со всеми» и «выключить».</p>';
+      content.innerHTML = bcard('Мои модели', 'cpu', 'cyan', own.length ? modelRows(modelGroupsFromTasks(rows(overview.tasks), own)) : smallEmpty('Вы ещё не подключили собственные модели. Можно использовать доступные общие модели ниже.'), '<button class="aw-link-button" data-aw-connect-model>+ подключить модель</button>')
+        + sharedSection() + '<p class="aw-muted aw-hint-line">Нажмите на модель, чтобы проверить ответ и посмотреть свои запросы и расходы.</p>';
     }
     function openModelGroup(id) {
       const data = cachedDomain('models');

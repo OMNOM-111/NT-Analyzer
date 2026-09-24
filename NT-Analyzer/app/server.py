@@ -1786,6 +1786,9 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
         end = end or datetime.now(timezone.utc)
         start = end - timedelta(days=range_days)
     access_source = str((access_decision or {}).source if access_decision else "")
+    if access_source == "demo_replay":
+        from .market_data_demo import series
+        return series(requested_instrument, timeframe, limit, start=start, end=end, max_points=max_points)
     isolated_source = access_source in {"owned_provider", "personal_connector"}
     access_scope_key = str((access_decision or {}).scope_id if access_decision else "")
     remote_bars = None
@@ -7863,6 +7866,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 out = account_auth.list_users(
                     (getattr(self, "_remote_context", None) or {}).get("user_id"))
+                if runtime_env.is_development():
+                    from .account_lifecycle import registry_rows
+                    out["deleted_accounts"] = registry_rows()
                 out["admin_capability_catalog"] = permissions.admin_capability_catalog()
                 for row in out.get("users") or []:
                     if row.get("is_owner"):
@@ -10843,6 +10849,26 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/api/account/"):
+            if path in {"/api/account/delete/start", "/api/account/delete/confirm"}:
+                if not self._check_local_post():
+                    return
+                body = self._read_body()
+                if not isinstance(body, dict):
+                    self._err(400, "Некорректный запрос.")
+                    return
+                from . import account_lifecycle
+                context = getattr(self, "_remote_context", None) or {}
+                try:
+                    kwargs = {"user_id": context.get("user_id"), "session_id": str(context.get("session_id") or "")}
+                    if path.endswith("/start"):
+                        out = account_lifecycle.start(**kwargs, provider=str(body.get("provider") or ""))
+                    else:
+                        out = account_lifecycle.confirm(**kwargs, challenge_id=str(body.get("challenge_id") or ""),
+                            code=str(body.get("code") or ""), confirmation=str(body.get("confirmation") or ""))
+                    self._json(HTTPStatus.OK, out)
+                except (account_auth.AccountAuthError, security_devices.SecurityDeviceError) as exc:
+                    self._err(exc.status, str(exc), code=getattr(exc, "code", "account_delete_failed"))
+                return
             self._account_security_post(path)
             return
 

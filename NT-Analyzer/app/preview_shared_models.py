@@ -25,17 +25,22 @@ from .ai_control_center.states import ContractError
 def enabled():
     return (preview_sandbox.enabled()
             and os.environ.get("STRATFORGE_PREVIEW_SCENARIO") != "agent_world_operator"
-            and bool(os.environ.get("STRATFORGE_PREVIEW_MODEL_BRIDGE"))
+            and transport_enabled())
+
+
+def transport_enabled():
+    return (preview_sandbox.enabled() and bool(os.environ.get("STRATFORGE_PREVIEW_MODEL_BRIDGE"))
             and bool(os.environ.get("STRATFORGE_PREVIEW_MODEL_TOKEN")))
 
 
 class Bridge:
     """One parent-owned capability, revoked when its Preview process exits."""
 
-    def __init__(self, preview_id):
+    def __init__(self, preview_id, *, allow_models=True):
         if not runtime_env.is_development() or preview_sandbox.enabled():
             raise ContractError("preview_bridge_development_required")
         self.preview_id = preview_id
+        self.allow_models = allow_models
         self.token = secrets.token_urlsafe(48)
         self.started = time.monotonic()
         self.closed = False
@@ -52,7 +57,7 @@ class Bridge:
             def do_POST(self):
                 try:
                     size = int(self.headers.get("Content-Length", "0"))
-                    if not 2 <= size <= 50000 or self.path not in {"/catalog", "/invoke"}:
+                    if not 2 <= size <= 50000 or self.path not in {"/catalog", "/invoke", "/social", "/account-deleted"}:
                         raise ContractError("preview_bridge_invalid_request")
                     encoded_body = self.rfile.read(size)
                     if not hmac.compare_digest(self.headers.get("Authorization", ""), "Bearer " + bridge.token):
@@ -83,11 +88,40 @@ class Bridge:
         self.results.clear()
 
     def _catalog(self):
+        if not self.allow_models:
+            return {}
         from .ai_control_center import model_sharing
         rows = model_sharing.available(environment="development", caller_user_uuid="preview:" + self.preview_id)
         return {hmac.new(self.token.encode(), row["model_id"].encode(), hashlib.sha256).hexdigest(): row for row in rows}
 
     def dispatch(self, path, body):
+        if self.closed or time.monotonic() - self.started > 1800:
+            raise ContractError("preview_bridge_expired")
+        if path == "/social":
+            if body != {}:
+                raise ContractError("preview_bridge_invalid_request")
+            from . import community, preview_public
+            with community._LOCK:
+                return preview_public.snapshot(community._load(include_preview=False))
+        if path == "/account-deleted":
+            from . import account_lifecycle, dev_preview
+            if type(body) is not dict or set(body) != {"user", "reason"}:
+                raise ContractError("preview_bridge_invalid_request")
+            user = body["user"]
+            if type(user) is not dict or set(user) != {"user_id", "user_uuid", "email", "created_at_utc"}:
+                raise ContractError("preview_bridge_invalid_request")
+            uid = str(UUID(user["user_uuid"]))
+            if account_auth.find_active_user_by_uuid(uid) is not None:
+                raise ContractError("preview_bridge_existing_identity_denied")
+            active = dev_preview._ACTIVE_SANDBOX or {}
+            container = dev_preview._validated_preview_container(active)
+            if not container or active.get("preview_id") != self.preview_id:
+                raise ContractError("preview_bridge_scope_invalid")
+            original = next((row for row in account_lifecycle.preview_accounts(container, self.preview_id)
+                             if account_auth._user_uuid(row) == uid and row.get("user_id") == user.get("user_id")), None)
+            if original is None:
+                raise ContractError("preview_bridge_scope_invalid")
+            return account_lifecycle.record_deletion(original, str(body["reason"]), preview=True)
         from .ai_control_center import model_sharing, contracts as c
         from .ai_control_center.model_service import ModelService
         from .ai_control_center.model_execution import ModelExecutor
@@ -156,7 +190,7 @@ class Bridge:
 
 
 def request(path, body):
-    if not enabled():
+    if not (transport_enabled() if path in {"/social", "/account-deleted"} else enabled()):
         raise ContractError("preview_bridge_unavailable")
     request = urllib.request.Request(os.environ["STRATFORGE_PREVIEW_MODEL_BRIDGE"] + path,
         data=json.dumps(body).encode(), method="POST", headers={"Content-Type": "application/json",

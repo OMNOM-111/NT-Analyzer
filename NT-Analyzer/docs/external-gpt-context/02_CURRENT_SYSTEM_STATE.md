@@ -17,6 +17,8 @@
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
+Current Local WIP: [Preview parity/account lifecycle](../changelog/2026-09-23-preview-parity-account-lifecycle.md), continuing `ca8e6639`. Demo trial charts, shared-model labelling, current Deputy/avatar speech, public Social projection and confirmed Local account erasure are IN DEVELOPMENT pending manual acceptance and regression. Runtime evidence above belongs to the prior baseline.
+
 Local chart incident (2026-09-23): the pinned Local supervisor claimed the Production public origin and isolated its chart gateway. The scoped correction uses the actual loopback listener; targeted tests PASS; correction preserved in the 0a9bcf09 baseline and subsequent Local UX checkpoint, owner Desktop TopstepX charts verified. Production supplied real MET candles during an authorized read. [Incident and exact scope](../changelog/2026-09-23-local-chart-gateway.md).
 
 - Development delta 2026-09-21: isolated branch `codex/unified-memory-service`

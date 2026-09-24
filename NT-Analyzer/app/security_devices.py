@@ -55,7 +55,7 @@ DEVICE_TYPES = ("phone", "tablet", "desktop", "browser", "connector")
 PURPOSE_DEVICE_CONFIRM = "device_confirm"
 PURPOSE_STEP_UP = "step_up"
 PURPOSE_REVOKE = "revoke"
-CHALLENGE_PURPOSES = (PURPOSE_DEVICE_CONFIRM, PURPOSE_STEP_UP, PURPOSE_REVOKE)
+CHALLENGE_PURPOSES = (PURPOSE_DEVICE_CONFIRM, PURPOSE_STEP_UP, PURPOSE_REVOKE, "account_delete")
 
 STEP_UP_PROVIDERS = ("telegram", "email", "google")
 
@@ -646,6 +646,7 @@ _DELIVERY_PURPOSE_TEXT = {
     PURPOSE_DEVICE_CONFIRM: "подтверждения нового устройства",
     PURPOSE_STEP_UP: "подтверждения действия",
     PURPOSE_REVOKE: "отзыва устройства",
+    "account_delete": "безвозвратного удаления аккаунта",
 }
 
 
@@ -848,6 +849,8 @@ def create_challenge(
         target_device_id = ""
         actor_session = None
         actor_session_id = str(session_id or "").strip()
+        if purpose_id == "account_delete" and not actor_session_id:
+            raise SecurityDeviceError("Войдите заново для удаления аккаунта.", 401, code="session_required")
         if actor_session_id:
             actor_session = _owned_session(
                 doc, user_id=uid, session_id=actor_session_id,

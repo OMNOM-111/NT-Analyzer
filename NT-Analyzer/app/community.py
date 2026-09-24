@@ -82,7 +82,7 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _load() -> Dict[str, Any]:
+def _load(*, include_preview: bool = True) -> Dict[str, Any]:
     from . import storage_router
     if storage_router.production_enabled():
         from .production_storage import StorageError
@@ -94,12 +94,10 @@ def _load() -> Dict[str, Any]:
             ) from None
     else:
         path = _store_path()
-        if not path.is_file():
-            return _empty_doc()
         try:
             doc = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return _empty_doc()
+            doc = _empty_doc()
     if not isinstance(doc, dict):
         return _empty_doc()
     for key in _COLLECTIONS:
@@ -108,6 +106,9 @@ def _load() -> Dict[str, Any]:
     # Treat the on-disk version as untrusted input as well.  The normalized
     # document is always written in the current format.
     doc["version"] = 4
+    if include_preview and runtime_env.is_development():
+        from .preview_public import overlay
+        return overlay(doc)
     return doc
 
 
@@ -123,7 +124,8 @@ def _json_safe(value: Any) -> Any:
 
 def _save(doc: Dict[str, Any]) -> None:
     from . import storage_router
-    payload = _json_safe(doc)
+    from .preview_public import local_only
+    payload = _json_safe(local_only(doc))
     if storage_router.production_enabled():
         from .production_storage import StorageError
         try:

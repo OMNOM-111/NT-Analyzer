@@ -392,6 +392,8 @@
     accountSecurity: (o) => getJSON('/api/account/security', o),
     accountDevices: (o) => getJSON('/api/account/devices', o),
     accountSecurityChallenge: (body) => send('/api/account/security/challenge', 'POST', body || {}),
+    accountDeleteStart: (body) => send('/api/account/delete/start', 'POST', body || {}),
+    accountDeleteConfirm: (body) => send('/api/account/delete/confirm', 'POST', body || {}),
     accountSecurityChallengeResend: (body) => send('/api/account/security/challenge/resend', 'POST', body || {}),
     accountSecurityChallengeConfirm: (body) => send('/api/account/security/challenge/confirm', 'POST', body || {}),
     accountDeviceApprove: (body) => send('/api/account/devices/approve', 'POST', body || {}),

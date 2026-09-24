@@ -1,5 +1,13 @@
 # StratForge Market Data Pivot: Bring Your Own Market Data (BYOMD)
 
+Local onboarding demo source: IN DEVELOPMENT pending [manual acceptance](../changelog/2026-09-23-preview-parity-account-lifecycle.md).
+An active bounded trial with chart capability and no own live provider receives
+`demo_replay` when redistribution is not authorized: deterministic synthetic
+educational candles, explicitly DEMO, never provider quotes. Normal and Preview
+accounts use the same decision. No live upstream lease or owner fan-out is
+allowed. Both existing flags remain mandatory for `shared_trial`; expired or
+denied trial remains denied.
+
 Status: Development implementation plus connector prototypes. The owner
 TopstepX hub is accepted for the owner's own charts, while unrelated-user
 redistribution remains fail-closed. Personal credentialed connectors remain

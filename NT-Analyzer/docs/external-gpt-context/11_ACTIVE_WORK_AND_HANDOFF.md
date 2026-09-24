@@ -1,5 +1,7 @@
 # 11. Active Work and Handoff
 
+Active Local work: [Preview parity/account lifecycle](../changelog/2026-09-23-preview-parity-account-lifecycle.md). User confirmed demo/replay, no owner live redistribution. Ordinary registration permissions; public surfaces shared, private data isolated. Remaining: clean Preview/owner browser walkthrough, deletion/reset receipts and full regression. No server/Canary/Production work authorized.
+
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b

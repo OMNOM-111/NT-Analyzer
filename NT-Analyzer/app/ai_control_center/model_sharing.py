@@ -161,6 +161,9 @@ def available(*, environment: str, caller_user_uuid: str) -> List[Dict[str, Any]
 
 def require(model_id: str, *, environment: str, caller_user_uuid: str) -> Dict[str, Any]:
     """The live grant for one call. Checked again right before transmission."""
+    from ..account_lifecycle import deleted_ids
+    if str(caller_user_uuid) in deleted_ids():
+        raise ContractError("model_caller_deleted")
     share = get(model_id)
     if share is None or share["environment"] != environment or share["owner_user_uuid"] == str(caller_user_uuid):
         raise ContractError("model_share_not_found")
@@ -313,7 +316,11 @@ def owner_usage(owner_user_uuid: str, *, limit: int = 50) -> Dict[str, Any]:
             "SELECT * FROM calls WHERE owner_user_uuid = ? AND caller_user_uuid != ? ORDER BY at DESC",
             (str(owner_user_uuid), str(owner_user_uuid))) if db is not None else [])]
     groups: Dict[tuple, List[Dict[str, Any]]] = {}
+    from ..account_lifecycle import deleted_ids
+    deleted = deleted_ids()
     for row in rows:
+        if row["caller_user_uuid"] in deleted:
+            row["caller_name"] = "Удалённый пользователь"
         groups.setdefault((row["model_id"], row["caller_user_uuid"]), []).append(row)
     by_caller = [{"model_id": model_id, "caller_user_uuid": person, "caller_name": items[0]["caller_name"],
                   **_summary(items)} for (model_id, person), items in groups.items()]

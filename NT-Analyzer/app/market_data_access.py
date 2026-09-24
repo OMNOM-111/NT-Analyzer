@@ -507,7 +507,15 @@ def resolve_market_data_access(
             revalidate_after_sec=_revalidate_delay(expires, current),
         )
     if expires is not None:
-        return _denied("redistribution_not_authorized", ctx)
+        # Product trial includes unrestricted synthetic chart data. This is a
+        # separate source/scope, never permission to redistribute owner ticks.
+        return MarketDataAccessDecision(
+            allowed=True, reason="trial_demo", source="demo_replay",
+            sharing_scope="public_demo", scope_id="public-demo-v1",
+            user_id=subject, workspace_id=workspace_id, provider="demo_replay",
+            expires_at_utc=str(entitlement.get("expires_at_utc") or ""),
+            revalidate_after_sec=_revalidate_delay(expires, current),
+        )
     return _denied("market_data_entitlement_required", ctx)
 
 

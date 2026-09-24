@@ -15,7 +15,11 @@ UI.ready(async function () {
   const { qs, el, toast } = UI;
 
   // ---- constants ---------------------------------------------------------
-  const STORE_KEY = 'desktop.workspaces.v2';
+  const desktopAuth = UI.CURRENT_AUTH || {};
+  // Preserve the accepted owner's layout. A regular account never inherits
+  // another person's drawings, chart windows or saved workspaces on this origin.
+  const STORE_KEY = desktopAuth.is_owner ? 'desktop.workspaces.v2'
+    : `desktop.workspaces.v2:${desktopAuth.user?.id || desktopAuth.user?.user_uuid || 'guest'}:${desktopAuth.active_workspace?.workspace_id || ''}`;
   const RESOLUTIONS = [
     { id: 'screen', label: 'Экран · под монитор', w: 0, h: 0 },
     { id: 'hd', label: 'HD · 1280×720', w: 1280, h: 720 },
@@ -1224,7 +1228,10 @@ UI.ready(async function () {
       const extra = hashShort ? ` · #${hashShort}` : '';
       let health = 'OFFLINE';
       let css = 'err';
-      if (offline || payload.market_data_available === false) {
+      if (status === 'demo_replay') {
+        health = 'DEMO · учебные данные';
+        css = 'wait';
+      } else if (offline || payload.market_data_available === false) {
         health = 'OFFLINE';
         css = 'err';
       } else if (live && marketFeedFresh && !marketFeedStale) {

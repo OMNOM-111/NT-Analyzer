@@ -631,6 +631,10 @@ def _acquire_client_upstream(
     key = f"{contract}|{timeframe}"
     if key in client.upstream_refs:
         return True
+    if decision.source == "demo_replay":
+        # Demo candles advance through normal HTTP polling. No live upstream
+        # lease and no owner fan-out event ever belongs to this public scope.
+        return True
     if decision.source == "owned_provider":
         connector = decision.connector
         if connector is None:

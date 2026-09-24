@@ -2282,6 +2282,11 @@ def delete_user(owner_id: Any, user_id: Any) -> Dict[str, Any]:
     real account again (``identity_already_linked``).
     """
     uid = int(user_id)
+    if runtime_env.is_development():
+        from . import account_lifecycle
+        account_footprint(owner_id, uid)  # Existing users.manage authority.
+        account_lifecycle.erase(uid, reason="owner_requested")
+        return list_users(owner_id)
     from . import workspaces
     # The workspace store is a separate document, so its refusal has to happen
     # before this one is mutated -- otherwise a shared-workspace rejection
@@ -4371,6 +4376,7 @@ _EMAIL_CODE_ACTIONS = {
     "device_confirm": "подтверждения нового устройства в StratForge",
     "step_up": "подтверждения действия в StratForge",
     "revoke": "отзыва устройства в StratForge",
+    "account_delete": "безвозвратного удаления аккаунта StratForge",
 }
 
 

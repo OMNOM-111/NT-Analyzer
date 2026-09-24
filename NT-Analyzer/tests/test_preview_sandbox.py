@@ -435,7 +435,8 @@ def test_new_user_profiles_have_registration_workspace_and_only_selected_rights(
     decorated = server.Handler._decorate_workspace_context(object(), raw)
     assert decorated["_permissions"]["nav"]["desktop"] is True
     assert decorated["_permissions"]["nav"]["topstep"] is True
-    assert decorated["capabilities"]["charts_realtime"] is False
+    assert decorated["capabilities"]["charts_realtime"] is True
+    assert decorated["market_data_access"]["source"] == "demo_replay"
     old_uuid, old_workspace = user["user_uuid"], workspace["workspace_id"]
     preview_sandbox.reset("shared_models_user", device_credential="preview-next-user-browser")
     assert account_auth.find_active_user_by_uuid(old_uuid) is None
@@ -596,6 +597,8 @@ def test_atomic_manifest_retries_transient_windows_reader_lock(tmp_path, monkeyp
     replace = preview_sandbox.os.replace
     attempts = []
     def transient(source, destination):
+        if Path(destination) != path:
+            return replace(source, destination)
         attempts.append(source)
         if len(attempts) == 1:
             assert path.read_text(encoding="utf-8") == '{"before": true}'
