@@ -11,7 +11,7 @@
 - Protected Local branch snapshot: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; the active final branch is identified below, while #285 is an accepted integration input
 - Version: `0.10.0-beta.96`, `pre_release`; clean `2b6d0112` active on Local 8765, no Canary/Production promotion
 - Integration state: scoped model/domain/Chat/NT/Desktop, real fact handoff, manual discussion, separate application observations, Consensus and Court verified; owner-dependent and full-program work remain
-- Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
+- Current Production version/build/artifact when known: last recorded beta.92, build `sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z`, artifact `art_57db4318cb8745d399d98bccf48de396`; accepted Canary and Production live on 2026-09-02. This supersedes the beta.87 snapshot; current public live identity was not re-verified during the 2026-09-24 timeline audit. See [timeline audit](../changelog/2026-09-24-timeline-source-audit.md).
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 

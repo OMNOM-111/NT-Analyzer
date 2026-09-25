@@ -3,7 +3,7 @@
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
 - Last verified UTC: 2026-08-30T02:05:00Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Verified deployed artifact Git SHA: `b923e7b2b4e034c4f890e89b33992d469c84b779`
+- Last recorded deployed artifact Git SHA: `9d800770d08e0072ec453c2611e98726e295b2e4` (2026-09-02; live endpoints not re-verified 2026-09-24)
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: DONE
 
@@ -44,7 +44,27 @@ summary, source SHA and final verification PASS are present.
 The Environment Switcher opens the selected origin and never carries session
 or browser storage between origins.
 
-## Current Production: beta.86
+## Last recorded Canary and Production: beta.92
+
+The Release Center audit recorded one signed artifact accepted on Canary at
+`2026-09-02T03:54:35Z` and promoted to Production (`production_live`) at
+`2026-09-02T03:57:03Z`. The Connector closeout independently names the
+Production server build. This is the latest deployment evidence found in the
+local repository; the public live endpoints could not be reached during the
+2026-09-24 timeline audit.
+
+| Field | Value |
+| --- | --- |
+| Version / source SHA | `0.10.0-beta.92` / `9d800770d08e0072ec453c2611e98726e295b2e4` |
+| Candidate / artifact | `rc_8e0373a36ebf4bd09c7a5872cb770664` / `art_57db4318cb8745d399d98bccf48de396` |
+| Build ID | `sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z` |
+| Archive SHA256 | `FAD094C243B8EDE0B365BE9874466FA9C53C414CB0C9588D4EF4DC0CE62FF315` |
+| Manifest SHA256 | `07A3961277E3879357EE92A8471911FAFA4B57E1B3BF2D046E1BCA41D27A9169` |
+
+Sources: [Connector Production closeout](../changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md),
+[timeline audit](../changelog/2026-09-24-timeline-source-audit.md).
+
+### Historical beta.86 snapshot
 
 | Field | Value |
 | --- | --- |

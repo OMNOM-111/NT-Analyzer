@@ -9,12 +9,11 @@
 - Protected Local program snapshot: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. New unified-source evidence is separate below; full-program/owner acceptance remains open.
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`; not released to Canary/Production
-- Active Local 8765: clean `2b6d0112bef88c5bfb73970de64ec5518443e56b`, build `dev-0.10.0-beta.96-2b6d0112bef8`, original owner data, Preview=false
-- Active Agent World branch: `codex/agent-world-final-acceptance`, integrating shared #285 and native P1-5 histories; protected Local still uses `codex/agent-world-owner-preview` code 2b6d0112 from the separate #282/#281/#280 stack. Nothing is deployed. Current ownership is in [master status](../current/AGENT_WORLD_MASTER_STATUS.md); preserved independent review is in [AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md).
-- Verified deployed artifact Git SHA: `8f42158661e8247832c90bea8fc4d9f0071e647b`
-- Current Production version/build/artifact when known: `0.10.0-beta.87`; `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; exact hashes are in the beta.87 changelog
-- Current live release: `0.10.0-beta.87`, accepted Canary and Production
-- Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
+- Active Local 8765: clean `56945ac68e94cb7ffa031ef2312dec5a9ad80a54`, build `dev-0.10.0-beta.96-56945ac68e94`, verified by `/api/runtime/env` on 2026-09-24. The editing checkout `feat/shared-model-access` at `77eda536` is separate from the running process; see [timeline audit](../changelog/2026-09-24-timeline-source-audit.md).
+- Active Agent World branch: `codex/agent-world-final-acceptance`, integrating shared #285 and native P1-5 histories; its candidate is not a Canary/Production release. Current ownership is in [master status](../current/AGENT_WORLD_MASTER_STATUS.md); preserved independent review is in [AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md).
+- Last recorded deployed artifact Git SHA: `9d800770d08e0072ec453c2611e98726e295b2e4` (2026-09-02 Release Center audit; public live identity not re-verified)
+- Current Production version/build/artifact when known: last recorded `0.10.0-beta.92`; build `sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z`; artifact `art_57db4318cb8745d399d98bccf48de396`. Release Center recorded Canary PASS and `production_live` on 2026-09-02; live endpoints were not reachable for the 2026-09-24 timeline audit. The beta.87 snapshot below is historical.
+- Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified last recorded Production baseline
 - Status: PARTIAL
 
 - Development delta 2026-09-21: isolated branch `codex/unified-memory-service`
@@ -343,35 +342,38 @@ on ef4006eb; actual historical bars are not labelled LIVE.
 | Subsystem | Status | Current fact | Remaining limit |
 | --- | --- | --- | --- |
 | Agent World | `IN DEVELOPMENT` | Protected Local stays on 2b6d0112; unified PR #285 saved e45 full 5416/119 skips, fresh PG 69/41/7 and actual runtime/RLS PASS. New Persona/V2 and live-refresh corrections are separate WIP after actual browser failures | New-code gates and integrated browser route remain, not completed e45 tests. Ordinary-user key, real external results, specific permanent Social publication and owner visual acceptance remain separate. See the canonical matrix |
-| Auth / owner identity | `BETA` in Unified Local | `0.10.0-beta.96` has one three-step registration contract for Telegram, Google and e-mail, a stable StratForge handle shared by profile/SF Social/SF Chat, final clickwrap consent and the existing shared environment-routed provider architecture. Owner Preview uses the same state transitions with sandbox-only synthetic credentials | Not present in the deployed beta.87 artifact; live real-provider acceptance and immutable Canary/Production promotion remain separate gates |
-| Device confirmation / trusted access | `BETA` in Unified Local | Every new unknown human browser/app access starts as a two-minute pending session. The first freshly authenticated device can choose permanent trust or current-session-only without a redundant second OTP; later unknown clients still use confirmed Telegram or verified e-mail. Machine → Client → Session grouping remains proof-based | Integrated and browser-verified in Local beta.96, but not present in deployed beta.87; real-provider acceptance and release promotion remain separate gates |
-| Legacy UI / Telegram Mini App | `DEPRECATED` | Merged main serves Aurora only; legacy UI, Mini App, remote-access and tunnel routes fail with HTTP 410. Classic assets are available only in a separate localhost read-only Legacy Viewer. Telegram `/start` uses a normal URL button | beta.87 is live in Canary and Production; historical snapshots remain until owner review |
-| User entry and trial access | `BETA` in Unified Local | Anonymous product access is removed. Every verified account receives the same full product with a default five-hour active-use starting grant; idle time is not charged. Profile/security remain available after exhaustion | Not present in deployed beta.87; product access does not grant third-party market-data redistribution rights |
-| Admin / Release Center | `BETA` | A versioned release/change record is visible with title, summary, PRs, SHA, build/artifact, stage, checks, duration and environment identity. Production approval/promotion fails closed without title, summary, source SHA and verification PASS | beta.87 acceptance is recorded; any application change starts a new artifact cycle |
+| Auth / owner identity | `BETA` in Unified Local | `0.10.0-beta.96` has one three-step registration contract for Telegram, Google and e-mail, a stable StratForge handle shared by profile/SF Social/SF Chat, final clickwrap consent and the existing shared environment-routed provider architecture. Owner Preview uses the same state transitions with sandbox-only synthetic credentials | Not present in the last recorded deployed beta.92 artifact; live real-provider acceptance and immutable Canary/Production promotion remain separate gates |
+| Device confirmation / trusted access | `BETA` in Unified Local | Every new unknown human browser/app access starts as a two-minute pending session. The first freshly authenticated device can choose permanent trust or current-session-only without a redundant second OTP; later unknown clients still use confirmed Telegram or verified e-mail. Machine → Client → Session grouping remains proof-based | Integrated and browser-verified in Local beta.96, but not present in last recorded deployed beta.92; real-provider acceptance and release promotion remain separate gates |
+| Legacy UI / Telegram Mini App | `DEPRECATED` | Merged main serves Aurora only; legacy UI, Mini App, remote-access and tunnel routes fail with HTTP 410. Classic assets are available only in a separate localhost read-only Legacy Viewer. Telegram `/start` uses a normal URL button | Last recorded Canary/Production release is beta.92; historical snapshots remain until owner review |
+| User entry and trial access | `BETA` in Unified Local | Anonymous product access is removed. Every verified account receives the same full product with a default five-hour active-use starting grant; idle time is not charged. Profile/security remain available after exhaustion | Not present in last recorded deployed beta.92; product access does not grant third-party market-data redistribution rights |
+| Admin / Release Center | `BETA` | A versioned release/change record is visible with title, summary, PRs, SHA, build/artifact, stage, checks, duration and environment identity. Production approval/promotion fails closed without title, summary, source SHA and verification PASS | beta.92 is the last recorded acceptance; any application change starts a new artifact cycle |
 | Test isolation | `AVAILABLE` | Protected 2b6d0112 retains its recorded 4235/44 and exact-code CI. Separate clean e45 immutable full 5416/119 skips and disposable PG 69/41/7 plus authenticated runtime/restart/RLS are hash-bound to e45 | 119 generic skips stay explicit; the new DB runs supplement them. Three shell/POSIX cases remain unavailable on this Windows run. Neither old CI nor e45 PASS certifies subsequent WIP or real provider/browser acceptance |
 | Market data / TopstepX | `BETA` | TopstepX remains the primary independent read-only history/realtime chart source; the accepted gateway/SignalR/cache/failover/rendering baseline was not changed by PR #254/#255 or the beta.86 release-record work | cross-user owner-feed redistribution remains `EXTERNAL BLOCKED` without written authority |
 | Charts / fan-out | `BETA` | Browser clients consume same-origin StratForge market-data WebSockets; provider credentials are not delivered to browsers and consumers do not create their own TopstepX loginKey/SignalR sessions | broader design acceptance is separate from this Connector closeout |
-| NinjaTrader / Connector | `BETA` | Production Connector on VMNINJA is `0.4.2-dev.20`; SERVER BACKTEST, cancel state machine, device catalog, account snapshot and Connector LIVE/GRACE/OFFLINE presentation are accepted | public installer distribution remains `EXTERNAL BLOCKED` on authorized Authenticode material |
+| NinjaTrader / Connector | `BETA` | Last recorded Production Connector on VMNINJA is `0.4.5-dev.1` (2026-09-02 health accepted); SERVER BACKTEST, cancel state machine, device catalog, account snapshot and Connector LIVE/GRACE/OFFLINE presentation are accepted | public installer distribution remains `EXTERNAL BLOCKED` on authorized Authenticode material; current installed version has not been re-verified |
 | Production worker queue | `AVAILABLE` | Eleven worker slots remain 4/4/2/1; empty workers use adaptive jittered backoff and one 30-second stale sweeper. Later auth hot-spot work reduced `/api/auth/status` latency but did not claim CPU improvement outside noise | DB tx/s still lacks a safe first-class diagnostics path |
 | SF Social / SF Chat | `BETA` in Unified Local | The former Community tab is SF Social; existing profile/privacy/feed/moderation and human/AI SF Chat stores stay authoritative. Agent World adds explicit verified snapshots to the existing Community store and model/application evidence to the same chat; real backtest delivery survived restart | Agent World Social publication remains pending; rejected-plan recovery and actual PNG chat delivery passed; broader Strategy/Chart/Live adapters remain separate. Existing relational PG tests passed, not an Agent World PG release. beta.96 is not promoted to Canary/Production |
-| Documents | `BETA` | Current handoff and Context Pack identify beta.87 as live; hidden Markdown amendment blocks are removed and AI provenance is infrastructure-only or absent | beta.87 exact operational identity is recorded in its changelog closeout |
+| Documents | `BETA` | Hidden Markdown amendment blocks are removed and AI provenance is infrastructure-only or absent | Last recorded server deployment is beta.92; current live identity requires a fresh endpoint check |
 | Legal | `AVAILABLE` | One official onboarding agreement `2026-08-30-v2` is the sole versioned clickwrap; related official policies are readable informational documents; owner configuration is absent from both document API namespaces | Live Trading remains unavailable pending separate release and legal requirements |
 
 ## Last recorded operational identity (not re-verified in this task)
 
 | Environment | Version | Git SHA | Build ID | Runtime artifact SHA256 | Status |
 | --- | --- | --- | --- | --- | --- |
-| Canary | `0.10.0-beta.87` | `8f42158661e8247832c90bea8fc4d9f0071e647b` | `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z` | same accepted beta.87 artifact | accepted / ready |
-| Production | `0.10.0-beta.87` | same | same | same | live / ready |
+| Canary | `0.10.0-beta.92` | `9d800770d08e0072ec453c2611e98726e295b2e4` | `sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z` | `07A3961277E3879357EE92A8471911FAFA4B57E1B3BF2D046E1BCA41D27A9169` | accepted 2026-09-02; not re-verified live |
+| Production | `0.10.0-beta.92` | same | same | same | `production_live` 2026-09-02; not re-verified live |
 
-The last deployment record identifies the same accepted beta.87 immutable artifact in both environments:
-`art_9ce9dbcb9a7a4fee9df6a54d40f29806`, promoted to Production without a
-rebuild. The exact archive and manifest SHA256 are recorded in the canonical
-beta.87 changelog closeout.
+The later Release Center audit identifies one accepted beta.92 artifact in both environments:
+`art_57db4318cb8745d399d98bccf48de396`, archive SHA256
+`FAD094C243B8EDE0B365BE9874466FA9C53C414CB0C9588D4EF4DC0CE62FF315`,
+manifest SHA256 as in the table. Canary passed at `2026-09-02T03:54:35Z` and
+Production became live at `2026-09-02T03:57:03Z`. See the
+[Connector closeout](../changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md)
+and [timeline audit](../changelog/2026-09-24-timeline-source-audit.md).
 
 ## Deprecated current-state claims
 
-- beta.29-beta.78 release identities are history, not current live state.
+- beta.29-beta.87 release identities are history, not the latest recorded deployment.
 - The target Production installation is no longer offline or blocked by
   `sf_connector_installations_workspace_id_fkey`.
 - Earlier draft legal labels are obsolete; the current package is official product documentation.
