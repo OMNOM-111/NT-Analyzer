@@ -3,68 +3,400 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="light">
-  <title>StratForge AI — история разработки и развёртывания</title>
+  <meta name="color-scheme" content="light dark">
+  <title>StratForge AI — история продукта</title>
+  <script>
+    try {
+      const savedTheme = localStorage.getItem('stratforge-timeline-theme');
+      document.documentElement.dataset.theme = savedTheme === 'light' || savedTheme === 'dark'
+        ? savedTheme
+        : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    } catch {
+      document.documentElement.dataset.theme = 'light';
+    }
+  </script>
   <style>
-    :root{--ink:#11264c;--muted:#536781;--blue:#2375d8;--green:#078b69;--amber:#dc9200;--red:#bd3545;--line:#d7e5f5;--surface:#fff;--bg:#f6faff}
-    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--ink);font:15px/1.45 "Segoe UI",Arial,sans-serif;background:radial-gradient(circle at 50% -15%,#e9f3ff 0,#fff 44%,var(--bg) 100%)}
-    a{color:#155db0;text-decoration:none}a:hover{text-decoration:underline}a:focus-visible,button:focus-visible{outline:3px solid #f5b938;outline-offset:3px}
-    .page{max-width:1680px;margin:auto;padding:30px 28px 34px}.masthead{display:flex;align-items:flex-start;justify-content:space-between;gap:28px;margin-bottom:24px}
-    .brand{display:flex;align-items:flex-start;gap:17px}.brand-mark{flex:none;display:grid;place-items:center;width:58px;height:58px;color:#fff;background:linear-gradient(145deg,#1d6bd0,#54a7f0);border-radius:18px;box-shadow:0 7px 20px #2375d833;font-size:29px;font-weight:800}
-    h1{font-size:clamp(29px,3.1vw,48px);letter-spacing:-.035em;line-height:1.12;margin:0 0 7px}.subtitle{font-size:18px;color:var(--muted);margin:0}.snapshot{font-size:13px;color:#57708d;margin-top:9px}
-    .state-box{flex:none;width:330px;border:1px solid #cfe2fa;background:#ffffffdc;border-radius:15px;padding:16px 18px;box-shadow:0 6px 20px #25589113}.state-box strong{display:block;font-size:14px}.state-box .state-main{font-size:20px;font-weight:800}.state-box small{color:var(--muted)}
-    .state-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:18px}.state-tile{background:var(--surface);border:1px solid var(--line);border-radius:13px;padding:13px 16px;box-shadow:0 3px 14px #1c51820c;min-width:0}.state-tile .name{font-weight:800;font-size:13px;text-transform:uppercase;letter-spacing:.045em}.state-tile .value{font-size:18px;font-weight:800;margin:2px 0}.state-tile p{margin:0;color:var(--muted);font-size:12px}.state-tile code{font-size:11px}.state-tile.development{border-top:4px solid var(--blue)}.state-tile.canary{border-top:4px solid var(--amber)}.state-tile.production{border-top:4px solid var(--green)}
-    .section-head{display:flex;align-items:end;justify-content:space-between;gap:20px;margin:22px 2px 9px}.section-head h2{font-size:21px;margin:0}.section-head p{margin:3px 0 0;color:var(--muted);font-size:13px}.controls{display:flex;gap:7px}.controls button{border:1px solid #bcd4f2;background:#fff;color:#1a5ea9;border-radius:9px;width:35px;height:35px;font-size:22px;line-height:1;cursor:pointer}.controls button:hover{background:#eaf4ff}
-    .timeline-scroll{overflow-x:auto;overflow-y:hidden;border:1px solid #d5e5f7;border-radius:17px;background:linear-gradient(180deg,#fff 0%,#f7fbff 52%,#fff 100%);box-shadow:0 6px 24px #19599a0a;scrollbar-color:#a3bedb #edf5fe;scroll-snap-type:x proximity}
-    .track{display:grid;grid-auto-flow:column;grid-auto-columns:252px;gap:18px;width:max-content;position:relative;padding:20px 22px 26px}.track:before{content:"";position:absolute;left:22px;right:22px;top:321px;height:4px;background:linear-gradient(90deg,#718cab,#809ab8 89%,#c3d6ea);border-radius:4px}
-    .milestone{position:relative;display:grid;grid-template-rows:282px 39px 282px;scroll-snap-align:start}.milestone:before{content:"";position:absolute;left:50%;top:301px;transform:translateX(-50%);height:37px;width:2px;background:var(--accent)}.milestone.above:before{top:267px;height:37px}.milestone:after{content:"";position:absolute;left:50%;top:289px;transform:translateX(-50%);width:21px;height:21px;background:#fff;border:6px solid var(--accent);border-radius:50%;box-shadow:0 0 0 6px #fff,0 3px 12px #244b752d;z-index:2}
-    .milestone.above .card{grid-row:1}.milestone.below .card{grid-row:3}.milestone.feature{--accent:#227be0}.milestone.release{--accent:#078b69}.milestone.connector{--accent:#ee9b00}.milestone.agent{--accent:#7b45cd}.milestone.current{--accent:#c53042}.milestone.current:after{box-shadow:0 0 0 6px #fff,0 0 0 9px #d03649}
-    .card{background:#fff;border:1px solid #cfdef1;border-radius:13px;padding:12px 13px;box-shadow:0 4px 12px #25578d12;display:flex;flex-direction:column;min-height:0}.current .card{border:2px dashed #cc3345;background:linear-gradient(135deg,#fff,#fff4f6)}
-    .card-top{display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:8px;font-size:12px;font-weight:800}.card-top time{white-space:nowrap}.version{color:var(--accent);white-space:nowrap}.icon-title{display:flex;gap:9px;align-items:start}.icon{flex:none;display:grid;place-items:center;width:32px;height:32px;border-radius:50%;color:var(--accent);background:color-mix(in srgb,var(--accent) 11%,white);font-size:16px;font-weight:800}.card h3{font-size:15px;line-height:1.22;margin:0}.description{font-size:12px;color:#425875;line-height:1.34;margin:7px 0 8px;min-height:34px}.commit{color:#6b7e96;font-size:11px;margin:0 0 6px}.commit code,.state-tile code{font-family:Consolas,monospace}.env-list{list-style:none;padding:0;margin:auto 0 7px;display:grid;gap:3px}.env-list li{display:flex;gap:6px;align-items:center;padding:3px 6px;background:#edf5fe;border-radius:6px;font-size:11px;line-height:1.2}.env-list .symbol{flex:none;display:grid;place-items:center;border-radius:50%;width:16px;height:16px;color:#fff;font-weight:800;font-size:11px}.env-list .ok .symbol{background:var(--green)}.env-list .partial .symbol{background:var(--amber)}.env-list .no .symbol{background:#94a4b8}.env-list .label{font-weight:700;min-width:75px}.env-list .note{color:#526680}.source{border-top:1px solid #e4edf7;padding-top:5px;font-size:11px}
-    .details{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:18px}.info-panel{border:1px solid #d5e4f7;background:#fff;border-radius:13px;padding:15px 18px}.info-panel h2{font-size:16px;margin:0 0 9px}.info-panel p,.info-panel li{font-size:12px;color:#4c6180}.info-panel p{margin:0 0 7px}.info-panel ul{padding-left:18px;margin:0}.swatch{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}.footnote{color:#617591;font-size:12px;margin:14px 2px 0}
-    @media(max-width:900px){.masthead{display:block}.state-box{width:auto;margin-top:16px}.state-grid,.details{grid-template-columns:1fr 1fr}}
-    @media(max-width:680px){.page{padding:19px 14px}.brand-mark{width:43px;height:43px;border-radius:13px;font-size:22px}.brand{gap:12px}.subtitle{font-size:14px}.state-grid,.details{grid-template-columns:1fr}.state-tile{padding:10px 13px}.section-head{align-items:center}.section-head p,.controls{display:none}.timeline-scroll{overflow:visible;border:0;background:none;box-shadow:none}.track{display:flex;flex-direction:column;width:auto;gap:15px;padding:4px 0 4px 28px}.track:before{left:11px;right:auto;top:0;bottom:0;width:3px;height:auto;background:#8ba7c7}.milestone{display:block}.milestone:before,.milestone.above:before{display:none}.milestone:after{left:-16px;top:19px;width:13px;height:13px;border-width:4px;box-shadow:0 0 0 4px #fff}.milestone.current:after{box-shadow:0 0 0 4px #fff,0 0 0 7px #d03649}.card{min-height:auto;padding:12px}.description{min-height:0}.env-list{margin:4px 0 8px}.state-box .state-main{font-size:18px}}
+    :root {
+      color-scheme: light;
+      --bg: #f4f8fe; --surface: #fff; --surface-soft: #eef5fd;
+      --ink: #12284c; --muted: #526781; --border: #d2e1f2;
+      --line: #8ca6c4; --shadow: 0 8px 26px #1b579615;
+      --blue: #2375d8; --green: #087e60; --amber: #986000;
+      --red: #bf3547; --neutral: #8396ac;
+      --status-green-bg: #087e60; --status-amber-bg: #986000; --status-neutral-bg: #60758d;
+      --social: #087f78; --chat: #3b68c6; --ai: #7949c8;
+      --security: #397099; --trading: #087e60; --connector: #925d00;
+      --ui: #366dbb; --infrastructure: #5f708b; --fix: #ac4f58;
+      --wash: radial-gradient(circle at 48% -9%, #e5f1ff 0, #fff 42%, #f4f8fe 100%);
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #0b1422; --surface: #142238; --surface-soft: #1b2c45;
+      --ink: #edf5ff; --muted: #b5c5d9; --border: #33475f;
+      --line: #68829f; --shadow: 0 10px 30px #03081070;
+      --blue: #72afff; --green: #46d2a4; --amber: #ffc064;
+      --red: #ff7b88; --neutral: #96a8bb;
+      --status-green-bg: #087e60; --status-amber-bg: #986000; --status-neutral-bg: #60758d;
+      --social: #61d7ca; --chat: #8db0ff; --ai: #bd9aff;
+      --security: #8ac2e8; --trading: #65d8b2; --connector: #ffce78;
+      --ui: #88b8f7; --infrastructure: #adbed7; --fix: #ff9ba6;
+      --wash: radial-gradient(circle at 48% -8%, #183250 0, #101e30 45%, #0b1422 100%);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body { margin: 0; background: var(--wash); color: var(--ink); font: 15px/1.42 "Segoe UI", Arial, sans-serif; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    button { font: inherit; }
+    button:focus-visible, a:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
+    a { color: var(--blue); }
+    .page { width: 100%; padding: clamp(16px, 2.1vw, 48px); margin: 0 auto; }
+    .masthead { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 22px; }
+    .brand { display: flex; align-items: flex-start; gap: 15px; }
+    .brand-mark { display: grid; place-items: center; flex: none; width: 51px; height: 51px; border-radius: 15px; background: linear-gradient(145deg, #1664bf, #51a5ed); color: white; font-size: 25px; box-shadow: var(--shadow); }
+    h1 { margin: 0 0 5px; font-size: clamp(28px, 2.8vw, 50px); letter-spacing: -.035em; line-height: 1.12; }
+    .subtitle { color: var(--muted); margin: 0; font-size: clamp(14px, 1.15vw, 19px); }
+    .snapshot-date { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
+    .theme-toggle { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--ink); padding: 8px 13px; cursor: pointer; box-shadow: var(--shadow); white-space: nowrap; }
+    .theme-toggle:hover { border-color: var(--blue); }
+    .theme-icon { color: var(--blue); font-size: 18px; line-height: 1; }
+    .release-note { margin: 20px 0 15px; padding: 11px 15px; border: 1px solid var(--border); border-left: 4px solid var(--green); border-radius: 11px; background: var(--surface); color: var(--muted); font-size: 13px; }
+    .release-note strong { color: var(--ink); }
+    .environment-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(10px, 1vw, 19px); }
+    .environment-card { min-width: 0; padding: clamp(13px, 1.15vw, 23px); border: 1px solid var(--border); border-top: 4px solid var(--env); border-radius: 15px; background: var(--surface); box-shadow: var(--shadow); container-type: inline-size; }
+    .environment-card.local { --env: var(--blue); }
+    .environment-card.canary { --env: var(--amber); }
+    .environment-card.production { --env: var(--green); }
+    .env-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; }
+    .env-heading h2 { margin: 0; font-size: 14px; text-transform: uppercase; letter-spacing: .055em; }
+    .env-version { margin: 2px 0 3px; font-size: clamp(18px, 1.45vw, 26px); font-weight: 800; line-height: 1.1; }
+    .env-qualified { color: var(--muted); font-size: 11px; font-weight: 600; }
+    .env-subtitle { margin: 2px 0 10px; color: var(--muted); font-size: 12px; }
+    .availability { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr; gap: 5px 10px; }
+    @container (min-width: 530px) { .availability { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    .availability li { min-width: 0; display: flex; align-items: center; gap: 7px; border-radius: 7px; background: var(--surface-soft); padding: 5px 7px; }
+    .state-symbol { flex: none; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--state); color: #fff; font-size: 12px; font-weight: 800; }
+    .available { --state: var(--status-green-bg); }
+    .candidate { --state: var(--status-amber-bg); }
+    .absent { --state: var(--status-neutral-bg); }
+    .availability button { min-width: 0; border: 0; padding: 0; background: none; color: var(--ink); text-align: left; cursor: pointer; font-size: 12px; line-height: 1.22; }
+    .availability button:hover { color: var(--blue); text-decoration: underline; }
+    .env-meta { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 8px; margin: 11px 0 0; padding-top: 9px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); }
+    .env-meta dt { font-weight: 700; }
+    .env-meta dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-family: Consolas, monospace; }
+    .environment-caption { color: var(--muted); font-size: 11px; margin: 8px 3px 0; }
+    .section-heading { margin: clamp(24px, 2vw, 34px) 2px 10px; display: flex; align-items: baseline; justify-content: space-between; gap: 15px; }
+    .section-heading h2 { margin: 0; font-size: clamp(20px, 1.7vw, 27px); }
+    .section-heading p { color: var(--muted); margin: 0; font-size: 12px; }
+    .timeline { position: relative; padding: 18px 0 23px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
+    .timeline-track { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); width: 100%; position: relative; }
+    .timeline-track::before { content: ""; position: absolute; top: 291px; left: 1.5%; right: 1.5%; height: 3px; background: var(--line); border-radius: 3px; }
+    .milestone { min-width: 0; position: relative; display: grid; grid-template-rows: 270px 44px 270px; padding: 0 clamp(3px, .45vw, 12px); --accent: var(--infrastructure); }
+    .milestone.trading { --accent: var(--trading); }
+    .milestone.fix { --accent: var(--fix); }
+    .milestone.connector { --accent: var(--connector); }
+    .milestone.social { --accent: var(--social); }
+    .milestone.ai { --accent: var(--ai); }
+    .milestone.current { --accent: var(--red); }
+    .milestone::before { content: ""; position: absolute; left: 50%; width: 2px; background: var(--accent); }
+    .milestone.above::before { top: 250px; height: 40px; }
+    .milestone.below::before { top: 292px; height: 39px; }
+    .milestone::after { content: ""; position: absolute; top: 280px; left: 50%; transform: translateX(-50%); width: 23px; height: 23px; border: 6px solid var(--accent); border-radius: 50%; background: var(--surface); box-shadow: 0 0 0 5px var(--surface), 0 3px 12px #163f6a36; }
+    .milestone.current::after { box-shadow: 0 0 0 5px var(--surface), 0 0 0 8px var(--red); }
+    .event-card { width: min(100%, 340px); min-width: 0; min-height: 0; display: flex; flex-direction: column; justify-self: center; padding: clamp(8px, .75vw, 14px); border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
+    .above .event-card { grid-row: 1; align-self: end; margin-bottom: 20px; }
+    .below .event-card { grid-row: 3; align-self: start; margin-top: 17px; }
+    .current .event-card { border: 2px dashed var(--red); background: var(--surface-soft); }
+    .event-date { margin: 0; font-size: 12px; font-weight: 800; color: var(--ink); }
+    .event-version { margin: 0 0 9px; color: var(--muted); font-size: 11px; }
+    .event-card h3 { margin: 0 0 7px; color: var(--accent); font-size: clamp(15px, 1.12vw, 20px); line-height: 1.18; }
+    .feature-chips { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 5px; min-height: 43px; }
+    .feature-chip { border: 1px solid currentColor; border-radius: 999px; padding: 3px 7px; background: transparent; color: var(--chip); font-size: clamp(10px, .75vw, 12px); font-weight: 700; line-height: 1.2; cursor: pointer; text-align: left; }
+    .feature-chip:hover { background: var(--surface-soft); text-decoration: underline; }
+    .cat-social { --chip: var(--social); }.cat-chat { --chip: var(--chat); }.cat-ai { --chip: var(--ai); }.cat-security { --chip: var(--security); }.cat-trading { --chip: var(--trading); }.cat-connector { --chip: var(--connector); }.cat-ui { --chip: var(--ui); }.cat-infrastructure { --chip: var(--infrastructure); }.cat-fix { --chip: var(--fix); }
+    .event-availability { margin: auto 0 0; padding: 8px 0 5px; list-style: none; font-size: clamp(10px, .75vw, 12px); }
+    .event-availability li { display: flex; gap: 5px; align-items: baseline; padding: 2px 0; }
+    .event-availability b { min-width: 20px; color: var(--status); }
+    .event-availability .yes { --status: var(--green); }.event-availability .pending { --status: var(--amber); }.event-availability .none { --status: var(--neutral); }
+    .event-availability span { color: var(--muted); }
+    .event-footer { display: flex; align-items: center; justify-content: space-between; gap: 6px; border-top: 1px solid var(--border); padding-top: 6px; margin-top: 3px; }
+    .more { border: 0; padding: 0; background: none; color: var(--blue); cursor: pointer; font-size: 11px; font-weight: 700; }
+    .more:hover { text-decoration: underline; }
+    .event-source { color: var(--muted); font-size: 10px; text-align: right; }
+    .legend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 17px; }
+    .legend-panel { padding: 14px 17px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+    .legend-panel h2 { margin: 0 0 8px; font-size: 15px; }
+    .legend-panel p { margin: 4px 0; color: var(--muted); font-size: 12px; }
+    .legend-categories { display: flex; flex-wrap: wrap; gap: 5px; }
+    .legend-categories span { font-size: 11px; font-weight: 700; color: var(--chip); padding: 3px 7px; border: 1px solid currentColor; border-radius: 999px; }
+    .footnote { margin: 14px 2px 0; color: var(--muted); font-size: 11px; }
+    dialog { width: min(92vw, 520px); max-height: min(85vh, 700px); overflow: auto; border: 1px solid var(--border); border-radius: 16px; padding: 20px; background: var(--surface); color: var(--ink); box-shadow: 0 24px 70px #02091470; }
+    dialog::backdrop { background: #071426a8; }
+    .dialog-top { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+    dialog h2 { margin: 0 0 4px; font-size: 23px; }
+    .dialog-kicker { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+    .dialog-intro { margin: 0 0 11px; }
+    .dialog-points { margin: 0 0 15px; padding-left: 20px; }
+    .dialog-points li { margin: 4px 0; }
+    .dialog-tech { border-top: 1px solid var(--border); padding-top: 10px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+    .dialog-tech p { margin: 0 0 6px; }
+    .close-dialog { flex: none; width: 32px; height: 32px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface-soft); color: var(--ink); cursor: pointer; font-size: 20px; line-height: 1; }
+    @media (max-width: 1720px) {
+      .event-card h3 { font-size: 15px; }
+      .feature-chip { font-size: 10px; }
+      .event-availability { font-size: 10px; }
+    }
+    @media (max-width: 1360px) {
+      .timeline { padding: 15px 18px; }
+      .timeline-track { display: flex; flex-direction: column; gap: 12px; padding-left: 29px; }
+      .timeline-track::before { top: 0; bottom: 0; left: 11px; right: auto; width: 3px; height: auto; }
+      .milestone { display: block; padding: 0; }
+      .milestone::before { display: none; }
+      .milestone::after { top: 18px; left: -16px; width: 17px; height: 17px; border-width: 4px; box-shadow: 0 0 0 4px var(--surface); }
+      .milestone.current::after { box-shadow: 0 0 0 4px var(--surface), 0 0 0 7px var(--red); }
+      .event-card { width: 100%; max-width: none; min-height: 0; padding: 13px 15px; }
+      .above .event-card, .below .event-card { margin: 0; }
+      .event-card h3 { font-size: 18px; }
+      .feature-chip, .event-availability { font-size: 12px; }
+      .feature-chips { min-height: 0; }
+      .event-availability { display: flex; flex-wrap: wrap; gap: 5px 16px; margin-top: 6px; }
+      .event-availability li { min-width: 135px; }
+    }
+    @media (max-width: 1000px) {
+      .environment-grid { grid-template-columns: 1fr; }
+      .environment-card { padding: 15px; }
+      .legend-grid { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 620px) {
+      .page { padding: 16px 12px 25px; }
+      .masthead { grid-template-columns: 1fr auto; gap: 9px; }
+      .brand { gap: 9px; }
+      .brand-mark { width: 39px; height: 39px; border-radius: 11px; font-size: 21px; }
+      h1 { font-size: 26px; }
+      .theme-toggle { width: 38px; height: 38px; justify-content: center; padding: 0; }
+      .theme-label { display: none; }
+      .release-note { margin-top: 14px; }
+      .legend-grid { grid-template-columns: 1fr; }
+      .section-heading { display: block; }
+      .section-heading p { margin-top: 3px; }
+      .timeline { padding: 12px 10px; }
+      .event-availability { display: block; }
+      .event-availability li { min-width: 0; }
+    }
   </style>
 </head>
 <body>
 <main class="page">
   <header class="masthead">
-    <div class="brand"><div class="brand-mark" aria-hidden="true">✦</div><div><h1>История StratForge AI</h1><p class="subtitle">Разработка, проверка и публикация в трёх окружениях</p><p class="snapshot">Снимок на 24 сентября 2026 · даты на шкале — даты подтверждённых событий, а не даты из макета</p></div></div>
-    <aside class="state-box" aria-label="Последняя подтверждённая публикация"><strong>Последняя подтверждённая публикация</strong><div class="state-main">Server 0.10.0-beta.92</div><small>Canary → Production, 2 сентября 2026. Live-версия серверов сегодня удалённо не перепроверена.</small></aside>
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">✦</div>
+      <div>
+        <h1>История StratForge AI</h1>
+        <p class="subtitle">Что развивали, где проверяли и что дошло до пользователей</p>
+        <p class="snapshot-date">Снимок на 24 сентября 2026 · история подтверждена Git и записями релизов</p>
+      </div>
+    </div>
+    <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Переключить тему">
+      <span class="theme-icon" id="theme-icon" aria-hidden="true">☾</span><span class="theme-label" id="theme-label">Тёмная тема</span>
+    </button>
   </header>
-  <section class="state-grid" aria-label="Состояние окружений">
-    <div class="state-tile development"><div class="name">Development / Local</div><div class="value">0.10.0-beta.96</div><p>Запущенный :8765: commit <code>56945ac6</code>. Редактируемый checkout: <code>feat/shared-model-access</code>, HEAD <code>77eda536</code>; это не тот же runtime.</p></div>
-    <div class="state-tile canary"><div class="name">Canary</div><div class="value">beta.92 <small>по записи</small></div><p>Последняя найденная приёмка: 02.09, тот же подписанный artifact, что затем передан в Production. Текущий live ответ недоступен.</p></div>
-    <div class="state-tile production"><div class="name">Production</div><div class="value">beta.92 <small>по записи</small></div><p>Последнее подтверждённое <code>production_live</code>: 02.09, commit <code>9d800770</code>. Текущий live ответ недоступен.</p></div>
+
+  <p class="release-note"><strong>Последняя подтверждённая публикация:</strong> Server 0.10.0-beta.92 — Canary → Production, 2 сентября 2026. Сегодняшнюю live-версию удалённых серверов проверить не удалось. Списки ниже сравнивают Local runtime с последним документально подтверждённым artifact Canary и Production.</p>
+
+  <section class="environment-grid" aria-label="Снимок продукта в трёх окружениях">
+    <article class="environment-card local">
+      <div class="env-heading"><h2>Development / Local</h2><span class="env-qualified">Запущено и проверено локально</span></div>
+      <p class="env-version">0.10.0-beta.96</p>
+      <p class="env-subtitle">Функции активного Local runtime; Agent World показан отдельно как кандидат.</p>
+      <ul class="availability">
+        <li class="available"><span class="state-symbol">✓</span><button data-detail="social" type="button">Социальная сеть</button></li>
+        <li class="available"><span class="state-symbol">✓</span><button data-detail="chat" type="button">SF Chat</button></li>
+        <li class="available"><span class="state-symbol">✓</span><button data-detail="registration" type="button">Новая регистрация</button></li>
+        <li class="available"><span class="state-symbol">✓</span><button data-detail="charts" type="button">Графики и бэктест</button></li>
+        <li class="available"><span class="state-symbol">✓</span><button data-detail="catalog" type="button">Каталог контрактов</button></li>
+        <li class="candidate"><span class="state-symbol">!</span><button data-detail="agent" type="button">Agent World — кандидат</button></li>
+      </ul>
+      <dl class="env-meta"><dt>Build</dt><dd>dev-0.10.0-beta.96-56945ac68e94</dd><dt>Commit</dt><dd>56945ac6 (runtime :8765)</dd><dt>Проверено</dt><dd>24.09.2026; checkout feat/shared-model-access отдельно</dd></dl>
+    </article>
+    <article class="environment-card canary">
+      <div class="env-heading"><h2>Canary</h2><span class="env-qualified">Последняя запись, не live-проверка</span></div>
+      <p class="env-version">0.10.0-beta.92</p>
+      <p class="env-subtitle">Состав принятого серверного artifact от 2 сентября.</p>
+      <ul class="availability">
+        <li class="absent"><span class="state-symbol">○</span><button data-detail="social" type="button">Социальная сеть</button></li>
+        <li class="absent"><span class="state-symbol">○</span><button data-detail="chat" type="button">SF Chat</button></li>
+        <li class="absent"><span class="state-symbol">○</span><button data-detail="registration" type="button">Новая регистрация</button></li>
+        <li class="available"><span class="state-symbol">✓</span><button data-detail="charts" type="button">Графики и бэктест</button></li>
+        <li class="available"><span class="state-symbol">✓</span><button data-detail="catalog" type="button">Каталог контрактов</button></li>
+        <li class="absent"><span class="state-symbol">○</span><button data-detail="agent" type="button">Agent World</button></li>
+      </ul>
+      <dl class="env-meta"><dt>Build</dt><dd>sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z</dd><dt>Commit</dt><dd>9d800770</dd><dt>Приёмка</dt><dd>02.09.2026 03:54 UTC</dd></dl>
+    </article>
+    <article class="environment-card production">
+      <div class="env-heading"><h2>Production</h2><span class="env-qualified">Последняя запись, не live-проверка</span></div>
+      <p class="env-version">0.10.0-beta.92</p>
+      <p class="env-subtitle">Состав artifact, опубликованного 2 сентября.</p>
+      <ul class="availability">
+        <li class="absent"><span class="state-symbol">○</span><button data-detail="social" type="button">Социальная сеть</button></li>
+        <li class="absent"><span class="state-symbol">○</span><button data-detail="chat" type="button">SF Chat</button></li>
+        <li class="absent"><span class="state-symbol">○</span><button data-detail="registration" type="button">Новая регистрация</button></li>
+        <li class="available"><span class="state-symbol">✓</span><button data-detail="charts" type="button">Графики и бэктест</button></li>
+        <li class="available"><span class="state-symbol">✓</span><button data-detail="catalog" type="button">Каталог контрактов</button></li>
+        <li class="absent"><span class="state-symbol">○</span><button data-detail="agent" type="button">Agent World</button></li>
+      </ul>
+      <dl class="env-meta"><dt>Build</dt><dd>sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z</dd><dt>Commit</dt><dd>9d800770</dd><dt>Публикация</dt><dd>02.09.2026 03:57 UTC</dd></dl>
+    </article>
   </section>
+  <p class="environment-caption">✓ функция есть в указанной сборке · ! отдельный Local-кандидат · ○ функция отсутствует в последнем подтверждённом artifact среды. Базовый вход в beta.92 не следует путать с новой трёхшаговой регистрацией beta.95/96.</p>
+
   <section aria-labelledby="timeline-heading">
-    <div class="section-head"><div><h2 id="timeline-heading">Подтверждённые этапы</h2><p>Листайте вправо; карточки чередуются над и под линией. На телефоне этапы идут сверху вниз.</p></div><div class="controls" aria-label="Прокрутка шкалы"><button type="button" id="back" aria-label="Назад">‹</button><button type="button" id="forward" aria-label="Вперёд">›</button></div></div>
-    <div class="timeline-scroll" id="timeline-scroll" tabindex="0" aria-label="Горизонтальная шкала истории StratForge AI">
-      <div class="track">
-        <article class="milestone feature above"><div class="card"><div class="card-top"><time datetime="2026-08-13">13 августа 2026</time><span class="version">Server beta.1</span></div><div class="icon-title"><span class="icon" aria-hidden="true">◆</span><h3>Canary acceptance и rollback</h3></div><p class="description">Подписанный artifact <code>7ebda6fa</code> принят на Canary; возврат на previous и повторное продвижение проверены.</p><p class="commit">Build: sf-0.10.0-beta.1-7ebda6fa…</p><ul class="env-list"><li class="ok"><span class="symbol">✓</span><span class="label">Development</span><span class="note">проверено</span></li><li class="ok"><span class="symbol">✓</span><span class="label">Canary</span><span class="note">принято</span></li><li class="no"><span class="symbol">–</span><span class="label">Production</span><span class="note">этот artifact не продвигали</span></li></ul><div class="source"><a href="NT-Analyzer/docs/changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md">Источник: Canary closeout</a></div></div></article>
-        <article class="milestone release below"><div class="card"><div class="card-top"><time datetime="2026-08-23">23 августа 2026</time><span class="version">Server beta.29</span></div><div class="icon-title"><span class="icon" aria-hidden="true">↗</span><h3>Market data и адаптивность</h3></div><p class="description">Проверены fan-out графиков и адаптивный UI; один artifact последовательно принят на Canary и Production.</p><p class="commit">Artifact commit: <code>4d15f1d2</code></p><ul class="env-list"><li class="ok"><span class="symbol">✓</span><span class="label">Development</span><span class="note">проверено</span></li><li class="ok"><span class="symbol">✓</span><span class="label">Canary</span><span class="note">02:08 UTC</span></li><li class="ok"><span class="symbol">✓</span><span class="label">Production</span><span class="note">02:16 UTC</span></li></ul><div class="source"><a href="NT-Analyzer/docs/changelog/2026-08-22-market-data-responsive-release-beta29.md">Источник: beta.29 closeout</a></div></div></article>
-        <article class="milestone release above"><div class="card"><div class="card-top"><time datetime="2026-09-01">1 сентября 2026</time><span class="version">Server beta.87</span></div><div class="icon-title"><span class="icon" aria-hidden="true">✓</span><h3>Исправление Owner Backtest</h3></div><p class="description">Владелец больше не видит демо-панель в обычном бэктесте. Canary и Production получили один artifact.</p><p class="commit">Artifact commit: <code>8f421586</code></p><ul class="env-list"><li class="ok"><span class="symbol">✓</span><span class="label">Development</span><span class="note">проверено</span></li><li class="ok"><span class="symbol">✓</span><span class="label">Canary</span><span class="note">принято</span></li><li class="ok"><span class="symbol">✓</span><span class="label">Production</span><span class="note">опубликовано</span></li></ul><div class="source"><a href="NT-Analyzer/docs/changelog/2026-09-01-beta87-owner-backtest-demo-fix.md">Источник: beta.87 closeout</a></div></div></article>
-        <article class="milestone release below"><div class="card"><div class="card-top"><time datetime="2026-09-02">2 сентября 2026</time><span class="version">Server beta.92</span></div><div class="icon-title"><span class="icon" aria-hidden="true">✓</span><h3>Каталог контрактов</h3></div><p class="description">Сервер принял контракты без локального кэша. Сборка прошла Canary и стала Production live.</p><p class="commit">Artifact commit: <code>9d800770</code></p><ul class="env-list"><li class="ok"><span class="symbol">✓</span><span class="label">Development</span><span class="note">собрано</span></li><li class="ok"><span class="symbol">✓</span><span class="label">Canary</span><span class="note">03:54 UTC</span></li><li class="ok"><span class="symbol">✓</span><span class="label">Production</span><span class="note">03:57 UTC</span></li></ul><div class="source"><a href="NT-Analyzer/docs/changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md">Источник: beta.92 и Connector</a></div></div></article>
-        <article class="milestone connector above"><div class="card"><div class="card-top"><time datetime="2026-09-02">2 сентября 2026</time><span class="version">Connector 0.4.5-dev.1</span></div><div class="icon-title"><span class="icon" aria-hidden="true">▦</span><h3>Снимок каталога Connector</h3></div><p class="description">Отдельный Windows Connector установлен на Production и подтвердил стабильный <code>catalog_id</code>.</p><p class="commit">Component commit: <code>ff6fe049</code></p><ul class="env-list"><li class="no"><span class="symbol">–</span><span class="label">Development</span><span class="note">не подтверждено здесь</span></li><li class="no"><span class="symbol">–</span><span class="label">Canary</span><span class="note">не подтверждено здесь</span></li><li class="ok"><span class="symbol">✓</span><span class="label">Production</span><span class="note">health accepted 06:14 UTC</span></li></ul><div class="source"><a href="NT-Analyzer/docs/changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md">Источник: Connector closeout</a></div></div></article>
-        <article class="milestone feature below"><div class="card"><div class="card-top"><time datetime="2026-09-03">3 сентября 2026</time><span class="version">Server beta.95</span></div><div class="icon-title"><span class="icon" aria-hidden="true">✦</span><h3>Единая Local-сборка</h3></div><p class="description">Social, SF Chat, регистрация, безопасность и Owner Preview объединены в Local.</p><p class="commit">Integration commit: <code>d6a4a626</code></p><ul class="env-list"><li class="ok"><span class="symbol">✓</span><span class="label">Development</span><span class="note">проверено</span></li><li class="no"><span class="symbol">–</span><span class="label">Canary</span><span class="note">не развёрнуто</span></li><li class="no"><span class="symbol">–</span><span class="label">Production</span><span class="note">не развёрнуто</span></li></ul><div class="source"><a href="NT-Analyzer/docs/changelog/2026-09-04-beta95-unified-local-integration.md">Источник: beta.95 change record</a></div></div></article>
-        <article class="milestone feature above"><div class="card"><div class="card-top"><time datetime="2026-09-04">4 сентября 2026</time><span class="version">Server beta.96</span></div><div class="icon-title"><span class="icon" aria-hidden="true">✦</span><h3>Onboarding и первое устройство</h3></div><p class="description">Local-сборка сверена с макетами; первое устройство после регистрации не требует второго кода.</p><p class="commit">Implementation commit: <code>42a99a85</code></p><ul class="env-list"><li class="ok"><span class="symbol">✓</span><span class="label">Development</span><span class="note">проверено</span></li><li class="no"><span class="symbol">–</span><span class="label">Canary</span><span class="note">не развёрнуто</span></li><li class="no"><span class="symbol">–</span><span class="label">Production</span><span class="note">не развёрнуто</span></li></ul><div class="source"><a href="NT-Analyzer/docs/changelog/2026-09-04-beta96-visual-audit-and-first-device.md">Источник: beta.96 change record</a></div></div></article>
-        <article class="milestone agent below"><div class="card"><div class="card-top"><time datetime="2026-09-14">14 сентября 2026</time><span class="version">Candidate beta.96</span></div><div class="icon-title"><span class="icon" aria-hidden="true">✣</span><h3>Agent World: Local-кандидат</h3></div><p class="description">Проверен отдельный exact-SHA кандидат Agent World. Owner acceptance ещё открыт; релиза нет.</p><p class="commit">Candidate commit: <code>2debb2d6</code></p><ul class="env-list"><li class="partial"><span class="symbol">!</span><span class="label">Development</span><span class="note">кандидат проверен</span></li><li class="no"><span class="symbol">–</span><span class="label">Canary</span><span class="note">не развёрнуто</span></li><li class="no"><span class="symbol">–</span><span class="label">Production</span><span class="note">не развёрнуто</span></li></ul><div class="source"><a href="NT-Analyzer/docs/changelog/2026-09-14-agent-world-historical-acceptance.md">Источник: Agent World acceptance</a></div></div></article>
-        <article class="milestone current above"><div class="card"><div class="card-top"><time datetime="2026-09-23">23 сентября 2026</time><span class="version">beta.96 · Local</span></div><div class="icon-title"><span class="icon" aria-hidden="true">●</span><h3>Текущая разработка</h3></div><p class="description">Shared Models, Preview и chart mirror: работа в ветке без нового server release. Текущий checkout и запущенный Local имеют разные SHA.</p><p class="commit">Branch HEAD: <code>77eda536</code> · origin: <code>256af9db</code></p><ul class="env-list"><li class="partial"><span class="symbol">!</span><span class="label">Development</span><span class="note">ветка и Local QA</span></li><li class="no"><span class="symbol">–</span><span class="label">Canary</span><span class="note">не развёрнуто</span></li><li class="no"><span class="symbol">–</span><span class="label">Production</span><span class="note">не развёрнуто</span></li></ul><div class="source"><a href="NT-Analyzer/docs/changelog/2026-09-24-timeline-source-audit.md">Источник: аудит ветки и runtime</a></div></div></article>
+    <div class="section-heading"><h2 id="timeline-heading">Развитие продукта</h2><p>Нажмите на функцию или «Подробнее», чтобы увидеть краткие изменения и источник.</p></div>
+    <div class="timeline">
+      <div class="timeline-track">
+        <article class="milestone above">
+          <div class="event-card">
+            <p class="event-date"><time datetime="2026-08-13">13 августа 2026</time></p><p class="event-version">Server beta.1 · Canary artifact</p>
+            <h3>Безопасный выпуск</h3>
+            <div class="feature-chips"><button class="feature-chip cat-infrastructure" data-detail="release" type="button">Canary и откат</button></div>
+            <ul class="event-availability"><li class="yes"><b>✓</b>Development</li><li class="yes"><b>✓</b>Canary</li><li class="none"><b>○</b>Production <span>этот artifact не продвигали</span></li></ul>
+            <div class="event-footer"><button class="more" data-detail="release" type="button">Подробнее ▾</button><span class="event-source">7ebda6fa</span></div>
+          </div>
+        </article>
+        <article class="milestone trading below">
+          <div class="event-card">
+            <p class="event-date"><time datetime="2026-08-23">23 августа 2026</time></p><p class="event-version">Server beta.29</p>
+            <h3>Графики и интерфейс</h3>
+            <div class="feature-chips"><button class="feature-chip cat-trading" data-detail="charts" type="button">Графики</button><button class="feature-chip cat-ui" data-detail="responsive" type="button">Адаптивный UI</button></div>
+            <ul class="event-availability"><li class="yes"><b>✓</b>Development</li><li class="yes"><b>✓</b>Canary</li><li class="yes"><b>✓</b>Production</li></ul>
+            <div class="event-footer"><button class="more" data-detail="beta29" type="button">Подробнее ▾</button><span class="event-source">4d15f1d2</span></div>
+          </div>
+        </article>
+        <article class="milestone fix above">
+          <div class="event-card">
+            <p class="event-date"><time datetime="2026-09-01">1 сентября 2026</time></p><p class="event-version">Server beta.87</p>
+            <h3>Бэктест владельца</h3>
+            <div class="feature-chips"><button class="feature-chip cat-trading" data-detail="backtest" type="button">Бэктест</button><button class="feature-chip cat-fix" data-detail="backtest" type="button">Исправление</button></div>
+            <ul class="event-availability"><li class="yes"><b>✓</b>Development</li><li class="yes"><b>✓</b>Canary</li><li class="yes"><b>✓</b>Production</li></ul>
+            <div class="event-footer"><button class="more" data-detail="backtest" type="button">Подробнее ▾</button><span class="event-source">8f421586</span></div>
+          </div>
+        </article>
+        <article class="milestone connector below">
+          <div class="event-card">
+            <p class="event-date"><time datetime="2026-09-02">2 сентября 2026</time></p><p class="event-version">Server beta.92 · Connector 0.4.5-dev.1</p>
+            <h3>Каталог контрактов</h3>
+            <div class="feature-chips"><button class="feature-chip cat-trading" data-detail="catalog" type="button">Контракты</button><button class="feature-chip cat-connector" data-detail="connector" type="button">NinjaTrader Connector</button></div>
+            <ul class="event-availability"><li class="yes"><b>✓</b>Development <span>server</span></li><li class="yes"><b>✓</b>Canary <span>server; Connector не подтверждён</span></li><li class="yes"><b>✓</b>Production <span>server + Connector</span></li></ul>
+            <div class="event-footer"><button class="more" data-detail="catalog-group" type="button">Подробнее ▾</button><span class="event-source">9d800770 / ff6fe049</span></div>
+          </div>
+        </article>
+        <article class="milestone social above">
+          <div class="event-card">
+            <p class="event-date"><time datetime="2026-09-03">3–4 сентября 2026</time></p><p class="event-version">Local server beta.95 → beta.96</p>
+            <h3>Социальная сеть, чат и вход</h3>
+            <div class="feature-chips"><button class="feature-chip cat-social" data-detail="social" type="button">Социальная сеть</button><button class="feature-chip cat-chat" data-detail="chat" type="button">SF Chat</button><button class="feature-chip cat-security" data-detail="registration" type="button">Регистрация</button><button class="feature-chip cat-security" data-detail="security" type="button">Безопасность</button></div>
+            <ul class="event-availability"><li class="yes"><b>✓</b>Development</li><li class="none"><b>○</b>Canary</li><li class="none"><b>○</b>Production</li></ul>
+            <div class="event-footer"><button class="more" data-detail="beta95" type="button">Подробнее ▾</button><span class="event-source">d6a4a626 / 42a99a85</span></div>
+          </div>
+        </article>
+        <article class="milestone ai below">
+          <div class="event-card">
+            <p class="event-date"><time datetime="2026-09-14">14 сентября 2026</time></p><p class="event-version">Отдельный кандидат beta.96</p>
+            <h3>Agent World</h3>
+            <div class="feature-chips"><button class="feature-chip cat-ai" data-detail="agent" type="button">AI Agents</button><button class="feature-chip cat-ai" data-detail="agent" type="button">Agent World</button></div>
+            <ul class="event-availability"><li class="pending"><b>!</b>Development <span>кандидат, не активный :8765</span></li><li class="none"><b>○</b>Canary</li><li class="none"><b>○</b>Production</li></ul>
+            <div class="event-footer"><button class="more" data-detail="agent" type="button">Подробнее ▾</button><span class="event-source">2debb2d6</span></div>
+          </div>
+        </article>
+        <article class="milestone current above">
+          <div class="event-card">
+            <p class="event-date"><time datetime="2026-09-23">23 сентября 2026 · сейчас</time></p><p class="event-version">Local beta.96 · новая версия не назначена</p>
+            <h3>Совместные модели и Preview</h3>
+            <div class="feature-chips"><button class="feature-chip cat-ai" data-detail="models" type="button">Общие модели</button><button class="feature-chip cat-trading" data-detail="preview-charts" type="button">Графики в Preview</button></div>
+            <ul class="event-availability"><li class="pending"><b>!</b>Development <span>ветка и Local QA</span></li><li class="none"><b>○</b>Canary</li><li class="none"><b>○</b>Production</li></ul>
+            <div class="event-footer"><button class="more" data-detail="current" type="button">Подробнее ▾</button><span class="event-source">77eda536 / 256af9db</span></div>
+          </div>
+        </article>
       </div>
     </div>
   </section>
-  <section class="details" aria-label="Пояснения">
-    <div class="info-panel"><h2>Типы изменений</h2><p><span class="swatch" style="background:#078b69"></span>Публикация server artifact</p><p><span class="swatch" style="background:#227be0"></span>Разработка и приёмка</p><p><span class="swatch" style="background:#ee9b00"></span>Самостоятельный Connector</p><p><span class="swatch" style="background:#7b45cd"></span>Кандидат Agent World</p><p><span class="swatch" style="background:#c53042"></span>Текущая ветка разработки</p></div>
-    <div class="info-panel"><h2>Три окружения</h2><p><strong>Development / Local</strong> — рабочая среда разработчика.</p><p><strong>Canary</strong> — отдельный сервер для приёмки подписанного artifact.</p><p><strong>Production</strong> — публичный сервер StratForge AI.</p><p>Исторический <code>staging</code> в коде — совместимый QA-профиль Development, а не имя Canary.</p></div>
-    <div class="info-panel"><h2>Как читать статусы</h2><p><strong style="color:#078b69">✓</strong> подтверждено для конкретного события и artifact.</p><p><strong style="color:#dc9200">!</strong> локальный кандидат; отдельная приёмка ещё нужна.</p><p><strong style="color:#94a4b8">–</strong> развертывание не подтверждено или не выполнялось — пояснение в строке.</p><p>Версия server и версия Connector показаны отдельно. Commit, сборка и публикация не приравниваются друг к другу.</p></div>
+
+  <section class="legend-grid" aria-label="Условные обозначения">
+    <div class="legend-panel"><h2>Функциональные области</h2><div class="legend-categories"><span class="cat-social">Social</span><span class="cat-chat">Chat</span><span class="cat-ai">AI / Agents</span><span class="cat-security">Безопасность</span><span class="cat-trading">Графики / бэктест</span><span class="cat-connector">Connector</span><span class="cat-ui">UI</span><span class="cat-infrastructure">Инфраструктура</span><span class="cat-fix">Исправление</span></div></div>
+    <div class="legend-panel"><h2>Окружения</h2><p><strong>Development / Local</strong> — компьютер разработчика.</p><p><strong>Canary</strong> — сервер приёмки подписанного artifact.</p><p><strong>Production</strong> — публичный сервер StratForge AI.</p></div>
+    <div class="legend-panel"><h2>Статусы</h2><p><strong style="color:var(--green)">✓ Есть</strong> — подтверждено для указанной сборки и среды.</p><p><strong style="color:var(--amber)">! Кандидат</strong> — разработка или отдельная Local-проверка.</p><p><strong style="color:var(--neutral)">○ Нет</strong> — не входило в указанный artifact; это не утверждение о сегодняшнем live-сервере.</p></div>
   </section>
-  <p class="footnote">Источник текущего Local runtime: <code>http://127.0.0.1:8765/api/runtime/env</code> (проверено 24.09.2026). Последняя запись Release Center о Production: <code>2026-09-02T03:57:03Z</code>; публичные endpoints из этого окружения недоступны, поэтому сегодняшняя live-версия Canary и Production не утверждается.</p>
+  <p class="footnote">Local runtime проверен через /api/runtime/env 24.09.2026: build dev-0.10.0-beta.96-56945ac68e94. Последняя запись Release Center о Production: 02.09.2026 03:57 UTC. Даты и версии не взяты из дизайнерского примера.</p>
 </main>
+
+<dialog id="feature-dialog" aria-labelledby="dialog-title">
+  <div class="dialog-top"><div><p class="dialog-kicker" id="dialog-kicker"></p><h2 id="dialog-title"></h2></div><button class="close-dialog" id="close-dialog" type="button" aria-label="Закрыть">×</button></div>
+  <p class="dialog-intro" id="dialog-intro"></p>
+  <ul class="dialog-points" id="dialog-points"></ul>
+  <div class="dialog-tech"><p id="dialog-tech"></p><a id="dialog-source" href="#">Открыть источник</a></div>
+</dialog>
+
 <script>
-  const timeline = document.getElementById('timeline-scroll');
-  for (const [id, direction] of [['back', -1], ['forward', 1]]) {
-    document.getElementById(id).addEventListener('click', () => timeline.scrollBy({left: direction * Math.max(270, timeline.clientWidth * .72), behavior: 'smooth'}));
+  const sources = {
+    release: 'NT-Analyzer/docs/changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md',
+    beta29: 'NT-Analyzer/docs/changelog/2026-08-22-market-data-responsive-release-beta29.md',
+    backtest: 'NT-Analyzer/docs/changelog/2026-09-01-beta87-owner-backtest-demo-fix.md',
+    catalog: 'NT-Analyzer/docs/changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md',
+    beta95: 'NT-Analyzer/docs/changelog/2026-09-04-beta95-unified-local-integration.md',
+    beta96: 'NT-Analyzer/docs/changelog/2026-09-04-beta96-visual-audit-and-first-device.md',
+    agent: 'NT-Analyzer/docs/changelog/2026-09-14-agent-world-historical-acceptance.md',
+    current: 'NT-Analyzer/docs/changelog/2026-09-24-timeline-source-audit.md'
+  };
+  const details = {
+    release: {title:'Безопасный выпуск',period:'13 августа · Server beta.1',intro:'Подписанный artifact прошёл Canary и проверку отката.',points:['Canary принял exact build и подпись.','Возврат на previous и повторное продвижение прошли проверку.','Этот конкретный artifact не продвигали в Production.'],tech:'Commit 7ebda6fa · Canary acceptance; не Production deploy.',source:sources.release},
+    charts: {title:'Графики и бэктест',period:'beta.29 → beta.92',intro:'Графики и бэктест присутствуют в последнем подтверждённом серверном artifact.',points:['beta.29 проверила fan-out графиков и отзывчивость интерфейса.','beta.87 исправила демо-панель бэктеста владельца.','Работа с графиками в Preview после beta.92 относится к Local.'],tech:'Последний записанный серверный artifact: beta.92.',source:sources.beta29},
+    responsive: {title:'Адаптивный интерфейс',period:'23 августа · Server beta.29',intro:'Основные экраны и графики получили проверенные компактные размеры.',points:['Проверены 84 сочетания страниц и размеров.','Два графика перестраивались на планшете и телефоне.'],tech:'Artifact commit 4d15f1d2 · Canary → Production.',source:sources.beta29},
+    beta29: {title:'Графики и интерфейс',period:'23 августа · Server beta.29',intro:'Один подписанный artifact доставил исправления графиков и адаптивности.',points:['Графики используют существующий безопасный fan-out.','Адаптивность проверена на основных страницах.','Canary принят до Production без пересборки.'],tech:'Artifact commit 4d15f1d2 · Canary 02:08 UTC · Production 02:16 UTC.',source:sources.beta29},
+    backtest: {title:'Бэктест владельца',period:'1 сентября · Server beta.87',intro:'Владелец больше не видит обычный бэктест как демоверсию.',points:['Демо-панель скрыта у аккаунта с полным доступом.','Настоящие демо-отчёты и права пользователей сохранены.','Один artifact принят на Canary и опубликован в Production.'],tech:'Artifact commit 8f421586 · build sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z.',source:sources.backtest},
+    catalog: {title:'Каталог контрактов',period:'2 сентября · Server beta.92',intro:'Сервер принимает контракт, даже когда локальная история ещё не скачана.',points:['Контракт определяется по имени с месяцем.','Отсутствие диапазона данных больше не отклоняет весь снимок.','Серверный artifact прошёл Canary и стал Production live.'],tech:'Server commit 9d800770 · Canary 03:54 UTC · Production 03:57 UTC.',source:sources.catalog},
+    connector: {title:'NinjaTrader Connector',period:'2 сентября · 0.4.5-dev.1',intro:'Отдельная версия Windows Connector; это не номер версии сервера.',points:['Каталог отдаётся из одного стабильного снимка.','Production-установка принята по health в 06:14 UTC.','Установка этой версии на Canary источником не подтверждена.'],tech:'Connector component commit ff6fe049 · server рядом: beta.92.',source:sources.catalog},
+    'catalog-group': {title:'Контракты и Connector',period:'2 сентября · Server beta.92 / Connector 0.4.5-dev.1',intro:'Одна функциональная работа затронула два независимо версионируемых компонента.',points:['Server beta.92 принял некэшированные контракты и прошёл Canary → Production.','Connector 0.4.5-dev.1 стабилизировал снимок каталога и принят на Production.','Canary-установка Connector отдельно не подтверждена.'],tech:'Server 9d800770 · Connector ff6fe049.',source:sources.catalog},
+    social: {title:'Социальная сеть SF Social',period:'Local beta.95/96',intro:'Новая социальная сеть присутствует в Local-сборке и отсутствует в последнем подтверждённом серверном artifact beta.92.',points:['Профили, лента, публикации и реакции.','Постоянная запись с раскрытыми исправлениями.','Общая идентичность пользователя с SF Chat.'],tech:'Local integration d6a4a626 · PR #270; Canary/Production deploy не выполнялся.',source:sources.beta95},
+    chat: {title:'SF Chat',period:'Local beta.95/96',intro:'Единая оболочка человеческих и AI-диалогов собрана локально.',points:['Диалоги используют общую идентичность пользователя.','В beta.96 добавлены папки и группировка по дням.','Новая оболочка не входила в опубликованный beta.92 artifact.'],tech:'Local beta.95/96 · PR #270; без Canary/Production deploy.',source:sources.beta96},
+    registration: {title:'Новая регистрация',period:'Local beta.95/96',intro:'Речь о новом трёхшаговом onboarding, а не об отсутствии базового входа в beta.92.',points:['Шаги профиля, подтверждения личности и согласия разделены.','Имя пользователя StratForge не подменяется провайдером входа.','Первое устройство после регистрации подтверждается без повторного кода.'],tech:'Local integration d6a4a626 · beta.96 source 42a99a85.',source:sources.beta96},
+    security: {title:'Безопасность устройства',period:'Local beta.95/96',intro:'Новое подтверждение устройства объединено с регистрацией в Local.',points:['Постоянное доверие или доступ до конца сессии.','Поздний неизвестный клиент всё ещё проходит обычное подтверждение.','Изменение не развёрнуто на Canary/Production.'],tech:'Local beta.95/96 · PR #278.',source:sources.beta95},
+    beta95: {title:'Социальная сеть, чат и вход',period:'3–4 сентября · Local beta.95 → beta.96',intro:'Смежные Local-изменения сгруппированы по функциям.',points:['SF Social: профили, лента, публикации.','SF Chat: единая переписка и улучшенные диалоги.','Регистрация и безопасность: новый onboarding и первое устройство.'],tech:'Integration d6a4a626 · beta.96 source 42a99a85 · только Development.',source:sources.beta95},
+    agent: {title:'Agent World',period:'14 сентября · отдельный beta.96-кандидат',intro:'Проверен отдельный exact-SHA кандидат. Он не равен активному Local runtime.',points:['Зафиксирована приёмка AW-FINAL-1 на коде 2debb2d6.','Owner acceptance и внешние зависимости остаются отдельно.','Canary и Production не менялись.'],tech:'Candidate commit 2debb2d6 · PR #287 · release отсутствует.',source:sources.agent},
+    models: {title:'Совместный доступ к моделям',period:'Текущая разработка · Local beta.96',intro:'Работа идёт в ветке Shared Models без назначения новой версии сервера.',points:['Доступ к общей модели проверяется для вызывающего пользователя.','Учёт вызова остаётся привязанным к владельцу и пользователю.','Canary и Production не получали эту ветку.'],tech:'Checkout 77eda536 · remote-tracking 256af9db · активный Local runtime 56945ac6.',source:sources.current},
+    'preview-charts': {title:'Графики в Preview',period:'Текущая разработка · Local',intro:'В изолированном Preview исправлялись открытие и восстановление живых графиков.',points:['Первый Desktop открывает графики без ручного обхода.','Канонический TopStep mirror восстанавливается для активных пользователей.','Это Local QA, не новый серверный релиз.'],tech:'Git history 5292a2ec → 56945ac6; Production остаётся на последней записанной beta.92.',source:sources.current},
+    current: {title:'Что сейчас впереди Production',period:'23 сентября · ветка feat/shared-model-access',intro:'Последняя работа относится к Local и ещё не публиковалась.',points:['Совместный доступ к моделям и отдельный Preview проходят Local QA.','Графики в Preview проверялись на локальном runtime.','Новая версия server и Canary/Production deployment не зафиксированы.'],tech:'Checkout HEAD 77eda536 · origin/feat/shared-model-access 256af9db · runtime 56945ac6.',source:sources.current}
+  };
+  const dialog = document.getElementById('feature-dialog');
+  let previousFocus = null;
+  document.querySelectorAll('[data-detail]').forEach(button => button.addEventListener('click', () => {
+    const detail = details[button.dataset.detail];
+    if (!detail) return;
+    previousFocus = button;
+    document.getElementById('dialog-title').textContent = detail.title;
+    document.getElementById('dialog-kicker').textContent = detail.period;
+    document.getElementById('dialog-intro').textContent = detail.intro;
+    const points = document.getElementById('dialog-points');
+    points.replaceChildren();
+    detail.points.forEach(point => { const item = document.createElement('li'); item.textContent = point; points.append(item); });
+    document.getElementById('dialog-tech').textContent = detail.tech;
+    document.getElementById('dialog-source').href = detail.source;
+    dialog.showModal();
+  }));
+  document.getElementById('close-dialog').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('close', () => previousFocus?.focus());
+  const themeToggle = document.getElementById('theme-toggle');
+  function updateThemeButton() {
+    const dark = document.documentElement.dataset.theme === 'dark';
+    document.getElementById('theme-icon').textContent = dark ? '☀' : '☾';
+    document.getElementById('theme-label').textContent = dark ? 'Светлая тема' : 'Тёмная тема';
+    themeToggle.setAttribute('aria-label', dark ? 'Включить светлую тему' : 'Включить тёмную тему');
+    themeToggle.setAttribute('aria-pressed', String(dark));
   }
+  themeToggle.addEventListener('click', () => {
+    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('stratforge-timeline-theme', next); } catch {}
+    updateThemeButton();
+  });
+  updateThemeButton();
 </script>
 </body>
 </html>

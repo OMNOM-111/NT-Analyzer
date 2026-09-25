@@ -16,12 +16,13 @@ Source branch at audit: `feat/shared-model-access`, checkout HEAD
 `77eda536f9909afd325ffcd2c89900c17744d4f3`; local remote-tracking branch
 `origin/feat/shared-model-access` at `256af9db`. The correction is isolated
 on `codex/fact-checked-timeline` from `origin/main` `c3b320e6`; its final commit
-and PR are recorded by Git closeout. Verification result: nine chronological
-events, 27 environment rows and nine local source links PASS; Context Pack
-validator PASS; pre-release bundle gate PASS (629 files, all four checks);
-inline JavaScript syntax and staged diff checks PASS. Visual desktop/mobile QA
-remains BLOCKED: the browser refused the local file URL and forbade alternate
-browser routes for that action.
+and PR are recorded by Git closeout. Verification result: nine documented
+source events grouped into seven chronological product cards, three environment
+snapshots, and 40 functional detail controls PASS by static HTML contract;
+Context Pack validator PASS; pre-release bundle gate PASS (629 files, all four
+checks); inline JavaScript syntax and staged diff checks PASS. Visual
+desktop/mobile QA remains BLOCKED: the browser refused the local file URL and
+forbade alternate browser routes for that action.
 
 ## Source hierarchy and correction
 
@@ -70,6 +71,27 @@ browser routes for that action.
 The reference image supplied only layout, color and visual hierarchy. Its
 versions, dates, generic product title and automatic green deployment checks
 were not used as factual sources. No future version or roadmap date was added.
+
+## Owner-facing presentation follow-up
+
+The standalone timeline now groups related technical records into seven
+product-oriented milestones. The 2026-09-02 server catalog fix and the later
+Connector installation appear together, with separate version and environment
+notes. The Local beta.95/beta.96 work appears as Social, SF Chat, registration
+and security rather than a list of commits. Each feature opens a short detail
+dialog with its source and technical identity one level below the product name.
+
+The three top cards compare the same six capabilities across environments.
+The Local card identifies Agent World as a separate candidate, not as a feature
+of the active `:8765` process. The Canary/Production cards describe the last
+confirmed beta.92 artifact, not an unverified current live state. Their empty
+status for the new registration refers specifically to the beta.95/beta.96
+three-step onboarding; it does not mean beta.92 lacked basic login.
+
+The page has fluid full-width layout, a seven-column timeline on sufficiently
+wide viewports, a vertical timeline at narrower sizes, and complete Light/Dark
+CSS variable themes with localStorage preference. No server API, deployment
+status or feature availability was changed by this presentation follow-up.
 
 Release impact: documentation and standalone review page only; no server
 artifact, Canary or Production deployment. If this page is later shipped in an
