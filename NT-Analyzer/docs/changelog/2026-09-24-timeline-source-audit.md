@@ -16,13 +16,12 @@ Source branch at audit: `feat/shared-model-access`, checkout HEAD
 `77eda536f9909afd325ffcd2c89900c17744d4f3`; local remote-tracking branch
 `origin/feat/shared-model-access` at `256af9db`. The correction is isolated
 on `codex/fact-checked-timeline` from `origin/main` `c3b320e6`; its final commit
-and PR are recorded by Git closeout. Verification result: nine documented
-source events grouped into seven chronological product cards, three environment
-snapshots, and 40 functional detail controls PASS by static HTML contract;
-Context Pack validator PASS; pre-release bundle gate PASS (629 files, all four
-checks); inline JavaScript syntax and staged diff checks PASS. Visual
-desktop/mobile QA remains BLOCKED: the browser refused the local file URL and
-forbade alternate browser routes for that action.
+and PR are recorded by Git closeout. Verification result for the initial source
+audit: nine documented source events grouped into seven chronological product
+cards, three environment snapshots, Context Pack validator PASS, and
+pre-release bundle gate PASS (629 files, all four checks). The later visual and
+UX revision is recorded below. Browser visual QA remains BLOCKED: the browser
+refused the local file URL and forbade alternate browser routes for that action.
 
 ## Source hierarchy and correction
 
@@ -74,24 +73,38 @@ were not used as factual sources. No future version or roadmap date was added.
 
 ## Owner-facing presentation follow-up
 
-The standalone timeline now groups related technical records into seven
+The standalone timeline groups related technical records into seven
 product-oriented milestones. The 2026-09-02 server catalog fix and the later
 Connector installation appear together, with separate version and environment
-notes. The Local beta.95/beta.96 work appears as Social, SF Chat, registration
-and security rather than a list of commits. Each feature opens a short detail
-dialog with its source and technical identity one level below the product name.
+notes in the right-side detail panel. The Local beta.95/beta.96 work appears as
+Social, SF Chat, registration and security rather than a list of commits.
 
-The three top cards compare the same six capabilities across environments.
-The Local card identifies Agent World as a separate candidate, not as a feature
-of the active `:8765` process. The Canary/Production cards describe the last
-confirmed beta.92 artifact, not an unverified current live state. Their empty
-status for the new registration refers specifically to the beta.95/beta.96
-three-step onboarding; it does not mean beta.92 lacked basic login.
+The three top cards now list only functions present in their specified build,
+with version, build and commit shown in smaller type. The Local card describes
+the active `:8765` process; Agent World remains identified as a separate
+candidate below. The Canary/Production cards describe the last confirmed
+beta.92 artifact, not an unverified current live state. The new three-step
+registration is ahead of that artifact; beta.92 still had basic login.
 
-The page has fluid full-width layout, a seven-column timeline on sufficiently
-wide viewports, a vertical timeline at narrower sizes, and complete Light/Dark
-CSS variable themes with localStorage preference. No server API, deployment
-status or feature availability was changed by this presentation follow-up.
+Every milestone card uses the same compact structure: date, version, product
+change, two to four feature chips, three environment statuses and a details
+control. SHA, artifact identity and long descriptions are confined to the
+right-side panel. Clicking anywhere on a card opens it; the details control
+provides a keyboard path. The panel closes by button, backdrop or Escape,
+restores focus, and keeps focus inside while open. The page uses a fluid
+seven-column horizontal timeline through 1440 px, a vertical timeline below
+1361 px, and complete Light/Dark themes with localStorage preference. The
+source-audited facts and deployment statuses were not changed by the UX work.
+
+UX verification: static HTML contract PASS for seven sorted cards, 2–4 feature
+chips and three statuses per card, no SHA in the main cards, three compact
+environment snapshots, and existing source links. Inline JavaScript syntax
+PASS with `node --check`; `validate_external_gpt_context.py` PASS with a
+pre-existing pack SHA warning; `pre_release_check.py` PASS (629 bundle files,
+all four checks). Width calculations were checked at 3840, 3440, 2560,
+1920, 1440 and 390 px; these are static layout checks, not rendered
+screenshots. Actual Light/Dark and viewport visual acceptance remains BLOCKED
+by the browser URL policy noted above.
 
 Release impact: documentation and standalone review page only; no server
 artifact, Canary or Production deployment. If this page is later shipped in an

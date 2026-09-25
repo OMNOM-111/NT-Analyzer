@@ -16,172 +16,119 @@
     }
   </script>
   <style>
-    :root {
-      color-scheme: light;
-      --bg: #f4f8fe; --surface: #fff; --surface-soft: #eef5fd;
-      --ink: #12284c; --muted: #526781; --border: #d2e1f2;
-      --line: #8ca6c4; --shadow: 0 8px 26px #1b579615;
-      --blue: #2375d8; --green: #087e60; --amber: #986000;
-      --red: #bf3547; --neutral: #8396ac;
-      --status-green-bg: #087e60; --status-amber-bg: #986000; --status-neutral-bg: #60758d;
-      --social: #087f78; --chat: #3b68c6; --ai: #7949c8;
-      --security: #397099; --trading: #087e60; --connector: #925d00;
-      --ui: #366dbb; --infrastructure: #5f708b; --fix: #ac4f58;
-      --wash: radial-gradient(circle at 48% -9%, #e5f1ff 0, #fff 42%, #f4f8fe 100%);
+
+    :root { color-scheme: light; --bg:#f6f8fb; --surface:#fff; --soft:#f0f4f9; --ink:#182b47; --muted:#5b6b80; --border:#dce4ed; --line:#9badc1; --accent:#2569b9; --good:#087e60; --pending:#a26613; --empty:#8997aa; --shadow:0 8px 26px #1b365512; }
+    :root[data-theme="dark"] { color-scheme:dark; --bg:#0d1725; --surface:#162337; --soft:#1d3048; --ink:#edf4fd; --muted:#b5c4d7; --border:#34475d; --line:#7890aa; --accent:#81b9ff; --good:#5ad3a8; --pending:#ffca7e; --empty:#9baec3; --shadow:0 10px 30px #02081055; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.4 "Segoe UI",Arial,sans-serif; }
+    button { font:inherit; cursor:pointer; }
+    button:focus-visible, a:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+    a { color:var(--accent); }
+    .page { width:100%; max-width:none; padding:clamp(16px,1.8vw,42px); margin:auto; }
+    .masthead { display:flex; justify-content:space-between; align-items:flex-start; gap:18px; }
+    .brand { display:flex; align-items:flex-start; gap:14px; min-width:0; }
+    .brand-mark { display:grid; place-items:center; flex:none; width:43px; height:43px; border-radius:12px; background:var(--accent); color:var(--surface); font-size:22px; }
+    h1 { margin:0 0 5px; font-size:clamp(27px,2.2vw,44px); letter-spacing:-.03em; line-height:1.12; }
+    .subtitle { margin:0; color:var(--muted); font-size:clamp(14px,1vw,18px); }
+    .snapshot-date { margin:6px 0 0; color:var(--muted); font-size:12px; }
+    .theme-toggle { flex:none; display:flex; gap:7px; align-items:center; padding:8px 12px; border:1px solid var(--border); border-radius:999px; color:var(--ink); background:var(--surface); }
+    .theme-icon { font-size:17px; line-height:1; color:var(--accent); }
+    .environment-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:clamp(10px,1vw,18px); margin-top:23px; }
+    .environment-card { min-width:0; padding:clamp(13px,1.15vw,20px); border:1px solid var(--border); border-radius:14px; background:var(--surface); box-shadow:var(--shadow); }
+    .environment-card.local { border-top:3px solid var(--accent); }
+    .environment-card.canary { border-top:3px solid var(--pending); }
+    .environment-card.production { border-top:3px solid var(--good); }
+    .env-heading { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:3px 8px; }
+    .env-heading h2 { margin:0; text-transform:uppercase; letter-spacing:.06em; font-size:13px; }
+    .env-qualified { color:var(--muted); font-size:11px; }
+    .env-version { margin:5px 0 10px; font-size:clamp(19px,1.45vw,25px); font-weight:750; letter-spacing:-.02em; }
+    .availability { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:5px 12px; }
+    .availability li { min-width:0; display:flex; align-items:center; gap:6px; font-size:12px; }
+    .state-symbol { flex:none; color:var(--good); font-weight:800; }
+    .availability button { min-width:0; padding:0; border:0; background:none; color:var(--ink); text-align:left; font-size:12px; }
+    .availability button:hover { color:var(--accent); text-decoration:underline; }
+    .env-meta { display:flex; flex-wrap:wrap; gap:3px 8px; margin:12px 0 0; padding-top:9px; border-top:1px solid var(--border); font-size:10px; color:var(--muted); }
+    .env-meta dt { font-weight:700; }
+    .env-meta dd { min-width:0; margin:0 12px 0 0; overflow-wrap:anywhere; font-family:Consolas,monospace; }
+    .environment-caption { margin:8px 2px 0; color:var(--muted); font-size:11px; }
+    .section-heading { display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin:clamp(25px,2.3vw,40px) 2px 12px; }
+    .section-heading h2 { margin:0; font-size:clamp(20px,1.6vw,28px); }
+    .section-heading p { margin:0; color:var(--muted); font-size:12px; }
+    .timeline { padding:18px 0; border:1px solid var(--border); border-radius:16px; background:var(--surface); }
+    .timeline-track { position:relative; display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); width:100%; }
+    .timeline-track::before { content:""; position:absolute; top:259px; left:1.5%; right:1.5%; height:2px; background:var(--line); }
+    .milestone { position:relative; display:grid; grid-template-rows:240px 38px 240px; min-width:0; padding:0 clamp(3px,.45vw,12px); }
+    .milestone::before { content:""; position:absolute; left:50%; width:1px; background:var(--line); }
+    .milestone.above::before { top:224px; height:34px; }
+    .milestone.below::before { top:261px; height:34px; }
+    .milestone::after { content:""; position:absolute; top:251px; left:50%; transform:translateX(-50%); width:17px; height:17px; border:4px solid var(--accent); border-radius:50%; background:var(--surface); box-shadow:0 0 0 4px var(--surface); }
+    .milestone.current::after { border-color:var(--pending); }
+    .event-card { display:flex; flex-direction:column; justify-self:center; width:100%; height:224px; min-width:0; padding:clamp(9px,.78vw,15px); border:1px solid var(--border); border-radius:12px; background:var(--surface); box-shadow:var(--shadow); cursor:pointer; }
+    .event-card:hover { border-color:var(--accent); }
+    .above .event-card { grid-row:1; align-self:end; margin-bottom:16px; }
+    .below .event-card { grid-row:3; align-self:start; margin-top:16px; }
+    .current .event-card { border-color:var(--pending); background:var(--soft); }
+    .event-date { margin:0; font-size:11px; font-weight:700; }
+    .event-version { margin:3px 0 8px; color:var(--muted); font-size:11px; line-height:1.2; }
+    .event-card h3 { margin:0 0 10px; font-size:clamp(14px,1.05vw,19px); line-height:1.14; min-height:2.28em; }
+    .feature-chips { display:flex; flex-wrap:wrap; align-content:start; gap:5px; min-height:50px; }
+    .feature-chip { display:inline-flex; align-items:center; max-width:100%; padding:3px 7px; border:1px solid var(--border); border-radius:999px; color:var(--ink); background:var(--soft); font-size:clamp(9px,.7vw,11px); line-height:1.15; }
+    .event-availability { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:3px; margin:auto 0 0; padding:0; list-style:none; }
+    .event-availability li { display:flex; gap:3px; align-items:center; min-width:0; white-space:nowrap; font-size:clamp(9px,.7vw,11px); color:var(--muted); }
+    .event-availability b { font-size:13px; }
+    .event-availability .yes b { color:var(--good); }
+    .event-availability .pending b { color:var(--pending); }
+    .event-availability .none b { color:var(--empty); }
+    .event-footer { margin-top:7px; padding-top:6px; border-top:1px solid var(--border); }
+    .more { padding:0; border:0; background:none; color:var(--accent); font-size:11px; font-weight:700; }
+    .more:hover { text-decoration:underline; }
+    .reading-note { margin:13px 2px 0; color:var(--muted); font-size:11px; }
+    .panel-backdrop { position:fixed; inset:0; z-index:10; background:#05101f99; }
+    .detail-panel { position:fixed; top:0; right:0; bottom:0; z-index:11; width:min(460px,100vw); overflow:auto; padding:clamp(20px,2vw,32px); border-left:1px solid var(--border); background:var(--surface); color:var(--ink); box-shadow:-16px 0 46px #05101f55; }
+    .panel-backdrop[hidden], .detail-panel[hidden] { display:none; }
+    .panel-top { display:flex; justify-content:space-between; align-items:start; gap:15px; }
+    .panel-kicker { margin:0 0 8px; color:var(--muted); font-size:12px; }
+    .detail-panel h2 { margin:0; font-size:25px; line-height:1.16; }
+    .panel-intro { margin:17px 0; color:var(--muted); }
+    .panel-label { margin:20px 0 7px; font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
+    .panel-points { margin:0; padding-left:20px; }
+    .panel-points li { margin:7px 0; }
+    .panel-status { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; padding:0; list-style:none; }
+    .panel-status li { padding:8px; border-radius:8px; background:var(--soft); font-size:12px; }
+    .panel-status .yes { color:var(--good); }.panel-status .pending { color:var(--pending); }.panel-status .none { color:var(--muted); }
+    .panel-tech { margin-top:24px; padding-top:14px; border-top:1px solid var(--border); color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
+    .panel-tech p { margin:0 0 9px; }
+    .close-panel { flex:none; width:34px; height:34px; border:1px solid var(--border); border-radius:50%; background:var(--soft); color:var(--ink); font-size:20px; line-height:1; }
+    body.panel-open { overflow:hidden; }
+    @media (max-width:1360px) {
+      .timeline { padding:15px; }
+      .timeline-track { display:flex; flex-direction:column; gap:10px; padding-left:26px; }
+      .timeline-track::before { top:0; bottom:0; left:8px; right:auto; width:2px; height:auto; }
+      .milestone { display:block; padding:0; }
+      .milestone::before { display:none; }
+      .milestone::after { top:18px; left:-17px; width:15px; height:15px; border-width:3px; }
+      .event-card { width:100%; height:auto; min-height:0; padding:13px 15px; }
+      .above .event-card,.below .event-card { margin:0; }
+      .event-card h3 { min-height:0; margin-bottom:8px; font-size:17px; }
+      .feature-chips { min-height:0; }
+      .event-availability { display:flex; gap:15px; margin-top:9px; }
+      .event-availability li,.feature-chip { font-size:11px; }
     }
-    :root[data-theme="dark"] {
-      color-scheme: dark;
-      --bg: #0b1422; --surface: #142238; --surface-soft: #1b2c45;
-      --ink: #edf5ff; --muted: #b5c5d9; --border: #33475f;
-      --line: #68829f; --shadow: 0 10px 30px #03081070;
-      --blue: #72afff; --green: #46d2a4; --amber: #ffc064;
-      --red: #ff7b88; --neutral: #96a8bb;
-      --status-green-bg: #087e60; --status-amber-bg: #986000; --status-neutral-bg: #60758d;
-      --social: #61d7ca; --chat: #8db0ff; --ai: #bd9aff;
-      --security: #8ac2e8; --trading: #65d8b2; --connector: #ffce78;
-      --ui: #88b8f7; --infrastructure: #adbed7; --fix: #ff9ba6;
-      --wash: radial-gradient(circle at 48% -8%, #183250 0, #101e30 45%, #0b1422 100%);
+    @media (min-width:1361px) and (max-width:1700px) {
+      .event-availability { grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 4px; }
+      .event-availability li:last-child { grid-column:1 / -1; }
     }
-    * { box-sizing: border-box; }
-    html { scroll-behavior: smooth; }
-    body { margin: 0; background: var(--wash); color: var(--ink); font: 15px/1.42 "Segoe UI", Arial, sans-serif; }
-    button, a { -webkit-tap-highlight-color: transparent; }
-    button { font: inherit; }
-    button:focus-visible, a:focus-visible { outline: 3px solid var(--amber); outline-offset: 3px; }
-    a { color: var(--blue); }
-    .page { width: 100%; padding: clamp(16px, 2.1vw, 48px); margin: 0 auto; }
-    .masthead { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 22px; }
-    .brand { display: flex; align-items: flex-start; gap: 15px; }
-    .brand-mark { display: grid; place-items: center; flex: none; width: 51px; height: 51px; border-radius: 15px; background: linear-gradient(145deg, #1664bf, #51a5ed); color: white; font-size: 25px; box-shadow: var(--shadow); }
-    h1 { margin: 0 0 5px; font-size: clamp(28px, 2.8vw, 50px); letter-spacing: -.035em; line-height: 1.12; }
-    .subtitle { color: var(--muted); margin: 0; font-size: clamp(14px, 1.15vw, 19px); }
-    .snapshot-date { margin: 8px 0 0; color: var(--muted); font-size: 12px; }
-    .theme-toggle { display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); color: var(--ink); padding: 8px 13px; cursor: pointer; box-shadow: var(--shadow); white-space: nowrap; }
-    .theme-toggle:hover { border-color: var(--blue); }
-    .theme-icon { color: var(--blue); font-size: 18px; line-height: 1; }
-    .release-note { margin: 20px 0 15px; padding: 11px 15px; border: 1px solid var(--border); border-left: 4px solid var(--green); border-radius: 11px; background: var(--surface); color: var(--muted); font-size: 13px; }
-    .release-note strong { color: var(--ink); }
-    .environment-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(10px, 1vw, 19px); }
-    .environment-card { min-width: 0; padding: clamp(13px, 1.15vw, 23px); border: 1px solid var(--border); border-top: 4px solid var(--env); border-radius: 15px; background: var(--surface); box-shadow: var(--shadow); container-type: inline-size; }
-    .environment-card.local { --env: var(--blue); }
-    .environment-card.canary { --env: var(--amber); }
-    .environment-card.production { --env: var(--green); }
-    .env-heading { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 10px; }
-    .env-heading h2 { margin: 0; font-size: 14px; text-transform: uppercase; letter-spacing: .055em; }
-    .env-version { margin: 2px 0 3px; font-size: clamp(18px, 1.45vw, 26px); font-weight: 800; line-height: 1.1; }
-    .env-qualified { color: var(--muted); font-size: 11px; font-weight: 600; }
-    .env-subtitle { margin: 2px 0 10px; color: var(--muted); font-size: 12px; }
-    .availability { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: 1fr; gap: 5px 10px; }
-    @container (min-width: 530px) { .availability { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-    .availability li { min-width: 0; display: flex; align-items: center; gap: 7px; border-radius: 7px; background: var(--surface-soft); padding: 5px 7px; }
-    .state-symbol { flex: none; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--state); color: #fff; font-size: 12px; font-weight: 800; }
-    .available { --state: var(--status-green-bg); }
-    .candidate { --state: var(--status-amber-bg); }
-    .absent { --state: var(--status-neutral-bg); }
-    .availability button { min-width: 0; border: 0; padding: 0; background: none; color: var(--ink); text-align: left; cursor: pointer; font-size: 12px; line-height: 1.22; }
-    .availability button:hover { color: var(--blue); text-decoration: underline; }
-    .env-meta { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 8px; margin: 11px 0 0; padding-top: 9px; border-top: 1px solid var(--border); font-size: 11px; color: var(--muted); }
-    .env-meta dt { font-weight: 700; }
-    .env-meta dd { min-width: 0; margin: 0; overflow-wrap: anywhere; font-family: Consolas, monospace; }
-    .environment-caption { color: var(--muted); font-size: 11px; margin: 8px 3px 0; }
-    .section-heading { margin: clamp(24px, 2vw, 34px) 2px 10px; display: flex; align-items: baseline; justify-content: space-between; gap: 15px; }
-    .section-heading h2 { margin: 0; font-size: clamp(20px, 1.7vw, 27px); }
-    .section-heading p { color: var(--muted); margin: 0; font-size: 12px; }
-    .timeline { position: relative; padding: 18px 0 23px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
-    .timeline-track { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); width: 100%; position: relative; }
-    .timeline-track::before { content: ""; position: absolute; top: 291px; left: 1.5%; right: 1.5%; height: 3px; background: var(--line); border-radius: 3px; }
-    .milestone { min-width: 0; position: relative; display: grid; grid-template-rows: 270px 44px 270px; padding: 0 clamp(3px, .45vw, 12px); --accent: var(--infrastructure); }
-    .milestone.trading { --accent: var(--trading); }
-    .milestone.fix { --accent: var(--fix); }
-    .milestone.connector { --accent: var(--connector); }
-    .milestone.social { --accent: var(--social); }
-    .milestone.ai { --accent: var(--ai); }
-    .milestone.current { --accent: var(--red); }
-    .milestone::before { content: ""; position: absolute; left: 50%; width: 2px; background: var(--accent); }
-    .milestone.above::before { top: 250px; height: 40px; }
-    .milestone.below::before { top: 292px; height: 39px; }
-    .milestone::after { content: ""; position: absolute; top: 280px; left: 50%; transform: translateX(-50%); width: 23px; height: 23px; border: 6px solid var(--accent); border-radius: 50%; background: var(--surface); box-shadow: 0 0 0 5px var(--surface), 0 3px 12px #163f6a36; }
-    .milestone.current::after { box-shadow: 0 0 0 5px var(--surface), 0 0 0 8px var(--red); }
-    .event-card { width: min(100%, 340px); min-width: 0; min-height: 0; display: flex; flex-direction: column; justify-self: center; padding: clamp(8px, .75vw, 14px); border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: var(--shadow); }
-    .above .event-card { grid-row: 1; align-self: end; margin-bottom: 20px; }
-    .below .event-card { grid-row: 3; align-self: start; margin-top: 17px; }
-    .current .event-card { border: 2px dashed var(--red); background: var(--surface-soft); }
-    .event-date { margin: 0; font-size: 12px; font-weight: 800; color: var(--ink); }
-    .event-version { margin: 0 0 9px; color: var(--muted); font-size: 11px; }
-    .event-card h3 { margin: 0 0 7px; color: var(--accent); font-size: clamp(15px, 1.12vw, 20px); line-height: 1.18; }
-    .feature-chips { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 5px; min-height: 43px; }
-    .feature-chip { border: 1px solid currentColor; border-radius: 999px; padding: 3px 7px; background: transparent; color: var(--chip); font-size: clamp(10px, .75vw, 12px); font-weight: 700; line-height: 1.2; cursor: pointer; text-align: left; }
-    .feature-chip:hover { background: var(--surface-soft); text-decoration: underline; }
-    .cat-social { --chip: var(--social); }.cat-chat { --chip: var(--chat); }.cat-ai { --chip: var(--ai); }.cat-security { --chip: var(--security); }.cat-trading { --chip: var(--trading); }.cat-connector { --chip: var(--connector); }.cat-ui { --chip: var(--ui); }.cat-infrastructure { --chip: var(--infrastructure); }.cat-fix { --chip: var(--fix); }
-    .event-availability { margin: auto 0 0; padding: 8px 0 5px; list-style: none; font-size: clamp(10px, .75vw, 12px); }
-    .event-availability li { display: flex; gap: 5px; align-items: baseline; padding: 2px 0; }
-    .event-availability b { min-width: 20px; color: var(--status); }
-    .event-availability .yes { --status: var(--green); }.event-availability .pending { --status: var(--amber); }.event-availability .none { --status: var(--neutral); }
-    .event-availability span { color: var(--muted); }
-    .event-footer { display: flex; align-items: center; justify-content: space-between; gap: 6px; border-top: 1px solid var(--border); padding-top: 6px; margin-top: 3px; }
-    .more { border: 0; padding: 0; background: none; color: var(--blue); cursor: pointer; font-size: 11px; font-weight: 700; }
-    .more:hover { text-decoration: underline; }
-    .event-source { color: var(--muted); font-size: 10px; text-align: right; }
-    .legend-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 17px; }
-    .legend-panel { padding: 14px 17px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
-    .legend-panel h2 { margin: 0 0 8px; font-size: 15px; }
-    .legend-panel p { margin: 4px 0; color: var(--muted); font-size: 12px; }
-    .legend-categories { display: flex; flex-wrap: wrap; gap: 5px; }
-    .legend-categories span { font-size: 11px; font-weight: 700; color: var(--chip); padding: 3px 7px; border: 1px solid currentColor; border-radius: 999px; }
-    .footnote { margin: 14px 2px 0; color: var(--muted); font-size: 11px; }
-    dialog { width: min(92vw, 520px); max-height: min(85vh, 700px); overflow: auto; border: 1px solid var(--border); border-radius: 16px; padding: 20px; background: var(--surface); color: var(--ink); box-shadow: 0 24px 70px #02091470; }
-    dialog::backdrop { background: #071426a8; }
-    .dialog-top { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
-    dialog h2 { margin: 0 0 4px; font-size: 23px; }
-    .dialog-kicker { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
-    .dialog-intro { margin: 0 0 11px; }
-    .dialog-points { margin: 0 0 15px; padding-left: 20px; }
-    .dialog-points li { margin: 4px 0; }
-    .dialog-tech { border-top: 1px solid var(--border); padding-top: 10px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
-    .dialog-tech p { margin: 0 0 6px; }
-    .close-dialog { flex: none; width: 32px; height: 32px; border: 1px solid var(--border); border-radius: 50%; background: var(--surface-soft); color: var(--ink); cursor: pointer; font-size: 20px; line-height: 1; }
-    @media (max-width: 1720px) {
-      .event-card h3 { font-size: 15px; }
-      .feature-chip { font-size: 10px; }
-      .event-availability { font-size: 10px; }
+    @media (max-width:900px) { .environment-grid { grid-template-columns:1fr; } }
+    @media (max-width:620px) {
+      .page { padding:15px 12px 28px; }
+      .brand { gap:9px; }.brand-mark { width:36px; height:36px; font-size:19px; }
+      h1 { font-size:25px; }.theme-toggle { width:36px; height:36px; justify-content:center; padding:0; }.theme-label { display:none; }
+      .section-heading { display:block; }.section-heading p { margin-top:3px; }
+      .environment-grid { margin-top:16px; }.availability { grid-template-columns:repeat(2,minmax(0,1fr)); }
+      .event-availability { gap:7px; }.event-availability li { font-size:10px; }
+      .detail-panel { border-left:0; }
     }
-    @media (max-width: 1360px) {
-      .timeline { padding: 15px 18px; }
-      .timeline-track { display: flex; flex-direction: column; gap: 12px; padding-left: 29px; }
-      .timeline-track::before { top: 0; bottom: 0; left: 11px; right: auto; width: 3px; height: auto; }
-      .milestone { display: block; padding: 0; }
-      .milestone::before { display: none; }
-      .milestone::after { top: 18px; left: -16px; width: 17px; height: 17px; border-width: 4px; box-shadow: 0 0 0 4px var(--surface); }
-      .milestone.current::after { box-shadow: 0 0 0 4px var(--surface), 0 0 0 7px var(--red); }
-      .event-card { width: 100%; max-width: none; min-height: 0; padding: 13px 15px; }
-      .above .event-card, .below .event-card { margin: 0; }
-      .event-card h3 { font-size: 18px; }
-      .feature-chip, .event-availability { font-size: 12px; }
-      .feature-chips { min-height: 0; }
-      .event-availability { display: flex; flex-wrap: wrap; gap: 5px 16px; margin-top: 6px; }
-      .event-availability li { min-width: 135px; }
-    }
-    @media (max-width: 1000px) {
-      .environment-grid { grid-template-columns: 1fr; }
-      .environment-card { padding: 15px; }
-      .legend-grid { grid-template-columns: 1fr 1fr; }
-    }
-    @media (max-width: 620px) {
-      .page { padding: 16px 12px 25px; }
-      .masthead { grid-template-columns: 1fr auto; gap: 9px; }
-      .brand { gap: 9px; }
-      .brand-mark { width: 39px; height: 39px; border-radius: 11px; font-size: 21px; }
-      h1 { font-size: 26px; }
-      .theme-toggle { width: 38px; height: 38px; justify-content: center; padding: 0; }
-      .theme-label { display: none; }
-      .release-note { margin-top: 14px; }
-      .legend-grid { grid-template-columns: 1fr; }
-      .section-heading { display: block; }
-      .section-heading p { margin-top: 3px; }
-      .timeline { padding: 12px 10px; }
-      .event-availability { display: block; }
-      .event-availability li { min-width: 0; }
-    }
+    @media (prefers-reduced-motion:no-preference) { .detail-panel { animation:panel-enter .18s ease-out; } @keyframes panel-enter { from { transform:translateX(24px); opacity:.7; } to { transform:none; opacity:1; } } }
   </style>
 </head>
 <body>
@@ -200,139 +147,127 @@
     </button>
   </header>
 
-  <p class="release-note"><strong>Последняя подтверждённая публикация:</strong> Server 0.10.0-beta.92 — Canary → Production, 2 сентября 2026. Сегодняшнюю live-версию удалённых серверов проверить не удалось. Списки ниже сравнивают Local runtime с последним документально подтверждённым artifact Canary и Production.</p>
 
   <section class="environment-grid" aria-label="Снимок продукта в трёх окружениях">
     <article class="environment-card local">
-      <div class="env-heading"><h2>Development / Local</h2><span class="env-qualified">Запущено и проверено локально</span></div>
+      <div class="env-heading"><h2>Local</h2><span class="env-qualified">Активный runtime · 24.09.2026</span></div>
       <p class="env-version">0.10.0-beta.96</p>
-      <p class="env-subtitle">Функции активного Local runtime; Agent World показан отдельно как кандидат.</p>
       <ul class="availability">
-        <li class="available"><span class="state-symbol">✓</span><button data-detail="social" type="button">Социальная сеть</button></li>
-        <li class="available"><span class="state-symbol">✓</span><button data-detail="chat" type="button">SF Chat</button></li>
-        <li class="available"><span class="state-symbol">✓</span><button data-detail="registration" type="button">Новая регистрация</button></li>
-        <li class="available"><span class="state-symbol">✓</span><button data-detail="charts" type="button">Графики и бэктест</button></li>
-        <li class="available"><span class="state-symbol">✓</span><button data-detail="catalog" type="button">Каталог контрактов</button></li>
-        <li class="candidate"><span class="state-symbol">!</span><button data-detail="agent" type="button">Agent World — кандидат</button></li>
+        <li><span class="state-symbol">✓</span><button data-detail="social" type="button">Социальная сеть</button></li>
+        <li><span class="state-symbol">✓</span><button data-detail="chat" type="button">SF Chat</button></li>
+        <li><span class="state-symbol">✓</span><button data-detail="registration" type="button">Новая регистрация</button></li>
+        <li><span class="state-symbol">✓</span><button data-detail="charts" type="button">Графики и бэктест</button></li>
+        <li><span class="state-symbol">✓</span><button data-detail="catalog" type="button">Каталог контрактов</button></li>
       </ul>
-      <dl class="env-meta"><dt>Build</dt><dd>dev-0.10.0-beta.96-56945ac68e94</dd><dt>Commit</dt><dd>56945ac6 (runtime :8765)</dd><dt>Проверено</dt><dd>24.09.2026; checkout feat/shared-model-access отдельно</dd></dl>
+      <dl class="env-meta"><dt>Build</dt><dd>dev-0.10.0-beta.96-56945ac68e94</dd><dt>Commit</dt><dd>56945ac6</dd></dl>
     </article>
     <article class="environment-card canary">
-      <div class="env-heading"><h2>Canary</h2><span class="env-qualified">Последняя запись, не live-проверка</span></div>
+      <div class="env-heading"><h2>Canary</h2><span class="env-qualified">Последняя подтверждённая запись</span></div>
       <p class="env-version">0.10.0-beta.92</p>
-      <p class="env-subtitle">Состав принятого серверного artifact от 2 сентября.</p>
       <ul class="availability">
-        <li class="absent"><span class="state-symbol">○</span><button data-detail="social" type="button">Социальная сеть</button></li>
-        <li class="absent"><span class="state-symbol">○</span><button data-detail="chat" type="button">SF Chat</button></li>
-        <li class="absent"><span class="state-symbol">○</span><button data-detail="registration" type="button">Новая регистрация</button></li>
-        <li class="available"><span class="state-symbol">✓</span><button data-detail="charts" type="button">Графики и бэктест</button></li>
-        <li class="available"><span class="state-symbol">✓</span><button data-detail="catalog" type="button">Каталог контрактов</button></li>
-        <li class="absent"><span class="state-symbol">○</span><button data-detail="agent" type="button">Agent World</button></li>
+        <li><span class="state-symbol">✓</span><button data-detail="charts" type="button">Графики</button></li>
+        <li><span class="state-symbol">✓</span><button data-detail="backtest" type="button">Бэктест</button></li>
+        <li><span class="state-symbol">✓</span><button data-detail="catalog" type="button">Каталог контрактов</button></li>
+        <li><span class="state-symbol">✓</span><button data-detail="responsive" type="button">Адаптивный UI</button></li>
       </ul>
-      <dl class="env-meta"><dt>Build</dt><dd>sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z</dd><dt>Commit</dt><dd>9d800770</dd><dt>Приёмка</dt><dd>02.09.2026 03:54 UTC</dd></dl>
+      <dl class="env-meta"><dt>Build</dt><dd>sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z</dd><dt>Commit</dt><dd>9d800770</dd></dl>
     </article>
     <article class="environment-card production">
-      <div class="env-heading"><h2>Production</h2><span class="env-qualified">Последняя запись, не live-проверка</span></div>
+      <div class="env-heading"><h2>Production</h2><span class="env-qualified">Последняя подтверждённая запись</span></div>
       <p class="env-version">0.10.0-beta.92</p>
-      <p class="env-subtitle">Состав artifact, опубликованного 2 сентября.</p>
       <ul class="availability">
-        <li class="absent"><span class="state-symbol">○</span><button data-detail="social" type="button">Социальная сеть</button></li>
-        <li class="absent"><span class="state-symbol">○</span><button data-detail="chat" type="button">SF Chat</button></li>
-        <li class="absent"><span class="state-symbol">○</span><button data-detail="registration" type="button">Новая регистрация</button></li>
-        <li class="available"><span class="state-symbol">✓</span><button data-detail="charts" type="button">Графики и бэктест</button></li>
-        <li class="available"><span class="state-symbol">✓</span><button data-detail="catalog" type="button">Каталог контрактов</button></li>
-        <li class="absent"><span class="state-symbol">○</span><button data-detail="agent" type="button">Agent World</button></li>
+        <li><span class="state-symbol">✓</span><button data-detail="charts" type="button">Графики</button></li>
+        <li><span class="state-symbol">✓</span><button data-detail="backtest" type="button">Бэктест</button></li>
+        <li><span class="state-symbol">✓</span><button data-detail="catalog" type="button">Каталог контрактов</button></li>
+        <li><span class="state-symbol">✓</span><button data-detail="connector" type="button">NinjaTrader Connector</button></li>
       </ul>
-      <dl class="env-meta"><dt>Build</dt><dd>sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z</dd><dt>Commit</dt><dd>9d800770</dd><dt>Публикация</dt><dd>02.09.2026 03:57 UTC</dd></dl>
+      <dl class="env-meta"><dt>Build</dt><dd>sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z</dd><dt>Commit</dt><dd>9d800770</dd></dl>
     </article>
   </section>
-  <p class="environment-caption">✓ функция есть в указанной сборке · ! отдельный Local-кандидат · ○ функция отсутствует в последнем подтверждённом artifact среды. Базовый вход в beta.92 не следует путать с новой трёхшаговой регистрацией beta.95/96.</p>
+  <p class="environment-caption">Canary и Production: состав последнего документально подтверждённого artifact от 02.09.2026, не live-проверка. Впереди него в Local — Social, SF Chat и новая регистрация; Agent World — отдельный кандидат.</p>
 
   <section aria-labelledby="timeline-heading">
-    <div class="section-heading"><h2 id="timeline-heading">Развитие продукта</h2><p>Нажмите на функцию или «Подробнее», чтобы увидеть краткие изменения и источник.</p></div>
+    <div class="section-heading"><h2 id="timeline-heading">Развитие продукта</h2><p>Нажмите на этап, чтобы увидеть детали и источники.</p></div>
     <div class="timeline">
       <div class="timeline-track">
         <article class="milestone above">
-          <div class="event-card">
-            <p class="event-date"><time datetime="2026-08-13">13 августа 2026</time></p><p class="event-version">Server beta.1 · Canary artifact</p>
+          <div class="event-card" data-milestone="release">
+            <p class="event-date"><time datetime="2026-08-13">13 августа 2026</time></p><p class="event-version">Server beta.1</p>
             <h3>Безопасный выпуск</h3>
-            <div class="feature-chips"><button class="feature-chip cat-infrastructure" data-detail="release" type="button">Canary и откат</button></div>
-            <ul class="event-availability"><li class="yes"><b>✓</b>Development</li><li class="yes"><b>✓</b>Canary</li><li class="none"><b>○</b>Production <span>этот artifact не продвигали</span></li></ul>
-            <div class="event-footer"><button class="more" data-detail="release" type="button">Подробнее ▾</button><span class="event-source">7ebda6fa</span></div>
+            <div class="feature-chips"><span class="feature-chip">Canary</span><span class="feature-chip">Откат</span></div>
+            <ul class="event-availability"><li class="yes"><b>✓</b>Local</li><li class="yes"><b>✓</b>Canary</li><li class="none"><b>○</b>Production</li></ul>
+            <div class="event-footer"><button class="more" data-detail="release" type="button">Подробнее →</button></div>
           </div>
         </article>
         <article class="milestone trading below">
-          <div class="event-card">
+          <div class="event-card" data-milestone="beta29">
             <p class="event-date"><time datetime="2026-08-23">23 августа 2026</time></p><p class="event-version">Server beta.29</p>
             <h3>Графики и интерфейс</h3>
-            <div class="feature-chips"><button class="feature-chip cat-trading" data-detail="charts" type="button">Графики</button><button class="feature-chip cat-ui" data-detail="responsive" type="button">Адаптивный UI</button></div>
-            <ul class="event-availability"><li class="yes"><b>✓</b>Development</li><li class="yes"><b>✓</b>Canary</li><li class="yes"><b>✓</b>Production</li></ul>
-            <div class="event-footer"><button class="more" data-detail="beta29" type="button">Подробнее ▾</button><span class="event-source">4d15f1d2</span></div>
+            <div class="feature-chips"><span class="feature-chip">Графики</span><span class="feature-chip">Адаптивный UI</span></div>
+            <ul class="event-availability"><li class="yes"><b>✓</b>Local</li><li class="yes"><b>✓</b>Canary</li><li class="yes"><b>✓</b>Production</li></ul>
+            <div class="event-footer"><button class="more" data-detail="beta29" type="button">Подробнее →</button></div>
           </div>
         </article>
         <article class="milestone fix above">
-          <div class="event-card">
+          <div class="event-card" data-milestone="backtest">
             <p class="event-date"><time datetime="2026-09-01">1 сентября 2026</time></p><p class="event-version">Server beta.87</p>
             <h3>Бэктест владельца</h3>
-            <div class="feature-chips"><button class="feature-chip cat-trading" data-detail="backtest" type="button">Бэктест</button><button class="feature-chip cat-fix" data-detail="backtest" type="button">Исправление</button></div>
-            <ul class="event-availability"><li class="yes"><b>✓</b>Development</li><li class="yes"><b>✓</b>Canary</li><li class="yes"><b>✓</b>Production</li></ul>
-            <div class="event-footer"><button class="more" data-detail="backtest" type="button">Подробнее ▾</button><span class="event-source">8f421586</span></div>
+            <div class="feature-chips"><span class="feature-chip">Бэктест</span><span class="feature-chip">Права владельца</span></div>
+            <ul class="event-availability"><li class="yes"><b>✓</b>Local</li><li class="yes"><b>✓</b>Canary</li><li class="yes"><b>✓</b>Production</li></ul>
+            <div class="event-footer"><button class="more" data-detail="backtest" type="button">Подробнее →</button></div>
           </div>
         </article>
         <article class="milestone connector below">
-          <div class="event-card">
+          <div class="event-card" data-milestone="catalog-group">
             <p class="event-date"><time datetime="2026-09-02">2 сентября 2026</time></p><p class="event-version">Server beta.92 · Connector 0.4.5-dev.1</p>
             <h3>Каталог контрактов</h3>
-            <div class="feature-chips"><button class="feature-chip cat-trading" data-detail="catalog" type="button">Контракты</button><button class="feature-chip cat-connector" data-detail="connector" type="button">NinjaTrader Connector</button></div>
-            <ul class="event-availability"><li class="yes"><b>✓</b>Development <span>server</span></li><li class="yes"><b>✓</b>Canary <span>server; Connector не подтверждён</span></li><li class="yes"><b>✓</b>Production <span>server + Connector</span></li></ul>
-            <div class="event-footer"><button class="more" data-detail="catalog-group" type="button">Подробнее ▾</button><span class="event-source">9d800770 / ff6fe049</span></div>
+            <div class="feature-chips"><span class="feature-chip">Контракты</span><span class="feature-chip">NinjaTrader Connector</span></div>
+            <ul class="event-availability"><li class="yes"><b>✓</b>Local*</li><li class="yes"><b>✓</b>Canary*</li><li class="yes"><b>✓</b>Production</li></ul>
+            <div class="event-footer"><button class="more" data-detail="catalog-group" type="button">Подробнее →</button></div>
           </div>
         </article>
         <article class="milestone social above">
-          <div class="event-card">
+          <div class="event-card" data-milestone="beta95">
             <p class="event-date"><time datetime="2026-09-03">3–4 сентября 2026</time></p><p class="event-version">Local server beta.95 → beta.96</p>
-            <h3>Социальная сеть, чат и вход</h3>
-            <div class="feature-chips"><button class="feature-chip cat-social" data-detail="social" type="button">Социальная сеть</button><button class="feature-chip cat-chat" data-detail="chat" type="button">SF Chat</button><button class="feature-chip cat-security" data-detail="registration" type="button">Регистрация</button><button class="feature-chip cat-security" data-detail="security" type="button">Безопасность</button></div>
-            <ul class="event-availability"><li class="yes"><b>✓</b>Development</li><li class="none"><b>○</b>Canary</li><li class="none"><b>○</b>Production</li></ul>
-            <div class="event-footer"><button class="more" data-detail="beta95" type="button">Подробнее ▾</button><span class="event-source">d6a4a626 / 42a99a85</span></div>
+            <h3>Социальная сеть и SF Chat</h3>
+            <div class="feature-chips"><span class="feature-chip">Социальная сеть</span><span class="feature-chip">SF Chat</span><span class="feature-chip">Регистрация</span><span class="feature-chip">Безопасность</span></div>
+            <ul class="event-availability"><li class="yes"><b>✓</b>Local</li><li class="none"><b>○</b>Canary</li><li class="none"><b>○</b>Production</li></ul>
+            <div class="event-footer"><button class="more" data-detail="beta95" type="button">Подробнее →</button></div>
           </div>
         </article>
         <article class="milestone ai below">
-          <div class="event-card">
+          <div class="event-card" data-milestone="agent">
             <p class="event-date"><time datetime="2026-09-14">14 сентября 2026</time></p><p class="event-version">Отдельный кандидат beta.96</p>
             <h3>Agent World</h3>
-            <div class="feature-chips"><button class="feature-chip cat-ai" data-detail="agent" type="button">AI Agents</button><button class="feature-chip cat-ai" data-detail="agent" type="button">Agent World</button></div>
-            <ul class="event-availability"><li class="pending"><b>!</b>Development <span>кандидат, не активный :8765</span></li><li class="none"><b>○</b>Canary</li><li class="none"><b>○</b>Production</li></ul>
-            <div class="event-footer"><button class="more" data-detail="agent" type="button">Подробнее ▾</button><span class="event-source">2debb2d6</span></div>
+            <div class="feature-chips"><span class="feature-chip">AI Agents</span><span class="feature-chip">Agent World</span></div>
+            <ul class="event-availability"><li class="pending"><b>!</b>Local*</li><li class="none"><b>○</b>Canary</li><li class="none"><b>○</b>Production</li></ul>
+            <div class="event-footer"><button class="more" data-detail="agent" type="button">Подробнее →</button></div>
           </div>
         </article>
         <article class="milestone current above">
-          <div class="event-card">
-            <p class="event-date"><time datetime="2026-09-23">23 сентября 2026 · сейчас</time></p><p class="event-version">Local beta.96 · новая версия не назначена</p>
+          <div class="event-card" data-milestone="current">
+            <p class="event-date"><time datetime="2026-09-23">23 сентября 2026 · сейчас</time></p><p class="event-version">Local QA · runtime beta.96</p>
             <h3>Совместные модели и Preview</h3>
-            <div class="feature-chips"><button class="feature-chip cat-ai" data-detail="models" type="button">Общие модели</button><button class="feature-chip cat-trading" data-detail="preview-charts" type="button">Графики в Preview</button></div>
-            <ul class="event-availability"><li class="pending"><b>!</b>Development <span>ветка и Local QA</span></li><li class="none"><b>○</b>Canary</li><li class="none"><b>○</b>Production</li></ul>
-            <div class="event-footer"><button class="more" data-detail="current" type="button">Подробнее ▾</button><span class="event-source">77eda536 / 256af9db</span></div>
+            <div class="feature-chips"><span class="feature-chip">Общие модели</span><span class="feature-chip">Графики Preview</span></div>
+            <ul class="event-availability"><li class="pending"><b>!</b>Local*</li><li class="none"><b>○</b>Canary</li><li class="none"><b>○</b>Production</li></ul>
+            <div class="event-footer"><button class="more" data-detail="current" type="button">Подробнее →</button></div>
           </div>
         </article>
       </div>
     </div>
   </section>
 
-  <section class="legend-grid" aria-label="Условные обозначения">
-    <div class="legend-panel"><h2>Функциональные области</h2><div class="legend-categories"><span class="cat-social">Social</span><span class="cat-chat">Chat</span><span class="cat-ai">AI / Agents</span><span class="cat-security">Безопасность</span><span class="cat-trading">Графики / бэктест</span><span class="cat-connector">Connector</span><span class="cat-ui">UI</span><span class="cat-infrastructure">Инфраструктура</span><span class="cat-fix">Исправление</span></div></div>
-    <div class="legend-panel"><h2>Окружения</h2><p><strong>Development / Local</strong> — компьютер разработчика.</p><p><strong>Canary</strong> — сервер приёмки подписанного artifact.</p><p><strong>Production</strong> — публичный сервер StratForge AI.</p></div>
-    <div class="legend-panel"><h2>Статусы</h2><p><strong style="color:var(--green)">✓ Есть</strong> — подтверждено для указанной сборки и среды.</p><p><strong style="color:var(--amber)">! Кандидат</strong> — разработка или отдельная Local-проверка.</p><p><strong style="color:var(--neutral)">○ Нет</strong> — не входило в указанный artifact; это не утверждение о сегодняшнем live-сервере.</p></div>
-  </section>
-  <p class="footnote">Local runtime проверен через /api/runtime/env 24.09.2026: build dev-0.10.0-beta.96-56945ac68e94. Последняя запись Release Center о Production: 02.09.2026 03:57 UTC. Даты и версии не взяты из дизайнерского примера.</p>
+  <p class="reading-note">✓ есть в указанной сборке · ! отдельный кандидат или Local QA · ○ отсутствует в указанном artifact. * Подробности по компонентам и ограничениям — в панели этапа. Базовый вход в beta.92 не равен новой регистрации beta.95/96.</p>
 </main>
 
-<dialog id="feature-dialog" aria-labelledby="dialog-title">
-  <div class="dialog-top"><div><p class="dialog-kicker" id="dialog-kicker"></p><h2 id="dialog-title"></h2></div><button class="close-dialog" id="close-dialog" type="button" aria-label="Закрыть">×</button></div>
-  <p class="dialog-intro" id="dialog-intro"></p>
-  <ul class="dialog-points" id="dialog-points"></ul>
-  <div class="dialog-tech"><p id="dialog-tech"></p><a id="dialog-source" href="#">Открыть источник</a></div>
-</dialog>
+<div class="panel-backdrop" id="panel-backdrop" hidden></div>
+<aside class="detail-panel" id="detail-panel" role="dialog" aria-modal="true" aria-labelledby="panel-title" aria-hidden="true" inert hidden>
+  <div class="panel-top"><div><p class="panel-kicker" id="panel-kicker"></p><h2 id="panel-title"></h2></div><button class="close-panel" id="close-panel" type="button" aria-label="Закрыть подробности">×</button></div>
+  <p class="panel-intro" id="panel-intro"></p>
+  <h3 class="panel-label">Что изменилось</h3><ul class="panel-points" id="panel-points"></ul>
+  <div id="panel-environments" hidden><h3 class="panel-label">Окружения на этом этапе</h3><ul class="panel-status" id="panel-status"></ul></div>
+  <div class="panel-tech"><h3 class="panel-label">Техническое подтверждение</h3><p id="panel-tech"></p><a id="panel-source" href="#">Открыть запись изменений</a></div>
+</aside>
 
 <script>
   const sources = {
@@ -353,35 +288,81 @@
     backtest: {title:'Бэктест владельца',period:'1 сентября · Server beta.87',intro:'Владелец больше не видит обычный бэктест как демоверсию.',points:['Демо-панель скрыта у аккаунта с полным доступом.','Настоящие демо-отчёты и права пользователей сохранены.','Один artifact принят на Canary и опубликован в Production.'],tech:'Artifact commit 8f421586 · build sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z.',source:sources.backtest},
     catalog: {title:'Каталог контрактов',period:'2 сентября · Server beta.92',intro:'Сервер принимает контракт, даже когда локальная история ещё не скачана.',points:['Контракт определяется по имени с месяцем.','Отсутствие диапазона данных больше не отклоняет весь снимок.','Серверный artifact прошёл Canary и стал Production live.'],tech:'Server commit 9d800770 · Canary 03:54 UTC · Production 03:57 UTC.',source:sources.catalog},
     connector: {title:'NinjaTrader Connector',period:'2 сентября · 0.4.5-dev.1',intro:'Отдельная версия Windows Connector; это не номер версии сервера.',points:['Каталог отдаётся из одного стабильного снимка.','Production-установка принята по health в 06:14 UTC.','Установка этой версии на Canary источником не подтверждена.'],tech:'Connector component commit ff6fe049 · server рядом: beta.92.',source:sources.catalog},
-    'catalog-group': {title:'Контракты и Connector',period:'2 сентября · Server beta.92 / Connector 0.4.5-dev.1',intro:'Одна функциональная работа затронула два независимо версионируемых компонента.',points:['Server beta.92 принял некэшированные контракты и прошёл Canary → Production.','Connector 0.4.5-dev.1 стабилизировал снимок каталога и принят на Production.','Canary-установка Connector отдельно не подтверждена.'],tech:'Server 9d800770 · Connector ff6fe049.',source:sources.catalog},
+    'catalog-group': {title:'Контракты и Connector',period:'2 сентября · Server beta.92 / Connector 0.4.5-dev.1',intro:'Одна функциональная работа затронула два независимо версионируемых компонента.',points:['Server beta.92 принял некэшированные контракты и прошёл Canary → Production.','Connector 0.4.5-dev.1 стабилизировал снимок каталога и принят на Production.','Local- и Canary-установка Connector источником отдельно не подтверждены.'],tech:'Server 9d800770 · Connector ff6fe049.',source:sources.catalog},
     social: {title:'Социальная сеть SF Social',period:'Local beta.95/96',intro:'Новая социальная сеть присутствует в Local-сборке и отсутствует в последнем подтверждённом серверном artifact beta.92.',points:['Профили, лента, публикации и реакции.','Постоянная запись с раскрытыми исправлениями.','Общая идентичность пользователя с SF Chat.'],tech:'Local integration d6a4a626 · PR #270; Canary/Production deploy не выполнялся.',source:sources.beta95},
     chat: {title:'SF Chat',period:'Local beta.95/96',intro:'Единая оболочка человеческих и AI-диалогов собрана локально.',points:['Диалоги используют общую идентичность пользователя.','В beta.96 добавлены папки и группировка по дням.','Новая оболочка не входила в опубликованный beta.92 artifact.'],tech:'Local beta.95/96 · PR #270; без Canary/Production deploy.',source:sources.beta96},
     registration: {title:'Новая регистрация',period:'Local beta.95/96',intro:'Речь о новом трёхшаговом onboarding, а не об отсутствии базового входа в beta.92.',points:['Шаги профиля, подтверждения личности и согласия разделены.','Имя пользователя StratForge не подменяется провайдером входа.','Первое устройство после регистрации подтверждается без повторного кода.'],tech:'Local integration d6a4a626 · beta.96 source 42a99a85.',source:sources.beta96},
     security: {title:'Безопасность устройства',period:'Local beta.95/96',intro:'Новое подтверждение устройства объединено с регистрацией в Local.',points:['Постоянное доверие или доступ до конца сессии.','Поздний неизвестный клиент всё ещё проходит обычное подтверждение.','Изменение не развёрнуто на Canary/Production.'],tech:'Local beta.95/96 · PR #278.',source:sources.beta95},
-    beta95: {title:'Социальная сеть, чат и вход',period:'3–4 сентября · Local beta.95 → beta.96',intro:'Смежные Local-изменения сгруппированы по функциям.',points:['SF Social: профили, лента, публикации.','SF Chat: единая переписка и улучшенные диалоги.','Регистрация и безопасность: новый onboarding и первое устройство.'],tech:'Integration d6a4a626 · beta.96 source 42a99a85 · только Development.',source:sources.beta95},
+    beta95: {title:'Социальная сеть и SF Chat',period:'3–4 сентября · Local beta.95 → beta.96',intro:'Смежные Local-изменения сгруппированы по функциям.',points:['SF Social: профили, лента, публикации.','SF Chat: единая переписка и улучшенные диалоги.','Регистрация и безопасность: новый onboarding и первое устройство.'],tech:'Integration d6a4a626 · beta.96 source 42a99a85 · только Development.',source:sources.beta95},
     agent: {title:'Agent World',period:'14 сентября · отдельный beta.96-кандидат',intro:'Проверен отдельный exact-SHA кандидат. Он не равен активному Local runtime.',points:['Зафиксирована приёмка AW-FINAL-1 на коде 2debb2d6.','Owner acceptance и внешние зависимости остаются отдельно.','Canary и Production не менялись.'],tech:'Candidate commit 2debb2d6 · PR #287 · release отсутствует.',source:sources.agent},
     models: {title:'Совместный доступ к моделям',period:'Текущая разработка · Local beta.96',intro:'Работа идёт в ветке Shared Models без назначения новой версии сервера.',points:['Доступ к общей модели проверяется для вызывающего пользователя.','Учёт вызова остаётся привязанным к владельцу и пользователю.','Canary и Production не получали эту ветку.'],tech:'Checkout 77eda536 · remote-tracking 256af9db · активный Local runtime 56945ac6.',source:sources.current},
     'preview-charts': {title:'Графики в Preview',period:'Текущая разработка · Local',intro:'В изолированном Preview исправлялись открытие и восстановление живых графиков.',points:['Первый Desktop открывает графики без ручного обхода.','Канонический TopStep mirror восстанавливается для активных пользователей.','Это Local QA, не новый серверный релиз.'],tech:'Git history 5292a2ec → 56945ac6; Production остаётся на последней записанной beta.92.',source:sources.current},
     current: {title:'Что сейчас впереди Production',period:'23 сентября · ветка feat/shared-model-access',intro:'Последняя работа относится к Local и ещё не публиковалась.',points:['Совместный доступ к моделям и отдельный Preview проходят Local QA.','Графики в Preview проверялись на локальном runtime.','Новая версия server и Canary/Production deployment не зафиксированы.'],tech:'Checkout HEAD 77eda536 · origin/feat/shared-model-access 256af9db · runtime 56945ac6.',source:sources.current}
   };
-  const dialog = document.getElementById('feature-dialog');
+  const panel = document.getElementById('detail-panel');
+  const backdrop = document.getElementById('panel-backdrop');
   let previousFocus = null;
-  document.querySelectorAll('[data-detail]').forEach(button => button.addEventListener('click', () => {
-    const detail = details[button.dataset.detail];
+  function openDetail(key, trigger) {
+    const detail = details[key];
     if (!detail) return;
-    previousFocus = button;
-    document.getElementById('dialog-title').textContent = detail.title;
-    document.getElementById('dialog-kicker').textContent = detail.period;
-    document.getElementById('dialog-intro').textContent = detail.intro;
-    const points = document.getElementById('dialog-points');
+    previousFocus = trigger.matches('[data-milestone]') ? trigger.querySelector('.more') : trigger;
+    document.getElementById('panel-title').textContent = detail.title;
+    document.getElementById('panel-kicker').textContent = detail.period;
+    document.getElementById('panel-intro').textContent = detail.intro;
+    const points = document.getElementById('panel-points');
     points.replaceChildren();
     detail.points.forEach(point => { const item = document.createElement('li'); item.textContent = point; points.append(item); });
-    document.getElementById('dialog-tech').textContent = detail.tech;
-    document.getElementById('dialog-source').href = detail.source;
-    dialog.showModal();
+    document.getElementById('panel-tech').textContent = detail.tech;
+    document.getElementById('panel-source').href = detail.source;
+    const milestone = trigger.closest('.milestone');
+    const statusSection = document.getElementById('panel-environments');
+    const statuses = document.getElementById('panel-status');
+    statuses.replaceChildren();
+    if (milestone) {
+      milestone.querySelectorAll('.event-availability li').forEach(status => {
+        const item = document.createElement('li');
+        item.className = status.className;
+        item.textContent = status.textContent;
+        statuses.append(item);
+      });
+      statusSection.hidden = false;
+    } else statusSection.hidden = true;
+    backdrop.hidden = false;
+    panel.hidden = false;
+    panel.inert = false;
+    panel.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('panel-open');
+    document.getElementById('close-panel').focus();
+    document.querySelector('main').inert = true;
+  }
+  function closeDetail() {
+    panel.hidden = true;
+    panel.inert = true;
+    panel.setAttribute('aria-hidden', 'true');
+    backdrop.hidden = true;
+    document.body.classList.remove('panel-open');
+    document.querySelector('main').inert = false;
+    previousFocus?.focus();
+  }
+  document.querySelectorAll('[data-detail]').forEach(button => button.addEventListener('click', event => {
+    event.stopPropagation();
+    openDetail(button.dataset.detail, button);
   }));
-  document.getElementById('close-dialog').addEventListener('click', () => dialog.close());
-  dialog.addEventListener('close', () => previousFocus?.focus());
+  document.querySelectorAll('[data-milestone]').forEach(card => {
+    card.addEventListener('click', () => openDetail(card.dataset.milestone, card));
+  });
+  document.getElementById('close-panel').addEventListener('click', closeDetail);
+  backdrop.addEventListener('click', closeDetail);
+  document.addEventListener('keydown', event => {
+    if (panel.hidden) return;
+    if (event.key === 'Escape') closeDetail();
+    if (event.key === 'Tab') {
+      const focusable = [...panel.querySelectorAll('button, a[href]')];
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    }
+  });
   const themeToggle = document.getElementById('theme-toggle');
   function updateThemeButton() {
     const dark = document.documentElement.dataset.theme === 'dark';
