@@ -12,6 +12,7 @@
 - Version: `0.10.0-beta.96`, `pre_release`; clean `2b6d0112` active on Local 8765, no Canary/Production promotion
 - Integration state: scoped model/domain/Chat/NT/Desktop, real fact handoff, manual discussion, separate application observations, Consensus and Court verified; owner-dependent and full-program work remain
 - Current Production version/build/artifact when known: last recorded beta.92, build `sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z`, artifact `art_57db4318cb8745d399d98bccf48de396`; accepted Canary and Production live on 2026-09-02. This supersedes the beta.87 snapshot; current public live identity was not re-verified during the 2026-09-24 timeline audit. See [timeline audit](../changelog/2026-09-24-timeline-source-audit.md).
+- The root [`timeline.html`](../../../timeline.html) is the owner-facing next-day handoff. Keep the current post-beta.92 Local work in one open delivery card and update the numbered Local / Canary / Production snapshots under [timeline maintenance](../TIMELINE_MAINTENANCE.md); this does not claim a server promotion.
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 

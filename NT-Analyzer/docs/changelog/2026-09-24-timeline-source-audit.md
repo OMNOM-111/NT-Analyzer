@@ -8,9 +8,11 @@ Linux baseline and later releases to current Local work. Three environment
 snapshots show cumulative major capabilities; milestone cards show only deltas.
 Technical identity and evidence live in a right-side drawer.
 
-Affected surfaces: standalone `timeline.html` and factual deployment snapshots
-in External GPT Context Pack 00, 02, 04 and 11. The application runtime, release
-artifact selection, market data and Connector code are unchanged.
+Affected surfaces: standalone `timeline.html`, root developer instructions and
+README, documentation governance and timeline upkeep rule, plus factual
+deployment snapshots in External GPT Context Pack 00, 02, 04 and 11. The
+application runtime, release artifact selection, market data and Connector
+code are unchanged.
 
 Source branch at audit: `feat/shared-model-access`, checkout HEAD
 `77eda536f9909afd325ffcd2c89900c17744d4f3`; local remote-tracking branch
@@ -102,14 +104,17 @@ NinjaTrader Connector, AI and Telegram paths, release rollback and that live
 trading remained disabled. The later 2026-08-12 beta.1 snapshot is therefore
 not presented as the birth of StratForge.
 
-The page now has 11 milestones: Local MVP-1, working backtest tag, Aurora,
+The page now has nine milestones: Local MVP-1, working backtest tag, Aurora,
 public Stage 10 baseline, beta.1 release, beta.29 graphics/UI, beta.87 owner
-backtest correction, beta.92 catalog/Connector, Local beta.95/96 Social/Chat/
-registration, separate Agent World candidate, and current Shared Models/
-Preview work. Every detail panel computes a cumulative major-capability list
-from the confirmed additions through that point, then lists only that
-milestone's changes. Agent World and the current branch remain candidates;
-they are not silently added to the active Local runtime capability set.
+backtest correction, beta.92 catalog/Connector, and **one open post-beta.92
+Local delivery batch**. The batch combines Social/Chat/registration, Agent
+World work, the `Поделиться` model switch and graphs for Preview test accounts.
+Its detail panel retains dated subevents and technical sources. Agent World is
+still `IN DEVELOPMENT` and is not counted as an accepted Local capability.
+Its appearance in the delivery batch does not assert Canary or Production
+promotion. The list of 23 numbered capabilities is defined once and rendered
+in identical order for all three environments. The counters count confirmed
+presence: Local 22/23; last-recorded Canary and Production 16/23 each.
 
 The top Local card uses `/api/runtime/env` checked on 2026-09-24:
 `0.10.0-beta.96`, build `dev-0.10.0-beta.96-56945ac68e94`, commit
@@ -124,24 +129,36 @@ on Production; its Local and Canary installation remain unconfirmed.
 
 ## Presentation and verification
 
-The desktop and mobile timeline stays horizontal. Eleven cards share one
-height and appear below a single thin line with aligned dots and connectors.
-At 2560/3440/3840 px the width calculation fits all milestones; at 1920,
-1440 and narrow screens only the history viewport scrolls horizontally.
-The page does not turn milestones into a long vertical column. A right drawer
-contains the cumulative capabilities, milestone delta, environment notes,
-build, commit, artifact and source. It closes with its button, Escape or a
-backdrop click. A compact "Сейчас" control jumps directly to the last point
-when the history needs horizontal scrolling. Light and Dark themes persist in
-localStorage.
+The desktop and mobile timeline stays horizontal. Nine equal-height cards
+sit under the date/version and aligned timeline dots. The nine-card width
+calculation fits 2560/3440/3840 px; at 1920, 1440 and narrow widths only the
+history viewport scrolls horizontally. The whole card opens the right drawer
+with click, Enter or Space; the drawer closes through X, Escape or backdrop.
+The open batch shows dated subevents; SHA, artifact and sources remain there.
+Light and Dark choices persist in localStorage.
 
-Static contract: PASS for chronological dates, 11 milestones, two to four
-change chips per card, complete environment/status triples, source path
-existence, baseline and candidate boundaries, and JavaScript syntax. Layout
-width checks were calculated at 3840, 3440, 2560, 1920, 1440 and 390 px.
-These calculations are not rendered screenshots. Visual acceptance remains
-BLOCKED by the prior in-app browser local-URL rejection, which explicitly
-forbade alternate browser routes for that operation.
+Static validation results and the browser visual-review status are recorded
+in the task closeout. A prior browser action rejected the local file URL and
+explicitly prohibited alternate browser routes for that action; calculated
+layout widths are not presented as rendered screenshots.
+
+Revision verification on 2026-09-24: JavaScript parsed; the data contract
+checked 23 unique chronologically ordered capability IDs, counts 22/16/16,
+nine milestones, one open post-beta.92 card, 2–4 chips and complete environment
+statuses. HTML IDs, date/point order and whole-card click/keyboard handlers
+passed. `validate_external_gpt_context.py` returned OK.
+`pre_release_check.py` returned PASS for a 629-file bundle (static scan,
+runtime reads, Python compilation and shipped JavaScript syntax). A first
+pre-release scan exposed a link from the shipped changelog to the repository-
+only maintenance doc; the link was changed to a plain path and the gate passed.
+`git diff --check` passed. Rendered visual acceptance remains blocked by the
+prior local-URL browser rejection.
+
+The upkeep rule is repository-only `NT-Analyzer/docs/TIMELINE_MAINTENANCE.md`,
+linked from root developer instructions, the README, documentation governance
+and the External GPT Context Pack. Future developers append confirmed Local
+work to the current batch and advance the same card through exact-artifact
+Canary/Production acceptance before opening the next delivery batch.
 
 Release impact: standalone review page and canonical changelog only. No
 server runtime or deployment was changed. A later shipped application artifact

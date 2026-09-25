@@ -17,6 +17,10 @@ release-gated pending a separate owner and regulatory decision.
 > `NT-Analyzer` is the repository and technical identifier (the project's
 > original name). The product it builds and runs is StratForge AI.
 
+Owner/developer handoff: open [product history](timeline.html) for the visual
+Local / Canary / Production snapshot and the current delivery batch. Changes
+to it follow [timeline maintenance](NT-Analyzer/docs/TIMELINE_MAINTENANCE.md).
+
 The product is intentionally local-first:
 
 - NinjaTrader remains the source of truth for compilation, execution, fills,
@@ -132,4 +136,3 @@ See `NT-Analyzer/docs/repository-hygiene.md` for the full policy.
 ## License
 
 Proprietary. See `LICENSE`.
-

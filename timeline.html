@@ -45,11 +45,19 @@
     .environment-card.production { border-top:3px solid var(--good); }
     .environment-head { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:2px 8px; }
     .environment-head h2 { margin:0; text-transform:uppercase; font-size:12px; letter-spacing:.09em; }
+    .environment-count { margin-left:5px; color:var(--accent); font-weight:800; letter-spacing:0; }
     .environment-head span { color:var(--muted); font-size:10px; }
     .environment-version { margin:4px 0 10px; font-size:clamp(18px,1.3vw,24px); font-weight:760; letter-spacing:-.025em; }
     .environment-features { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px 12px; margin:0; padding:0; list-style:none; }
     .environment-features li { display:flex; align-items:baseline; gap:6px; min-width:0; font-size:11px; line-height:1.25; }
-    .environment-features li::before { content:'✓'; flex:none; color:var(--good); font-weight:800; }
+    .environment-features li.unavailable { color:var(--quiet); }
+    .environment-features li.candidate { color:var(--wait); }
+    .capability-symbol { flex:none; width:10px; color:var(--good); font-weight:800; }
+    .unavailable .capability-symbol { color:var(--quiet); }
+    .candidate .capability-symbol { color:var(--wait); }
+    .capability-number { flex:none; color:var(--muted); font:10px/1.3 Consolas,monospace; }
+    .unavailable .capability-number { color:var(--quiet); }
+    .environment-summary { margin:7px 2px 0; color:var(--muted); font-size:11px; }
     .environment-meta { display:flex; flex-wrap:wrap; gap:2px 12px; margin:12px 0 0; padding-top:8px; border-top:1px solid var(--line); color:var(--muted); font:10px/1.35 Consolas,monospace; overflow-wrap:anywhere; }
     .history-heading { display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin:clamp(22px,1.9vw,34px) 1px 12px; }
     .history-heading h2 { margin:0; font-size:clamp(19px,1.4vw,26px); }
@@ -57,16 +65,18 @@
     .jump-current:hover { text-decoration:underline; }
     .timeline-shell { border:1px solid var(--line); border-radius:17px; background:var(--card); box-shadow:var(--shadow); overflow:hidden; }
     .timeline-viewport { overflow-x:auto; overflow-y:hidden; overscroll-behavior-inline:contain; scrollbar-color:var(--line) transparent; scrollbar-width:thin; }
-    .timeline-track { --track-gap:clamp(8px,.55vw,14px); position:relative; display:grid; grid-template-columns:repeat(11,minmax(202px,1fr)); gap:var(--track-gap); width:max(100%,2425px); padding:19px clamp(16px,1.2vw,32px) 20px; }
+    .timeline-track { --track-gap:clamp(8px,.55vw,14px); position:relative; display:grid; grid-template-columns:repeat(var(--milestone-count),minmax(202px,1fr)); gap:var(--track-gap); width:100%; padding:15px clamp(16px,1.2vw,32px) 20px; }
     .milestone { position:relative; display:flex; flex-direction:column; min-width:0; scroll-snap-align:start; }
-    .milestone:not(:last-child)::before { content:''; position:absolute; top:8px; left:50%; width:calc(100% + var(--track-gap)); height:2px; background:var(--line); }
+    .milestone:not(:last-child)::before { content:''; position:absolute; top:54px; left:50%; width:calc(100% + var(--track-gap)); height:2px; background:var(--line); }
     .milestone-dot { align-self:center; z-index:1; width:18px; height:18px; border:4px solid var(--accent); border-radius:50%; background:var(--card); box-shadow:0 0 0 5px var(--card); }
     .milestone.current .milestone-dot { border-color:var(--wait); box-shadow:0 0 0 5px var(--card),0 0 0 7px var(--wait); }
-    .milestone-meta { display:flex; flex-direction:column; justify-content:center; align-items:center; height:53px; padding:6px 2px 0; text-align:center; }
+    .milestone-meta { display:flex; flex-direction:column; justify-content:center; align-items:center; height:46px; padding:0 2px 7px; text-align:center; }
     .milestone-date { font-weight:700; font-size:11px; white-space:nowrap; }
     .milestone-version { color:var(--muted); font-size:10px; line-height:1.2; }
     .milestone-stem { align-self:center; width:1px; height:17px; background:var(--line); }
-    .milestone-card { display:flex; flex-direction:column; flex:1; min-height:180px; padding:13px; border:1px solid var(--line); border-radius:12px; background:var(--card); }
+    .milestone-card { display:flex; flex-direction:column; flex:1; min-height:180px; padding:13px; border:1px solid var(--line); border-radius:12px; background:var(--card); cursor:pointer; transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease; }
+    .milestone-card:hover { border-color:var(--accent); box-shadow:var(--shadow); transform:translateY(-2px); }
+    .milestone-card:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
     .milestone.current .milestone-card { border-color:var(--wait); background:var(--soft); }
     .milestone-eyebrow { margin:0 0 4px; color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
     .milestone-card h3 { margin:0 0 9px; min-height:2.25em; font-size:clamp(14px,1vw,18px); line-height:1.13; letter-spacing:-.015em; }
@@ -80,8 +90,7 @@
     .milestone-status .candidate b { color:var(--wait); }
     .milestone-status .unconfirmed b { color:var(--quiet); }
     .milestone-status .no b { color:var(--quiet); }
-    .details-button { align-self:start; margin-top:8px; padding:6px 0 0; border:0; border-top:1px solid var(--line); width:100%; text-align:left; background:none; color:var(--accent); font-size:11px; font-weight:700; }
-    .details-button:hover { text-decoration:underline; }
+    .details-hint { display:block; margin-top:8px; padding-top:6px; border-top:1px solid var(--line); color:var(--accent); font-size:11px; font-weight:700; }
     .timeline-caption { display:flex; justify-content:space-between; gap:12px; margin:0; padding:8px 16px; border-top:1px solid var(--line); color:var(--muted); font-size:10px; }
     .timeline-caption strong { color:var(--ink); }
     .backdrop[hidden], .drawer[hidden] { display:none; }
@@ -94,6 +103,10 @@
     .drawer h3 { margin:19px 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); }
     .drawer ul { margin:0; padding-left:19px; }
     .drawer li { margin:4px 0; }
+    .batch-entry { padding:9px 0; border-top:1px solid var(--line); }
+    .batch-entry strong { font-size:12px; }
+    .batch-entry ul { margin-top:4px; font-size:12px; }
+    .batch-entry small { display:block; margin-top:4px; color:var(--muted); }
     .cumulative { columns:2; column-gap:25px; font-size:12px; }
     .cumulative li { break-inside:avoid; }
     .deployment-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; padding:0!important; list-style:none; }
@@ -118,14 +131,15 @@
   </header>
 
   <section class="environment-grid" id="environments" aria-label="Состояние трёх сред"></section>
+  <p class="environment-summary" id="environment-summary"></p>
 
   <section aria-labelledby="history-title">
-    <div class="history-heading"><h2 id="history-title">Развитие продукта</h2><button class="jump-current" id="jump-current" type="button">Сейчас: совместные модели и Preview →</button></div>
+    <div class="history-heading"><h2 id="history-title">Развитие продукта</h2><button class="jump-current" id="jump-current" type="button">Сейчас: пакет перед следующим выпуском →</button></div>
     <div class="timeline-shell">
       <div class="timeline-viewport" tabindex="0" aria-label="Горизонтальная история StratForge; прокручивается вправо">
         <div class="timeline-track" id="timeline-track"></div>
       </div>
-      <p class="timeline-caption"><span><strong>✓</strong> подтверждено · <strong>!</strong> кандидат · <strong>○</strong> не входило в указанный выпуск · <strong>—</strong> нет подтверждения для этапа</span><span>Canary/Production: запись от 02.09.2026; * в beta.92 статус Local/Canary относится к Server</span></p>
+      <p class="timeline-caption"><span><strong>✓</strong> подтверждено · <strong>!</strong> в разработке · <strong>○</strong> не входило в указанный выпуск · <strong>—</strong> нет подтверждения для этапа</span><span>Canary/Production: запись от 02.09.2026; * в beta.92 статус Local/Canary относится к Server</span></p>
     </div>
   </section>
 </main>
@@ -136,19 +150,46 @@
   <p class="drawer-intro" id="drawer-intro"></p>
   <h3 id="cumulative-heading">Эта версия содержала</h3><ul class="cumulative" id="drawer-cumulative"></ul>
   <h3>Новое в этом этапе</h3><ul id="drawer-new"></ul>
+  <div id="drawer-batch" hidden><h3>Как наполнялся пакет</h3><div id="drawer-batch-events"></div></div>
   <h3>Deployment изменения</h3><ul class="deployment-list" id="drawer-deployment"></ul>
   <div class="technical"><h3>Technical evidence</h3><dl id="drawer-technical"></dl></div>
 </aside>
 
 <script>
   const featureNames = {
-    strategies:'Каталог стратегий', instruments:'Каталог инструментов', backtest:'Бэктест через NinjaTrader', batches:'Пакетные прогоны', reports:'Отчёты и история заданий', metrics:'Метрики и сделки', charts:'Графики результата', bridge:'NinjaTrader Bridge', risk:'Информационный Risk Profile', testedStrategy:'Проверенная стратегия', online:'Операционный контроль', aurora:'Интерфейс Aurora', aiLab:'AI Strategy Lab', documents:'Документы', auth:'Вход пользователей', workspaces:'Личные рабочие пространства', connector:'NinjaTrader Connector', releases:'Release Center', telegram:'Telegram-связь', catalog:'Каталог контрактов', social:'Социальная сеть', chat:'SF Chat', onboarding:'Новая регистрация', device:'Доверие устройству'
+    strategies:'Каталог стратегий', instruments:'Каталог инструментов', backtest:'Бэктест через NinjaTrader', batches:'Пакетные прогоны', reports:'Отчёты и история заданий', metrics:'Метрики и сделки', charts:'Графики результата', bridge:'NinjaTrader Bridge', risk:'Информационный Risk Profile', testedStrategy:'Проверенная стратегия', online:'Операционный контроль', aurora:'Интерфейс Aurora', aiLab:'AI-инструменты', documents:'Документы', auth:'Вход пользователей', workspaces:'Личные рабочие пространства', connector:'NinjaTrader Connector', releases:'Release Center', telegram:'Telegram-связь', catalog:'Каталог контрактов', social:'Социальная сеть', chat:'SF Chat', onboarding:'Новая регистрация', device:'Доверие устройству', sharing:'Поделиться моделями', previewCharts:'Графики для тестовых аккаунтов'
   };
-  const commonEnvironment = ['Стратегии и инструменты','Бэктест и пакеты','Отчёты и метрики','Графики','Рыночные данные','Операционный контроль','Практика / paper','Связь с NinjaTrader','AI Lab','AI-помощники','Документы','Вход и рабочие пространства','Release Center','Каталог контрактов','Telegram'];
+  // Номера не переиспользуются. Новый пункт добавляется в конец после проверки источника.
+  const released = (id,name,first) => ({id,name,first,local:'yes',canary:'yes',production:'yes'});
+  const capabilities = [
+    released('strategies','Стратегии и инструменты','2026-04-29'),
+    released('reports','Отчёты и метрики','2026-04-29'),
+    released('backtest','Бэктест и пакеты','2026-04-29'),
+    released('charts','Графики результатов','2026-04-29'),
+    released('bridge','Связь с NinjaTrader','2026-04-29'),
+    released('risk','Risk Profile','2026-05-02'),
+    released('online','Операционный контроль','2026-06-28'),
+    released('aiLab','AI-инструменты и помощники','2026-06-28'),
+    released('documents','Документы','2026-06-28'),
+    released('aurora','Интерфейс Aurora','2026-06-28'),
+    released('practice','Практика / paper','2026-07-15'),
+    released('market','Рыночные данные','2026-07-16'),
+    released('auth','Вход и личные пространства','2026-08-01'),
+    released('releases','Release Center','2026-08-01'),
+    released('telegram','Telegram-связь','2026-08-01'),
+    released('catalog','Каталог контрактов','2026-09-02'),
+    {id:'social',name:'Социальная сеть',first:'2026-09-03',local:'yes',canary:'no',production:'no'},
+    {id:'chat',name:'SF Chat',first:'2026-09-04',local:'yes',canary:'no',production:'no'},
+    {id:'onboarding',name:'Новая регистрация',first:'2026-09-04',local:'yes',canary:'no',production:'no'},
+    {id:'device',name:'Доверие устройству',first:'2026-09-04',local:'yes',canary:'no',production:'no'},
+    {id:'agentWorld',name:'Agent World',first:'2026-09-14',local:'candidate',canary:'no',production:'no'},
+    {id:'sharing',name:'Поделиться моделями',first:'2026-09-22',local:'yes',canary:'no',production:'no'},
+    {id:'previewCharts',name:'Графики для тестовых аккаунтов',first:'2026-09-23',local:'yes',canary:'no',production:'no'}
+  ];
   const environments = [
-    {kind:'local',name:'Local',qualifier:'активный runtime · 24.09.2026',version:'0.10.0-beta.96',features:[...commonEnvironment,'Социальная сеть','SF Chat','Новая регистрация','Доверие устройству'],build:'dev-0.10.0-beta.96-56945ac68e94',commit:'56945ac6'},
-    {kind:'canary',name:'Canary',qualifier:'последний подтверждённый artifact',version:'0.10.0-beta.92',features:commonEnvironment,build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'9d800770'},
-    {kind:'production',name:'Production',qualifier:'последний подтверждённый artifact',version:'0.10.0-beta.92',features:commonEnvironment,build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'9d800770'}
+    {kind:'local',name:'Local',qualifier:'активный runtime · 24.09.2026',version:'0.10.0-beta.96',build:'dev-0.10.0-beta.96-56945ac68e94',commit:'56945ac6'},
+    {kind:'canary',name:'Canary',qualifier:'последний подтверждённый artifact',version:'0.10.0-beta.92',build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'9d800770'},
+    {kind:'production',name:'Production',qualifier:'последний подтверждённый artifact',version:'0.10.0-beta.92',build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'9d800770'}
   ];
   const milestones = [
     {
@@ -208,25 +249,17 @@
       build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'Server 9d800770d08e · Connector ff6fe049',artifact:'art_57db4318cb8745d399d98bccf48de396',source:'NT-Analyzer/docs/changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md',sourceHref:'NT-Analyzer/docs/changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md'
     },
     {
-      date:'2026-09-03',dateLabel:'3–4 сентября 2026',version:'Local beta.95 → beta.96',title:'Социальная сеть и SF Chat',changes:['Социальная сеть','SF Chat','Регистрация','Безопасность'],adds:['social','chat','onboarding','device'],
-      newItems:['SF Social: профили, лента, публикации и реакции.','SF Chat: единые диалоги и обновлённая оболочка.','Трёхшаговая регистрация и подтверждение первого устройства.'],
-      summary:'Новые Local-функции сверх последнего подтверждённого публичного artifact beta.92. Базовый вход на beta.92 уже был.',
-      status:['yes','no','no'],notes:['В активном Local beta.96','Не входило в записанный beta.92','Не входило в записанный beta.92'],
-      build:'dev-0.10.0-beta.96-56945ac68e94',commit:'integration d6a4a626 · beta.96 42a99a85',artifact:'публичного artifact нет',source:'NT-Analyzer/docs/changelog/2026-09-04-beta95-unified-local-integration.md и 2026-09-04-beta96-visual-audit-and-first-device.md',sourceHref:'NT-Analyzer/docs/changelog/2026-09-04-beta95-unified-local-integration.md'
-    },
-    {
-      date:'2026-09-14',dateLabel:'14 сентября 2026',version:'Отдельный beta.96-кандидат',title:'Agent World',changes:['AI Agents','Agent World','Owner review'],adds:[],
-      newItems:['Отдельный exact-SHA кандидат прошёл историческую проверку AW-FINAL-1.','Он не является частью активного runtime на :8765.','Owner acceptance и внешние зависимости остаются открыты.'],
-      summary:'Кандидат на отдельной ветке; не включён в активный накопленный набор Local beta.96.',
-      status:['candidate','no','no'],notes:['Отдельный Local-кандидат','Не развёрнуто','Не развёрнуто'],
-      build:'beta.96 candidate; release build не назначен',commit:'2debb2d6',artifact:'не выпускался',source:'NT-Analyzer/docs/changelog/2026-09-14-agent-world-historical-acceptance.md',sourceHref:'NT-Analyzer/docs/changelog/2026-09-14-agent-world-historical-acceptance.md'
-    },
-    {
-      date:'2026-09-24',dateLabel:'СЕЙЧАС · 24 сентября',version:'Local runtime 0.10.0-beta.96',title:'В разработке сейчас',changes:['Совместные модели','Графики Preview','Local QA'],adds:[],current:true,
-      newItems:['Совместный доступ к моделям проверяется в рабочей ветке.','Графики Preview проходят отдельную Local-проверку.','Новая версия server и Canary/Production deploy не зафиксированы.'],
-      summary:'Активный Local runtime beta.96 отделён от checkout ветки Shared Models. Эти работы не входят в последний записанный публичный beta.92.',
-      status:['candidate','no','no'],notes:['Ветка и Local QA; не релиз','Не развёрнуто','Не развёрнуто'],
-      build:'runtime dev-0.10.0-beta.96-56945ac68e94',commit:'checkout 77eda536 · runtime 56945ac6',artifact:'не выпускался',source:'NT-Analyzer/docs/changelog/2026-09-24-timeline-source-audit.md',sourceHref:'NT-Analyzer/docs/changelog/2026-09-24-timeline-source-audit.md'
+      date:'2026-09-03',dateLabel:'3–24 сентября 2026',version:'Local beta.95 → beta.96',title:'Пакет перед публикацией',changes:['Социальная сеть и SF Chat','Регистрация и безопасность','Agent World','Модели и графики'],adds:['social','chat','onboarding','device','sharing','previewCharts'],current:true,batchId:'post-beta92-local',batchState:'open',
+      newItems:['Социальная сеть, SF Chat и новая регистрация работают в Local.','Agent World остаётся в разработке и требует отдельной приёмки.','Переключатель «Поделиться» даёт другим пользователям вызов модели без доступа к ключу владельца.','Живые графики проверены у пользователя отдельного тестового аккаунта Preview.'],
+      batchEvents:[
+        {date:'3–4 сентября',items:['Социальная сеть и SF Chat.','Новая регистрация и доверие первому устройству.'],source:'beta.95/beta.96 Local records'},
+        {date:'14–21 сентября',items:['Agent World объединён с Local-кодом; программа остаётся IN DEVELOPMENT.'],source:'Agent World acceptance и current status'},
+        {date:'22 сентября',items:['В карточке модели появился переключатель «Поделиться».','Вызов общей модели проверен с отдельным личным workspace тестового пользователя.'],source:'Shared Models Local acceptance'},
+        {date:'23–24 сентября',items:['Первый экран тестового пользователя открывает живой график.','Графики продолжают работать всю одноразовую Preview-сессию.'],source:'Local Preview charts follow-up'}
+      ],
+      summary:'Один открытый пакет изменений после последнего подтверждённого Server beta.92. Часть функций принята в Local; Agent World ещё требует приёмки. Публикация пакета не подтверждена.',
+      status:['candidate','no','no'],notes:['Часть функций Local принята; Agent World ещё IN DEVELOPMENT','Пакет не развёрнут','Пакет не развёрнут'],
+      build:'runtime dev-0.10.0-beta.96-56945ac68e94',commit:'d6a4a626 / 42a99a85 / 2debb2d6 / 77eda536 / 56945ac6',artifact:'единый release artifact ещё не собран',source:'beta.95/beta.96 records; Agent World current status; Shared Models Local acceptance; 56945ac6 Preview follow-up; timeline source audit',sourceHref:'NT-Analyzer/docs/changelog/2026-09-24-timeline-source-audit.md'
     }
   ];
 
@@ -235,17 +268,30 @@
   environments.forEach(env => {
     const card=element('article',`environment-card ${env.kind}`);
     const head=element('div','environment-head');
-    head.append(element('h2','',env.name),element('span','',env.qualifier));
+    const title=element('h2','',env.name);
+    const available=capabilities.filter(capability => capability[env.kind]==='yes').length;
+    title.append(element('span','environment-count',`${available}/${capabilities.length}`));
+    head.append(title,element('span','',env.qualifier));
     card.append(head,element('p','environment-version',env.version));
     const list=element('ul','environment-features');
-    env.features.forEach(feature => list.append(element('li','',feature)));
+    capabilities.forEach((capability,index) => {
+      const state=capability[env.kind];
+      const li=element('li',state==='yes'?'':state==='candidate'?'candidate':'unavailable');
+      li.append(element('span','capability-symbol',state==='yes'?'✓':state==='candidate'?'!':'○'),element('span','capability-number',String(index+1).padStart(2,'0')),element('span','',capability.name));
+      list.append(li);
+    });
     card.append(list);
     const meta=element('p','environment-meta');
     meta.append(element('span','','build '+env.build),element('span','','commit '+env.commit));
     card.append(meta); environmentRoot.append(card);
   });
+  const ahead=capabilities.filter(capability => capability.local==='yes' && capability.production==='no').length;
+  const candidates=capabilities.filter(capability => capability.local==='candidate').length;
+  document.getElementById('environment-summary').textContent=`${ahead} подтверждённых возможностей Local ещё нет в последнем записанном Production beta.92; ${candidates} функция остаётся в разработке. Номера одни и те же во всех средах.`;
 
   const track=document.getElementById('timeline-track');
+  track.style.setProperty('--milestone-count',String(milestones.length));
+  track.style.minWidth=`${milestones.length*210+(milestones.length-1)*14+64}px`;
   const statusLabels=['Local','Canary','Production'];
   const symbols={yes:'✓',candidate:'!',no:'○',unconfirmed:'—'};
   const cumulative=[];
@@ -253,12 +299,13 @@
     milestone.adds.forEach(id => { if (!cumulative.includes(id)) cumulative.push(id); });
     milestone.cumulative=[...cumulative];
     const item=element('article',`milestone${milestone.current?' current':''}`);
-    item.append(element('span','milestone-dot'));
     const meta=element('div','milestone-meta');
     meta.append(element('time','milestone-date',milestone.dateLabel),element('span','milestone-version',milestone.version));
     meta.firstChild.dateTime=milestone.date;
-    item.append(meta,element('span','milestone-stem'));
+    item.append(meta,element('span','milestone-dot'),element('span','milestone-stem'));
     const card=element('div','milestone-card');
+    card.setAttribute('role','button'); card.tabIndex=0;
+    card.setAttribute('aria-label',`Подробнее: ${milestone.title}`);
     card.append(element('p','milestone-eyebrow',milestone.current?'СЕЙЧАС':'ЧТО ИЗМЕНИЛОСЬ'),element('h3','',milestone.title));
     const chips=element('div','change-chips');
     milestone.changes.forEach(change => chips.append(element('span','',change)));
@@ -268,9 +315,10 @@
       const li=element('li',state); li.append(element('b','',symbols[state]),document.createTextNode(milestone.statusLabels?.[i]||statusLabels[i])); statuses.append(li);
     });
     card.append(statuses);
-    const button=element('button','details-button','Подробнее →'); button.type='button';
-    button.addEventListener('click',() => openDrawer(index,button));
-    card.append(button); item.append(card); track.append(item);
+    card.append(element('span','details-hint','Подробнее →'));
+    card.addEventListener('click',() => openDrawer(index,card));
+    card.addEventListener('keydown',event => { if (event.key==='Enter'||event.key===' ') { event.preventDefault(); openDrawer(index,card); } });
+    item.append(card); track.append(item);
   });
   document.getElementById('jump-current').addEventListener('click',() => {
     track.lastElementChild.scrollIntoView({behavior:'smooth',block:'nearest',inline:'end'});
@@ -285,9 +333,18 @@
     document.getElementById('drawer-kicker').textContent=`${item.dateLabel} · ${item.version}`;
     document.getElementById('drawer-title').textContent=item.title;
     document.getElementById('drawer-intro').textContent=item.summary;
-    document.getElementById('cumulative-heading').textContent=index>=9?'Активный Local набор до кандидата':'Эта версия содержала';
+    document.getElementById('cumulative-heading').textContent=item.batchState==='open'?'Подтверждённый Local набор; Agent World ещё в разработке':'Эта версия содержала';
     fillList('drawer-cumulative',item.cumulative.map(id => featureNames[id]));
     fillList('drawer-new',item.newItems);
+    const batch=document.getElementById('drawer-batch');
+    const events=document.getElementById('drawer-batch-events'); events.replaceChildren();
+    batch.hidden=!item.batchEvents;
+    item.batchEvents?.forEach(entry => {
+      const group=element('div','batch-entry');
+      group.append(element('strong','',entry.date));
+      const list=element('ul'); entry.items.forEach(point => list.append(element('li','',point)));
+      group.append(list,element('small','',entry.source)); events.append(group);
+    });
     const deployment=document.getElementById('drawer-deployment'); deployment.replaceChildren();
     item.status.forEach((state,i) => { const li=element('li',state); li.append(element('b','',`${symbols[state]} ${statusLabels[i]}`),document.createTextNode(item.notes[i])); deployment.append(li); });
     const tech=document.getElementById('drawer-technical'); tech.replaceChildren();
