@@ -7,377 +7,331 @@
   <title>StratForge AI — история продукта</title>
   <script>
     try {
-      const savedTheme = localStorage.getItem('stratforge-timeline-theme');
-      document.documentElement.dataset.theme = savedTheme === 'light' || savedTheme === 'dark'
-        ? savedTheme
-        : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-    } catch {
-      document.documentElement.dataset.theme = 'light';
-    }
+      const saved = localStorage.getItem('stratforge-timeline-theme');
+      document.documentElement.dataset.theme = saved === 'light' || saved === 'dark'
+        ? saved : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    } catch { document.documentElement.dataset.theme = 'light'; }
   </script>
   <style>
-
-    :root { color-scheme: light; --bg:#f6f8fb; --surface:#fff; --soft:#f0f4f9; --ink:#182b47; --muted:#5b6b80; --border:#dce4ed; --line:#9badc1; --accent:#2569b9; --good:#087e60; --pending:#a26613; --empty:#8997aa; --shadow:0 8px 26px #1b365512; }
-    :root[data-theme="dark"] { color-scheme:dark; --bg:#0d1725; --surface:#162337; --soft:#1d3048; --ink:#edf4fd; --muted:#b5c4d7; --border:#34475d; --line:#7890aa; --accent:#81b9ff; --good:#5ad3a8; --pending:#ffca7e; --empty:#9baec3; --shadow:0 10px 30px #02081055; }
+    :root {
+      color-scheme: light;
+      --bg:#f7f9fc; --card:#fff; --soft:#f0f5fa; --ink:#172b49;
+      --muted:#61738b; --line:#cbd8e7; --accent:#286fbd;
+      --good:#0b8b69; --wait:#af7518; --quiet:#8798ac;
+      --shadow:0 12px 32px #19395a10;
+    }
+    :root[data-theme="dark"] {
+      color-scheme:dark;
+      --bg:#0b1523; --card:#152338; --soft:#1e3048; --ink:#edf5ff;
+      --muted:#b3c2d4; --line:#3a4e67; --accent:#82b9ff;
+      --good:#58d5a9; --wait:#ffd083; --quiet:#9aacc1;
+      --shadow:0 12px 32px #03081160;
+    }
     * { box-sizing:border-box; }
-    body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.4 "Segoe UI",Arial,sans-serif; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.4 "Segoe UI",Arial,sans-serif; }
     button { font:inherit; cursor:pointer; }
-    button:focus-visible, a:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+    button:focus-visible, a:focus-visible, .timeline-viewport:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
     a { color:var(--accent); }
-    .page { width:100%; max-width:none; padding:clamp(16px,1.8vw,42px); margin:auto; }
-    .masthead { display:flex; justify-content:space-between; align-items:flex-start; gap:18px; }
-    .brand { display:flex; align-items:flex-start; gap:14px; min-width:0; }
-    .brand-mark { display:grid; place-items:center; flex:none; width:43px; height:43px; border-radius:12px; background:var(--accent); color:var(--surface); font-size:22px; }
-    h1 { margin:0 0 5px; font-size:clamp(27px,2.2vw,44px); letter-spacing:-.03em; line-height:1.12; }
-    .subtitle { margin:0; color:var(--muted); font-size:clamp(14px,1vw,18px); }
-    .snapshot-date { margin:6px 0 0; color:var(--muted); font-size:12px; }
-    .theme-toggle { flex:none; display:flex; gap:7px; align-items:center; padding:8px 12px; border:1px solid var(--border); border-radius:999px; color:var(--ink); background:var(--surface); }
-    .theme-icon { font-size:17px; line-height:1; color:var(--accent); }
-    .environment-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:clamp(10px,1vw,18px); margin-top:23px; }
-    .environment-card { min-width:0; padding:clamp(13px,1.15vw,20px); border:1px solid var(--border); border-radius:14px; background:var(--surface); box-shadow:var(--shadow); }
+    .page { width:100%; padding:clamp(15px,1.5vw,34px); }
+    .masthead { display:flex; justify-content:space-between; align-items:start; gap:18px; }
+    .masthead h1 { margin:0; font-size:clamp(25px,2vw,39px); letter-spacing:-.035em; line-height:1.1; }
+    .masthead p { margin:5px 0 0; color:var(--muted); font-size:13px; }
+    .theme-toggle { display:flex; flex:none; align-items:center; gap:7px; padding:8px 12px; border:1px solid var(--line); border-radius:999px; background:var(--card); color:var(--ink); }
+    .theme-icon { color:var(--accent); font-size:17px; line-height:1; }
+    .environment-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:clamp(10px,1vw,18px); margin-top:clamp(17px,1.5vw,26px); }
+    .environment-card { min-width:0; padding:clamp(13px,1vw,18px); border:1px solid var(--line); border-radius:15px; background:var(--card); box-shadow:var(--shadow); }
     .environment-card.local { border-top:3px solid var(--accent); }
-    .environment-card.canary { border-top:3px solid var(--pending); }
+    .environment-card.canary { border-top:3px solid var(--wait); }
     .environment-card.production { border-top:3px solid var(--good); }
-    .env-heading { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:baseline; gap:3px 8px; }
-    .env-heading h2 { margin:0; text-transform:uppercase; letter-spacing:.06em; font-size:13px; }
-    .env-qualified { color:var(--muted); font-size:11px; }
-    .env-version { margin:5px 0 10px; font-size:clamp(19px,1.45vw,25px); font-weight:750; letter-spacing:-.02em; }
-    .availability { list-style:none; margin:0; padding:0; display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:5px 12px; }
-    .availability li { min-width:0; display:flex; align-items:center; gap:6px; font-size:12px; }
-    .state-symbol { flex:none; color:var(--good); font-weight:800; }
-    .availability button { min-width:0; padding:0; border:0; background:none; color:var(--ink); text-align:left; font-size:12px; }
-    .availability button:hover { color:var(--accent); text-decoration:underline; }
-    .env-meta { display:flex; flex-wrap:wrap; gap:3px 8px; margin:12px 0 0; padding-top:9px; border-top:1px solid var(--border); font-size:10px; color:var(--muted); }
-    .env-meta dt { font-weight:700; }
-    .env-meta dd { min-width:0; margin:0 12px 0 0; overflow-wrap:anywhere; font-family:Consolas,monospace; }
-    .environment-caption { margin:8px 2px 0; color:var(--muted); font-size:11px; }
-    .section-heading { display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin:clamp(25px,2.3vw,40px) 2px 12px; }
-    .section-heading h2 { margin:0; font-size:clamp(20px,1.6vw,28px); }
-    .section-heading p { margin:0; color:var(--muted); font-size:12px; }
-    .timeline { padding:18px 0; border:1px solid var(--border); border-radius:16px; background:var(--surface); }
-    .timeline-track { position:relative; display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); width:100%; }
-    .timeline-track::before { content:""; position:absolute; top:259px; left:1.5%; right:1.5%; height:2px; background:var(--line); }
-    .milestone { position:relative; display:grid; grid-template-rows:240px 38px 240px; min-width:0; padding:0 clamp(3px,.45vw,12px); }
-    .milestone::before { content:""; position:absolute; left:50%; width:1px; background:var(--line); }
-    .milestone.above::before { top:224px; height:34px; }
-    .milestone.below::before { top:261px; height:34px; }
-    .milestone::after { content:""; position:absolute; top:251px; left:50%; transform:translateX(-50%); width:17px; height:17px; border:4px solid var(--accent); border-radius:50%; background:var(--surface); box-shadow:0 0 0 4px var(--surface); }
-    .milestone.current::after { border-color:var(--pending); }
-    .event-card { display:flex; flex-direction:column; justify-self:center; width:100%; height:224px; min-width:0; padding:clamp(9px,.78vw,15px); border:1px solid var(--border); border-radius:12px; background:var(--surface); box-shadow:var(--shadow); cursor:pointer; }
-    .event-card:hover { border-color:var(--accent); }
-    .above .event-card { grid-row:1; align-self:end; margin-bottom:16px; }
-    .below .event-card { grid-row:3; align-self:start; margin-top:16px; }
-    .current .event-card { border-color:var(--pending); background:var(--soft); }
-    .event-date { margin:0; font-size:11px; font-weight:700; }
-    .event-version { margin:3px 0 8px; color:var(--muted); font-size:11px; line-height:1.2; }
-    .event-card h3 { margin:0 0 10px; font-size:clamp(14px,1.05vw,19px); line-height:1.14; min-height:2.28em; }
-    .feature-chips { display:flex; flex-wrap:wrap; align-content:start; gap:5px; min-height:50px; }
-    .feature-chip { display:inline-flex; align-items:center; max-width:100%; padding:3px 7px; border:1px solid var(--border); border-radius:999px; color:var(--ink); background:var(--soft); font-size:clamp(9px,.7vw,11px); line-height:1.15; }
-    .event-availability { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:3px; margin:auto 0 0; padding:0; list-style:none; }
-    .event-availability li { display:flex; gap:3px; align-items:center; min-width:0; white-space:nowrap; font-size:clamp(9px,.7vw,11px); color:var(--muted); }
-    .event-availability b { font-size:13px; }
-    .event-availability .yes b { color:var(--good); }
-    .event-availability .pending b { color:var(--pending); }
-    .event-availability .none b { color:var(--empty); }
-    .event-footer { margin-top:7px; padding-top:6px; border-top:1px solid var(--border); }
-    .more { padding:0; border:0; background:none; color:var(--accent); font-size:11px; font-weight:700; }
-    .more:hover { text-decoration:underline; }
-    .reading-note { margin:13px 2px 0; color:var(--muted); font-size:11px; }
-    .panel-backdrop { position:fixed; inset:0; z-index:10; background:#05101f99; }
-    .detail-panel { position:fixed; top:0; right:0; bottom:0; z-index:11; width:min(460px,100vw); overflow:auto; padding:clamp(20px,2vw,32px); border-left:1px solid var(--border); background:var(--surface); color:var(--ink); box-shadow:-16px 0 46px #05101f55; }
-    .panel-backdrop[hidden], .detail-panel[hidden] { display:none; }
-    .panel-top { display:flex; justify-content:space-between; align-items:start; gap:15px; }
-    .panel-kicker { margin:0 0 8px; color:var(--muted); font-size:12px; }
-    .detail-panel h2 { margin:0; font-size:25px; line-height:1.16; }
-    .panel-intro { margin:17px 0; color:var(--muted); }
-    .panel-label { margin:20px 0 7px; font-size:12px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); }
-    .panel-points { margin:0; padding-left:20px; }
-    .panel-points li { margin:7px 0; }
-    .panel-status { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; padding:0; list-style:none; }
-    .panel-status li { padding:8px; border-radius:8px; background:var(--soft); font-size:12px; }
-    .panel-status .yes { color:var(--good); }.panel-status .pending { color:var(--pending); }.panel-status .none { color:var(--muted); }
-    .panel-tech { margin-top:24px; padding-top:14px; border-top:1px solid var(--border); color:var(--muted); font-size:12px; overflow-wrap:anywhere; }
-    .panel-tech p { margin:0 0 9px; }
-    .close-panel { flex:none; width:34px; height:34px; border:1px solid var(--border); border-radius:50%; background:var(--soft); color:var(--ink); font-size:20px; line-height:1; }
-    body.panel-open { overflow:hidden; }
-    @media (max-width:1360px) {
-      .timeline { padding:15px; }
-      .timeline-track { display:flex; flex-direction:column; gap:10px; padding-left:26px; }
-      .timeline-track::before { top:0; bottom:0; left:8px; right:auto; width:2px; height:auto; }
-      .milestone { display:block; padding:0; }
-      .milestone::before { display:none; }
-      .milestone::after { top:18px; left:-17px; width:15px; height:15px; border-width:3px; }
-      .event-card { width:100%; height:auto; min-height:0; padding:13px 15px; }
-      .above .event-card,.below .event-card { margin:0; }
-      .event-card h3 { min-height:0; margin-bottom:8px; font-size:17px; }
-      .feature-chips { min-height:0; }
-      .event-availability { display:flex; gap:15px; margin-top:9px; }
-      .event-availability li,.feature-chip { font-size:11px; }
-    }
-    @media (min-width:1361px) and (max-width:1700px) {
-      .event-availability { grid-template-columns:repeat(2,minmax(0,1fr)); gap:0 4px; }
-      .event-availability li:last-child { grid-column:1 / -1; }
-    }
-    @media (max-width:900px) { .environment-grid { grid-template-columns:1fr; } }
-    @media (max-width:620px) {
-      .page { padding:15px 12px 28px; }
-      .brand { gap:9px; }.brand-mark { width:36px; height:36px; font-size:19px; }
-      h1 { font-size:25px; }.theme-toggle { width:36px; height:36px; justify-content:center; padding:0; }.theme-label { display:none; }
-      .section-heading { display:block; }.section-heading p { margin-top:3px; }
-      .environment-grid { margin-top:16px; }.availability { grid-template-columns:repeat(2,minmax(0,1fr)); }
-      .event-availability { gap:7px; }.event-availability li { font-size:10px; }
-      .detail-panel { border-left:0; }
-    }
-    @media (prefers-reduced-motion:no-preference) { .detail-panel { animation:panel-enter .18s ease-out; } @keyframes panel-enter { from { transform:translateX(24px); opacity:.7; } to { transform:none; opacity:1; } } }
+    .environment-head { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:2px 8px; }
+    .environment-head h2 { margin:0; text-transform:uppercase; font-size:12px; letter-spacing:.09em; }
+    .environment-head span { color:var(--muted); font-size:10px; }
+    .environment-version { margin:4px 0 10px; font-size:clamp(18px,1.3vw,24px); font-weight:760; letter-spacing:-.025em; }
+    .environment-features { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px 12px; margin:0; padding:0; list-style:none; }
+    .environment-features li { display:flex; align-items:baseline; gap:6px; min-width:0; font-size:11px; line-height:1.25; }
+    .environment-features li::before { content:'✓'; flex:none; color:var(--good); font-weight:800; }
+    .environment-meta { display:flex; flex-wrap:wrap; gap:2px 12px; margin:12px 0 0; padding-top:8px; border-top:1px solid var(--line); color:var(--muted); font:10px/1.35 Consolas,monospace; overflow-wrap:anywhere; }
+    .history-heading { display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin:clamp(22px,1.9vw,34px) 1px 12px; }
+    .history-heading h2 { margin:0; font-size:clamp(19px,1.4vw,26px); }
+    .jump-current { padding:5px 0; border:0; background:none; color:var(--accent); font-size:12px; font-weight:700; text-align:right; }
+    .jump-current:hover { text-decoration:underline; }
+    .timeline-shell { border:1px solid var(--line); border-radius:17px; background:var(--card); box-shadow:var(--shadow); overflow:hidden; }
+    .timeline-viewport { overflow-x:auto; overflow-y:hidden; overscroll-behavior-inline:contain; scrollbar-color:var(--line) transparent; scrollbar-width:thin; }
+    .timeline-track { --track-gap:clamp(8px,.55vw,14px); position:relative; display:grid; grid-template-columns:repeat(11,minmax(202px,1fr)); gap:var(--track-gap); width:max(100%,2425px); padding:19px clamp(16px,1.2vw,32px) 20px; }
+    .milestone { position:relative; display:flex; flex-direction:column; min-width:0; scroll-snap-align:start; }
+    .milestone:not(:last-child)::before { content:''; position:absolute; top:8px; left:50%; width:calc(100% + var(--track-gap)); height:2px; background:var(--line); }
+    .milestone-dot { align-self:center; z-index:1; width:18px; height:18px; border:4px solid var(--accent); border-radius:50%; background:var(--card); box-shadow:0 0 0 5px var(--card); }
+    .milestone.current .milestone-dot { border-color:var(--wait); box-shadow:0 0 0 5px var(--card),0 0 0 7px var(--wait); }
+    .milestone-meta { display:flex; flex-direction:column; justify-content:center; align-items:center; height:53px; padding:6px 2px 0; text-align:center; }
+    .milestone-date { font-weight:700; font-size:11px; white-space:nowrap; }
+    .milestone-version { color:var(--muted); font-size:10px; line-height:1.2; }
+    .milestone-stem { align-self:center; width:1px; height:17px; background:var(--line); }
+    .milestone-card { display:flex; flex-direction:column; flex:1; min-height:180px; padding:13px; border:1px solid var(--line); border-radius:12px; background:var(--card); }
+    .milestone.current .milestone-card { border-color:var(--wait); background:var(--soft); }
+    .milestone-eyebrow { margin:0 0 4px; color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
+    .milestone-card h3 { margin:0 0 9px; min-height:2.25em; font-size:clamp(14px,1vw,18px); line-height:1.13; letter-spacing:-.015em; }
+    .change-chips { display:flex; flex-wrap:wrap; align-content:start; gap:4px; min-height:55px; }
+    .change-chips span { padding:3px 7px; border:1px solid var(--line); border-radius:999px; background:var(--soft); font-size:10px; line-height:1.15; }
+    .milestone.current .change-chips span { background:var(--card); }
+    .milestone-status { display:flex; flex-wrap:wrap; justify-content:space-between; gap:2px 4px; margin:auto 0 0; padding:0; list-style:none; font-size:10px; }
+    .milestone-status li { white-space:nowrap; color:var(--muted); }
+    .milestone-status b { margin-right:3px; font-size:13px; }
+    .milestone-status .yes b { color:var(--good); }
+    .milestone-status .candidate b { color:var(--wait); }
+    .milestone-status .unconfirmed b { color:var(--quiet); }
+    .milestone-status .no b { color:var(--quiet); }
+    .details-button { align-self:start; margin-top:8px; padding:6px 0 0; border:0; border-top:1px solid var(--line); width:100%; text-align:left; background:none; color:var(--accent); font-size:11px; font-weight:700; }
+    .details-button:hover { text-decoration:underline; }
+    .timeline-caption { display:flex; justify-content:space-between; gap:12px; margin:0; padding:8px 16px; border-top:1px solid var(--line); color:var(--muted); font-size:10px; }
+    .timeline-caption strong { color:var(--ink); }
+    .backdrop[hidden], .drawer[hidden] { display:none; }
+    .backdrop { position:fixed; inset:0; z-index:20; background:#0613249e; }
+    .drawer { position:fixed; top:0; right:0; bottom:0; z-index:21; width:min(510px,100vw); padding:clamp(19px,2vw,32px); overflow:auto; border-left:1px solid var(--line); background:var(--card); box-shadow:-22px 0 55px #04101e55; }
+    .drawer-head { display:flex; justify-content:space-between; align-items:start; gap:15px; }
+    .drawer-kicker { margin:0 0 6px; color:var(--muted); font-size:12px; }
+    .drawer h2 { margin:0; font-size:clamp(23px,1.7vw,29px); line-height:1.1; }
+    .drawer-intro { margin:15px 0 18px; color:var(--muted); }
+    .drawer h3 { margin:19px 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); }
+    .drawer ul { margin:0; padding-left:19px; }
+    .drawer li { margin:4px 0; }
+    .cumulative { columns:2; column-gap:25px; font-size:12px; }
+    .cumulative li { break-inside:avoid; }
+    .deployment-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; padding:0!important; list-style:none; }
+    .deployment-list li { margin:0; padding:8px; border-radius:8px; background:var(--soft); font-size:11px; }
+    .deployment-list b { display:block; font-size:12px; }
+    .technical { margin-top:23px; padding-top:1px; border-top:1px solid var(--line); font-size:12px; }
+    .technical dl { display:grid; grid-template-columns:70px minmax(0,1fr); gap:6px 10px; margin:0; overflow-wrap:anywhere; }
+    .technical dt { color:var(--muted); }
+    .technical dd { margin:0; font-family:Consolas,monospace; }
+    .close-drawer { flex:none; width:35px; height:35px; border:1px solid var(--line); border-radius:50%; background:var(--soft); color:var(--ink); font-size:22px; line-height:1; }
+    body.drawer-open { overflow:hidden; }
+    @media (max-width:860px) { .environment-grid { grid-template-columns:1fr; } .environment-features { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+    @media (max-width:590px) { .page { padding:15px 11px 22px; } .masthead h1 { font-size:25px; } .theme-toggle { width:35px; height:35px; justify-content:center; padding:0; } .theme-label { display:none; } .environment-features { grid-template-columns:repeat(2,minmax(0,1fr)); } .history-heading { display:block; } .jump-current { margin-top:4px; text-align:left; } .timeline-track { padding-left:13px; padding-right:13px; } .timeline-caption { display:block; } .timeline-caption span { display:block; } .cumulative { columns:1; } }
+    @media (prefers-reduced-motion:no-preference) { .drawer { animation:slide-in .2s ease-out; } @keyframes slide-in { from { transform:translateX(25px); opacity:.6; } to { transform:none; opacity:1; } } }
   </style>
 </head>
 <body>
 <main class="page">
   <header class="masthead">
-    <div class="brand">
-      <div class="brand-mark" aria-hidden="true">✦</div>
-      <div>
-        <h1>История StratForge AI</h1>
-        <p class="subtitle">Что развивали, где проверяли и что дошло до пользователей</p>
-        <p class="snapshot-date">Снимок на 24 сентября 2026 · история подтверждена Git и записями релизов</p>
-      </div>
-    </div>
-    <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Переключить тему">
-      <span class="theme-icon" id="theme-icon" aria-hidden="true">☾</span><span class="theme-label" id="theme-label">Тёмная тема</span>
-    </button>
+    <div><h1>История StratForge AI</h1><p>От первого рабочего NT-Analyzer до текущей разработки</p></div>
+    <button class="theme-toggle" id="theme-toggle" type="button"><span class="theme-icon" id="theme-icon" aria-hidden="true">☾</span><span class="theme-label" id="theme-label">Тёмная тема</span></button>
   </header>
 
+  <section class="environment-grid" id="environments" aria-label="Состояние трёх сред"></section>
 
-  <section class="environment-grid" aria-label="Снимок продукта в трёх окружениях">
-    <article class="environment-card local">
-      <div class="env-heading"><h2>Local</h2><span class="env-qualified">Активный runtime · 24.09.2026</span></div>
-      <p class="env-version">0.10.0-beta.96</p>
-      <ul class="availability">
-        <li><span class="state-symbol">✓</span><button data-detail="social" type="button">Социальная сеть</button></li>
-        <li><span class="state-symbol">✓</span><button data-detail="chat" type="button">SF Chat</button></li>
-        <li><span class="state-symbol">✓</span><button data-detail="registration" type="button">Новая регистрация</button></li>
-        <li><span class="state-symbol">✓</span><button data-detail="charts" type="button">Графики и бэктест</button></li>
-        <li><span class="state-symbol">✓</span><button data-detail="catalog" type="button">Каталог контрактов</button></li>
-      </ul>
-      <dl class="env-meta"><dt>Build</dt><dd>dev-0.10.0-beta.96-56945ac68e94</dd><dt>Commit</dt><dd>56945ac6</dd></dl>
-    </article>
-    <article class="environment-card canary">
-      <div class="env-heading"><h2>Canary</h2><span class="env-qualified">Последняя подтверждённая запись</span></div>
-      <p class="env-version">0.10.0-beta.92</p>
-      <ul class="availability">
-        <li><span class="state-symbol">✓</span><button data-detail="charts" type="button">Графики</button></li>
-        <li><span class="state-symbol">✓</span><button data-detail="backtest" type="button">Бэктест</button></li>
-        <li><span class="state-symbol">✓</span><button data-detail="catalog" type="button">Каталог контрактов</button></li>
-        <li><span class="state-symbol">✓</span><button data-detail="responsive" type="button">Адаптивный UI</button></li>
-      </ul>
-      <dl class="env-meta"><dt>Build</dt><dd>sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z</dd><dt>Commit</dt><dd>9d800770</dd></dl>
-    </article>
-    <article class="environment-card production">
-      <div class="env-heading"><h2>Production</h2><span class="env-qualified">Последняя подтверждённая запись</span></div>
-      <p class="env-version">0.10.0-beta.92</p>
-      <ul class="availability">
-        <li><span class="state-symbol">✓</span><button data-detail="charts" type="button">Графики</button></li>
-        <li><span class="state-symbol">✓</span><button data-detail="backtest" type="button">Бэктест</button></li>
-        <li><span class="state-symbol">✓</span><button data-detail="catalog" type="button">Каталог контрактов</button></li>
-        <li><span class="state-symbol">✓</span><button data-detail="connector" type="button">NinjaTrader Connector</button></li>
-      </ul>
-      <dl class="env-meta"><dt>Build</dt><dd>sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z</dd><dt>Commit</dt><dd>9d800770</dd></dl>
-    </article>
-  </section>
-  <p class="environment-caption">Canary и Production: состав последнего документально подтверждённого artifact от 02.09.2026, не live-проверка. Впереди него в Local — Social, SF Chat и новая регистрация; Agent World — отдельный кандидат.</p>
-
-  <section aria-labelledby="timeline-heading">
-    <div class="section-heading"><h2 id="timeline-heading">Развитие продукта</h2><p>Нажмите на этап, чтобы увидеть детали и источники.</p></div>
-    <div class="timeline">
-      <div class="timeline-track">
-        <article class="milestone above">
-          <div class="event-card" data-milestone="release">
-            <p class="event-date"><time datetime="2026-08-13">13 августа 2026</time></p><p class="event-version">Server beta.1</p>
-            <h3>Безопасный выпуск</h3>
-            <div class="feature-chips"><span class="feature-chip">Canary</span><span class="feature-chip">Откат</span></div>
-            <ul class="event-availability"><li class="yes"><b>✓</b>Local</li><li class="yes"><b>✓</b>Canary</li><li class="none"><b>○</b>Production</li></ul>
-            <div class="event-footer"><button class="more" data-detail="release" type="button">Подробнее →</button></div>
-          </div>
-        </article>
-        <article class="milestone trading below">
-          <div class="event-card" data-milestone="beta29">
-            <p class="event-date"><time datetime="2026-08-23">23 августа 2026</time></p><p class="event-version">Server beta.29</p>
-            <h3>Графики и интерфейс</h3>
-            <div class="feature-chips"><span class="feature-chip">Графики</span><span class="feature-chip">Адаптивный UI</span></div>
-            <ul class="event-availability"><li class="yes"><b>✓</b>Local</li><li class="yes"><b>✓</b>Canary</li><li class="yes"><b>✓</b>Production</li></ul>
-            <div class="event-footer"><button class="more" data-detail="beta29" type="button">Подробнее →</button></div>
-          </div>
-        </article>
-        <article class="milestone fix above">
-          <div class="event-card" data-milestone="backtest">
-            <p class="event-date"><time datetime="2026-09-01">1 сентября 2026</time></p><p class="event-version">Server beta.87</p>
-            <h3>Бэктест владельца</h3>
-            <div class="feature-chips"><span class="feature-chip">Бэктест</span><span class="feature-chip">Права владельца</span></div>
-            <ul class="event-availability"><li class="yes"><b>✓</b>Local</li><li class="yes"><b>✓</b>Canary</li><li class="yes"><b>✓</b>Production</li></ul>
-            <div class="event-footer"><button class="more" data-detail="backtest" type="button">Подробнее →</button></div>
-          </div>
-        </article>
-        <article class="milestone connector below">
-          <div class="event-card" data-milestone="catalog-group">
-            <p class="event-date"><time datetime="2026-09-02">2 сентября 2026</time></p><p class="event-version">Server beta.92 · Connector 0.4.5-dev.1</p>
-            <h3>Каталог контрактов</h3>
-            <div class="feature-chips"><span class="feature-chip">Контракты</span><span class="feature-chip">NinjaTrader Connector</span></div>
-            <ul class="event-availability"><li class="yes"><b>✓</b>Local*</li><li class="yes"><b>✓</b>Canary*</li><li class="yes"><b>✓</b>Production</li></ul>
-            <div class="event-footer"><button class="more" data-detail="catalog-group" type="button">Подробнее →</button></div>
-          </div>
-        </article>
-        <article class="milestone social above">
-          <div class="event-card" data-milestone="beta95">
-            <p class="event-date"><time datetime="2026-09-03">3–4 сентября 2026</time></p><p class="event-version">Local server beta.95 → beta.96</p>
-            <h3>Социальная сеть и SF Chat</h3>
-            <div class="feature-chips"><span class="feature-chip">Социальная сеть</span><span class="feature-chip">SF Chat</span><span class="feature-chip">Регистрация</span><span class="feature-chip">Безопасность</span></div>
-            <ul class="event-availability"><li class="yes"><b>✓</b>Local</li><li class="none"><b>○</b>Canary</li><li class="none"><b>○</b>Production</li></ul>
-            <div class="event-footer"><button class="more" data-detail="beta95" type="button">Подробнее →</button></div>
-          </div>
-        </article>
-        <article class="milestone ai below">
-          <div class="event-card" data-milestone="agent">
-            <p class="event-date"><time datetime="2026-09-14">14 сентября 2026</time></p><p class="event-version">Отдельный кандидат beta.96</p>
-            <h3>Agent World</h3>
-            <div class="feature-chips"><span class="feature-chip">AI Agents</span><span class="feature-chip">Agent World</span></div>
-            <ul class="event-availability"><li class="pending"><b>!</b>Local*</li><li class="none"><b>○</b>Canary</li><li class="none"><b>○</b>Production</li></ul>
-            <div class="event-footer"><button class="more" data-detail="agent" type="button">Подробнее →</button></div>
-          </div>
-        </article>
-        <article class="milestone current above">
-          <div class="event-card" data-milestone="current">
-            <p class="event-date"><time datetime="2026-09-23">23 сентября 2026 · сейчас</time></p><p class="event-version">Local QA · runtime beta.96</p>
-            <h3>Совместные модели и Preview</h3>
-            <div class="feature-chips"><span class="feature-chip">Общие модели</span><span class="feature-chip">Графики Preview</span></div>
-            <ul class="event-availability"><li class="pending"><b>!</b>Local*</li><li class="none"><b>○</b>Canary</li><li class="none"><b>○</b>Production</li></ul>
-            <div class="event-footer"><button class="more" data-detail="current" type="button">Подробнее →</button></div>
-          </div>
-        </article>
+  <section aria-labelledby="history-title">
+    <div class="history-heading"><h2 id="history-title">Развитие продукта</h2><button class="jump-current" id="jump-current" type="button">Сейчас: совместные модели и Preview →</button></div>
+    <div class="timeline-shell">
+      <div class="timeline-viewport" tabindex="0" aria-label="Горизонтальная история StratForge; прокручивается вправо">
+        <div class="timeline-track" id="timeline-track"></div>
       </div>
+      <p class="timeline-caption"><span><strong>✓</strong> подтверждено · <strong>!</strong> кандидат · <strong>○</strong> не входило в указанный выпуск · <strong>—</strong> нет подтверждения для этапа</span><span>Canary/Production: запись от 02.09.2026; * в beta.92 статус Local/Canary относится к Server</span></p>
     </div>
   </section>
-
-  <p class="reading-note">✓ есть в указанной сборке · ! отдельный кандидат или Local QA · ○ отсутствует в указанном artifact. * Подробности по компонентам и ограничениям — в панели этапа. Базовый вход в beta.92 не равен новой регистрации beta.95/96.</p>
 </main>
 
-<div class="panel-backdrop" id="panel-backdrop" hidden></div>
-<aside class="detail-panel" id="detail-panel" role="dialog" aria-modal="true" aria-labelledby="panel-title" aria-hidden="true" inert hidden>
-  <div class="panel-top"><div><p class="panel-kicker" id="panel-kicker"></p><h2 id="panel-title"></h2></div><button class="close-panel" id="close-panel" type="button" aria-label="Закрыть подробности">×</button></div>
-  <p class="panel-intro" id="panel-intro"></p>
-  <h3 class="panel-label">Что изменилось</h3><ul class="panel-points" id="panel-points"></ul>
-  <div id="panel-environments" hidden><h3 class="panel-label">Окружения на этом этапе</h3><ul class="panel-status" id="panel-status"></ul></div>
-  <div class="panel-tech"><h3 class="panel-label">Техническое подтверждение</h3><p id="panel-tech"></p><a id="panel-source" href="#">Открыть запись изменений</a></div>
+<div class="backdrop" id="backdrop" hidden></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" aria-hidden="true" inert hidden>
+  <div class="drawer-head"><div><p class="drawer-kicker" id="drawer-kicker"></p><h2 id="drawer-title"></h2></div><button class="close-drawer" id="close-drawer" type="button" aria-label="Закрыть подробности">×</button></div>
+  <p class="drawer-intro" id="drawer-intro"></p>
+  <h3 id="cumulative-heading">Эта версия содержала</h3><ul class="cumulative" id="drawer-cumulative"></ul>
+  <h3>Новое в этом этапе</h3><ul id="drawer-new"></ul>
+  <h3>Deployment изменения</h3><ul class="deployment-list" id="drawer-deployment"></ul>
+  <div class="technical"><h3>Technical evidence</h3><dl id="drawer-technical"></dl></div>
 </aside>
 
 <script>
-  const sources = {
-    release: 'NT-Analyzer/docs/changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md',
-    beta29: 'NT-Analyzer/docs/changelog/2026-08-22-market-data-responsive-release-beta29.md',
-    backtest: 'NT-Analyzer/docs/changelog/2026-09-01-beta87-owner-backtest-demo-fix.md',
-    catalog: 'NT-Analyzer/docs/changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md',
-    beta95: 'NT-Analyzer/docs/changelog/2026-09-04-beta95-unified-local-integration.md',
-    beta96: 'NT-Analyzer/docs/changelog/2026-09-04-beta96-visual-audit-and-first-device.md',
-    agent: 'NT-Analyzer/docs/changelog/2026-09-14-agent-world-historical-acceptance.md',
-    current: 'NT-Analyzer/docs/changelog/2026-09-24-timeline-source-audit.md'
+  const featureNames = {
+    strategies:'Каталог стратегий', instruments:'Каталог инструментов', backtest:'Бэктест через NinjaTrader', batches:'Пакетные прогоны', reports:'Отчёты и история заданий', metrics:'Метрики и сделки', charts:'Графики результата', bridge:'NinjaTrader Bridge', risk:'Информационный Risk Profile', testedStrategy:'Проверенная стратегия', online:'Операционный контроль', aurora:'Интерфейс Aurora', aiLab:'AI Strategy Lab', documents:'Документы', auth:'Вход пользователей', workspaces:'Личные рабочие пространства', connector:'NinjaTrader Connector', releases:'Release Center', telegram:'Telegram-связь', catalog:'Каталог контрактов', social:'Социальная сеть', chat:'SF Chat', onboarding:'Новая регистрация', device:'Доверие устройству'
   };
-  const details = {
-    release: {title:'Безопасный выпуск',period:'13 августа · Server beta.1',intro:'Подписанный artifact прошёл Canary и проверку отката.',points:['Canary принял exact build и подпись.','Возврат на previous и повторное продвижение прошли проверку.','Этот конкретный artifact не продвигали в Production.'],tech:'Commit 7ebda6fa · Canary acceptance; не Production deploy.',source:sources.release},
-    charts: {title:'Графики и бэктест',period:'beta.29 → beta.92',intro:'Графики и бэктест присутствуют в последнем подтверждённом серверном artifact.',points:['beta.29 проверила fan-out графиков и отзывчивость интерфейса.','beta.87 исправила демо-панель бэктеста владельца.','Работа с графиками в Preview после beta.92 относится к Local.'],tech:'Последний записанный серверный artifact: beta.92.',source:sources.beta29},
-    responsive: {title:'Адаптивный интерфейс',period:'23 августа · Server beta.29',intro:'Основные экраны и графики получили проверенные компактные размеры.',points:['Проверены 84 сочетания страниц и размеров.','Два графика перестраивались на планшете и телефоне.'],tech:'Artifact commit 4d15f1d2 · Canary → Production.',source:sources.beta29},
-    beta29: {title:'Графики и интерфейс',period:'23 августа · Server beta.29',intro:'Один подписанный artifact доставил исправления графиков и адаптивности.',points:['Графики используют существующий безопасный fan-out.','Адаптивность проверена на основных страницах.','Canary принят до Production без пересборки.'],tech:'Artifact commit 4d15f1d2 · Canary 02:08 UTC · Production 02:16 UTC.',source:sources.beta29},
-    backtest: {title:'Бэктест владельца',period:'1 сентября · Server beta.87',intro:'Владелец больше не видит обычный бэктест как демоверсию.',points:['Демо-панель скрыта у аккаунта с полным доступом.','Настоящие демо-отчёты и права пользователей сохранены.','Один artifact принят на Canary и опубликован в Production.'],tech:'Artifact commit 8f421586 · build sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z.',source:sources.backtest},
-    catalog: {title:'Каталог контрактов',period:'2 сентября · Server beta.92',intro:'Сервер принимает контракт, даже когда локальная история ещё не скачана.',points:['Контракт определяется по имени с месяцем.','Отсутствие диапазона данных больше не отклоняет весь снимок.','Серверный artifact прошёл Canary и стал Production live.'],tech:'Server commit 9d800770 · Canary 03:54 UTC · Production 03:57 UTC.',source:sources.catalog},
-    connector: {title:'NinjaTrader Connector',period:'2 сентября · 0.4.5-dev.1',intro:'Отдельная версия Windows Connector; это не номер версии сервера.',points:['Каталог отдаётся из одного стабильного снимка.','Production-установка принята по health в 06:14 UTC.','Установка этой версии на Canary источником не подтверждена.'],tech:'Connector component commit ff6fe049 · server рядом: beta.92.',source:sources.catalog},
-    'catalog-group': {title:'Контракты и Connector',period:'2 сентября · Server beta.92 / Connector 0.4.5-dev.1',intro:'Одна функциональная работа затронула два независимо версионируемых компонента.',points:['Server beta.92 принял некэшированные контракты и прошёл Canary → Production.','Connector 0.4.5-dev.1 стабилизировал снимок каталога и принят на Production.','Local- и Canary-установка Connector источником отдельно не подтверждены.'],tech:'Server 9d800770 · Connector ff6fe049.',source:sources.catalog},
-    social: {title:'Социальная сеть SF Social',period:'Local beta.95/96',intro:'Новая социальная сеть присутствует в Local-сборке и отсутствует в последнем подтверждённом серверном artifact beta.92.',points:['Профили, лента, публикации и реакции.','Постоянная запись с раскрытыми исправлениями.','Общая идентичность пользователя с SF Chat.'],tech:'Local integration d6a4a626 · PR #270; Canary/Production deploy не выполнялся.',source:sources.beta95},
-    chat: {title:'SF Chat',period:'Local beta.95/96',intro:'Единая оболочка человеческих и AI-диалогов собрана локально.',points:['Диалоги используют общую идентичность пользователя.','В beta.96 добавлены папки и группировка по дням.','Новая оболочка не входила в опубликованный beta.92 artifact.'],tech:'Local beta.95/96 · PR #270; без Canary/Production deploy.',source:sources.beta96},
-    registration: {title:'Новая регистрация',period:'Local beta.95/96',intro:'Речь о новом трёхшаговом onboarding, а не об отсутствии базового входа в beta.92.',points:['Шаги профиля, подтверждения личности и согласия разделены.','Имя пользователя StratForge не подменяется провайдером входа.','Первое устройство после регистрации подтверждается без повторного кода.'],tech:'Local integration d6a4a626 · beta.96 source 42a99a85.',source:sources.beta96},
-    security: {title:'Безопасность устройства',period:'Local beta.95/96',intro:'Новое подтверждение устройства объединено с регистрацией в Local.',points:['Постоянное доверие или доступ до конца сессии.','Поздний неизвестный клиент всё ещё проходит обычное подтверждение.','Изменение не развёрнуто на Canary/Production.'],tech:'Local beta.95/96 · PR #278.',source:sources.beta95},
-    beta95: {title:'Социальная сеть и SF Chat',period:'3–4 сентября · Local beta.95 → beta.96',intro:'Смежные Local-изменения сгруппированы по функциям.',points:['SF Social: профили, лента, публикации.','SF Chat: единая переписка и улучшенные диалоги.','Регистрация и безопасность: новый onboarding и первое устройство.'],tech:'Integration d6a4a626 · beta.96 source 42a99a85 · только Development.',source:sources.beta95},
-    agent: {title:'Agent World',period:'14 сентября · отдельный beta.96-кандидат',intro:'Проверен отдельный exact-SHA кандидат. Он не равен активному Local runtime.',points:['Зафиксирована приёмка AW-FINAL-1 на коде 2debb2d6.','Owner acceptance и внешние зависимости остаются отдельно.','Canary и Production не менялись.'],tech:'Candidate commit 2debb2d6 · PR #287 · release отсутствует.',source:sources.agent},
-    models: {title:'Совместный доступ к моделям',period:'Текущая разработка · Local beta.96',intro:'Работа идёт в ветке Shared Models без назначения новой версии сервера.',points:['Доступ к общей модели проверяется для вызывающего пользователя.','Учёт вызова остаётся привязанным к владельцу и пользователю.','Canary и Production не получали эту ветку.'],tech:'Checkout 77eda536 · remote-tracking 256af9db · активный Local runtime 56945ac6.',source:sources.current},
-    'preview-charts': {title:'Графики в Preview',period:'Текущая разработка · Local',intro:'В изолированном Preview исправлялись открытие и восстановление живых графиков.',points:['Первый Desktop открывает графики без ручного обхода.','Канонический TopStep mirror восстанавливается для активных пользователей.','Это Local QA, не новый серверный релиз.'],tech:'Git history 5292a2ec → 56945ac6; Production остаётся на последней записанной beta.92.',source:sources.current},
-    current: {title:'Что сейчас впереди Production',period:'23 сентября · ветка feat/shared-model-access',intro:'Последняя работа относится к Local и ещё не публиковалась.',points:['Совместный доступ к моделям и отдельный Preview проходят Local QA.','Графики в Preview проверялись на локальном runtime.','Новая версия server и Canary/Production deployment не зафиксированы.'],tech:'Checkout HEAD 77eda536 · origin/feat/shared-model-access 256af9db · runtime 56945ac6.',source:sources.current}
-  };
-  const panel = document.getElementById('detail-panel');
-  const backdrop = document.getElementById('panel-backdrop');
-  let previousFocus = null;
-  function openDetail(key, trigger) {
-    const detail = details[key];
-    if (!detail) return;
-    previousFocus = trigger.matches('[data-milestone]') ? trigger.querySelector('.more') : trigger;
-    document.getElementById('panel-title').textContent = detail.title;
-    document.getElementById('panel-kicker').textContent = detail.period;
-    document.getElementById('panel-intro').textContent = detail.intro;
-    const points = document.getElementById('panel-points');
-    points.replaceChildren();
-    detail.points.forEach(point => { const item = document.createElement('li'); item.textContent = point; points.append(item); });
-    document.getElementById('panel-tech').textContent = detail.tech;
-    document.getElementById('panel-source').href = detail.source;
-    const milestone = trigger.closest('.milestone');
-    const statusSection = document.getElementById('panel-environments');
-    const statuses = document.getElementById('panel-status');
-    statuses.replaceChildren();
-    if (milestone) {
-      milestone.querySelectorAll('.event-availability li').forEach(status => {
-        const item = document.createElement('li');
-        item.className = status.className;
-        item.textContent = status.textContent;
-        statuses.append(item);
-      });
-      statusSection.hidden = false;
-    } else statusSection.hidden = true;
-    backdrop.hidden = false;
-    panel.hidden = false;
-    panel.inert = false;
-    panel.setAttribute('aria-hidden', 'false');
-    document.body.classList.add('panel-open');
-    document.getElementById('close-panel').focus();
-    document.querySelector('main').inert = true;
-  }
-  function closeDetail() {
-    panel.hidden = true;
-    panel.inert = true;
-    panel.setAttribute('aria-hidden', 'true');
-    backdrop.hidden = true;
-    document.body.classList.remove('panel-open');
-    document.querySelector('main').inert = false;
-    previousFocus?.focus();
-  }
-  document.querySelectorAll('[data-detail]').forEach(button => button.addEventListener('click', event => {
-    event.stopPropagation();
-    openDetail(button.dataset.detail, button);
-  }));
-  document.querySelectorAll('[data-milestone]').forEach(card => {
-    card.addEventListener('click', () => openDetail(card.dataset.milestone, card));
+  const commonEnvironment = ['Стратегии и инструменты','Бэктест и пакеты','Отчёты и метрики','Графики','Рыночные данные','Операционный контроль','Практика / paper','Связь с NinjaTrader','AI Lab','AI-помощники','Документы','Вход и рабочие пространства','Release Center','Каталог контрактов','Telegram'];
+  const environments = [
+    {kind:'local',name:'Local',qualifier:'активный runtime · 24.09.2026',version:'0.10.0-beta.96',features:[...commonEnvironment,'Социальная сеть','SF Chat','Новая регистрация','Доверие устройству'],build:'dev-0.10.0-beta.96-56945ac68e94',commit:'56945ac6'},
+    {kind:'canary',name:'Canary',qualifier:'последний подтверждённый artifact',version:'0.10.0-beta.92',features:commonEnvironment,build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'9d800770'},
+    {kind:'production',name:'Production',qualifier:'последний подтверждённый artifact',version:'0.10.0-beta.92',features:commonEnvironment,build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'9d800770'}
+  ];
+  const milestones = [
+    {
+      date:'2026-04-29',dateLabel:'29 апреля 2026',version:'MVP-1 · без SemVer',title:'Первый рабочий NT-Analyzer',changes:['Стратегии','Бэктест','Отчёты и метрики','Графики'],adds:['strategies','instruments','backtest','batches','reports','metrics','charts','bridge'],
+      newItems:['Каталог стратегий и инструментов из NinjaTrader.','Одиночные и пакетные бэктесты через Bridge.','Отчёты со сделками, метриками и графиками.','Локальный интерфейс и история заданий.'],
+      summary:'Первый зафиксированный в Git рабочий Local baseline. Создание стратегий, AI и публичный deploy в этом источнике не подтверждены.',
+      status:['yes','unconfirmed','unconfirmed'],notes:['Рабочий Local baseline','Публичного выпуска не зафиксировано','Публичного выпуска не зафиксировано'],
+      build:'не назначен',commit:'004bcc4121d2',artifact:'не выпускался',source:'Git 004bcc41: NT-Analyzer/README.md и app/static/index.html'
+    },
+    {
+      date:'2026-05-02',dateLabel:'2 мая 2026',version:'Backtest tag v1.0.0',title:'Проверенная стратегия',changes:['Рабочая стратегия','Сверка с NinjaTrader','Risk Profile'],adds:['testedStrategy','risk'],
+      newItems:['Зафиксирована первая рабочая стратегия B1 ShortOnly.','Бэктест сверялся с NinjaTrader Strategy Analyzer.','Информационный Risk Profile появился в ранней линии проекта.'],
+      summary:'Исторический Git tag рабочей версии бэктеста; он не означает публичный Production deploy.',
+      status:['yes','unconfirmed','unconfirmed'],notes:['Локальный рабочий tag','Не подтверждено','Не подтверждено'],
+      build:'tag v1.0.0-backtest-working',commit:'7fc22e484cf1',artifact:'не зафиксирован',source:'Git tag v1.0.0-backtest-working; commits c52656ec и 7fc22e48'
+    },
+    {
+      date:'2026-06-28',dateLabel:'28 июня 2026',version:'Aurora · без SemVer',title:'Интерфейс всего продукта',changes:['Семь разделов','AI Lab','Стратегии','Торговый контроль'],adds:['online','aurora','aiLab','documents'],
+      newItems:['Семь основных страниц Aurora подключены к реальным API.','Стратегии, документы, AI Lab и торговый контроль получили рабочий UI.','Графики, результаты и отчёты доступны в новой оболочке.'],
+      summary:'Зафиксирован переход основного UI на Aurora. Слово «production» в журнале UI означает основной маршрут приложения; публичный серверный deploy этого этапа не установлен.',
+      status:['yes','unconfirmed','unconfirmed'],notes:['Рабочий UI подтверждён','Нет записи о deploy','Нет записи о deploy'],
+      build:'не назначен',commit:'69cbcc4001e1',artifact:'не зафиксирован',source:'NT-Analyzer/docs/changelog/UI_INTEGRATION_LOG.md',sourceHref:'NT-Analyzer/docs/changelog/UI_INTEGRATION_LOG.md'
+    },
+    {
+      date:'2026-08-01',dateLabel:'1 августа 2026',version:'Server 0.9.0-dev.15',title:'Публичный StratForge',changes:['Local / Canary / Production','Личные пространства','Connector','Release Center'],adds:['auth','workspaces','connector','releases','telegram'],
+      newItems:['Первый точно идентифицированный публичный Linux baseline: Canary и Production готовы.','Личный вход, рабочие пространства и связь с NinjaTrader проверены.','Release workflow, откат и серверное хранение приняты; live trading выключен.'],
+      summary:'Stage 10 закрыл перенос на публичные Linux-контуры. Более ранний dev.13 был первым Linux cutover внутри этого этапа; dev.15 — подтверждённый итоговый baseline.',
+      status:['yes','yes','yes'],notes:['Отдельный Windows Development','Canary ready на dev.15','Production ready на dev.15'],
+      build:'0.9.0-dev.15-f05f287d',commit:'f05f287d3233',artifact:'0.9.0-dev.15-f05f287d',source:'Git 1031437b: NT-Analyzer/docs/STAGE10_CLOSURE_2026-08-01.md'
+    },
+    {
+      date:'2026-08-12',dateLabel:'12 августа 2026',version:'Server 0.10.0-beta.1',title:'Надёжный выпуск',changes:['Единый artifact','Canary → Production','Откат'],adds:[],
+      newItems:['Один подписанный artifact прошёл Canary и Production.','Проверены ready/live, сохранение версии и откат.','Этот выпуск продолжил накопленный набор функций публичного baseline.'],
+      summary:'Первый подробно зафиксированный здесь beta.1 Production snapshot. Позднейший artifact от 13 августа с тем же номером проверялся отдельно только в Canary.',
+      status:['yes','yes','yes'],notes:['Тот же исходный commit','Accepted','Published'],
+      build:'sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z',commit:'6b6dc4589407',artifact:'0.10.0-beta.1-6b6dc458',source:'NT-Analyzer/docs/changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md',sourceHref:'NT-Analyzer/docs/changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md'
+    },
+    {
+      date:'2026-08-23',dateLabel:'23 августа 2026',version:'Server 0.10.0-beta.29',title:'Графики и интерфейс',changes:['Живые графики','Несколько клиентов','Адаптивный UI'],adds:[],
+      newItems:['Улучшен fan-out рыночных графиков для нескольких клиентов.','Сохранены честные live/stale маркеры.','Проверена адаптивность основных страниц и графиков.'],
+      summary:'Улучшение уже существовавших графиков и интерфейса; один artifact прошёл Canary и Production.',
+      status:['yes','yes','yes'],notes:['Сборка проверена','Canary PASS','Production live'],
+      build:'sf-0.10.0-beta.29-4d15f1d2250e-20260823T020155Z',commit:'4d15f1d2250e',artifact:'art_ccaadc3a536e4272809d32073f072918',source:'NT-Analyzer/docs/changelog/2026-08-22-market-data-responsive-release-beta29.md',sourceHref:'NT-Analyzer/docs/changelog/2026-08-22-market-data-responsive-release-beta29.md'
+    },
+    {
+      date:'2026-09-01',dateLabel:'1 сентября 2026',version:'Server 0.10.0-beta.87',title:'Бэктест владельца',changes:['Корректный доступ','Без ложного демо','Отчёты сохранены'],adds:[],
+      newItems:['Владелец больше не видит обычный бэктест как демоверсию.','Реальные demo-отчёты и права остальных пользователей сохранены.'],
+      summary:'Точечное исправление интерфейса и прав бэктеста было принято в Canary и Production.',
+      status:['yes','yes','yes'],notes:['Проверено','Canary PASS','Production live'],
+      build:'sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z',commit:'8f42158661e8',artifact:'art_9ce9dbcb9a7a4fee9df6a54d40f29806',source:'NT-Analyzer/docs/changelog/2026-09-01-beta87-owner-backtest-demo-fix.md',sourceHref:'NT-Analyzer/docs/changelog/2026-09-01-beta87-owner-backtest-demo-fix.md'
+    },
+    {
+      date:'2026-09-02',dateLabel:'2 сентября 2026',version:'Server beta.92 · Connector 0.4.5-dev.1',title:'Каталог контрактов',changes:['Контракты без кэша','Снимок каталога','NinjaTrader'],adds:['catalog'],
+      newItems:['Server beta.92 принимает контракт без заранее загруженной истории.','Connector 0.4.5-dev.1 стабилизировал снимок каталога.','Production-установка Connector принята; Local/Canary для этой версии Connector отдельно не подтверждены.'],
+      summary:'Сервер и Windows Connector имеют разные версии и разное подтверждение по средам.',
+      status:['yes','yes','yes'],statusLabels:['Local*','Canary*','Production'],notes:['Server beta.92; Connector dev.1 не подтверждён','Server beta.92; Connector dev.1 не подтверждён','Server beta.92 и Connector dev.1'],
+      build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'Server 9d800770d08e · Connector ff6fe049',artifact:'art_57db4318cb8745d399d98bccf48de396',source:'NT-Analyzer/docs/changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md',sourceHref:'NT-Analyzer/docs/changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md'
+    },
+    {
+      date:'2026-09-03',dateLabel:'3–4 сентября 2026',version:'Local beta.95 → beta.96',title:'Социальная сеть и SF Chat',changes:['Социальная сеть','SF Chat','Регистрация','Безопасность'],adds:['social','chat','onboarding','device'],
+      newItems:['SF Social: профили, лента, публикации и реакции.','SF Chat: единые диалоги и обновлённая оболочка.','Трёхшаговая регистрация и подтверждение первого устройства.'],
+      summary:'Новые Local-функции сверх последнего подтверждённого публичного artifact beta.92. Базовый вход на beta.92 уже был.',
+      status:['yes','no','no'],notes:['В активном Local beta.96','Не входило в записанный beta.92','Не входило в записанный beta.92'],
+      build:'dev-0.10.0-beta.96-56945ac68e94',commit:'integration d6a4a626 · beta.96 42a99a85',artifact:'публичного artifact нет',source:'NT-Analyzer/docs/changelog/2026-09-04-beta95-unified-local-integration.md и 2026-09-04-beta96-visual-audit-and-first-device.md',sourceHref:'NT-Analyzer/docs/changelog/2026-09-04-beta95-unified-local-integration.md'
+    },
+    {
+      date:'2026-09-14',dateLabel:'14 сентября 2026',version:'Отдельный beta.96-кандидат',title:'Agent World',changes:['AI Agents','Agent World','Owner review'],adds:[],
+      newItems:['Отдельный exact-SHA кандидат прошёл историческую проверку AW-FINAL-1.','Он не является частью активного runtime на :8765.','Owner acceptance и внешние зависимости остаются открыты.'],
+      summary:'Кандидат на отдельной ветке; не включён в активный накопленный набор Local beta.96.',
+      status:['candidate','no','no'],notes:['Отдельный Local-кандидат','Не развёрнуто','Не развёрнуто'],
+      build:'beta.96 candidate; release build не назначен',commit:'2debb2d6',artifact:'не выпускался',source:'NT-Analyzer/docs/changelog/2026-09-14-agent-world-historical-acceptance.md',sourceHref:'NT-Analyzer/docs/changelog/2026-09-14-agent-world-historical-acceptance.md'
+    },
+    {
+      date:'2026-09-24',dateLabel:'СЕЙЧАС · 24 сентября',version:'Local runtime 0.10.0-beta.96',title:'В разработке сейчас',changes:['Совместные модели','Графики Preview','Local QA'],adds:[],current:true,
+      newItems:['Совместный доступ к моделям проверяется в рабочей ветке.','Графики Preview проходят отдельную Local-проверку.','Новая версия server и Canary/Production deploy не зафиксированы.'],
+      summary:'Активный Local runtime beta.96 отделён от checkout ветки Shared Models. Эти работы не входят в последний записанный публичный beta.92.',
+      status:['candidate','no','no'],notes:['Ветка и Local QA; не релиз','Не развёрнуто','Не развёрнуто'],
+      build:'runtime dev-0.10.0-beta.96-56945ac68e94',commit:'checkout 77eda536 · runtime 56945ac6',artifact:'не выпускался',source:'NT-Analyzer/docs/changelog/2026-09-24-timeline-source-audit.md',sourceHref:'NT-Analyzer/docs/changelog/2026-09-24-timeline-source-audit.md'
+    }
+  ];
+
+  const element = (tag,className,textValue) => { const node=document.createElement(tag); if(className) node.className=className; if(textValue!==undefined) node.textContent=textValue; return node; };
+  const environmentRoot = document.getElementById('environments');
+  environments.forEach(env => {
+    const card=element('article',`environment-card ${env.kind}`);
+    const head=element('div','environment-head');
+    head.append(element('h2','',env.name),element('span','',env.qualifier));
+    card.append(head,element('p','environment-version',env.version));
+    const list=element('ul','environment-features');
+    env.features.forEach(feature => list.append(element('li','',feature)));
+    card.append(list);
+    const meta=element('p','environment-meta');
+    meta.append(element('span','','build '+env.build),element('span','','commit '+env.commit));
+    card.append(meta); environmentRoot.append(card);
   });
-  document.getElementById('close-panel').addEventListener('click', closeDetail);
-  backdrop.addEventListener('click', closeDetail);
-  document.addEventListener('keydown', event => {
-    if (panel.hidden) return;
-    if (event.key === 'Escape') closeDetail();
-    if (event.key === 'Tab') {
-      const focusable = [...panel.querySelectorAll('button, a[href]')];
-      const first = focusable[0], last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+
+  const track=document.getElementById('timeline-track');
+  const statusLabels=['Local','Canary','Production'];
+  const symbols={yes:'✓',candidate:'!',no:'○',unconfirmed:'—'};
+  const cumulative=[];
+  milestones.forEach((milestone,index) => {
+    milestone.adds.forEach(id => { if (!cumulative.includes(id)) cumulative.push(id); });
+    milestone.cumulative=[...cumulative];
+    const item=element('article',`milestone${milestone.current?' current':''}`);
+    item.append(element('span','milestone-dot'));
+    const meta=element('div','milestone-meta');
+    meta.append(element('time','milestone-date',milestone.dateLabel),element('span','milestone-version',milestone.version));
+    meta.firstChild.dateTime=milestone.date;
+    item.append(meta,element('span','milestone-stem'));
+    const card=element('div','milestone-card');
+    card.append(element('p','milestone-eyebrow',milestone.current?'СЕЙЧАС':'ЧТО ИЗМЕНИЛОСЬ'),element('h3','',milestone.title));
+    const chips=element('div','change-chips');
+    milestone.changes.forEach(change => chips.append(element('span','',change)));
+    card.append(chips);
+    const statuses=element('ul','milestone-status');
+    milestone.status.forEach((state,i) => {
+      const li=element('li',state); li.append(element('b','',symbols[state]),document.createTextNode(milestone.statusLabels?.[i]||statusLabels[i])); statuses.append(li);
+    });
+    card.append(statuses);
+    const button=element('button','details-button','Подробнее →'); button.type='button';
+    button.addEventListener('click',() => openDrawer(index,button));
+    card.append(button); item.append(card); track.append(item);
+  });
+  document.getElementById('jump-current').addEventListener('click',() => {
+    track.lastElementChild.scrollIntoView({behavior:'smooth',block:'nearest',inline:'end'});
+  });
+
+  const drawer=document.getElementById('drawer');
+  const backdrop=document.getElementById('backdrop');
+  let returnFocus=null;
+  function fillList(id,items) { const list=document.getElementById(id); list.replaceChildren(); items.forEach(value => list.append(element('li','',value))); }
+  function openDrawer(index,trigger) {
+    const item=milestones[index]; returnFocus=trigger;
+    document.getElementById('drawer-kicker').textContent=`${item.dateLabel} · ${item.version}`;
+    document.getElementById('drawer-title').textContent=item.title;
+    document.getElementById('drawer-intro').textContent=item.summary;
+    document.getElementById('cumulative-heading').textContent=index>=9?'Активный Local набор до кандидата':'Эта версия содержала';
+    fillList('drawer-cumulative',item.cumulative.map(id => featureNames[id]));
+    fillList('drawer-new',item.newItems);
+    const deployment=document.getElementById('drawer-deployment'); deployment.replaceChildren();
+    item.status.forEach((state,i) => { const li=element('li',state); li.append(element('b','',`${symbols[state]} ${statusLabels[i]}`),document.createTextNode(item.notes[i])); deployment.append(li); });
+    const tech=document.getElementById('drawer-technical'); tech.replaceChildren();
+    [['Build',item.build],['Commit',item.commit],['Artifact',item.artifact],['Source',item.source]].forEach(([key,value]) => {
+      tech.append(element('dt','',key));
+      const dd=element('dd');
+      if (key==='Source' && item.sourceHref) { const a=element('a','',value); a.href=item.sourceHref; dd.append(a); }
+      else dd.textContent=value;
+      tech.append(dd);
+    });
+    backdrop.hidden=false; drawer.hidden=false; drawer.inert=false; drawer.setAttribute('aria-hidden','false');
+    document.body.classList.add('drawer-open'); document.getElementById('close-drawer').focus(); document.querySelector('main').inert=true;
+  }
+  function closeDrawer() {
+    drawer.hidden=true; drawer.inert=true; drawer.setAttribute('aria-hidden','true'); backdrop.hidden=true;
+    document.body.classList.remove('drawer-open'); document.querySelector('main').inert=false; returnFocus?.focus();
+  }
+  document.getElementById('close-drawer').addEventListener('click',closeDrawer);
+  backdrop.addEventListener('click',closeDrawer);
+  document.addEventListener('keydown',event => {
+    if (drawer.hidden) return;
+    if (event.key==='Escape') closeDrawer();
+    if (event.key==='Tab') {
+      const focusable=[...drawer.querySelectorAll('button,a[href]')];
+      const first=focusable[0],last=focusable[focusable.length-1];
+      if (event.shiftKey && document.activeElement===first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement===last) { event.preventDefault(); first.focus(); }
     }
   });
-  const themeToggle = document.getElementById('theme-toggle');
-  function updateThemeButton() {
-    const dark = document.documentElement.dataset.theme === 'dark';
-    document.getElementById('theme-icon').textContent = dark ? '☀' : '☾';
-    document.getElementById('theme-label').textContent = dark ? 'Светлая тема' : 'Тёмная тема';
-    themeToggle.setAttribute('aria-label', dark ? 'Включить светлую тему' : 'Включить тёмную тему');
-    themeToggle.setAttribute('aria-pressed', String(dark));
+  const themeToggle=document.getElementById('theme-toggle');
+  function updateTheme() {
+    const dark=document.documentElement.dataset.theme==='dark';
+    document.getElementById('theme-icon').textContent=dark?'☀':'☾';
+    document.getElementById('theme-label').textContent=dark?'Светлая тема':'Тёмная тема';
+    themeToggle.setAttribute('aria-label',dark?'Включить светлую тему':'Включить тёмную тему');
+    themeToggle.setAttribute('aria-pressed',String(dark));
   }
-  themeToggle.addEventListener('click', () => {
-    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-    document.documentElement.dataset.theme = next;
-    try { localStorage.setItem('stratforge-timeline-theme', next); } catch {}
-    updateThemeButton();
+  themeToggle.addEventListener('click',() => {
+    const next=document.documentElement.dataset.theme==='dark'?'light':'dark';
+    document.documentElement.dataset.theme=next;
+    try { localStorage.setItem('stratforge-timeline-theme',next); } catch {}
+    updateTheme();
   });
-  updateThemeButton();
+  updateTheme();
 </script>
 </body>
 </html>

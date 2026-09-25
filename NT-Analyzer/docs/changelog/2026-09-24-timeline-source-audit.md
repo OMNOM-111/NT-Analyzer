@@ -1,12 +1,12 @@
 # StratForge history timeline — source audit and correction
 
-Release title: Fact-checked development and deployment timeline.
+Release title: StratForge product history from verified MVP to current Local work.
 
-Change summary: The standalone root `timeline.html` now uses dated Git and
-release events instead of example artwork as project history. The three
-canonical environments are Development, Canary and Production. Server and
-Connector versions remain separate, and each card distinguishes Local work,
-Canary acceptance and Production publication.
+Change summary: The standalone root `timeline.html` presents one horizontal
+product history from the first Git baseline through the first documented public
+Linux baseline and later releases to current Local work. Three environment
+snapshots show cumulative major capabilities; milestone cards show only deltas.
+Technical identity and evidence live in a right-side drawer.
 
 Affected surfaces: standalone `timeline.html` and factual deployment snapshots
 in External GPT Context Pack 00, 02, 04 and 11. The application runtime, release
@@ -53,7 +53,7 @@ refused the local file URL and forbade alternate browser routes for that action.
   This component version is not a server version. That record does not prove
   a Canary Connector installation, so the timeline leaves it unconfirmed.
 
-## Nine timeline events and their evidence
+## Original August–September audit events and their evidence
 
 | Date | Event / component | Evidence | Development | Canary | Production |
 | --- | --- | --- | --- | --- | --- |
@@ -71,42 +71,78 @@ The reference image supplied only layout, color and visual hierarchy. Its
 versions, dates, generic product title and automatic green deployment checks
 were not used as factual sources. No future version or roadmap date was added.
 
-## Owner-facing presentation follow-up
+## Verified earlier baseline and cumulative product history
 
-The standalone timeline groups related technical records into seven
-product-oriented milestones. The 2026-09-02 server catalog fix and the later
-Connector installation appear together, with separate version and environment
-notes in the right-side detail panel. The Local beta.95/beta.96 work appears as
-Social, SF Chat, registration and security rather than a list of commits.
+The first Git commit `004bcc4121d2` dated 2026-04-29 is a **working Local
+MVP-1**, not a demonstrated public deploy. Its `NT-Analyzer/README.md` and
+`app/static/index.html` show the NinjaTrader Bridge, strategy/instrument
+catalogs, single and batch backtests, job history, results, trades, metrics,
+equity and price-chart tabs. Strategy creation, AI, sharing, owner workspaces
+and public Production are not claimed for that first commit.
 
-The three top cards now list only functions present in their specified build,
-with version, build and commit shown in smaller type. The Local card describes
-the active `:8765` process; Agent World remains identified as a separate
-candidate below. The Canary/Production cards describe the last confirmed
-beta.92 artifact, not an unverified current live state. The new three-step
-registration is ahead of that artifact; beta.92 still had basic login.
+The historical tag `v1.0.0-backtest-working` points to `7fc22e484cf1` on
+2026-05-02: the first locked B1 ShortOnly strategy and accepted backtest
+baseline. The earlier `c52656ec` commit added an informational Risk Profile.
+The tag is a backtest milestone, not a later Server SemVer or deployment.
 
-Every milestone card uses the same compact structure: date, version, product
-change, two to four feature chips, three environment statuses and a details
-control. SHA, artifact identity and long descriptions are confined to the
-right-side panel. Clicking anywhere on a card opens it; the details control
-provides a keyboard path. The panel closes by button, backdrop or Escape,
-restores focus, and keeps focus inside while open. The page uses a fluid
-seven-column horizontal timeline through 1440 px, a vertical timeline below
-1361 px, and complete Light/Dark themes with localStorage preference. The
-source-audited facts and deployment statuses were not changed by the UX work.
+`docs/changelog/UI_INTEGRATION_LOG.md` records the 2026-06-28 Aurora cutover
+of seven real API-backed application pages. Its phrase "production cutover"
+refers to the application's default UI route; that record alone does not
+establish a public Linux deployment. No SemVer for that UI milestone was
+found, so the card explicitly says no SemVer.
 
-UX verification: static HTML contract PASS for seven sorted cards, 2–4 feature
-chips and three statuses per card, no SHA in the main cards, three compact
-environment snapshots, and existing source links. Inline JavaScript syntax
-PASS with `node --check`; `validate_external_gpt_context.py` PASS with a
-pre-existing pack SHA warning; `pre_release_check.py` PASS (629 bundle files,
-all four checks). Width calculations were checked at 3840, 3440, 2560,
-1920, 1440 and 390 px; these are static layout checks, not rendered
-screenshots. Actual Light/Dark and viewport visual acceptance remains BLOCKED
-by the browser URL policy noted above.
+The earliest **exactly identified public Linux baseline** in the checked
+operational history is Stage 10: Git `1031437b` contains
+`NT-Analyzer/docs/STAGE10_CLOSURE_2026-08-01.md`. It records Canary and
+Production ready on Server `0.9.0-dev.15`, source `f05f287d3233`, release
+directory `0.9.0-dev.15-f05f287d`, and a separate Windows Local contour.
+Its dev.13 was the initial Linux cutover during the same stage; dev.15 is the
+accepted final state. The closeout also confirms owner onboarding, workspaces,
+NinjaTrader Connector, AI and Telegram paths, release rollback and that live
+trading remained disabled. The later 2026-08-12 beta.1 snapshot is therefore
+not presented as the birth of StratForge.
 
-Release impact: documentation and standalone review page only; no server
-artifact, Canary or Production deployment. If this page is later shipped in an
-application artifact, that requires its own release cycle and exact-artifact
-verification.
+The page now has 11 milestones: Local MVP-1, working backtest tag, Aurora,
+public Stage 10 baseline, beta.1 release, beta.29 graphics/UI, beta.87 owner
+backtest correction, beta.92 catalog/Connector, Local beta.95/96 Social/Chat/
+registration, separate Agent World candidate, and current Shared Models/
+Preview work. Every detail panel computes a cumulative major-capability list
+from the confirmed additions through that point, then lists only that
+milestone's changes. Agent World and the current branch remain candidates;
+they are not silently added to the active Local runtime capability set.
+
+The top Local card uses `/api/runtime/env` checked on 2026-09-24:
+`0.10.0-beta.96`, build `dev-0.10.0-beta.96-56945ac68e94`, commit
+`56945ac68e94`. Canary and Production show the last confirmed beta.92
+artifact from the release record, not a fresh live-server claim. All three
+cards retain earlier core functions, including backtest, reports, charts,
+strategy/instrument work, market data, practice/paper, NinjaTrader, AI Lab,
+AI helpers, documents, identity and Release Center; the Local card adds
+confirmed Social, SF Chat and new
+registration/security. Connector `0.4.5-dev.1` is only claimed as accepted
+on Production; its Local and Canary installation remain unconfirmed.
+
+## Presentation and verification
+
+The desktop and mobile timeline stays horizontal. Eleven cards share one
+height and appear below a single thin line with aligned dots and connectors.
+At 2560/3440/3840 px the width calculation fits all milestones; at 1920,
+1440 and narrow screens only the history viewport scrolls horizontally.
+The page does not turn milestones into a long vertical column. A right drawer
+contains the cumulative capabilities, milestone delta, environment notes,
+build, commit, artifact and source. It closes with its button, Escape or a
+backdrop click. A compact "Сейчас" control jumps directly to the last point
+when the history needs horizontal scrolling. Light and Dark themes persist in
+localStorage.
+
+Static contract: PASS for chronological dates, 11 milestones, two to four
+change chips per card, complete environment/status triples, source path
+existence, baseline and candidate boundaries, and JavaScript syntax. Layout
+width checks were calculated at 3840, 3440, 2560, 1920, 1440 and 390 px.
+These calculations are not rendered screenshots. Visual acceptance remains
+BLOCKED by the prior in-app browser local-URL rejection, which explicitly
+forbade alternate browser routes for that operation.
+
+Release impact: standalone review page and canonical changelog only. No
+server runtime or deployment was changed. A later shipped application artifact
+would require its own release cycle and exact-artifact verification.
