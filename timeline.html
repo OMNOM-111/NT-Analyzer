@@ -57,6 +57,7 @@
     .candidate .capability-symbol { color:var(--wait); }
     .capability-number { flex:none; color:var(--muted); font:10px/1.3 Consolas,monospace; }
     .unavailable .capability-number { color:var(--quiet); }
+    .capability-qa { color:var(--good); font-size:10px; font-weight:700; }
     .environment-summary { margin:7px 2px 0; color:var(--muted); font-size:11px; }
     .environment-meta { display:flex; flex-wrap:wrap; gap:2px 12px; margin:12px 0 0; padding-top:8px; border-top:1px solid var(--line); color:var(--muted); font:10px/1.35 Consolas,monospace; overflow-wrap:anywhere; }
     .history-heading { display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin:clamp(22px,1.9vw,34px) 1px 12px; }
@@ -126,6 +127,8 @@
     .batch-task-copy { margin:0; font-size:11px; }
     .batch-task-points { margin:2px 0 0!important; padding-left:16px!important; font-size:11px; }
     .batch-task-points li { margin:2px 0; }
+    .batch-task-tech-qa { margin:7px 0 0; color:var(--good); font-size:11px; font-weight:700; }
+    .batch-task-tech-qa a { color:inherit; }
     .owner-comment { margin:3px 0 0; font-size:11px; }
     .task-deployment { display:flex; flex-wrap:wrap; gap:4px 9px; margin:7px 0 0; padding-top:7px; border-top:1px solid var(--line); font-size:10px; }
     .task-deployment .yes { color:var(--good); }
@@ -232,7 +235,7 @@
     {id:'previewCharts',name:'Графики для тестовых аккаунтов',first:'2026-09-23',local:'yes',canary:'no',production:'no'}
   ];
   const environments = [
-    {kind:'local',name:'Local',qualifier:'активный runtime · 24.09.2026',version:'0.10.0-beta.96',build:'dev-0.10.0-beta.96-56945ac68e94',commit:'56945ac6'},
+    {kind:'local',name:'Local',qualifier:'активный runtime · 25.09.2026',version:'0.10.0-beta.96',build:'dev-0.10.0-beta.96-56945ac68e94',commit:'56945ac6'},
     {kind:'canary',name:'Canary',qualifier:'последний подтверждённый artifact',version:'0.10.0-beta.92',build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'9d800770'},
     {kind:'production',name:'Production',qualifier:'последний подтверждённый artifact',version:'0.10.0-beta.92',build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'9d800770'}
   ];
@@ -294,13 +297,13 @@
       build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'Server 9d800770d08e · Connector ff6fe049',artifact:'art_57db4318cb8745d399d98bccf48de396',source:'NT-Analyzer/docs/changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md',sourceHref:'NT-Analyzer/docs/changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md'
     },
     {
-      date:'2026-09-03',dateLabel:'3–24 сентября 2026',version:'Local beta.95 → beta.96',title:'Пакет перед публикацией',icon:'network',changes:['Социальная сеть','SF Chat','Регистрация','Ещё 4 задачи'],adds:['social','chat','onboarding','device','sharing','previewCharts'],current:true,batchId:'post-beta92-local',batchState:'open',
+      date:'2026-09-03',dateLabel:'3–25 сентября 2026',version:'Local beta.95 → beta.96',title:'Пакет перед публикацией',icon:'network',changes:['Социальная сеть','SF Chat','Регистрация','Ещё 4 задачи'],adds:['social','chat','onboarding','device','sharing','previewCharts'],current:true,batchId:'post-beta92-local',batchState:'open',
       batchTasks:[
         {capabilityId:'social',date:'3 сентября',title:'Социальная сеть',state:'ready',localTest:'passed',ownerApproval:'pending',goal:'Создать место для публикаций и общения пользователей StratForge.',implemented:['Сохраняются публикации и данные социальной части.','Есть страница компании; уведомления отделены от чата.'],ownerComment:'Отдельного решения владельца о приёмке социальной сети пока нет; показать её ему в Local.',source:'Запись о Local beta.95',sourceHref:'NT-Analyzer/docs/changelog/2026-09-04-beta95-unified-local-integration.md'},
         {capabilityId:'chat',date:'3–4 сентября',title:'SF Chat',state:'ready',localTest:'passed',ownerApproval:'pending',goal:'Создать встроенный чат StratForge для общения пользователей.',implemented:['Диалоги разложены по папкам и дням.','Ответ агента показывает имя и модель; ожидающий вердикта ответ можно принять или отклонить в карточке.'],ownerComment:'Отдельного решения владельца о приёмке SF Chat пока нет; показать диалоги и ответы.',source:'Запись о Local beta.96',sourceHref:'NT-Analyzer/docs/changelog/2026-09-04-beta96-visual-audit-and-first-device.md'},
         {capabilityId:'onboarding',date:'4 сентября',title:'Новая регистрация',state:'ready',localTest:'passed',ownerApproval:'approved',goal:'Дать новому пользователю понятный путь от первого входа до создания профиля.',implemented:['Регистрация проходит три шага и заканчивается согласием с условиями.','Выбранное имя используется в профиле, социальной сети и SF Chat.'],ownerComment:'Утверждено владельцем 24.09.2026: дизайн и работа новой регистрации его устраивают. Решение относится именно к регистрации.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-24-timeline-owner-approval-workflow.md',source:'Запись о Local beta.96',sourceHref:'NT-Analyzer/docs/changelog/2026-09-04-beta96-visual-audit-and-first-device.md'},
         {capabilityId:'device',date:'4 сентября',title:'Доверие первому устройству',state:'ready',localTest:'passed',ownerApproval:'pending',goal:'Дать человеку выбор, доверять первому устройству постоянно или до конца сессии.',implemented:['После подтверждённой регистрации первое устройство не требует второго кода.','Новый неизвестный клиент по-прежнему проходит обычное подтверждение.'],ownerComment:'Утверждение владельцем именно доверия устройству не записано; показать оба режима отдельно от регистрации.',source:'Запись о Local beta.96',sourceHref:'NT-Analyzer/docs/changelog/2026-09-04-beta96-visual-audit-and-first-device.md'},
-        {capabilityId:'agentWorld',date:'14–21 сентября',title:'Agent World',state:'development',localTest:'partial',ownerApproval:'pending',goal:'Собрать рабочую среду агентов, задач и их обсуждения в AI Центре.',implemented:['Есть кандидат с агентами, задачами, проверкой результата и связью с чатом.','Программа остаётся IN DEVELOPMENT; частичные тесты не означают приёмку всего Agent World.'],ownerComment:'Владелец 24.09.2026 ещё не принял Agent World: хочет отдельно оценить визуальное восприятие и возможные технические моменты чата. Конкретные замечания он сообщит после просмотра.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-24-timeline-owner-approval-workflow.md',nextStep:'Показать владельцу интерфейс и сценарии чата, записать его точные замечания, исправить их и повторно представить на приёмку.',source:'Оперативный статус Agent World',sourceHref:'NT-Analyzer/docs/current/AGENT_WORLD_MASTER_STATUS.md'},
+        {capabilityId:'agentWorld',date:'14–25 сентября',title:'Agent World',state:'development',localTest:'partial',ownerApproval:'pending',goal:'Собрать рабочую среду агентов, задач и их обсуждения в AI Центре.',implemented:['Есть кандидат с агентами, задачами, проверкой результата и связью с чатом.','Программа остаётся IN DEVELOPMENT; частичные тесты не означают приёмку всего Agent World.'],technicalQa:'✓ Внутренние связки проверены на активном Local: 238 сквозных тестов PASS; экраны команды, памяти и задач открываются без ошибок консоли. Это отметка проверки, не приёмка всей программы.',technicalQaHref:'NT-Analyzer/docs/changelog/2026-09-25-prepublication-local-qa.md',ownerComment:'Владелец 24.09.2026 ещё не принял Agent World: хочет отдельно оценить визуальное восприятие и возможные технические моменты чата. Конкретные замечания он сообщит после просмотра.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-24-timeline-owner-approval-workflow.md',nextStep:'Закрыть известные частичные пункты Agent World и устаревший пример контракта MNQ 09-26; затем показать владельцу интерфейс и сценарии чата для личной приёмки.',source:'Оперативный статус Agent World',sourceHref:'NT-Analyzer/docs/current/AGENT_WORLD_MASTER_STATUS.md'},
         {capabilityId:'sharing',date:'22 сентября',title:'Поделиться моделями',state:'ready',localTest:'passed',ownerApproval:'pending',goal:'Позволить владельцу модели дать другому пользователю доступ к её вызову.',implemented:['В карточке модели есть переключатель «Поделиться».','Вызов проверен из отдельного личного workspace без раскрытия ключа владельца.'],ownerComment:'Local-проверка записана, но личное утверждение владельца этой функции пока не записано.',source:'Local-проверка в Git',sourceHref:'https://github.com/OMNOM-111/NT-Analyzer/blob/77eda536f9909afd325ffcd2c89900c17744d4f3/NT-Analyzer/docs/changelog/2026-09-22-shared-models-local-continuation.md'},
         {capabilityId:'previewCharts',date:'23–24 сентября',title:'Графики для тестовых аккаунтов',state:'ready',localTest:'passed',ownerApproval:'pending',goal:'Показывать живой график пользователю отдельного тестового аккаунта Preview.',implemented:['Первый экран тестового пользователя открывает график.','Доступ к графику сохраняется в пределах его одноразовой Preview-сессии.'],ownerComment:'Local-проверка записана, но личное утверждение владельца графиков для тестовых аккаунтов пока не записано.',source:'Local-проверка в Git',sourceHref:'https://github.com/OMNOM-111/NT-Analyzer/blob/56945ac68e94cb7ffa031ef2312dec5a9ad80a54/NT-Analyzer/docs/changelog/2026-09-24-local-preview-social-followup.md'}
       ],
@@ -326,6 +329,7 @@
       const state=capability[env.kind];
       const li=element('li',state==='yes'?'':state==='candidate'?'candidate':'unavailable');
       li.append(element('span','capability-symbol',state==='yes'?'✓':state==='candidate'?'!':'○'),element('span','capability-number',String(index+1).padStart(2,'0')),element('span','',capability.name));
+      if (env.kind==='local' && capability.id==='agentWorld') li.append(element('span','capability-qa','✓ ядро проверено'));
       list.append(li);
     });
     card.append(list);
@@ -418,6 +422,7 @@
       head.append(element('strong','',task.title),element('span',`batch-task-state${task.ownerApproval==='approved'?' approved':task.state==='development'?' review':''}`,approvalLabel));
       li.append(head,element('p','batch-task-label','Задача'),element('p','batch-task-copy',task.goal),element('p','batch-task-label','Что реализовано'));
       const points=element('ul','batch-task-points'); task.implemented.forEach(point => points.append(element('li','',point))); li.append(points);
+      if (task.technicalQa) { const qa=element('p','batch-task-tech-qa',task.technicalQa); if (task.technicalQaHref) { const evidence=element('a','',' Протокол'); evidence.href=task.technicalQaHref; qa.append(evidence); } li.append(qa); }
       li.append(element('p','batch-task-label','Комментарий / решение владельца'));
       const comment=element('p','owner-comment',task.ownerComment);
       if (task.approvalSourceHref) { const link=element('a','',' Запись решения'); link.href=task.approvalSourceHref; comment.append(link); }

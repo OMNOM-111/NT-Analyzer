@@ -3,6 +3,9 @@
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
 - Last verified UTC: 2026-09-05T12:45:49Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
+- Status: PARTIAL
+- Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified last recorded Production baseline
+- Current Production version/build/artifact when known: last recorded `0.10.0-beta.92`; build `sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z`; artifact `art_57db4318cb8745d399d98bccf48de396`. Release Center recorded Canary PASS and `production_live` on 2026-09-02; live endpoints were not reachable for the 2026-09-24 timeline audit. The beta.87 snapshot below is historical.
 - Local source verified SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (clean beta.96 runtime; real handoff/manual delivery and original report/PNG verified, exact-code CI PASS)
 - Local verification UTC: 2026-09-05T19:05:43Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
@@ -10,13 +13,10 @@
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Unified Local branch: `integration/stratforge-unified-local` (PR #280), version `0.10.0-beta.96`; not released to Canary/Production
 - Active Local 8765: clean `56945ac68e94cb7ffa031ef2312dec5a9ad80a54`, build `dev-0.10.0-beta.96-56945ac68e94`, verified by `/api/runtime/env` on 2026-09-24. The editing checkout `feat/shared-model-access` at `77eda536` is separate from the running process; see [timeline audit](../changelog/2026-09-24-timeline-source-audit.md).
+- Local recheck 2026-09-25 on that same runtime SHA: Agent World/Community/Chat/Preview/market-data focused suite 238 PASS, SF Chat 22 PASS, shared-model/e-mail suite 48 PASS; 646-file pre-release bundle 4/4 PASS. Owner MES/MNQ 12-26 charts painted TopstepX/WS. Agent World remains IN DEVELOPMENT; the separate technical QA tick in the [timeline](../../../timeline.html) is not owner approval. See [QA record](../changelog/2026-09-25-prepublication-local-qa.md).
 - Owner-facing visual state is the root [`timeline.html`](../../../timeline.html): one open post-beta.92 batch with seven separately tracked tasks and numbered capabilities across all environments. On 2026-09-24 the owner explicitly approved only the new registration; Agent World awaits his visual/chat review, and the other task approvals are unrecorded. Local test is separate from owner approval. See [owner decision record](../changelog/2026-09-24-timeline-owner-approval-workflow.md) and [mandatory workflow](../TIMELINE_MAINTENANCE.md); no server release followed.
 - Active Agent World branch: `codex/agent-world-final-acceptance`, integrating shared #285 and native P1-5 histories; its candidate is not a Canary/Production release. Current ownership is in [master status](../current/AGENT_WORLD_MASTER_STATUS.md); preserved independent review is in [AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md](../current/AGENT_WORLD_CLAUDE_REVIEW_AND_HANDOFF.md).
 - Last recorded deployed artifact Git SHA: `9d800770d08e0072ec453c2611e98726e295b2e4` (2026-09-02 Release Center audit; public live identity not re-verified)
-- Current Production version/build/artifact when known: last recorded `0.10.0-beta.92`; build `sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z`; artifact `art_57db4318cb8745d399d98bccf48de396`. Release Center recorded Canary PASS and `production_live` on 2026-09-02; live endpoints were not reachable for the 2026-09-24 timeline audit. The beta.87 snapshot below is historical.
-- Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified last recorded Production baseline
-- Status: PARTIAL
-
 - Development delta 2026-09-21: isolated branch `codex/unified-memory-service`
   introduces one disabled-by-default `MemoryService` for Chief/chat/specialist
   context, additive entity/source/relationship records on the existing generic
