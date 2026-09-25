@@ -1,5 +1,14 @@
 # Agent World — master status
 
+> **Решение владельца 2026-09-24:** весь Agent World пока не утверждён.
+> Владельцу нужно лично оценить визуальное восприятие и возможные технические
+> моменты чата; конкретные замечания он сообщит после просмотра. Следующий
+> исполнитель показывает эти сценарии, записывает точные замечания, исправляет
+> их и повторно предъявляет владельцу. Не считать частичные тесты или
+> приёмку отдельных подсистем утверждением всей программы и не продвигать
+> её на сервер до отдельного решения владельца. Запись решения:
+> `docs/changelog/2026-09-24-timeline-owner-approval-workflow.md`.
+
 > **This file is the single operational status of the Agent World / AI Center
 > program.** Every executor — Claude, Codex or any later agent — reads it before
 > starting and updates it before finishing a session or running out of budget.

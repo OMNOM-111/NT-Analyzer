@@ -160,10 +160,10 @@ and the External GPT Context Pack. Future developers append confirmed Local
 work to the current batch and advance the same card through exact-artifact
 Canary/Production acceptance before opening the next delivery batch.
 
-## Owner-facing drawer clarification
+## Earlier owner-facing drawer clarification (superseded by separate approval)
 
-The open post-beta.92 card remains one delivery package but now names six
-separate tasks: Social, SF Chat, registration/first-device trust, Agent World,
+The earlier post-beta.92 card revision kept one delivery package and named six
+grouped tasks: Social, SF Chat, registration/first-device trust, Agent World,
 the `Поделиться` model switch, and charts for test/Preview accounts. The
 first four are backed by the beta.95/beta.96 Local records and the Agent World
 current status. Sharing is backed by the Local Shared Models acceptance on
@@ -174,11 +174,11 @@ exact Git documents at `77eda536` and `56945ac6`, respectively; both commit
 and document paths were checked with `git cat-file`. This does not claim a
 server deploy.
 
-The open drawer no longer repeats the full history of old capabilities. It
-summarizes the 16 confirmed Local directions that predated this package and
-lists each new task with its own date, status and evidence link. Agent World
-remains in development; the other five task summaries reflect Local evidence.
-Six delivery steps separate Local development, code saved in Git, active Local
+The earlier drawer stopped repeating the full history of old capabilities. It
+summarized the 16 confirmed Local directions that predated this package and
+listed each grouped task with its date, status and evidence link. Agent World
+remained in development; the other summaries reflected Local evidence.
+Six delivery steps separated Local development, code saved in Git, active Local
 build, immutable release artifact, Canary and Production. Direct `/api/runtime/env`
 read confirmed the active clean Local beta.96 build
 `dev-0.10.0-beta.96-56945ac68e94` and SHA `56945ac68e94...` again for this
@@ -187,7 +187,7 @@ Canary/Production identity was not freshly verified. Each milestone card has a
 small code-native SVG icon; technical field labels explain that a commit or
 build does not itself prove server publication.
 
-Static UX contract PASS: nine distinct icon identifiers, six separately named
+Prior static UX contract PASS: nine distinct icon identifiers, six separately named
 tasks with evidence targets, 16 pre-package Local directions, 22/16/16 current
 environment counters, and delivery steps `Local / Git / build` confirmed with
 `artifact / Canary / Production` pending. JavaScript parsed, HTML IDs were
@@ -200,3 +200,6 @@ Release impact: standalone review page, maintenance rule, canonical changelog
 and two Context Pack handoff notes only. No server runtime or deployment was
 changed. A later shipped application artifact would require its own release
 cycle and exact-artifact verification.
+
+The later split of registration and first-device trust and the owner's actual
+approval decisions are recorded in `2026-09-24-timeline-owner-approval-workflow.md`.

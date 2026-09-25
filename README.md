@@ -19,7 +19,9 @@ release-gated pending a separate owner and regulatory decision.
 
 Owner/developer handoff: open [product history](timeline.html) for the visual
 Local / Canary / Production snapshot and the current delivery batch. Changes
-to it follow [timeline maintenance](NT-Analyzer/docs/TIMELINE_MAINTENANCE.md).
+to it follow the mandatory [timeline and owner-approval workflow](NT-Analyzer/docs/TIMELINE_MAINTENANCE.md).
+Every AI developer reads that workflow before a development session. A passing
+Local test is separate from the owner's decision to approve a feature.
 
 The product is intentionally local-first:
 
