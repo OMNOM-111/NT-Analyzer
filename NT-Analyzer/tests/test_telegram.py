@@ -27,6 +27,7 @@ def _isolate(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv("NTA_APP_ENV", raising=False)
     monkeypatch.delenv("NTA_ENV", raising=False)
     monkeypatch.delenv("NTA_STAGING_ALLOW_OWNER_TELEGRAM", raising=False)
+    monkeypatch.delenv("STRATFORGE_TELEGRAM_OWNER_ENVIRONMENT", raising=False)
     with telegram_service._PAIR_LOCK:
         telegram_service._PAIRING.clear()
     with telegram_service._WEBHOOK_RUN_LOCK:
@@ -1269,6 +1270,48 @@ def test_telegram_vitek_message_uses_orchestrator_once(monkeypatch, tmp_path) ->
     assert calls[0][1]["mirror_to_telegram"] is False
     assert len(replies) == 1
     assert "активных задач нет" in replies[0]
+
+
+def test_non_owner_environment_never_invokes_model_for_free_text(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv("DEPLOYMENT_ENV", "canary")
+    monkeypatch.setenv(telegram_service.CHAT_ENV, "42")
+    monkeypatch.setattr(telegram_service.account_auth, "process_update", lambda *a, **k: False)
+    monkeypatch.setattr(telegram_service.telegram_remote, "process_update", lambda *a, **k: False)
+    monkeypatch.setattr(
+        telegram_service, "_handle_chief_command",
+        lambda *a, **k: pytest.fail("non-owner contour invoked the model path"),
+    )
+
+    result = telegram_service._dispatch_command_update({
+        "update_id": 9001,
+        "message": {
+            "message_id": 7, "text": "Витёк, как дела?",
+            "chat": {"id": 42, "type": "private"},
+            "from": {"id": 42, "first_name": "Owner"},
+        },
+    }, private_id="42", gid="", handle_owner_commands=True)
+
+    assert result["handler"] == "operational_owner_elsewhere"
+    assert result["consumed"] is True
+
+
+def test_non_owner_environment_cannot_create_topic_or_send_report(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setenv("DEPLOYMENT_ENV", "development")
+    monkeypatch.setenv(telegram_service.TOKEN_ENV, "fake-token")
+    monkeypatch.setenv(telegram_service.CHAT_ENV, "42")
+    monkeypatch.setenv(telegram_service.GROUP_ENV, "-1001234567890")
+    telegram_service._save_settings({**telegram_service.DEFAULT_SETTINGS, "enabled": True})
+    calls = []
+    monkeypatch.setattr(telegram_service, "_api_call", lambda *a, **k: calls.append((a, k)))
+
+    with pytest.raises(telegram_service.TelegramServiceError, match="не владеет"):
+        telegram_service.ensure_topic("C-NONOWNER", "Чужая тема")
+    assert telegram_service.send_chief_report(
+        "Отчёт", ["Не должен уйти"], dedupe_key="blocked-1",
+    ) is False
+    assert calls == []
 
 
 def test_configure_group_requires_forum_topics(monkeypatch, tmp_path) -> None:

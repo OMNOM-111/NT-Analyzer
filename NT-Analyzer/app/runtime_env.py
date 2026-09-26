@@ -647,11 +647,38 @@ def data_path(*parts: Any, project_root: Any = None) -> Path:
 
 
 def allow_owner_telegram_mirror() -> bool:
-    if is_development():
+    """Compatibility alias for the single operational Telegram owner gate."""
+    return telegram_operational_delivery_active()
+
+
+def telegram_owner_environment() -> str:
+    """Return the only contour allowed to own operational Telegram traffic.
+
+    Production is the fail-closed default.  A different contour may be selected
+    only through an explicit deployment setting (normally with its own bot).
+    Invalid values never grant another environment permission to send.
+    """
+    selected = str(
+        os.environ.get("STRATFORGE_TELEGRAM_OWNER_ENVIRONMENT") or PRODUCTION
+    ).strip().lower()
+    return selected if selected in {DEVELOPMENT, CANARY, PRODUCTION} else PRODUCTION
+
+
+def telegram_operational_delivery_active() -> bool:
+    """Whether this process owns SF Chat topics, reports and AI replies.
+
+    Development keeps the existing additional opt-in so an accidentally copied
+    Production token cannot become active merely by selecting Development as the
+    owner contour.
+    """
+    environment = deployment_environment()
+    if environment != telegram_owner_environment():
+        return False
+    if environment == DEVELOPMENT:
         return str(
             os.environ.get("NTA_STAGING_ALLOW_OWNER_TELEGRAM") or ""
         ).strip() == "1"
-    return is_production()
+    return True
 
 
 def _safe_identifier(name: str, default: str, *, required: bool) -> str:
@@ -996,6 +1023,8 @@ def status() -> Dict[str, Any]:
         "allow_live_orders": allow_live_orders(),
         "rate_limits_disabled": rate_limits_disabled(),
         "allow_owner_telegram_mirror": allow_owner_telegram_mirror(),
+        "telegram_owner_environment": telegram_owner_environment(),
+        "telegram_operational_delivery_active": telegram_operational_delivery_active(),
         "preview_sandbox": preview_public_metadata(),
         "data_root": str(data_root()),
         "deployment": config.as_dict(),

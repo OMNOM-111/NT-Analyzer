@@ -2303,6 +2303,60 @@ def test_report_task_update_persists_and_mirrors_public_execution_metadata(tmp_p
     assert sent[0][1]["conversation_id"] == "C-TASK"
 
 
+def test_report_task_update_is_idempotent_by_request_id(tmp_path, monkeypatch) -> None:
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_can_mirror_to_telegram", lambda scope: False)
+
+    first = chief_agent.report_task_update(
+        conversation_id="C-PERIODIC", text="Единый отчёт.",
+        action_name="periodic_weekly_report", action_status="completed",
+        request_id="periodic:weekly:2026-W39", mirror_to_telegram=False,
+    )
+    second = chief_agent.report_task_update(
+        conversation_id="C-PERIODIC", text="Повтор не должен попасть в историю.",
+        action_name="periodic_weekly_report", action_status="completed",
+        request_id="periodic:weekly:2026-W39", mirror_to_telegram=False,
+    )
+
+    rows = chief_agent._read_conversation(
+        500, path=chief_agent._conversation_file("C-PERIODIC"),
+    )
+    assert len([row for row in rows if row.get("request_id") == "periodic:weekly:2026-W39"]) == 1
+    assert second["replayed"] is True
+    assert second["message"]["message_id"] == first["message"]["message_id"]
+
+
+def test_periodic_report_cache_prevents_repeated_model_call(tmp_path, monkeypatch) -> None:
+    from app import performance
+
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    monkeypatch.setattr(performance, "build_performance_response", lambda **kwargs: {
+        "summary": {"trades": 3, "pnl": 125.0, "commission": 4.5, "win_rate": 66.7},
+        "strategy_summary": {"trades": 3, "pnl": 125.0, "commission": 4.5, "win_rate": 66.7},
+    })
+    monkeypatch.setattr(universal_llm, "require_valid_production_scope", lambda: None)
+    calls = []
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *args, **kwargs: (
+        calls.append((args, kwargs)) or {
+            "content": "Вывод по неделе.", "actual_model": "trusted-test-model",
+            "provider": "test-provider",
+        }
+    ))
+
+    first = chief_agent.generate_periodic_report(
+        "weekly", send_telegram=False, report_key="weekly:2026-W39",
+    )
+    second = chief_agent.generate_periodic_report(
+        "weekly", send_telegram=False, report_key="weekly:2026-W39",
+    )
+
+    assert len(calls) == 1
+    assert first["report_id"] == second["report_id"]
+    assert second["reused"] is True
+    assert first["route"]["deputy"] == "vitek"
+
+
 def test_chart_task_and_snapshot_expose_execution_status_in_both_channels(tmp_path, monkeypatch) -> None:
     from app import telegram_service
 
