@@ -496,6 +496,9 @@ def validate_record_scope(context: RequestContext, record: Record) -> None:
     if not isinstance(context, RequestContext) or not isinstance(record, Record):
         raise ContractError("context_and_record_required")
     require_same_scope(context.scope, record.header.scope)
+    if (record.KIND == EntityKind.EXTERNAL_AGENT_CONNECTION
+            and context.user_uuid != record.header.owner_user_uuid):
+        raise ContractError("external_agent_owner_denied")
     if (isinstance(record, Memory) and record.visibility == Visibility.PRIVATE
             and context.user_uuid != record.header.owner_user_uuid):
         raise ContractError("private_memory_denied")

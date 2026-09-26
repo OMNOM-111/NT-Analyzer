@@ -17,6 +17,17 @@
 - Scope: Current factual subsystem snapshot: Unified Local Development plus the separately identified live Production baseline
 - Status: PARTIAL
 
+- P1-5 native registration on base `3c62465d`: separate record kind/states/codec,
+  private repository visibility and shared Evaluation subject, 372 focused tests
+  passed. No dispatch/API/E2E readiness claim; new active integrator file overlap
+  is recorded in [master handoff](../current/AGENT_WORLD_MASTER_STATUS.md).
+
+- Parallel P1-5 (2026-09-10 historical checkpoint): **IN DEVELOPMENT**, isolated external-agent protocol
+  and service ports; not mounted or deployed. Native Evaluation/registry integration
+  requires integrator handoff. No global readiness change. See the parallel section
+  of [master status](../current/AGENT_WORLD_MASTER_STATUS.md) and
+  [checkpoint evidence](../changelog/2026-09-10-external-agent-onboarding.md).
+
 ## Active integration — 2026-09-09
 
 Latest preserved/pushed executable source is
