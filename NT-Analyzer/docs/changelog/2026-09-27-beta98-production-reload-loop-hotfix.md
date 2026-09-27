@@ -8,9 +8,10 @@ unconfirmed. Preserve the one-time refresh for a real selected-account
 transition from live to offline; do not weaken login, device confirmation or
 session checks.
 
-Release PR: pending
+Release PRs: #295
 
-Source SHA: pending merge to `main`
+Source checkpoint SHA: `8246237c`; final source SHA is assigned only by the
+verified merge to `main`.
 
 Verification result: IN PROGRESS (targeted regression PASS; full pre-release,
 PR CI, merged-main CI, immutable artifact, Canary and Production remain gated)
