@@ -226,18 +226,18 @@
     released('releases','Release Center','2026-08-01'),
     released('telegram','Telegram-связь','2026-08-01'),
     released('catalog','Каталог контрактов','2026-09-02'),
-    {id:'social',name:'Социальная сеть',first:'2026-09-03',local:'yes',canary:'no',production:'no'},
-    {id:'chat',name:'SF Chat',first:'2026-09-04',local:'yes',canary:'no',production:'no'},
-    {id:'onboarding',name:'Новая регистрация',first:'2026-09-04',local:'yes',canary:'no',production:'no'},
-    {id:'device',name:'Доверие устройству',first:'2026-09-04',local:'yes',canary:'no',production:'no'},
-    {id:'agentWorld',name:'Agent World',first:'2026-09-14',local:'candidate',canary:'no',production:'no'},
-    {id:'sharing',name:'Поделиться моделями',first:'2026-09-22',local:'yes',canary:'no',production:'no'},
-    {id:'previewCharts',name:'Графики для тестовых аккаунтов',first:'2026-09-23',local:'yes',canary:'no',production:'no'}
+    {id:'social',name:'Социальная сеть',first:'2026-09-03',local:'yes',canary:'yes',production:'candidate'},
+    {id:'chat',name:'SF Chat',first:'2026-09-04',local:'yes',canary:'yes',production:'candidate'},
+    {id:'onboarding',name:'Новая регистрация',first:'2026-09-04',local:'yes',canary:'yes',production:'candidate'},
+    {id:'device',name:'Доверие устройству',first:'2026-09-04',local:'yes',canary:'yes',production:'candidate'},
+    {id:'agentWorld',name:'Agent World',first:'2026-09-14',local:'candidate',canary:'candidate',production:'candidate'},
+    {id:'sharing',name:'Поделиться моделями',first:'2026-09-22',local:'yes',canary:'yes',production:'candidate'},
+    {id:'previewCharts',name:'Графики для тестовых аккаунтов',first:'2026-09-23',local:'yes',canary:'yes',production:'candidate'}
   ];
   const environments = [
     {kind:'local',name:'Local',qualifier:'активный runtime · 25.09.2026',version:'0.10.0-beta.96',build:'dev-0.10.0-beta.96-56945ac68e94',commit:'56945ac6'},
-    {kind:'canary',name:'Canary',qualifier:'последний подтверждённый artifact',version:'0.10.0-beta.92',build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'9d800770'},
-    {kind:'production',name:'Production',qualifier:'последний подтверждённый artifact',version:'0.10.0-beta.92',build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'9d800770'}
+    {kind:'canary',name:'Canary',qualifier:'beta.97 · принят до Production-инцидента',version:'0.10.0-beta.97',build:'sf-0.10.0-beta.97-4f6bb0b3a0d2-20260927T060203Z',commit:'4f6bb0b3'},
+    {kind:'production',name:'Production',qualifier:'beta.97 live · closeout заблокирован',version:'0.10.0-beta.97',build:'sf-0.10.0-beta.97-4f6bb0b3a0d2-20260927T060203Z',commit:'4f6bb0b3'}
   ];
   const milestones = [
     {
@@ -297,7 +297,7 @@
       build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'Server 9d800770d08e · Connector ff6fe049',artifact:'art_57db4318cb8745d399d98bccf48de396',source:'NT-Analyzer/docs/changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md',sourceHref:'NT-Analyzer/docs/changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md'
     },
     {
-      date:'2026-09-03',dateLabel:'3–26 сентября 2026',version:'Local beta.95 → beta.97 candidate',title:'Пакет перед публикацией',icon:'network',changes:['Социальная сеть','SF Chat ↔ Telegram','AI Центр','Ещё 4 задачи'],adds:['social','chat','onboarding','device','sharing','previewCharts'],current:true,batchId:'post-beta92-local',batchState:'release-candidate',
+      date:'2026-09-03',dateLabel:'3–27 сентября 2026',version:'Production beta.97 → beta.98 hotfix candidate',title:'Публикация и блокирующий инцидент',icon:'network',changes:['Production reload-loop','SF Chat ↔ Telegram','AI Центр','Ещё 4 задачи'],adds:['social','chat','onboarding','device','sharing','previewCharts'],current:true,batchId:'post-beta92-local',batchState:'release-candidate',
       batchTasks:[
         {capabilityId:'social',date:'3–26 сентября',title:'Социальная сеть',state:'ready',localTest:'passed',ownerApproval:'approved',goal:'Создать место для публикаций и общения пользователей StratForge.',implemented:['Сохраняются публикации и данные социальной части.','Есть страница компании; уведомления отделены от чата.'],ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска; некритичные детали дизайна отложены.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md',source:'Запись о Local beta.95',sourceHref:'NT-Analyzer/docs/changelog/2026-09-04-beta95-unified-local-integration.md'},
         {capabilityId:'chat',date:'3–26 сентября',title:'SF Chat',state:'ready',localTest:'passed',ownerApproval:'approved',goal:'Создать встроенный чат StratForge для общения пользователей.',implemented:['Диалоги разложены по папкам и дням.','Production — единственный владелец рабочих Telegram-тем; один message/request id защищает историю и доставку от дублей и циклов.','Периодические отчёты идут через Витька и команду в тот же SF Chat/Telegram диалог.'],ownerComment:'Владелец 26.09.2026 принял Local как основу выпуска; серверный двусторонний Telegram-smoke остаётся обязательной частью публикации.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md',source:'Release candidate beta.97',sourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md'},
@@ -307,10 +307,10 @@
         {capabilityId:'sharing',date:'22–26 сентября',title:'Поделиться моделями',state:'ready',localTest:'passed',ownerApproval:'approved',goal:'Позволить владельцу модели дать другому пользователю доступ к её вызову.',implemented:['В карточке модели есть переключатель «Поделиться».','Вызов проверен из отдельного личного workspace без раскрытия ключа владельца.'],ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md',source:'Local-проверка в Git',sourceHref:'https://github.com/OMNOM-111/NT-Analyzer/blob/77eda536f9909afd325ffcd2c89900c17744d4f3/NT-Analyzer/docs/changelog/2026-09-22-shared-models-local-continuation.md'},
         {capabilityId:'previewCharts',date:'23–26 сентября',title:'Графики для тестовых аккаунтов',state:'ready',localTest:'passed',ownerApproval:'approved',goal:'Показывать живой график пользователю отдельного тестового аккаунта Preview.',implemented:['Первый экран тестового пользователя открывает график.','Доступ к графику сохраняется в пределах его одноразовой Preview-сессии.'],ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md',source:'Local-проверка в Git',sourceHref:'https://github.com/OMNOM-111/NT-Analyzer/blob/56945ac68e94cb7ffa031ef2312dec5a9ad80a54/NT-Analyzer/docs/changelog/2026-09-24-local-preview-social-followup.md'}
       ],
-      release:{artifactReady:false,canaryAccepted:false,productionLive:false},
-      summary:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска. Блокирующий Telegram/report контур исправлен в release candidate; merge, final-SHA CI, артефакт, Canary и Production остаются отдельными этапами.',
-      status:['candidate','no','no'],notes:['Local-основа принята; release candidate проходит закрытие','Пакет не развёрнут','Пакет не развёрнут'],
-      build:'active runtime dev-0.10.0-beta.96-56945ac68e94; beta.97 candidate pending final SHA',commit:'56945ac6 base / f455043f release checkpoint',artifact:'единый release artifact ещё не собран',source:'beta.97 release candidate record',sourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md'
+      release:{artifactReady:true,canaryAccepted:true,productionLive:true},
+      summary:'beta.97 опубликована одним artifact, но финальная приёмка Production остановлена: при offline/unconfirmed runtime account подтверждён настоящий full-page reload-loop. beta.92 содержит тот же латентный дефект. Подготовлен узкий beta.98 hotfix candidate; scheduler Production остаётся OFF, Local StratForge Vitek — ON. Реальная multi-user Telegram-топология для обычного пользователя пока EXTERNAL BLOCKED.',
+      status:['yes','yes','candidate'],notes:['Новый beta.98 hotfix проходит Git gates','beta.97 была принята; beta.98 ещё не развёрнута','beta.97 live, но closeout заблокирован reload-loop'],
+      build:'sf-0.10.0-beta.97-4f6bb0b3a0d2-20260927T060203Z',commit:'4f6bb0b3; beta.98 hotfix pending',artifact:'art_8fec9cdd6ed14dd19cb762291a2a756f (beta.97; beta.98 ещё не собран)',source:'beta.98 Production reload incident record',sourceHref:'NT-Analyzer/docs/changelog/2026-09-27-beta98-production-reload-loop-hotfix.md'
     }
   ];
 
@@ -339,7 +339,7 @@
   });
   const ahead=capabilities.filter(capability => capability.local==='yes' && capability.production==='no').length;
   const candidates=capabilities.filter(capability => capability.local==='candidate').length;
-  document.getElementById('environment-summary').textContent=`${ahead} подтверждённых возможностей Local ещё нет в последнем записанном Production beta.92; ${candidates} функция остаётся в разработке. Номера одни во всех средах. ✓ здесь означает наличие функции, а не утверждение владельцем.`;
+  document.getElementById('environment-summary').textContent=`${ahead} подтверждённых возможностей Local ещё не имеют финального Production PASS; ${candidates} функций остаются кандидатами или заблокированы инцидентом. Номера одни во всех средах. ✓ здесь означает наличие функции, а не утверждение владельцем.`;
 
   const track=document.getElementById('timeline-track');
   track.style.setProperty('--milestone-count',String(milestones.length));

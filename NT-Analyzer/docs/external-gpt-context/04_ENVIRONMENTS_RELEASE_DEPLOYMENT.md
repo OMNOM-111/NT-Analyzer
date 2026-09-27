@@ -1,18 +1,28 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-09-27T00:09:21Z
+- Last verified UTC: 2026-09-27T17:45:58Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Current deployed artifact Git SHA: `9d800770d08e0072ec453c2611e98726e295b2e4` (live endpoints re-verified 2026-09-26)
+- Current deployed artifact Git SHA: `4f6bb0b3a0d20712f249afdc9c93538567fd6a8d`
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: PARTIAL
 
-Release candidate 2026-09-26: beta.97 consolidates periodic owner reports under
+Production incident 2026-09-27: beta.97 was promoted as immutable artifact
+`art_8fec9cdd6ed14dd19cb762291a2a756f`, but final closeout is blocked by a
+confirmed authenticated overview full-page reload loop when runtime accounts are
+already offline/unconfirmed. beta.92 contains the same trigger and is not a
+reliable rollback for this state. The minimal code correction is a new beta.98
+cycle; no server hotfix or artifact mutation is allowed. Production reports stay
+OFF and Local `StratForge Vitek` stays ON. See the
+[incident record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md).
+
+Historical pre-deployment contract (2026-09-26): beta.97 consolidates periodic owner reports under
 the Vitek/Deputy controller and makes Production the sole default operational
 owner of the shared Telegram bot. Development and Canary remain passive for
 topic creation, update consumption, chat mirroring and reports while retaining
-login/access callbacks. No server switch or data mutation has occurred. The
-required sequence remains merge → final-main-SHA CI → one signed immutable
+login/access callbacks. That candidate later completed its immutable promotion,
+but its final closeout is superseded by the live incident above. The required
+sequence for beta.98 remains merge → final-main-SHA CI → one signed immutable
 artifact → Canary acceptance → separate owner approval → same artifact in
 Production. [Candidate record](../changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md).
 
@@ -67,25 +77,25 @@ summary, source SHA and final verification PASS are present.
 The Environment Switcher opens the selected origin and never carries session
 or browser storage between origins.
 
-## Last recorded Canary and Production: beta.92
+## Current Canary and Production: beta.97 (closeout blocked)
 
-The Release Center audit recorded one signed artifact accepted on Canary at
-`2026-09-02T03:54:35Z` and promoted to Production (`production_live`) at
-`2026-09-02T03:57:03Z`. The Connector closeout independently names the
-Production server build. Direct `/live` and `/ready` rechecks on 2026-09-26
-confirmed the same version, source, build and runtime artifact SHA on Canary and
-Production. This does not constitute acceptance of the beta.97 candidate.
+Canary and Production point to the same signed beta.97 artifact. Readiness and
+identity passed promotion checks, but application acceptance is not PASS because
+the live authenticated overview reload loop was reproduced after owner login and
+device confirmation. Promotion identity is preserved for incident response; the
+next application change starts the beta.98 immutable cycle.
 
 | Field | Value |
 | --- | --- |
-| Version / source SHA | `0.10.0-beta.92` / `9d800770d08e0072ec453c2611e98726e295b2e4` |
-| Candidate / artifact | `rc_8e0373a36ebf4bd09c7a5872cb770664` / `art_57db4318cb8745d399d98bccf48de396` |
-| Build ID | `sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z` |
-| Archive SHA256 | `FAD094C243B8EDE0B365BE9874466FA9C53C414CB0C9588D4EF4DC0CE62FF315` |
-| Manifest SHA256 | `07A3961277E3879357EE92A8471911FAFA4B57E1B3BF2D046E1BCA41D27A9169` |
+| Version / source SHA | `0.10.0-beta.97` / `4f6bb0b3a0d20712f249afdc9c93538567fd6a8d` |
+| Artifact | `art_8fec9cdd6ed14dd19cb762291a2a756f` |
+| Build ID | `sf-0.10.0-beta.97-4f6bb0b3a0d2-20260927T060203Z` |
+| Archive SHA256 | `F7B522C845D4DEA93BFB15F09C37F5B25A95A0C474052FB70F27A2F6DA6F8FF3` |
+| Manifest SHA256 | `B5FC667474ED38CD5AA3600F22E4DD97495958DCC906BCEAD1CA80CF2838F9D2` |
+| Previous / rollback | beta.92 / `0.10.0-beta.92-9d800770d08e` (preserved; same latent reload trigger) |
 
-Sources: [Connector Production closeout](../changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md),
-[timeline audit](../changelog/2026-09-24-timeline-source-audit.md).
+Sources: [beta.98 incident record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md),
+[beta.97 candidate record](../changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md).
 
 ### Historical beta.86 snapshot
 

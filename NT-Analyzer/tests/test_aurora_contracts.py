@@ -878,6 +878,63 @@ def test_connector_heartbeat_grace_is_not_rendered_as_running_or_active_account(
     assert "connectorConfirmed" in overview
 
 
+def test_offline_runtime_account_emits_only_a_real_live_to_offline_transition():
+    ui = (AURORA / "assets" / "ui.js").read_text(encoding="utf-8")
+    marker = "const accountsTask = API.http.runtimeAccounts().then(accounts => {"
+    handler = ui.split(marker, 1)[1].split("}).catch(() => {", 1)[0]
+    script = r'''
+const assert = require('node:assert/strict');
+const handler = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+const account = {account_name:'OWNER-1', is_system:false};
+function evaluate(accounts, state) {
+  let runtimeAccounts = state.runtimeAccounts || [];
+  let selectedAccount = state.selectedAccount || null;
+  const events = [];
+  const localStorage = {getItem:()=>state.preferred || null};
+  const AuroraDomain = {
+    ACCOUNT_KEY:'nt-account',
+    selectAccount:(listed, preferred)=>listed.find(row=>row.account_name===preferred) || null
+  };
+  const setSelectedAccount = (preferred) => { setSelectedAccount.preferred = preferred; };
+  const setChip = () => {};
+  const accC = {};
+  const window = {dispatchEvent:event=>events.push(event.detail)};
+  const CustomEvent = function(type, options) { this.type=type; this.detail=options.detail; };
+  const run = new Function('accounts','runtimeAccounts','selectedAccount','localStorage',
+    'AuroraDomain','setSelectedAccount','setChip','accC','window','CustomEvent',
+    handler + '; return {runtimeAccounts, selectedAccount};');
+  const next = run(accounts, runtimeAccounts, selectedAccount, localStorage,
+    AuroraDomain, setSelectedAccount, setChip, accC, window, CustomEvent);
+  if (Object.prototype.hasOwnProperty.call(setSelectedAccount, 'preferred')) {
+    next.selectedAccount = AuroraDomain.selectAccount(next.runtimeAccounts, setSelectedAccount.preferred);
+  }
+  return {...next, events};
+}
+const offline = {accounts:[account], confirmed_live:false, heartbeat_confirmation_state:'offline'};
+let state = evaluate(offline, {selectedAccount:null, preferred:'OWNER-1'});
+assert.deepEqual(state.events, []);
+state = evaluate(offline, state);
+assert.deepEqual(state.events, []);
+state = evaluate({accounts:[account], confirmed_live:true}, {selectedAccount:null, preferred:'OWNER-1'});
+assert.equal(state.selectedAccount.account_name, 'OWNER-1');
+assert.deepEqual(state.events, []);
+state = evaluate(offline, state);
+assert.deepEqual(state.events, [null]);
+assert.equal(state.selectedAccount, null);
+state = evaluate(offline, state);
+assert.deepEqual(state.events, []);
+'''
+    result = subprocess.run(
+        ["node", "-e", script], input=json.dumps(handler), text=True,
+        capture_output=True, timeout=15,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+    account_picker = ui[ui.index("function setSelectedAccount("):
+                        ui.index("function getSelectedAccount(")]
+    assert "if (notify !== false) window.dispatchEvent" in account_picker
+
+
 def test_runtime_strategy_adapter_uses_real_nested_contract():
     result = _domain_eval("""
       (() => {
