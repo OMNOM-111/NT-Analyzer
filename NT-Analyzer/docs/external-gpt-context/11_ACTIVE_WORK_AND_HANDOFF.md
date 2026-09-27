@@ -1,7 +1,7 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-27T21:30:00Z
+- Last verified UTC: 2026-09-27T22:12:09Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Scope: Production beta.97 reload incident, beta.98 hotfix and multi-user Telegram blocker
 - Status: PARTIAL
@@ -13,8 +13,8 @@ separate reload-loop hotfix. Do not rename or collapse these versions. The
 [chronology record](../changelog/2026-09-27-beta96-beta98-timeline-reconciliation.md)
 contains exact identities and owner approvals.
 
-Urgent incident: **PRODUCTION CLOSEOUT BLOCKED; BETA.98 CANARY ACCEPTANCE IN
-PROGRESS**. Live CDP proved a genuine
+Urgent incident: **PRODUCTION CLOSEOUT BLOCKED; BETA.98 CANARY ACCEPTANCE
+BLOCKED BY ISSUE #298**. Live CDP proved a genuine
 script-initiated full-page reload, not an auth/device/redirect/polling/exception
 loop. `ui.js` emitted `nt-account-change(detail:null)` on every cold offline
 account read; the overview listener called `location.reload()`. Blast radius is
@@ -23,9 +23,13 @@ owner and ordinary Professional overview sessions with graded
 used. beta.98 makes the null event transition-only. PR #295 merged as
 `0b9233d7c8983adc0a3a6c37350a3974770cb738`; final-main CI `36346357025` PASS;
 signed artifact `art_b05720a1f2d44672805b45b513f0203e` is deployed on Canary.
-Identity/readiness, restart and owner offline cold-start PASS. A real separate
-Professional session/cookie cold-start is the remaining Canary gate; Production
-has not been approved. [Incident record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md).
+Identity/readiness, restart and owner offline cold-start PASS. Real separate
+Professional registration then failed before cold-start: Canary subscriptions
+fell through to Windows DPAPI, leaving an active non-owner user with
+`initial_trial_pending=true` but no workspace, entitlement or session. Canary
+acceptance is BLOCKED; Production has not been approved. [Incident
+record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md) and
+[storage blocker](../changelog/2026-09-27-canary-professional-registration-storage-blocker.md).
 
 Operational safety: Production report scheduler remains OFF; Local Windows task
 `StratForge Vitek` remains ON. Do not complete Telegram/report ownership cutover
@@ -66,8 +70,10 @@ Those beta.97 build and promotion gates completed, but final Production
 acceptance did not: the reload incident and multi-user Telegram architecture gap
 keep **STAGE NOT CLOSED**. The completed beta.98 gates are PR merge,
 merged-main CI, signed artifact, Canary deployment, restart and owner cold-start.
-The remaining gates are real separate Professional cold-start acceptance and a
-new artifact-specific Production approval.
+The next required application action is a new source/version cycle for issue
+#298; real separate Professional cold-start and artifact-specific Production
+approval remain blocked behind it. Do not seed the missing workspace/entitlement
+manually or mutate the beta.98 artifact.
 
 Checkpoint `f455043f`, draft PR #294: full Local regression **6087 passed / 134
 skipped / 0 failed** in 1:07:38. The exact 650-file pre-release bundle, context

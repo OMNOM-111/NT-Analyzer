@@ -1,7 +1,7 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-09-27T21:30:00Z
+- Last verified UTC: 2026-09-27T22:12:09Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Current deployed artifact Git SHA: `4f6bb0b3a0d20712f249afdc9c93538567fd6a8d`
 - Scope: Environment isolation, immutable release, promotion and rollback
@@ -81,9 +81,11 @@ or browser storage between origins.
 ## Current environments: beta.98 Canary / beta.97 Production
 
 Canary now points to the signed beta.98 hotfix artifact. Identity/readiness,
-restart persistence and owner offline cold-start passed; a real separate
-Professional session/cookie cold-start remains required before Canary acceptance.
-Production remains on beta.97 and has no beta.98 approval.
+restart persistence and owner offline cold-start passed. Real separate
+Professional registration failed before cold-start: issue #298 shows Canary
+subscription storage falling through to Windows DPAPI, leaving a pending
+non-owner account without workspace, entitlement or session. Canary acceptance
+is BLOCKED. Production remains on beta.97 and has no beta.98 approval.
 
 | Field | beta.98 Canary |
 | --- | --- |
@@ -94,7 +96,7 @@ Production remains on beta.97 and has no beta.98 approval.
 | Manifest SHA256 | `F0E48884C3933E487349C8AB3673989FC5FEF180B85B72F7A507EE7EAA312D43` |
 | Release dir | server data-root relative `releases/0.10.0-beta.98-0b9233d7c898` |
 | Backup | server data-root relative `backups/pre-beta98-canary-peer-20260927T210222Z` |
-| Stage | Canary deployed; Professional acceptance pending; Production not authorized |
+| Stage | Canary deployed; Professional acceptance BLOCKED by issue #298; Production not authorized |
 
 Production beta.97 identity remains:
 
