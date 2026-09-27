@@ -38,9 +38,10 @@ runtime, database, artifact or environment.
    manifest/runtime SHA256
    `F0E48884C3933E487349C8AB3673989FC5FEF180B85B72F7A507EE7EAA312D43`.
    It is deployed to Canary. Identity/readiness, restart persistence and owner
-   offline cold-start are PASS; real separate Professional cold-start acceptance
-   remains pending. Production remains beta.97 and no beta.98 Production approval
-   has been requested.
+   offline cold-start are PASS. Real separate Professional registration then
+   failed before cold-start because Canary entitlement persistence selected
+   Windows DPAPI; issue #298 blocks Canary acceptance. Production remains
+   beta.97 and no beta.98 Production approval has been requested.
 
 ## Telegram/reporting facts carried by beta.97
 
@@ -78,3 +79,13 @@ acceptance and Production promotion.
 This record is intentionally not part of the already signed beta.98 archive.
 It records operational evidence without rebuilding or mutating
 `art_b05720a1f2d44672805b45b513f0203e`.
+
+## Acceptance blocker discovered after this reconciliation
+
+The real Google user was written as a distinct active non-owner Professional
+with `initial_trial_pending=true`, but the Canary trial write failed, leaving
+zero personal workspaces, zero entitlements and no authenticated session.
+`subscriptions.py` uses a literal Production-only storage condition and falls
+through to Windows DPAPI on Linux Canary. The partial account is preserved for
+recovery or verified cleanup; Production data is unchanged. This is issue #298
+and requires a new version/artifact if fixed in application code.
