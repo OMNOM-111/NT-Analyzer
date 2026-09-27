@@ -1,7 +1,7 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-09-27T17:45:58Z
+- Last verified UTC: 2026-09-27T21:30:00Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Current deployed artifact Git SHA: `4f6bb0b3a0d20712f249afdc9c93538567fd6a8d`
 - Scope: Environment isolation, immutable release, promotion and rollback
@@ -12,8 +12,9 @@ Production incident 2026-09-27: beta.97 was promoted as immutable artifact
 confirmed authenticated overview full-page reload loop when runtime accounts are
 already offline/unconfirmed. beta.92 contains the same trigger and is not a
 reliable rollback for this state. The minimal code correction is a new beta.98
-cycle; no server hotfix or artifact mutation is allowed. Production reports stay
-OFF and Local `StratForge Vitek` stays ON. See the
+cycle; no server hotfix or artifact mutation is allowed. beta.98 is now deployed
+to Canary from its own final main SHA and signed artifact. Production reports
+stay OFF and Local `StratForge Vitek` stays ON. See the
 [incident record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md).
 
 Historical pre-deployment contract (2026-09-26): beta.97 consolidates periodic owner reports under
@@ -77,13 +78,25 @@ summary, source SHA and final verification PASS are present.
 The Environment Switcher opens the selected origin and never carries session
 or browser storage between origins.
 
-## Current Canary and Production: beta.97 (closeout blocked)
+## Current environments: beta.98 Canary / beta.97 Production
 
-Canary and Production point to the same signed beta.97 artifact. Readiness and
-identity passed promotion checks, but application acceptance is not PASS because
-the live authenticated overview reload loop was reproduced after owner login and
-device confirmation. Promotion identity is preserved for incident response; the
-next application change starts the beta.98 immutable cycle.
+Canary now points to the signed beta.98 hotfix artifact. Identity/readiness,
+restart persistence and owner offline cold-start passed; a real separate
+Professional session/cookie cold-start remains required before Canary acceptance.
+Production remains on beta.97 and has no beta.98 approval.
+
+| Field | beta.98 Canary |
+| --- | --- |
+| Version / source SHA | `0.10.0-beta.98` / `0b9233d7c8983adc0a3a6c37350a3974770cb738` |
+| Candidate / artifact | `rc_8b8b51c156f844ce9829edeceb70e484` / `art_b05720a1f2d44672805b45b513f0203e` |
+| Build ID | `sf-0.10.0-beta.98-0b9233d7c898-20260927T210136Z` |
+| Archive SHA256 | `FEC858A913F5B90455ED34E10071204859D2CB2CC64EC1E0BC8024FD50CB5029` |
+| Manifest SHA256 | `F0E48884C3933E487349C8AB3673989FC5FEF180B85B72F7A507EE7EAA312D43` |
+| Release dir | server data-root relative `releases/0.10.0-beta.98-0b9233d7c898` |
+| Backup | server data-root relative `backups/pre-beta98-canary-peer-20260927T210222Z` |
+| Stage | Canary deployed; Professional acceptance pending; Production not authorized |
+
+Production beta.97 identity remains:
 
 | Field | Value |
 | --- | --- |

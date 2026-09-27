@@ -1,33 +1,45 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-27T17:45:58Z
+- Last verified UTC: 2026-09-27T21:30:00Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Scope: Production beta.97 reload incident, beta.98 hotfix and multi-user Telegram blocker
 - Status: PARTIAL
 - Current Production version/build/artifact when known: `0.10.0-beta.97` / `sf-0.10.0-beta.97-4f6bb0b3a0d2-20260927T060203Z` / `art_8fec9cdd6ed14dd19cb762291a2a756f`; runtime artifact SHA256 `B5FC667474ED38CD5AA3600F22E4DD97495958DCC906BCEAD1CA80CF2838F9D2`
 
-Urgent incident: **PRODUCTION CLOSEOUT BLOCKED**. Live CDP proved a genuine
+Current release line: beta.96 is the original Local feature package; beta.97 is
+its first server release after a new main/CI/artifact cycle; beta.98 is the
+separate reload-loop hotfix. Do not rename or collapse these versions. The
+[chronology record](../changelog/2026-09-27-beta96-beta98-timeline-reconciliation.md)
+contains exact identities and owner approvals.
+
+Urgent incident: **PRODUCTION CLOSEOUT BLOCKED; BETA.98 CANARY ACCEPTANCE IN
+PROGRESS**. Live CDP proved a genuine
 script-initiated full-page reload, not an auth/device/redirect/polling/exception
 loop. `ui.js` emitted `nt-account-change(detail:null)` on every cold offline
 account read; the overview listener called `location.reload()`. Blast radius is
 owner and ordinary Professional overview sessions with graded
 `confirmed_live=false`. beta.92 has the same latent trigger, so rollback was not
-used. The beta.98 candidate makes the null event transition-only and has targeted
-regression PASS. It must follow PR → main CI → new artifact → Canary → separate
-Production approval. [Incident record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md).
+used. beta.98 makes the null event transition-only. PR #295 merged as
+`0b9233d7c8983adc0a3a6c37350a3974770cb738`; final-main CI `36346357025` PASS;
+signed artifact `art_b05720a1f2d44672805b45b513f0203e` is deployed on Canary.
+Identity/readiness, restart and owner offline cold-start PASS. A real separate
+Professional session/cookie cold-start is the remaining Canary gate; Production
+has not been approved. [Incident record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md).
 
 Operational safety: Production report scheduler remains OFF; Local Windows task
 `StratForge Vitek` remains ON. Do not complete Telegram/report ownership cutover
 until the new Production artifact is accepted.
 
-Multi-user Telegram acceptance: **EXTERNAL BLOCKED**. One shared bot token is
+Multi-user Telegram acceptance: **EXTERNAL BLOCKED / issue #296**. One shared bot token is
 already used, and browser SF Chat/agent work is scoped, durable and deduplicated.
 However ordinary users do not get their own Telegram topic or mirror, and a
 single shared Telegram forum cannot hide other members' topic history. Foreign
 scoped inbound is rejected before model invocation, but the refusal has no
-own-chat/pairing CTA and legacy unscoped topics need fail-closed migration. Do
-not add a real second user to the owner forum. The next implementation must bind
+own-chat/pairing CTA and legacy unscoped topics need fail-closed migration. A
+real second Google Professional user reproduced registration/linking → Open
+Telegram → Start with no expected confirmation/linking step. Do not add that
+user to the owner forum. The next implementation must bind
 user + workspace + conversation + private chat/container + thread and verify the
 sender before routing.
 
@@ -52,9 +64,10 @@ registries were deleted. Canonical details:
 
 Those beta.97 build and promotion gates completed, but final Production
 acceptance did not: the reload incident and multi-user Telegram architecture gap
-keep **STAGE NOT CLOSED**. The active release gates are now the beta.98 PR,
-merged-main CI, new signed artifact, Canary stability acceptance and a new
-artifact-specific Production approval.
+keep **STAGE NOT CLOSED**. The completed beta.98 gates are PR merge,
+merged-main CI, signed artifact, Canary deployment, restart and owner cold-start.
+The remaining gates are real separate Professional cold-start acceptance and a
+new artifact-specific Production approval.
 
 Checkpoint `f455043f`, draft PR #294: full Local regression **6087 passed / 134
 skipped / 0 failed** in 1:07:38. The exact 650-file pre-release bundle, context
@@ -69,10 +82,10 @@ Scoped Local work completed: **BETA** — [Preview parity/account lifecycle](../
 - Historical protected Local program snapshot: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 was active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. New unified-source evidence is separate below; full-program/owner acceptance remains open.
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Protected Local branch snapshot: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; the active final branch is identified below, while #285 is an accepted integration input
-- Version: `0.10.0-beta.96`, `pre_release`; verified implementation `56945ac6` on Local 8765, no Canary/Production promotion
+- Historical Local origin: `0.10.0-beta.96`, source `56945ac6` on Local 8765. It was not itself promoted; beta.97 was the later server release of the evolving package and beta.98 is the subsequent hotfix.
 - Integration state: scoped model/domain/Chat/NT/Desktop, real fact handoff, manual discussion, separate application observations, Consensus and Court verified; owner-dependent and full-program work remain
-- Current Production version/build/artifact when known: last recorded beta.92, build `sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z`, artifact `art_57db4318cb8745d399d98bccf48de396`; accepted Canary and Production live on 2026-09-02. This supersedes the beta.87 snapshot; current public live identity was not re-verified during the 2026-09-24 timeline audit. See [timeline audit](../changelog/2026-09-24-timeline-source-audit.md).
-- The root [`timeline.html`](../../../timeline.html) is the owner-facing next-day handoff. Keep current post-beta.92 Local work in one open card with seven separate tasks: only registration has explicit owner approval (2026-09-24); Agent World needs owner visual/chat review, and other approvals are not recorded. Do not advance the batch on test PASS alone. Read the [decision record](../changelog/2026-09-24-timeline-owner-approval-workflow.md) and [mandatory workflow](../TIMELINE_MAINTENANCE.md) at session start; this handoff does not claim server promotion.
+- Historical 2026-09-24 snapshot: Production was then beta.92. Current Production is beta.97 and Canary is beta.98 as recorded at the top; the earlier snapshot is retained only as history. See [timeline audit](../changelog/2026-09-24-timeline-source-audit.md).
+- The root [`timeline.html`](../../../timeline.html) is the owner-facing handoff. Read it, the [mandatory workflow](../TIMELINE_MAINTENANCE.md) and this current handoff before development, merge or release. Update the same open card until closeout; after Production publication, application-code change starts the next version/card. A version must have source/commit plus Development/CI evidence before artifact/Canary/Production.
 - 2026-09-25 prepublication Local QA: 430 focused tests PASS; live owner MES/MNQ 12-26 and disposable Preview MBT 09-26 charts painted TopstepX/WS; checked Social/Chat/Agent World screens opened without console errors; 646-file bundle 4/4 PASS. With owner authorization, Preview registration, terms and first-device trust completed; a fresh Preview user received an SF Chat AI reply via an owner-shared model. A separate real Development user sent a private message to the owner; the owner saw it and sent a reply; the disposable user and conversation were self-deleted. The receiving side of that reply was not separately checked. A stale Preview bridge expires after 1800 seconds and breaks Social/Chat reads until a fresh launch. Permanent Social comment was blocked by automated action review, so no public write is claimed. Agent World still has the partial items in its master status, and the UI's chart task example says `MNQ 09-26` while the active chart is `MNQ 12-26`. The timeline shows a separate ✓ for checked internals and retains the overall ! and owner-approval gate. [Exact QA record](../changelog/2026-09-25-prepublication-local-qa.md).
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
