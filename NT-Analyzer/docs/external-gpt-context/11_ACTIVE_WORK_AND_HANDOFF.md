@@ -3,7 +3,7 @@
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-27T22:12:09Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Scope: Production beta.97 reload incident, beta.98 hotfix and multi-user Telegram blocker
+- Scope: beta.97 Production baseline, beta.98 blocked Canary acceptance, beta.99 entitlement-storage correction and multi-user Telegram blocker
 - Status: PARTIAL
 - Current Production version/build/artifact when known: `0.10.0-beta.97` / `sf-0.10.0-beta.97-4f6bb0b3a0d2-20260927T060203Z` / `art_8fec9cdd6ed14dd19cb762291a2a756f`; runtime artifact SHA256 `B5FC667474ED38CD5AA3600F22E4DD97495958DCC906BCEAD1CA80CF2838F9D2`
 
@@ -74,6 +74,13 @@ The next required application action is a new source/version cycle for issue
 #298; real separate Professional cold-start and artifact-specific Production
 approval remain blocked behind it. Do not seed the missing workspace/entitlement
 manually or mutate the beta.98 artifact.
+
+beta.99 Development implements only that required storage boundary correction:
+subscription document read/reference/write, status and audit delegate to the
+existing authoritative server predicate used by account/workspace storage.
+Development DPAPI remains unchanged and fail-closed. Focused tests are 7 PASS;
+task commit, PR CI, merge, final-main CI, immutable artifact and Canary rerun are
+still required. [beta.99 record](../changelog/2026-09-27-beta99-canary-entitlement-storage-routing.md).
 
 Checkpoint `f455043f`, draft PR #294: full Local regression **6087 passed / 134
 skipped / 0 failed** in 1:07:38. The exact 650-file pre-release bundle, context

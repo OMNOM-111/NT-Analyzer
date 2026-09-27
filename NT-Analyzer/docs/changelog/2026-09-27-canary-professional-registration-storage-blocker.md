@@ -47,6 +47,8 @@ cold-start acceptance cannot begin without a personal workspace and session.
 Canary result is not PASS. No manual server hotfix, test exception, direct data
 seeding or artifact mutation was used. Issue #298 tracks the correction. Any
 application-code fix starts the next source commit/version, mandatory CI, signed
-immutable artifact and full Canary acceptance. The pending account row remains
-recoverable until the fixed outbox completes or a separately confirmed normal
-account-delete cleanup is available.
+immutable artifact and full Canary acceptance. beta.99 Development now contains
+the narrowly scoped routing correction and regression tests; merge and every
+release gate remain open. The pending account row remains recoverable until the
+fixed outbox completes or a separately confirmed normal account-delete cleanup
+is available.

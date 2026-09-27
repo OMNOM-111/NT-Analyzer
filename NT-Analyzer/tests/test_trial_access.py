@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -42,6 +43,67 @@ def _seed_accounts() -> tuple[str, str]:
         "auth_identities": [], "challenges": [], "sessions": [],
     })
     return owner_uuid, user_uuid
+
+
+def test_canary_entitlements_use_authoritative_server_storage(monkeypatch, tmp_path) -> None:
+    from app import storage_router
+
+    server_doc = subscriptions._default_doc()
+    server_doc["entitlements"] = [{
+        "entitlement_id": "ent_canary_route_01",
+        "user_id": 42,
+        "plan_id": "trial",
+        "status": "active",
+    }]
+    writes = []
+    audits = []
+    status = {"available": True, "backend": "postgresql", "environment": "canary"}
+
+    monkeypatch.setattr(storage_router, "production_enabled", lambda: True)
+    monkeypatch.setattr(
+        storage_router, "read_document",
+        lambda name, default: deepcopy(server_doc) if name == "entitlements" else deepcopy(default),
+    )
+    monkeypatch.setattr(
+        storage_router, "write_document",
+        lambda name, doc: writes.append((name, deepcopy(doc))),
+    )
+    monkeypatch.setattr(storage_router, "storage_status", lambda: dict(status))
+    monkeypatch.setattr(
+        storage_router, "append_audit",
+        lambda source, event, values: audits.append((source, event, deepcopy(values))),
+    )
+    monkeypatch.setattr(subscriptions, "_root", lambda: tmp_path)
+    monkeypatch.setattr(secure_store, "available", lambda: False)
+    subscriptions._clear_doc_cache()
+
+    assert subscriptions._read_doc()["entitlements"][0]["entitlement_id"] == "ent_canary_route_01"
+    assert subscriptions._read_doc_reference()["entitlements"][0]["user_id"] == 42
+    subscriptions._write_doc(server_doc)
+    assert writes and writes[-1][0] == "entitlements"
+    assert subscriptions.storage_status() == status
+    subscriptions._audit("canary_route_verified", user_id=42)
+    assert audits == [("subscription_entitlements", "canary_route_verified", {"user_id": 42})]
+    assert not subscriptions._store_path().exists()
+    assert not subscriptions._audit_path().exists()
+
+
+def test_development_entitlements_keep_dpapi_fail_closed(monkeypatch, tmp_path) -> None:
+    from app import storage_router
+
+    routed = []
+    monkeypatch.setattr(storage_router, "production_enabled", lambda: False)
+    monkeypatch.setattr(
+        storage_router, "write_document",
+        lambda *args, **kwargs: routed.append((args, kwargs)),
+    )
+    monkeypatch.setattr(subscriptions, "_root", lambda: tmp_path)
+    monkeypatch.setattr(secure_store, "available", lambda: False)
+    subscriptions._clear_doc_cache()
+
+    with pytest.raises(subscriptions.SubscriptionError, match="Windows DPAPI недоступен"):
+        subscriptions._write_doc(subscriptions._default_doc())
+    assert routed == []
 
 
 def test_initial_trial_is_full_seven_days_and_never_restarts(trial_store) -> None:

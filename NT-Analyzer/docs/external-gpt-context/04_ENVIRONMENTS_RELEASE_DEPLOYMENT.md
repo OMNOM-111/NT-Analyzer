@@ -109,6 +109,15 @@ Production beta.97 identity remains:
 | Manifest SHA256 | `B5FC667474ED38CD5AA3600F22E4DD97495958DCC906BCEAD1CA80CF2838F9D2` |
 | Previous / rollback | beta.92 / `0.10.0-beta.92-9d800770d08e` (preserved; same latent reload trigger) |
 
+## beta.99 Development only
+
+Issue #298 has a narrow Development correction: subscriptions now use the same
+authoritative server-storage predicate as accounts/workspaces for explicit
+Canary and Production, while Development retains DPAPI and its fail-closed
+behavior. Focused regression is 7 PASS. There is no beta.99 artifact, Canary
+deploy or Production approval; beta.98 and beta.97 runtime identities above are
+unchanged.
+
 Sources: [beta.98 incident record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md),
 [beta.97 candidate record](../changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md).
 
