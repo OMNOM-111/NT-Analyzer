@@ -33,6 +33,12 @@ artifact; same-artifact Production promotion and post-release duplicate/isolatio
 checks. **IMPLEMENTATION COMPLETE pending verification; GIT CLOSEOUT IN PROGRESS;
 STAGE NOT CLOSED.**
 
+Checkpoint `f455043f`, draft PR #294: full Local regression **6087 passed / 134
+skipped / 0 failed** in 1:07:38. The exact 650-file pre-release bundle, context
+validator, timeline JavaScript syntax and diff checks PASS. Static, bridge and
+Ubuntu PR checks PASS; Windows and full `python-tests` remain pending at this
+checkpoint. Merge and environment release gates are unchanged.
+
 Scoped Local work completed: **BETA** — [Preview parity/account lifecycle](../changelog/2026-09-23-preview-parity-account-lifecycle.md). Historical DEMO acceptance is superseded by the current live-mirror contract below. Ordinary registration permissions; public surfaces shared, private data isolated. Fresh Preview/owner browser walkthrough, deletion/reset/exit receipts and full regression PASS. Test containers removed; owner access snapshot unchanged. Owner review and remote CI remain separate. No server/Canary/Production work authorized.
 - Local source verified SHA: 56945ac68e94cb7ffa031ef2312dec5a9ad80a54 (canonical live mirror; 6080 passed / 134 skipped across 293 files after complete affected-module reruns; full Preview/owner walkthrough plus final chart-lifetime follow-up; browser-tool interruption/recovery documented in the canonical receipt)
 - Local verification UTC: 2026-09-24T04:08:00Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification

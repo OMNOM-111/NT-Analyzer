@@ -2,7 +2,7 @@
 
 Release summary: Периодические отчёты владельцу формирует один контроллер Заместителя; SF Chat и Telegram используют одну scoped-беседу, а общий бот имеет ровно одну операционную среду без дублей и повторных model calls.
 
-Release PRs: pending
+Release PRs: #294
 Affected subsystems: AI Center Vitek Deputy SF Chat SF Social Telegram runtime isolation periodic reports
 Release impact: Release candidate; merge, final-main-SHA CI, signed artifact, Canary acceptance and separate Production approval remain required.
 
@@ -71,11 +71,18 @@ SF Social остаётся discovery/publication surface и не получае�
 ## Проверки кандидата
 
 - До изменения: 306 связанных тестов PASS.
-- После изменения: 313 связанных тестов PASS; отдельный новый policy/report
-  набор 8 PASS после корректировки fixture.
-- Полная регрессия, `pre_release_check`, context validator, CI итогового merge SHA,
-  signed artifact и Canary acceptance ещё не завершены и будут дописаны сюда по
-  факту. HTTP 200 или конфигурация сами по себе не считаются приемкой Telegram.
+- После изменения: 530 связанных тестов PASS; исправленный release-date contract
+  1 PASS. Полная локальная регрессия на `f455043f`: **6087 PASS / 134 skipped /
+  0 failed** за 1:07:38.
+- `python tools/pre_release_check.py`: PASS для 650-файлового production bundle
+  (static scan внутри bundle, runtime reads, Python compile, shipped JavaScript).
+  `python tools/validate_external_gpt_context.py`, embedded timeline JavaScript
+  syntax и `git diff --check`: PASS.
+- PR #294: Static gates, bridge build и Ubuntu CI PASS; Windows и полный
+  `python-tests` были ещё активны на момент этого checkpoint. CI итогового merge
+  SHA, signed artifact и Canary acceptance выполняются только после отдельного
+  решения владельца о merge. HTTP 200 или конфигурация сами по себе не считаются
+  приемкой Telegram.
 - Реальный короткий exchange выполняется только в обозначенном owner test dialog:
   один outbound, один ручной ответ владельца, один ответ системы. Массовая
   рассылка запрещена.
