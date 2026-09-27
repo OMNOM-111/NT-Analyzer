@@ -65,6 +65,7 @@ _ENV_KEYS = (
     "STRATFORGE_QUEUE_ID",
     "STRATFORGE_OBJECT_STORAGE_ID",
     "STRATFORGE_TELEGRAM_BOT_ID",
+    "STRATFORGE_TELEGRAM_OWNER_ENVIRONMENT",
     "STRATFORGE_COOKIE_NAMESPACE",
     "STRATFORGE_SIGNING_KEY_ID",
     "STRATFORGE_LOG_NAMESPACE",
@@ -204,6 +205,28 @@ def test_legacy_staging_is_a_development_compatibility_profile(
     assert config.environment == "development"
     assert runtime_env.is_staging() is True
     assert runtime_env.impersonation_enabled() is True
+
+
+def test_operational_telegram_has_exactly_one_environment_owner(tmp_path, monkeypatch) -> None:
+    _production_config(monkeypatch, tmp_path)
+    assert runtime_env.telegram_owner_environment() == runtime_env.PRODUCTION
+    assert runtime_env.telegram_operational_delivery_active() is True
+
+    _canary_config(monkeypatch, tmp_path)
+    assert runtime_env.telegram_operational_delivery_active() is False
+    monkeypatch.setenv("STRATFORGE_TELEGRAM_OWNER_ENVIRONMENT", "canary")
+    assert runtime_env.telegram_operational_delivery_active() is True
+
+    monkeypatch.setenv("DEPLOYMENT_ENV", "development")
+    monkeypatch.setenv("STRATFORGE_TELEGRAM_OWNER_ENVIRONMENT", "development")
+    monkeypatch.delenv("NTA_STAGING_ALLOW_OWNER_TELEGRAM", raising=False)
+    assert runtime_env.telegram_operational_delivery_active() is False
+    monkeypatch.setenv("NTA_STAGING_ALLOW_OWNER_TELEGRAM", "1")
+    assert runtime_env.telegram_operational_delivery_active() is True
+
+    monkeypatch.setenv("STRATFORGE_TELEGRAM_OWNER_ENVIRONMENT", "invalid")
+    assert runtime_env.telegram_owner_environment() == runtime_env.PRODUCTION
+    assert runtime_env.telegram_operational_delivery_active() is False
 
 
 def test_environment_aliases_may_agree_but_may_not_conflict(

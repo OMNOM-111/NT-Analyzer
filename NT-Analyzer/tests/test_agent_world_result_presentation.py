@@ -16,6 +16,12 @@ def chat_render(row):
     # added orchAgentWorldTaskId/Views/Card just above orchAgentWorldReportUrl,
     # and the message renderer calls them, so the window starts there now.
     helpers = "function orchAgentWorldTaskId(" + source.split("function orchAgentWorldTaskId(", 1)[1].split("function orchChainHtml(", 1)[0]
+    # Message headers now use the same kind classifier as footers. Include the
+    # shipped helper and labels in this extracted render-only execution port.
+    kind = ("const ORCH_KIND_LABELS =" + source.split("const ORCH_KIND_LABELS =", 1)[1]
+            .split("const ORCH_FULFILL_LABELS =", 1)[0]
+            + "function orchInferKind(" + source.split("function orchInferKind(", 1)[1]
+            .split("function orchFulfillmentOf(", 1)[0])
     message = "function orchMessageHtml(" + source.split("function orchMessageHtml(", 1)[1].split("function orchStopFeedbackVoice(", 1)[0]
     script = ("const esc=require(" + json.dumps(str(SCRIPT)) + ").esc;"
         "const ORCH_ACTION_LABELS={}, ORCH_ACTION_STATES={completed:['','done']},ORCH={};"
@@ -24,7 +30,7 @@ def chat_render(row):
         "const window={addEventListener(){}},document={addEventListener(){}},AGENT_AVATAR_IDS={};"
         "const agentSpeakStop=()=>{throw Error('render-only test must not execute speech')};"
         "const orchFmtTime=()=>'',orchFooterHtml=()=>'',agentAvatarHtml=()=>'',orchAwaitHtml=()=>'';"
-        + helpers + message + "const row=" + json.dumps(row) + ";"
+        + kind + helpers + message + "const row=" + json.dumps(row) + ";"
         "const before=JSON.stringify(row); const html=orchMessageHtml(row);"
         "process.stdout.write(JSON.stringify({html,url:orchAgentWorldReportUrl(row),unchanged:before===JSON.stringify(row)}));")
     result = subprocess.run(["node", "-e", script], cwd=ROOT, check=True, capture_output=True,

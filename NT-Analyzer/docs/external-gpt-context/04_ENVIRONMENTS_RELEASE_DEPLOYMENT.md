@@ -1,11 +1,34 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-08-30T02:05:00Z
+- Last verified UTC: 2026-09-27T00:09:21Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Verified deployed artifact Git SHA: `b923e7b2b4e034c4f890e89b33992d469c84b779`
+- Current deployed artifact Git SHA: `9d800770d08e0072ec453c2611e98726e295b2e4` (live endpoints re-verified 2026-09-26)
 - Scope: Environment isolation, immutable release, promotion and rollback
-- Status: DONE
+- Status: PARTIAL
+
+Release candidate 2026-09-26: beta.97 consolidates periodic owner reports under
+the Vitek/Deputy controller and makes Production the sole default operational
+owner of the shared Telegram bot. Development and Canary remain passive for
+topic creation, update consumption, chat mirroring and reports while retaining
+login/access callbacks. No server switch or data mutation has occurred. The
+required sequence remains merge → final-main-SHA CI → one signed immutable
+artifact → Canary acceptance → separate owner approval → same artifact in
+Production. [Candidate record](../changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md).
+
+Development supervisor origin correction (2026-09-23): default identity is the actual `http://127.0.0.1:<port>` listener, never the Production hub hostname. An explicitly configured Development HTTPS origin is supported. This prevents false gateway self-loop isolation while preserving true self-loop rejection. [Incident and verification](../changelog/2026-09-23-local-chart-gateway.md). No server release is included.
+
+Local-only Preview change (2026-09-22): the two shared-model QA profiles may call
+one authenticated parent loopback service for catalog/invoke only. Other outbound
+connections remain blocked. The bridge expires after 30 minutes and allows at
+most 32 calls / USD 0.25 while preserving the model's own caps. Exit removes the
+child's data/process/container; minimal owner usage accounting remains. No
+Canary/Production deployment or release identity changed.
+Local 8765 now runs clean `c9a9d7e6a3080988af1c90ff65f2520b0e74cc70`, build
+`dev-0.10.0-beta.96-c9a9d7e6a308`, Development, Preview=false. The owner Preview
+launch endpoint passed real-provider acceptance and cleanup; owner access settings
+matched the before snapshot exactly. This is a Local code switch, not a release artifact.
+[Canonical evidence](../changelog/2026-09-22-shared-models-local-continuation.md).
 
 ## Only supported release model
 
@@ -44,7 +67,27 @@ summary, source SHA and final verification PASS are present.
 The Environment Switcher opens the selected origin and never carries session
 or browser storage between origins.
 
-## Current Production: beta.86
+## Last recorded Canary and Production: beta.92
+
+The Release Center audit recorded one signed artifact accepted on Canary at
+`2026-09-02T03:54:35Z` and promoted to Production (`production_live`) at
+`2026-09-02T03:57:03Z`. The Connector closeout independently names the
+Production server build. Direct `/live` and `/ready` rechecks on 2026-09-26
+confirmed the same version, source, build and runtime artifact SHA on Canary and
+Production. This does not constitute acceptance of the beta.97 candidate.
+
+| Field | Value |
+| --- | --- |
+| Version / source SHA | `0.10.0-beta.92` / `9d800770d08e0072ec453c2611e98726e295b2e4` |
+| Candidate / artifact | `rc_8e0373a36ebf4bd09c7a5872cb770664` / `art_57db4318cb8745d399d98bccf48de396` |
+| Build ID | `sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z` |
+| Archive SHA256 | `FAD094C243B8EDE0B365BE9874466FA9C53C414CB0C9588D4EF4DC0CE62FF315` |
+| Manifest SHA256 | `07A3961277E3879357EE92A8471911FAFA4B57E1B3BF2D046E1BCA41D27A9169` |
+
+Sources: [Connector Production closeout](../changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md),
+[timeline audit](../changelog/2026-09-24-timeline-source-audit.md).
+
+### Historical beta.86 snapshot
 
 | Field | Value |
 | --- | --- |

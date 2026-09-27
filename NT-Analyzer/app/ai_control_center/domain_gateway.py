@@ -28,6 +28,9 @@ DOMAINS = frozenset({"personas", "memory", "projects", "routines", "calendar", "
 
 
 def access(scope, *, read_only=False):
+    if preview_sandbox.enabled():
+        from ..preview_shared_models import authorize
+        return authorize(scope, read_only=read_only)
     if not isinstance(scope, dict) or not live_gateway.configured(str(scope.get("workspace_id") or "")):
         raise ContractError("agent_world_local_disabled")
     try:
@@ -120,6 +123,10 @@ def domain_admission(authorized, domain, action="read"):
 
 def repository(authorized):
     authorized["admit"]()
+    if authorized.get("preview_bridge"):
+        from .sqlite_repository import SQLiteAgentWorldRepository
+        return SQLiteAgentWorldRepository(preview_sandbox.isolated_root() / "agent-world.sqlite3",
+                                          read_only=authorized.get("read_only", False))
     backend = os.environ.get("STRATFORGE_AGENT_WORLD_STORAGE", "sqlite").strip().lower()
     if backend == "postgres":
         from ..production_storage.core import PostgresClient
@@ -147,7 +154,10 @@ def _model_admit(authorized, context, operation, estimate):
     if authorized.get("read_only"):
         raise ContractError("model_history_read_only")
     current = refresh_authority(authorized, read_only=False)
-    if not current["chat_scope"]["capabilities"].get("ai_pro_models"):
+    # Calling a connection somebody else shares needs AI access, not the right
+    # to connect models of one's own; the share and the budget still apply.
+    required = "ai_lab" if str(operation).startswith("shared_") else "ai_pro_models"
+    if not current["chat_scope"]["capabilities"].get(required):
         raise ContractError("model_capability_required")
     if not ai_budgets.check_budget(context.scope.workspace_id, estimate).get("ok"):
         raise ContractError("model_budget_exhausted")
@@ -189,6 +199,8 @@ def enqueue_model(authorized, *, context, task_id):
     authorized["admit"]()
     if context != authorized["context"]:
         raise ContractError("model_context_required")
+    if authorized.get("preview_bridge"):
+        return {"status": "bounded_preview_pending"}
     from .. import worker_router
     from . import execution_v2
     service = models(authorized)
@@ -230,6 +242,9 @@ def _executor(authorized, bind):
     nothing else: the same admissions, budget, grant and verifier apply.
     """
     from .model_execution import ModelExecutor
+    if authorized.get("preview_bridge"):
+        from ..preview_shared_models import execute
+        return execute
     from . import test_executor
     if test_executor.enabled(authorized["context"].scope.workspace_id):
         return test_executor.execute
@@ -1108,6 +1123,9 @@ def mutate(authorized, domain, identity, action, body):
         return _mechanism_gateway().mutate(authorized, service, domain, identity, action, payload,
             expected_revision=body.get("expected_revision"), idempotency_key=key)
     if domain == "models":
+        if identity == "new" and action == "bind_catalog" and set(payload) == {"registry_id"}:
+            return service.bind_catalog_model(context=context, registry_id=payload["registry_id"],
+                resolve_binding=lambda ctx, rid: owner_binding(authorized, rid) if ctx == context else None)
         if identity == "new" and action == "connect":
             return service.connect(context=context, payload=payload, idempotency_key=key)
         if identity == "new" and action == "bind_existing":
@@ -1118,6 +1136,8 @@ def mutate(authorized, domain, identity, action, body):
             return model_chat.start(authorized, service, identity, payload, key, test=action == "test")
         if action == "disconnect" and not payload:
             return service.disconnect(context=context, model_id=identity)
+        if action in {"share", "unshare"} and not payload:
+            return service.set_sharing(context=context, model_id=identity, shared=action == "share")
     elif domain in {"model_tasks", "tasks"} and action == "handoff":
         if set(payload) != {"target_model_id"}:
             raise ContractError("invalid_domain_request")

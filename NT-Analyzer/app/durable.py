@@ -37,10 +37,19 @@ def db_path(root: Optional[Path] = None) -> Path:
     return runtime_env.data_path("durable", DEFAULT_DB_NAME, project_root=base)
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """Close transaction-scoped handles deterministically (required on Windows)."""
+    def __exit__(self, *args):
+        try:
+            return super().__exit__(*args)
+        finally:
+            self.close()
+
+
 def connect(root: Optional[Path] = None) -> sqlite3.Connection:
     path = db_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), timeout=5.0)
+    conn = sqlite3.connect(str(path), timeout=5.0, factory=_ClosingConnection)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")

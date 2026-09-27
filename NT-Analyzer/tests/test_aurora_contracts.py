@@ -614,7 +614,7 @@ def test_sf_chat_preserves_vitek_metadata_without_exposing_internal_model_beside
     assert "!isUser && row.model ? esc(row.model)" not in ui
     assert "SF Chat · люди и AI-помощники" in ui
     assert '<span class="orch-head-name">SF Chat<span class="orch-head-skin"' in ui
-    assert "AI · Виктор и агенты" in ui
+    assert "AI · Заместитель" in ui
     assert "function openSFChat" in ui
     assert "conversation_type === 'human'" in ui
     assert "Ваши чаты и данные сохранены" in ui

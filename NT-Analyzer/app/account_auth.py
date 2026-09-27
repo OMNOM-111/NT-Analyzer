@@ -697,14 +697,24 @@ def _write_doc(doc: Dict[str, Any]) -> None:
         payload = _MAGIC + base64.b64encode(secure_store._protect(plaintext))
     except secure_store.SecureStoreError as exc:
         raise AccountAuthError(str(exc), 503) from None
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = path.with_name(path.name + "." + secrets.token_hex(8) + ".tmp")
     try:
         tmp.write_bytes(payload)
         try:
             os.chmod(tmp, 0o600)
         except OSError:
             pass
-        os.replace(tmp, path)
+        # Windows scanners/readers can briefly hold the destination without
+        # FILE_SHARE_DELETE. Preserve the old encrypted document and retry only
+        # the atomic replacement; never fall back to truncating the live store.
+        for attempt in range(6):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(0.02 * (attempt + 1))
         try:
             os.chmod(path, 0o600)
         except OSError:
@@ -1387,6 +1397,12 @@ def _ensure_registration_trial(user: Dict[str, Any], *, source: str = "") -> Dic
             user_uuid=_user_uuid(snapshot),
             source=str(source or snapshot.get("initial_trial_source") or "verified_registration"),
         )
+        # The registration outbox provisions the user's own container too.
+        # Preview registration uses this exact path, including entitlement
+        # admission; neither registration path attaches private AI work to
+        # the owner's training workspace.
+        from . import workspaces
+        granted["workspace"] = workspaces.ensure_personal_workspace(uid)
     except subscriptions.SubscriptionError as exc:
         raise AccountAuthError(
             f"Аккаунт подтверждён, но trial пока не сохранён: {exc}",
@@ -2038,6 +2054,16 @@ def find_active_user(user_id: Any) -> Optional[Dict[str, Any]]:
         return None
 
 
+def find_active_user_by_uuid(user_uuid: Any) -> Optional[Dict[str, Any]]:
+    """The active account behind a canonical user UUID, as ``find_active_user``."""
+    with _LOCK:
+        user = _user_by_uuid(_read_doc_reference(), user_uuid)
+        if not user:
+            return None
+        uid = user.get("user_id") or user.get("id")
+    return find_active_user(uid)
+
+
 def _require_owner_in_doc(doc: Dict[str, Any], owner_id: Any) -> Dict[str, Any]:
     try:
         uid = int(owner_id or 0)
@@ -2165,6 +2191,8 @@ def set_user_status(owner_id: Any, user_id: Any, status: str) -> Dict[str, Any]:
             raise AccountAuthError("Аккаунт владельца нельзя заблокировать.", 403)
         if not _profile_complete(user) and new_status == "active":
             raise AccountAuthError("Профиль не заполнен — активировать нельзя.", 400)
+        if user.get("deletion_pending") and new_status == "active":
+            raise AccountAuthError("Удаление начато. Завершите очистку аккаунта.", 409, code="account_deletion_pending")
         user["status"] = new_status
         user["updated_at_utc"] = _now_iso()
         if new_status == "blocked":
@@ -2256,6 +2284,13 @@ def delete_user(owner_id: Any, user_id: Any) -> Dict[str, Any]:
     real account again (``identity_already_linked``).
     """
     uid = int(user_id)
+    if runtime_env.is_development():
+        from . import account_lifecycle
+        report = account_footprint(owner_id, uid)  # Existing users.manage authority.
+        account_lifecycle.erase(uid, reason="owner_requested")
+        _audit("user_deleted", owner_id=int(owner_id), user_id=0,
+               extra={"deleted_user_uuid": report["user_uuid"], "deleted_legacy_user_id": uid})
+        return list_users(owner_id)
     from . import workspaces
     # The workspace store is a separate document, so its refusal has to happen
     # before this one is mutated -- otherwise a shared-workspace rejection
@@ -2640,7 +2675,7 @@ def complete_profile(challenge_id: str, profile: Dict[str, Any], *,
         api_call("sendMessage", {"chat_id": int(snapshot["user_id"]), "text": (
             "Профиль заполнен. Полный доступ владельца — вернитесь в приложение."
             if snapshot.get("is_owner")
-            else "Профиль заполнен. Открыт полный пробный доступ на 7 дней — вернитесь в приложение."
+            else "Профиль заполнен. Открыт стартовый пробный доступ — вернитесь в приложение."
         )})
     elif awaiting_owner:
         _send_owner_approval(api_call, owner_chat_id, snapshot, cid)
@@ -2660,7 +2695,7 @@ def _notify_owner_new_user(api_call: Callable[..., Any], owner_chat_id: str,
             "🆕 <b>Новый пользователь StratForge AI</b>\n"
             f"<b>{label}</b> · id <code>{uid}</code> · @{html.escape(str(user.get('username') or '—'))}\n"
             f"E-mail: <code>{html.escape(str(user.get('email') or ''))}</code>\n"
-            "Открыт полный пробный доступ на 7 дней. Продлить период можно в карточке пользователя."
+            "Открыт стартовый пробный доступ. Лимит активного времени можно посмотреть в карточке пользователя."
         ),
         "reply_markup": {"inline_keyboard": [[
             {"text": "⛔ Заблокировать", "callback_data": f"account_revoke:{uid}"},
@@ -3436,7 +3471,7 @@ def process_update(update: Dict[str, Any], *, api_call: Callable[..., Any], owne
             "login_approved": (
                 "Личность подтверждена. Вернитесь в приложение — полный доступ владельца."
                 if snapshot.get("is_owner")
-                else "Личность подтверждена. Вернитесь в приложение — открыт полный пробный доступ на 7 дней."
+                else "Личность подтверждена. Вернитесь в приложение — открыт стартовый пробный доступ."
             ),
             "account_blocked": "Доступ к StratForge AI ограничен владельцем.",
         }
@@ -4345,6 +4380,7 @@ _EMAIL_CODE_ACTIONS = {
     "device_confirm": "подтверждения нового устройства в StratForge",
     "step_up": "подтверждения действия в StratForge",
     "revoke": "отзыва устройства в StratForge",
+    "account_delete": "безвозвратного удаления аккаунта StratForge",
 }
 
 

@@ -64,7 +64,7 @@ const env = {ORCH: state, esc, qs: selector => elements.get(selector) || null, i
 };
 env.window = {API: env.API};
 vm.createContext(env);
-const names = ['orchPersonaOptions', 'orchLoadPersonaModels', 'orchNeedsModelChoice', 'orchRenderPersonaPicker', 'orchLoadPersonas', 'orchPersonaTransport', 'orchPendingPersonaFace', 'orchFailure', 'orchErrorHtml', 'orchSend', 'orchRenderAuthRequired'];
+const names = ['orchPersonaOptions', 'orchLoadPersonaModels', 'orchModelServes', 'orchNeedsModelChoice', 'orchRenderPersonaPicker', 'orchLoadPersonas', 'orchPersonaTransport', 'orchPendingPersonaFace', 'orchFailure', 'orchErrorHtml', 'orchSend', 'orchRenderAuthRequired'];
 names.forEach(name => vm.runInContext(extract(name), env));
 const plain = value => JSON.parse(JSON.stringify(value));
 (async () => {
@@ -138,7 +138,18 @@ const plain = value => JSON.parse(JSON.stringify(value));
     const port = {Error, TextDecoder, mutationRequestId: () => 'request-one', requestHeaders: value => value,
       HttpError: Error, fetch: async (url, options) => {requests.push([url, JSON.parse(options.body)]); let consumed = false; return {ok: true, body: {getReader: () => ({read: async () => consumed ? {done: true} : (consumed = true, {done: false, value: packet})})}};}};
     vm.createContext(port); vm.runInContext(extract('personaChatOptions', apiSource) + '\n' + extract('streamOrchestrator', apiSource), port);
-    if (input.mode === 'invalid') await assert.rejects(port.streamOrchestrator('original', 'chat', '', {}, {persona_id: 'wrong'}), /Persona/);
+    if (input.mode === 'recovery') {
+      let posts = 0, reads = 0;
+      port.HttpError = class HttpError extends Error {};
+      port.fetch = async () => { posts++; throw new TypeError('connection lost after commit'); };
+      port.getJSON = async url => {
+        reads++; assert.match(url, /conversations\/chat\?request_id=request-one$/);
+        return {receipt: {ok:true, reply:'already persisted', message:{message_id:'saved-one'}}};
+      };
+      const result = await port.streamOrchestrator('original', 'chat', '', {onFinal: value => events.push(value)});
+      assert.equal(posts, 1); assert.equal(reads, 1); assert.equal(result.recovered, true);
+      assert.equal(events[0].message.message_id, 'saved-one');
+    } else if (input.mode === 'invalid') await assert.rejects(port.streamOrchestrator('original', 'chat', '', {}, {persona_id: 'wrong'}), /Persona/);
     else {
       const options = input.mode === 'legacy' ? undefined : {persona_id: ID, is_owner: true, api_key: 'not-forwarded'};
       await port.streamOrchestrator('original', 'chat', '', {onFinal: value => events.push(value)}, options);

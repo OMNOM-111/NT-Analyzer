@@ -46,12 +46,12 @@ def test_qa_drawer_offset_tracks_actual_banner_height_and_resets():
 const assert=require('node:assert/strict');
 const helper=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
 let bottom=45, present=true, value;
-const qs=()=>present?{getBoundingClientRect:()=>({bottom})}:null;
+const qsa=selector=>{assert.equal(selector,'#impersonation-banner, #dev-view-as-banner');return present?[{getBoundingClientRect:()=>({bottom})}]:[];};
 const document={body:{style:{setProperty:(key,v)=>{assert.equal(key,'--qa-drawer-top');value=v;}}}};
-const sync=new Function('qs','document',helper);
-sync(qs,document); assert.equal(value,'45px');
-bottom=91.3; sync(qs,document); assert.equal(value,'92px');
-present=false; sync(qs,document); assert.equal(value,'0px');
+const sync=new Function('qsa','document',helper);
+sync(qsa,document); assert.equal(value,'45px');
+bottom=91.3; sync(qsa,document); assert.equal(value,'92px');
+present=false; sync(qsa,document); assert.equal(value,'0px');
 '''
     result = subprocess.run(["node", "-e", script], input=json.dumps(helper), text=True, capture_output=True, timeout=15)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -63,3 +63,11 @@ present=false; sync(qs,document); assert.equal(value,'0px');
     drawer = css.split(".drawer {", 1)[1].split("}", 1)[0]
     assert "top: var(--qa-drawer-top, 0px)" in drawer
     assert "height: calc(100vh - var(--qa-drawer-top, 0px))" in drawer
+
+
+def test_shared_model_revoke_has_a_specific_history_preserving_message():
+    source = (Path(__file__).resolve().parents[1] / "app/static/aurora/assets/pages/ai-command-center.js").read_text(encoding="utf-8")
+    function = source.split("function domainError(error) {", 1)[1].split("\n  }", 1)[0]
+    script = "const fn=new Function('error',JSON.parse(require('fs').readFileSync(0,'utf8'))); for(const code of ['model_share_revoked','model_share_not_found','preview_bridge_shared_only']) { const text=fn({code,status:409}); if(!text.includes('история сохранен')) throw Error(text); }"
+    result = subprocess.run(["node", "-e", script], input=json.dumps(function), text=True, capture_output=True, timeout=15)
+    assert result.returncode == 0, result.stdout + result.stderr

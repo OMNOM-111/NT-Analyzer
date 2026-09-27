@@ -43,6 +43,38 @@ def _api_recorder():
     return calls, api
 
 
+@pytest.mark.parametrize("blocked_attempts", [2, 6])
+def test_account_atomic_write_retries_transient_lock_preserving_old_store(auth_store, monkeypatch, blocked_attempts):
+    doc = {"version": 2, "users": [], "sessions": [], "challenges": []}
+    account_auth._write_doc(doc)
+    path = account_auth._store_path()
+    before = path.read_bytes()
+    original_replace = account_auth.os.replace
+    attempts = []
+
+    def locked_replace(source, destination):
+        attempts.append(source)
+        assert path.read_bytes() == before
+        if len(attempts) <= blocked_attempts:
+            raise PermissionError(13, "temporary sharing violation")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(account_auth.os, "replace", locked_replace)
+    monkeypatch.setattr(account_auth.time, "sleep", lambda _: None)
+    changed = {**doc, "users": [{"user_id": 42, "status": "active", "first_name": "Ada"}]}
+    if blocked_attempts == 6:
+        with pytest.raises(account_auth.AccountAuthError):
+            account_auth._write_doc(changed)
+        assert path.read_bytes() == before
+        assert account_auth._read_doc()["users"] == []
+    else:
+        account_auth._write_doc(changed)
+        account_auth._clear_doc_cache()
+        assert account_auth._read_doc()["users"][0]["first_name"] == "Ada"
+    assert len(attempts) == min(blocked_attempts + 1, 6)
+    assert not list(path.parent.glob(path.name + ".*.tmp"))
+
+
 def test_dpapi_read_cache_is_isolated_and_refreshes_after_write(auth_store, monkeypatch) -> None:
     account_auth._clear_doc_cache()
     account_auth._write_doc({

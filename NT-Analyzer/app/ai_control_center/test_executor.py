@@ -101,7 +101,7 @@ def _answer(prompt: str) -> str:
 
 
 def execute(*, context, model, account, profile, prompt, system_prompt, request_id,
-            conversation_id, max_output_tokens, purpose, cancelled, admit):
+            conversation_id, max_output_tokens, purpose, cancelled, admit, shared=None, acting_agent=None):
     """Answer locally, under the same admissions a provider call would face."""
     if not enabled(context.scope.workspace_id):
         raise ContractError("model_test_executor_disabled")

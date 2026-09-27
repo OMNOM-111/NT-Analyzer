@@ -26,6 +26,7 @@ from .model_evaluation import (APPLICATION_RUBRIC, APPLICATION_SOURCES, RUBRICS,
     application_reputation, digest, evaluate, is_application_observation, json_bytes, prepare, prompts, reputation)
 from . import presentation
 from .connection_protocol import CHAT_PROTOCOL, describe as describe_protocol, validate as validate_protocol
+from . import model_sharing
 from .repositories import PageRequest
 from .states import ContractError, EDITABLE_STATES, EntityKind, INITIAL_STATES
 
@@ -39,6 +40,11 @@ _POLICY = {"version": "private-model-tasks-v1", "synthetic": False, "risk": "low
            "approval": "explicit_user_bounded_text_request", "court_approval": False}
 _SUPPORTED = ("openai", "deepseek", "openrouter", "github_models", "zai", "mistral", "groq", "custom")
 _ACTIVE = frozenset({"planned", "ready", "running", "waiting", "blocked"})
+# A caller's local record of a connection somebody else shares with them. It
+# holds only what the share descriptor shows; the connection stays with its owner.
+SHARED_SOURCE = "shared_model_access"
+_SHARED_RUBRICS = frozenset({"assistant_response", "connection_exact", "json_arithmetic", "extract_facts"})
+_SHARED_PERSONA_NAME = "Общая модель"
 
 
 def _now():
@@ -321,11 +327,15 @@ class ModelService:
 
     def _check_execution_origin(self, context, model, profile, checkpoint):
         validate_protocol(profile)
+        shared = profile.get("source") == SHARED_SOURCE
+        if shared:
+            self._grant(context, model_sharing.get(profile["shared_model_id"]))
         selection = checkpoint.get("persona_selection")
         if selection is not None:
-            persona = self._get(context, EntityKind.PERSONA, profile["persona_id"])
+            bound = checkpoint.get("persona_id") if shared else profile["persona_id"]
+            persona = self._get(context, EntityKind.PERSONA, bound)
             if (persona.status != "active" or c.primitive(persona.ref()) != selection
-                    or checkpoint.get("persona_id", profile["persona_id"]) != profile["persona_id"]):
+                    or checkpoint.get("persona_id", bound) != bound):
                 raise ContractError("persona_selection_changed")
         from . import test_executor
         enabled = test_executor.enabled(context.scope.workspace_id)
@@ -341,6 +351,9 @@ class ModelService:
 
     def model_detail(self, *, context, model_id):
         self._access(context)
+        found = self._shared_target(context, model_id)
+        if found is not None:
+            return self._shared_detail(context, *found)
         model = self._get(context, EntityKind.MODEL, model_id)
         profile = self._json(context, model.profile)
         account = self._get(context, EntityKind.PROVIDER_ACCOUNT, profile["provider_account_id"])
@@ -352,7 +365,12 @@ class ModelService:
         verified_test = bool(active and test_only and last_test.get("passed") is True)
         from . import test_executor
         can_execute_test_only = verified_test and test_executor.enabled(context.scope.workspace_id)
+        share = model_sharing.get(str(model.header.entity_id))
+        shareable = active and profile.get("connection_kind") == "model"
+        shared = bool(share and share["shared"])
         return {"id": str(model.header.entity_id), "title": profile["label"], "label": profile["label"],
+            "ownership": "own", "shared": shared,
+            "can_share": shareable or shared,
             "revision": model.header.revision, "created_at": model.header.created_at.isoformat(),
             "updated_at": model.header.updated_at.isoformat(),
             "status": model.status, "model": model.model_key, "provider": model.provider_key,
@@ -364,8 +382,11 @@ class ModelService:
             "execution_available": connected or can_execute_test_only,
             "connection_verification": "test_executor_only" if test_only else "provider_verified" if connected else "not_verified",
             "credential_source": profile.get("credential_source"),
+            "registry_id": profile.get("existing_registry_id"),
             "credentials_configured": active, "base_url": profile["base_url"], "synthetic": False,
-            "last_test": last_test, "actions": ["test", "task", "disconnect"] if active else [],
+            "last_test": last_test,
+            "actions": (["test", "task", "disconnect"] + (["unshare"] if shared else ["share"] if shareable else [])
+                        if active else ["unshare"] if shared else []),
             "fields": {"model": model.model_key, "provider": model.provider_key,
                        "connection_kind": profile["connection_kind"], "credentials": "configured" if active else "disconnected"}}
 
@@ -384,6 +405,8 @@ class ModelService:
                  for m in self._all(context, EntityKind.MODEL)
                  if self._json(context, m.profile).get("source") == "private_model_connection"]
         return {"enabled": True, "items": items, "actions": ["connect"],
+            "shared": self.shared_models(context=context),
+            "shared_usage": self.shared_usage(context=context),
             "providers": [{"id": p, "label": agent_registry.PROVIDERS[p]["label"]} for p in _SUPPORTED],
             "rubrics": list(RUBRICS), "limitations": ["Поддерживаются текстовые подключения, совместимые с OpenAI; внешние инструменты модели не вызывает.",
                 "Ключи хранятся только в вашем рабочем пространстве; доступность провайдера и бюджет проверяются при каждом вызове."]}
@@ -393,6 +416,8 @@ class ModelService:
         with _LOCK:
             model = self._get(context, EntityKind.MODEL, model_id)
             profile = self._json(context, model.profile)
+            if profile.get("source") != "private_model_connection":
+                raise ContractError("model_share_action_not_allowed")
             account = self._get(context, EntityKind.PROVIDER_ACCOUNT, profile["provider_account_id"])
             if account.status != "retired":
                 self._change(context, account, "retired")
@@ -401,7 +426,189 @@ class ModelService:
             # Authorization was checked before resolving this exact opaque key.
             if profile.get("credential_source") == "user_supplied":
                 self.secrets.delete_secret(account.credential.key)
+            # A retired connection is never available to anyone else either.
+            share = model_sharing.get(str(model.header.entity_id))
+            if share and share["shared"]:
+                self._write_share(context, model, profile, False)
         return self.model_detail(context=context, model_id=model_id)
+
+    # -- shared access -------------------------------------------------------
+
+    def _write_share(self, context, model, profile, shared):
+        return model_sharing.set_shared(environment=context.scope.environment.value,
+            owner_workspace_id=context.scope.workspace_id, owner_user_uuid=str(context.user_uuid),
+            model_id=str(model.header.entity_id), shared=shared, label=profile["label"],
+            provider=model.provider_key, model_key=model.model_key,
+            credential_source=str(profile.get("credential_source") or ""),
+            registry_id=profile.get("existing_registry_id"))
+
+    def set_sharing(self, *, context, model_id, shared):
+        """The owner's switch. Off takes effect for the very next call."""
+        if type(shared) is not bool:
+            raise ContractError("model_share_invalid")
+        self._access(context, "share")
+        with _LOCK:
+            model = self._get(context, EntityKind.MODEL, model_id)
+            profile = self._json(context, model.profile)
+            if profile.get("source") != "private_model_connection":
+                raise ContractError("model_share_not_allowed")
+            if shared:
+                account = self._get(context, EntityKind.PROVIDER_ACCOUNT, profile["provider_account_id"])
+                if model.status != "active" or account.status != "active":
+                    raise ContractError("model_connection_inactive")
+                if profile.get("connection_kind") != "model":
+                    raise ContractError("model_share_not_allowed")
+            self._write_share(context, model, profile, shared)
+        return self.model_detail(context=context, model_id=model_id)
+
+    def _projection_id(self, context, owner_model_id):
+        return _id(context, "shared-model:" + str(owner_model_id))
+
+    def _shared_target(self, context, model_id):
+        """(share, projection or None) when ``model_id`` names a shared connection.
+
+        The caller only ever holds the id of their own projection; the owner's
+        model id is never accepted from them.
+        """
+        identity = _uuid(model_id)
+        record = self.repository.get(context=context, kind=EntityKind.MODEL, entity_id=identity)
+        if record is not None:
+            if record.header.owner_user_uuid != context.user_uuid:
+                return None
+            profile = self._json(context, record.profile)
+            if profile.get("source") != SHARED_SOURCE:
+                return None
+            return model_sharing.get(profile["shared_model_id"]), record
+        for share in model_sharing.available(environment=context.scope.environment.value,
+                                             caller_user_uuid=str(context.user_uuid)):
+            if self._projection_id(context, share["model_id"]) == identity:
+                return share, None
+        return None
+
+    def _grant(self, context, share):
+        if share is None:
+            raise ContractError("model_share_not_found")
+        model_sharing.require(share["model_id"], environment=context.scope.environment.value,
+                              caller_user_uuid=str(context.user_uuid))
+        return model_sharing.Grant(share, caller_user_uuid=str(context.user_uuid))
+
+    def _materialize_shared(self, context, share):
+        identity = self._projection_id(context, share["model_id"])
+        found = self.repository.get(context=context, kind=EntityKind.MODEL, entity_id=identity)
+        if found is not None:
+            return found
+        policy = self._put(context, {**_POLICY, "source": SHARED_SOURCE})
+        profile = {"schema_version": 1, "source": SHARED_SOURCE, "label": share["label"],
+                   "provider": share["provider"], "model": share["model_key"], "shared_model_id": share["model_id"],
+                   "connection_kind": "model", "protocol": CHAT_PROTOCOL, "credential_source": "shared_grant"}
+        record = self._ensure(context, c.Model, identity, identity, policy, provider_key=share["provider"],
+            model_key=share["model_key"], profile=self._put(context, profile), modalities=("text",))
+        return self._walk(context, record, "active")
+
+    def _shared_detail(self, context, share, record):
+        live = bool(share and share["shared"])
+        descriptor = share or {}
+        label = descriptor.get("label") or (self._json(context, record.profile)["label"] if record else "")
+        identity = record.header.entity_id if record else self._projection_id(context, descriptor["model_id"])
+        return {"id": str(identity), "title": label, "label": label, "ownership": "shared",
+            "shared_access": "available" if live else "revoked",
+            "status": "active" if live else "retired",
+            "model": descriptor.get("model_key") or (record.model_key if record else None),
+            "provider": descriptor.get("provider") or (record.provider_key if record else None),
+            "connection_kind": "model", "protocol": CHAT_PROTOCOL, "protocol_supported": True,
+            "persona_id": None, "persona_name": "",
+            "connected": live, "execution_available": live, "credentials_configured": live,
+            "credential_source": "shared_grant", "synthetic": False,
+            "revision": record.header.revision if record else 0,
+            "created_at": record.header.created_at.isoformat() if record else None,
+            "updated_at": record.header.updated_at.isoformat() if record else descriptor.get("updated_at"),
+            "actions": ["test", "task"] if live else [],
+            "note": ("Общая модель: вы можете вызывать её, ключ и настройки подключения остаются у владельца."
+                     if live else "Владелец закрыл общий доступ. Ваша история сохранена, новые вызовы недоступны.")}
+
+    def shared_models(self, *, context):
+        """Connections shared with this person, plus ones they used before a share closed."""
+        self._access(context)
+        rows, seen = [], set()
+        for share in model_sharing.available(environment=context.scope.environment.value,
+                                             caller_user_uuid=str(context.user_uuid)):
+            identity = self._projection_id(context, share["model_id"])
+            record = self.repository.get(context=context, kind=EntityKind.MODEL, entity_id=identity)
+            rows.append(self._shared_detail(context, share, record))
+            seen.add(identity)
+        for record in self._all(context, EntityKind.MODEL):
+            if record.header.entity_id in seen:
+                continue
+            profile = self._json(context, record.profile)
+            if profile.get("source") == SHARED_SOURCE:
+                rows.append(self._shared_detail(context, model_sharing.get(profile["shared_model_id"]), record))
+        return rows
+
+    def shared_usage(self, *, context):
+        """Use of this person's connections by others, apart from their own requests."""
+        self._access(context)
+        mine = {str(m.header.entity_id): self._json(context, m.profile).get("label")
+                for m in self._all(context, EntityKind.MODEL)}
+        by_others = model_sharing.owner_usage(str(context.user_uuid))
+        by_others["by_caller"] = [row | {"model_label": mine.get(row["model_id"], "")}
+                                  for row in by_others["by_caller"] if row["model_id"] in mine]
+        by_others["recent"] = [row | {"model_label": mine.get(row["model_id"], "")}
+                               for row in by_others["recent"] if row["model_id"] in mine]
+        mine_through_others = model_sharing.caller_usage(str(context.user_uuid))
+        labels = {row["model_id"]: row for row in model_sharing.available(
+            environment=context.scope.environment.value, caller_user_uuid=str(context.user_uuid))}
+        mine_through_others["by_model"] = [row | {"model_label": (labels.get(row["model_id"]) or {}).get("label", "")}
+                                           for row in mine_through_others["by_model"]]
+        # The caller never learns the owner's model id, only their own projection's.
+        for row in mine_through_others["by_model"]:
+            row["model_id"] = str(self._projection_id(context, row["model_id"]))
+        return {"by_others": by_others, "mine_through_others": mine_through_others}
+
+    def conversation_response(self, *, context, model_id, prompt, system_prompt, request_id, conversation_id):
+        """One shared text response, accounted and admitted without creating a Task."""
+        self._access(context, "shared_task")
+        target = self._shared_target(context, model_id)
+        if target is None:
+            raise ContractError("model_share_not_found")
+        share, _ = target
+        grant = self._grant(context, share)
+        model, account, profile = self._owner_connection(context, share)
+        if not callable(self.executor):
+            raise ContractError("model_executor_unavailable")
+        def admit(admitted_context, operation, estimate=0.0):
+            self._access(admitted_context, "shared_" + str(operation).removeprefix("shared_"), estimate)
+            grant.check()
+        admit(context, "provider_transmit")
+        result = self.executor(context=context, model=model, account=account, profile=profile,
+            prompt=prompt, system_prompt=system_prompt, request_id=request_id,
+            conversation_id=conversation_id, max_output_tokens=512, purpose="assistant_conversation",
+            cancelled=lambda: False, admit=admit, shared=grant, acting_agent="deputy")
+        receipt = self._clean_receipt(result, {"task_id": request_id,
+            "request_sha256": digest({"prompt": prompt, "system_prompt": system_prompt})})
+        return {**receipt, "provider": model.provider_key}
+
+    def bind_catalog_model(self, *, context, registry_id, resolve_binding):
+        """Explicit owner card action: reuse a binding or create its descriptor.
+
+        The trusted resolver authorizes the registry entry before any write.
+        No credentials are copied and no role or routing assignment is made.
+        """
+        self._access(context, "owner_bind")
+        binding = resolve_binding(context, registry_id)
+        with _LOCK:
+            for model in self._all(context, EntityKind.MODEL):
+                profile = self._json(context, model.profile)
+                if profile.get("existing_registry_id") == registry_id and model.status == "active":
+                    return self.model_detail(context=context, model_id=model.header.entity_id)
+            persona_id = _id(context, "catalog-connection-persona:" + registry_id)
+            policy = self._put(context, _POLICY)
+            persona = self._ensure(context, c.Persona, persona_id, persona_id, policy,
+                display_name=binding["name"][:80],
+                profile=self._put(context, {"description": "Подключение модели без назначения должности"}))
+            self._walk(context, persona, "active")
+            return self.bind_existing_model(context=context,
+                payload={"registry_id": registry_id, "persona_id": str(persona_id)},
+                idempotency_key="catalog-binding:" + registry_id, resolve_binding=resolve_binding)
 
     def bind_existing_model(self, *, context, payload, idempotency_key, resolve_binding):
         """Root-only callback resolves one approved ID; never list global models."""
@@ -462,8 +669,16 @@ class ModelService:
 
     def start_task(self, *, context, model_id, payload, idempotency_key, conversation_id=None,
                    message_id=None, comparison_id=None, comparison_title=None, _sealed_spec=None, _comparison_spec=None,
-                   _handoff=None, _delegation=None, _routing=None, _persona=None, _model_selection=None):
-        self._access(context, "task")
+                   _handoff=None, _delegation=None, _routing=None, _persona=None, _model_selection=None, _deputy=False):
+        # Which connection this is decides which admission applies. A malformed
+        # id is not a shared one; it still fails below exactly as it used to.
+        target = None
+        if isinstance(context, c.RequestContext):
+            try:
+                target = self._shared_target(context, model_id)
+            except ContractError:
+                target = None
+        self._access(context, "shared_task" if target is not None else "task")
         key = _key(idempotency_key)
         if not isinstance(payload, dict) or set(payload) - {"rubric_key", "input_text"}:
             raise ContractError("model_task_field_invalid")
@@ -471,6 +686,12 @@ class ModelService:
         if spec["rubric_key"] == "assistant_response" and any(value is not None for value in
                 (_routing, _handoff, _delegation, _sealed_spec, _comparison_spec, comparison_id, comparison_title)):
             raise ContractError("assistant_response_direct_only")
+        if target is not None and (spec["rubric_key"] not in _SHARED_RUBRICS or any(value is not None for value in
+                (_routing, _handoff, _delegation, _sealed_spec, _comparison_spec, comparison_id, comparison_title))):
+            # Somebody else's connection answers bounded direct requests only:
+            # no judging, routing or chained work on it. A short text test uses
+            # the same grant, budget and usage accounting as an ordinary call.
+            raise ContractError("model_share_action_not_allowed")
         # Court invokes judge() synchronously with a sealed server-side packet.
         # Enqueuing the same call races the separate worker process; its in-flight
         # safeguard can block the task after the inline caller receives a result.
@@ -480,6 +701,10 @@ class ModelService:
         task_id = _id(context, "model-task:" + key)
         identity = {"model_id": str(_uuid(model_id)), "spec": spec, "conversation_id": conversation,
                     "message_id": message, "comparison_id": comparison_id, "comparison_title": comparison_title}
+        if _deputy:
+            if spec["rubric_key"] != "assistant_response":
+                raise ContractError("model_task_field_invalid")
+            identity["conversation_role"] = "deputy"
         if _persona is not None:
             if (not isinstance(_persona, c.EntityRef) or _persona.kind != EntityKind.PERSONA
                     or _persona.scope != context.scope
@@ -495,7 +720,8 @@ class ModelService:
             if (_routing is not None or (_persona is None and not application)
                     or type(_model_selection) is not dict
                     or set(_model_selection) != {"mode", "selected_model_id"}
-                    or _model_selection["mode"] not in {"explicit_override", "single_available"}
+                    or _model_selection["mode"] not in {"explicit_override", "single_available", "shared_available"}
+                    or (_model_selection["mode"] == "shared_available" and target is None)
                     or (_model_selection["mode"] == "explicit_override")
                         != (_model_selection["selected_model_id"] is not None)
                     or (_model_selection["selected_model_id"] is not None
@@ -536,7 +762,7 @@ class ModelService:
                     # a false "queued" SF Chat acknowledgment.
                     raise ContractError(checkpoint["error_code"])
                 if existing.status in {"planned", "ready"} and not checkpoint.get("receipt"):
-                    model = self._get(context, EntityKind.MODEL, model_id)
+                    model = self._get(context, EntityKind.MODEL, checkpoint["model_id"])
                     self._check_execution_origin(context, model, self._json(context, model.profile), checkpoint)
                 if existing.status == "planned":
                     existing = self._change(context, existing, "ready")
@@ -547,14 +773,25 @@ class ModelService:
                 if existing.status == "ready" and not inline_judge and callable(self.enqueue):
                     self.enqueue(context=context, task_id=str(task_id))
                 return self.task_detail(context=context, task_id=task_id)
-            model = self._get(context, EntityKind.MODEL, model_id)
-            profile = self._json(context, model.profile)
-            account = self._get(context, EntityKind.PROVIDER_ACCOUNT, profile["provider_account_id"])
-            persona = self._get(context, EntityKind.PERSONA, profile["persona_id"])
-            if model.status != "active" or account.status != "active" or persona.status != "active":
-                raise ContractError("model_connection_inactive")
+            if target is not None:
+                share, _ = target
+                self._grant(context, share)
+                model = self._materialize_shared(context, share)
+                profile = self._json(context, model.profile)
+                # The caller's own Persona speaks, when they chose one; the
+                # owner's Persona binding is never borrowed.
+                persona = self._get(context, EntityKind.PERSONA, _persona.entity_id) if _persona is not None else None
+                if model.status != "active" or (persona is not None and persona.status != "active"):
+                    raise ContractError("model_connection_inactive")
+            else:
+                model = self._get(context, EntityKind.MODEL, model_id)
+                profile = self._json(context, model.profile)
+                account = self._get(context, EntityKind.PROVIDER_ACCOUNT, profile["provider_account_id"])
+                persona = self._get(context, EntityKind.PERSONA, profile["persona_id"])
+                if model.status != "active" or account.status != "active" or persona.status != "active":
+                    raise ContractError("model_connection_inactive")
             validate_protocol(profile)
-            if _persona is not None and persona.ref() != _persona:
+            if _persona is not None and (persona is None or persona.ref() != _persona):
                 raise ContractError("persona_selection_changed")
             policy = self._put(context, _POLICY)
             speaking_identity = None
@@ -571,19 +808,23 @@ class ModelService:
                 role = self._walk(context, role, "active")
             from . import test_executor
             goal = {"source": "real_model_task", **identity, "request_sha256": digest(identity),
-                    "persona_id": str(persona.header.entity_id),
-                    "persona_name": speaking_identity["persona_name"] if speaking_identity else persona.display_name,
-                    "provider_account_id": profile["provider_account_id"], "task_id": str(task_id),
+                    "persona_id": str(persona.header.entity_id) if persona is not None else None,
+                    "persona_name": (speaking_identity["persona_name"] if speaking_identity
+                                     else persona.display_name if persona is not None else _SHARED_PERSONA_NAME),
+                    "provider_account_id": profile.get("provider_account_id"), "task_id": str(task_id),
                     "correlation_id": str(correlation), "synthetic": False,
                     "test_executor_request": test_executor.enabled(context.scope.workspace_id)}
             if speaking_identity is not None:
                 goal.update(speaking_identity=speaking_identity, executor_persona_id=profile["persona_id"])
+            if target is not None:
+                goal["shared_model"] = True
             if _routing is not None:
                 selection_source = {"mode": "router_approved", "selected_model_id": str(model.header.entity_id),
                     "reason": "router_preview_applied", "routing": identity["routing"]}
             elif _model_selection is not None:
                 selection_source = {**_model_selection, "reason": (
                     "person_selected_connection" if _model_selection["mode"] == "explicit_override"
+                    else "shared_connection_available" if _model_selection["mode"] == "shared_available"
                     else "persona_single_binding" if _persona is not None else "application_role_single_binding")}
             else:
                 selection_source = None
@@ -592,7 +833,7 @@ class ModelService:
                 # connection, its revision and its provider cannot be restated.
                 goal["model_selection"] = {**selection_source, "model_id": str(model.header.entity_id),
                     "model_revision": model.header.revision, "model_key": model.model_key,
-                    "provider_key": model.provider_key, "provider_account_id": profile["provider_account_id"],
+                    "provider_key": model.provider_key, "provider_account_id": profile.get("provider_account_id"),
                     "connection_kind": profile.get("connection_kind")}
             if spec["rubric_key"] in {"backtest_spec", "chart_spec"}:
                 goal["application_request"] = {"kind": spec["rubric_key"].removesuffix("_spec"),
@@ -716,13 +957,16 @@ class ModelService:
         return self.task_detail(context=context, task_id=task.header.entity_id)
 
     def execute(self, *, context, task_id, cancelled=None):
-        self._access(context, "execute")
+        self._access(context)
         task_id = _uuid(task_id)
         with _RUN_LOCKS[task_id.int % len(_RUN_LOCKS)]:
             task = self._get(context, EntityKind.TASK, task_id)
             checkpoint = self._json(context, task.checkpoint)
             if checkpoint.get("source") != "real_model_task":
                 raise ContractError("model_task_not_found")
+            shared = checkpoint.get("shared_model") is True
+            operation = (lambda name: "shared_" + name) if shared else (lambda name: name)
+            self._access(context, operation("execute"))
             if checkpoint.get("application_request"):
                 from .application_evidence import application_result, _complete_task
                 if application_result(self, context, task):
@@ -755,10 +999,25 @@ class ModelService:
                 return self.cancel(context=context, task_id=task_id)
             model = self._get(context, EntityKind.MODEL, checkpoint["model_id"])
             profile = self._json(context, model.profile)
-            account = self._get(context, EntityKind.PROVIDER_ACCOUNT, profile["provider_account_id"])
-            persona = self._get(context, EntityKind.PERSONA, profile["persona_id"])
-            if model.status != "active" or account.status != "active" or persona.status != "active":
-                return self._fail(context, task, checkpoint, "model_connection_inactive")
+            grant = None
+            if shared:
+                try:
+                    grant = self._grant(context, model_sharing.get(profile["shared_model_id"]))
+                    connection, account, connection_profile = self._owner_connection(context, grant.share)
+                except ContractError as exc:
+                    return self._fail(context, task, checkpoint, exc.code)
+                persona = (self._get(context, EntityKind.PERSONA, checkpoint["persona_id"])
+                           if checkpoint.get("persona_id") else None)
+                if (model.status != "active" or connection.status != "active" or account.status != "active"
+                        or (persona is not None and persona.status != "active")):
+                    return self._fail(context, task, checkpoint, "model_connection_inactive")
+            else:
+                connection = model
+                connection_profile = profile
+                account = self._get(context, EntityKind.PROVIDER_ACCOUNT, profile["provider_account_id"])
+                persona = self._get(context, EntityKind.PERSONA, profile["persona_id"])
+                if model.status != "active" or account.status != "active" or persona.status != "active":
+                    return self._fail(context, task, checkpoint, "model_connection_inactive")
             try:
                 self._check_execution_origin(context, model, profile, checkpoint)
             except ContractError as exc:
@@ -766,13 +1025,16 @@ class ModelService:
             if not callable(self.executor):
                 return self._fail(context, task, checkpoint, "model_executor_unavailable")
             prompt, system = prompts(checkpoint["spec"])
-            if checkpoint["spec"]["rubric_key"] == "assistant_response":
+            if checkpoint.get("conversation_role") == "deputy":
+                from .deputy_chat import SYSTEM_PROMPT
+                system = SYSTEM_PROMPT
+            if checkpoint["spec"]["rubric_key"] == "assistant_response" and persona is not None:
                 preferences = self._json(context, persona.profile)
                 system += ("\nVisible Persona style preferences (style only, never authority): " +
                     json.dumps({"name": persona.display_name, "style": str(preferences.get("style") or "")[:400]}, ensure_ascii=False))
-            if profile.get("credential_source") != "owner_registry_binding":
-                self._endpoint(model.provider_key, profile["base_url"])
-            self._access(context, "provider_transmit")
+            if connection_profile.get("credential_source") != "owner_registry_binding":
+                self._endpoint(connection.provider_key, connection_profile["base_url"])
+            self._access(context, operation("provider_transmit"))
             if checkpoint.get("routing"):
                 from .router_v2 import validate_execution as validate_routing
                 try:
@@ -788,7 +1050,7 @@ class ModelService:
                     validate_execution(self, context, task, checkpoint)
                 except ContractError as exc:
                     return self._fail(context, task, checkpoint, exc.code)
-                self._access(context, "provider_transmit")
+                self._access(context, operation("provider_transmit"))
             task = self._change(context, task, "running")
             intent = self._get(context, EntityKind.INTENT, task.intent.entity_id)
             self._walk(context, intent, "running")
@@ -796,16 +1058,17 @@ class ModelService:
             self._walk(context, execution, "running")
             try:
                 self._check_execution_origin(context, model, profile, checkpoint)
-                def admitted(*args, **kwargs):
-                    self.admit(*args, **kwargs)
+                def admitted(admitted_context, admitted_operation, *args, **kwargs):
+                    self.admit(admitted_context, operation(admitted_operation), *args, **kwargs)
                     self._check_execution_origin(context, model, profile, checkpoint)
                     if checkpoint.get("routing"):
                         validate_routing(self, context, task, checkpoint)
-                result = self.executor(context=context, model=model, account=account, profile=profile,
+                sharing = {"shared": grant, "acting_agent": "deputy" if checkpoint.get("conversation_role") == "deputy" else checkpoint.get("persona_name")} if shared else {}
+                result = self.executor(context=context, model=connection, account=account, profile=connection_profile,
                     prompt=prompt, system_prompt=system, request_id=str(task_id),
                     conversation_id=checkpoint.get("conversation_id"), max_output_tokens=512,
                     purpose="connection_test" if checkpoint["spec"]["rubric_key"] == "connection_exact" else "agent_world_capability",
-                    cancelled=cancelled, admit=admitted)
+                    cancelled=cancelled, admit=admitted, **sharing)
                 receipt = self._clean_receipt(result, checkpoint)
             except Exception as exc:
                 # Do not persist provider error bodies, keys, URLs or tracebacks.
@@ -821,8 +1084,28 @@ class ModelService:
                 task = self._change(context, current, checkpoint=self._put(context, checkpoint))
             # Accounting/receipt survive loss of access; publishing/scoring
             # waits for a fresh authorized continuation instead of leaking data.
-            self._access(context, "complete")
+            self._access(context, operation("complete"))
             return self._finish(context, task, checkpoint)
+
+    def _owner_connection(self, context, share):
+        """The owner's connection records for one granted call; never shown to the caller."""
+        owner = UUID(share["owner_user_uuid"])
+        owner_context = c.RequestContext(scope=c.TenantScope(environment=context.scope.environment,
+                workspace_id=share["owner_workspace_id"]), user_uuid=owner,
+            actor=c.ActorRef(kind=c.ActorKind.SERVICE, actor_id=uuid5(_NS, "model-sharing-reader"),
+                             on_behalf_of=owner))
+        model = self.repository.get(context=owner_context, kind=EntityKind.MODEL, entity_id=_uuid(share["model_id"]))
+        if model is None or model.header.owner_user_uuid != owner:
+            raise ContractError("model_share_not_found")
+        profile = self._json(owner_context, model.profile)
+        if profile.get("source") != "private_model_connection" or profile.get("connection_kind") != "model":
+            raise ContractError("model_share_not_found")
+        account = self.repository.get(context=owner_context, kind=EntityKind.PROVIDER_ACCOUNT,
+                                      entity_id=_uuid(profile["provider_account_id"]))
+        if account is None or account.header.owner_user_uuid != owner:
+            raise ContractError("model_share_not_found")
+        validate_protocol(profile)
+        return model, account, profile
 
     @staticmethod
     def _clean_receipt(result, checkpoint):
@@ -895,6 +1178,7 @@ class ModelService:
             "model_budget_exhausted", "model_key_invalid", "model_endpoint_unavailable", "model_not_found",
             "model_provider_response_invalid", "model_provider_latency_invalid", "model_provider_cost_invalid",
             "model_pricing_unavailable", "model_access_denied", "model_cancelled",
+            "model_share_revoked", "model_share_not_found",
             "model_private_budget_not_configured", "model_owner_binding_denied", "model_owner_binding_changed",
             "model_owner_binding_unavailable", "handoff_source_changed", "handoff_source_unavailable",
             "handoff_request_mismatch", "handoff_target_inactive", "handoff_different_persona_required",
@@ -1013,13 +1297,17 @@ class ModelService:
         rubric_key = checkpoint["spec"]["rubric_key"]
         # The owner reads this title; the rubric key stays machine-readable in
         # task_class and in the technical details of the inspector.
-        title = f"{checkpoint['persona_name']} · {presentation.rubric_label(rubric_key)}"
+        speaker = "Заместитель" if checkpoint.get("conversation_role") == "deputy" else checkpoint["persona_name"]
+        title = ("Заместитель · " + " ".join(checkpoint["spec"]["input"].split())[:120]
+                 if checkpoint.get("conversation_role") == "deputy" else
+                 f"{speaker} · {presentation.rubric_label(rubric_key)}")
         task_dto = {"id": str(task.header.entity_id), "task_id": str(task.header.entity_id),
             "revision": task.header.revision,
             "title": title, "status": task.status, "stage": "provider_receipt" if receipt else "awaiting_provider",
             "summary": checkpoint.get("error_code") or ("Verified bounded response" if task.status == "succeeded" else task.status),
             "task_class": checkpoint["spec"]["rubric_key"], **provenance,
-            "lead": {"id": checkpoint["persona_id"], "display_name": checkpoint["persona_name"], "role": "model_response"},
+            **({"conversation_role": "deputy"} if checkpoint.get("conversation_role") == "deputy" else {}),
+            "lead": {"id": checkpoint["persona_id"], "display_name": speaker, "role": "model_response"},
             "model_id": str(model.header.entity_id), "model": model.model_key, "provider": model.provider_key,
             "configured_model": model.model_key, "configured_provider": model.provider_key,
             "response_provider": "local_test_executor" if provenance["synthetic"] else model.provider_key if receipt else None,

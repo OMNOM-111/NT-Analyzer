@@ -54,7 +54,8 @@ def test_market_data_access_requires_authenticated_subject_but_owner_is_authorit
     assert owner.scope_id == market_data_access.OWNER_SHARED_SCOPE
 
 
-def test_shared_registration_trial_requires_both_redistribution_flags() -> None:
+def test_shared_registration_trial_uses_canonical_mirror_without_legacy_flags(monkeypatch) -> None:
+    monkeypatch.setattr(market_data_access, "_utc_now", lambda: NOW)
     context = _context()
     trial = {
         "user_id": 42,
@@ -75,8 +76,11 @@ def test_shared_registration_trial_requires_both_redistribution_flags() -> None:
             "redistribution_authorized": False,
         },
     )
-    assert one_flag.allowed is False
-    assert one_flag.reason == "redistribution_not_authorized"
+    assert one_flag.allowed is True
+    assert one_flag.reason == "active_shared_mirror"
+    assert one_flag.source == "shared_trial"
+    assert one_flag.scope_id == market_data_access.OWNER_SHARED_SCOPE
+    assert market_data_access.decision_allows_message(one_flag, {"market_data_scope": market_data_access.OWNER_SHARED_SCOPE})
 
     allowed = _resolve(
         context,
@@ -117,8 +121,7 @@ def test_expired_trial_message_does_not_promise_unauthorized_shared_feed() -> No
         encoding="utf-8"
     )
 
-    assert "Продление владельцем открывает общий trial-feed" in source
-    assert "только там, где подтверждено разрешение на redistribution" in source
+    assert "Активная подписка или продление trial открывает общий live-mirror TopStep" in source
 
 
 def test_verified_owned_provider_is_private_and_unverified_provider_is_denied() -> None:

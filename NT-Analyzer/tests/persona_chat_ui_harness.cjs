@@ -6,8 +6,8 @@ const source = fs.readFileSync(path.join(__dirname, '../app/static/aurora/assets
 const scenario = JSON.parse(fs.readFileSync(0, 'utf8'));
 const names = ['orchPersonaId', 'orchPersonaViews', 'orchSpeechPersona', 'orchSpeechHtml', 'orchLoadPersonaAudio',
   'orchSpeechState', 'wireOrchSpeech', 'agentSpeakStop', 'agentAvatarId', 'agentAvatarUrl', 'agentAvatarHtml',
-  'wireAgentFaces', 'orchMessageHtml', 'orchSaveCurrentId'];
-if (scenario.mode.startsWith('canonical_review_')) names.push('orchIsAgentWorldMessage', 'orchInferKind', 'orchFulfillmentOf',
+  'wireAgentFaces', 'orchMessageHtml', 'orchSaveCurrentId', 'orchInferKind'];
+if (scenario.mode.startsWith('canonical_review_')) names.push('orchIsAgentWorldMessage', 'orchFulfillmentOf',
   'orchRatingHtml', 'orchFooterHtml', 'orchAwaitHtml');
 if (scenario.mode === 'late_face_asset_stays_stopped') names.push('agentFacePlay', 'agentFacePause');
 function functionSource(name) {
@@ -35,7 +35,7 @@ const ORCH = {open: true, currentId: 'test-conversation', viewerProfileId: ''};
 const ORCH_SPEECH = {generation: 0, controller: null, module: null, message: '', button: null, status: null};
 const button = new Element(), status = new Element(), face = new Element(), video = new Element();
 button.dataset.orchSpeech = row.message_id; button.parentElement = {querySelector: () => status};
-button.closest = () => ({querySelector: () => face});
+button.closest = () => ({querySelector: selector => selector === '[data-orch-speech-status]' ? status : face});
 face.classList.add('orch-msg-face'); face.querySelector = () => video;
 video.readyState = 0; video.pause = () => {}; video.currentTime = 0;
 const requests = [], spoken = [], scripts = [], faces = [], pauses = [], timers = new Map(), domains = [];
@@ -77,6 +77,18 @@ const flushTimers = () => { const fns = [...timers.values()]; timers.clear(); fn
 
 (async () => {
   switch (scenario.mode) {
+    case 'conversation_and_text_deliverable': {
+      row.message_kind = 'chat';
+      let html = sandbox.orchMessageHtml(row);
+      assert.ok(!html.includes('orch-msg-model'));
+      row.message_kind = 'task'; row.model = 'model pending';
+      html = sandbox.orchMessageHtml(row); assert.ok(!html.includes('model pending'));
+      row.message_kind = 'report'; row.model = 'actual-model'; row.content = 'A useful plan. '.repeat(80);
+      row.actions = [{task_class: 'assistant_response'}]; sandbox.orchAgentWorldTaskId = () => 'a-task';
+      html = sandbox.orchMessageHtml(row);
+      assert.ok(html.includes(row.content)); assert.ok(!html.includes('Полное сообщение и данные результата'));
+      break;
+    }
     case 'binding_is_silent':
       bind(); await flush(); assert.equal(requests.length, 0); assert.equal(spoken.length, 0); assert.equal(scripts.length, 0); break;
     case 'hover_is_silent':
@@ -110,13 +122,16 @@ const flushTimers = () => { const fns = [...timers.values()]; timers.clear(); fn
     }
     case 'missing_persona_is_not_vitek_or_technical_uuid': {
       row._persona = null; delete row.agent_name; const html = sandbox.orchMessageHtml(row);
-      assert.ok(!html.includes('agents/vitek/')); assert.ok(html.includes('AI-помощник')); assert.ok(html.includes('disabled'));
+      assert.ok(!html.includes('agents/vitek/')); assert.ok(html.includes('AI-помощник')); assert.ok(!html.includes('data-orch-speech='));
+      assert.ok(html.includes('Персона или её голос недоступны'));
       assert.ok(!html.includes('orch-msg-author">' + persona.id));
       assert.equal(sandbox.orchSpeechPersona(row), null); break;
     }
     case 'unconfigured_or_suspended_has_no_action':
       for (const change of [{status: 'suspended'}, {presentation: {resolved_voice_profile_id: ''}}]) {
-        assert.ok(sandbox.orchSpeechHtml({...row, _persona: {...persona, ...change}}).includes('disabled'));
+        const unavailable = {...row, _persona: {...persona, ...change}};
+        assert.ok(sandbox.orchSpeechHtml(unavailable).includes('Персона или её голос недоступны'));
+        assert.ok(!sandbox.orchMessageHtml(unavailable).includes('data-orch-speech='));
       } break;
     case 'legacy_uses_local_preset_not_owner_transport': {
       row.agent_id = 'marina'; row._persona = null; bind(); const pending = click(); await flush();

@@ -8,6 +8,7 @@ backend even when no browser window is open.
 """
 from __future__ import annotations
 
+import calendar
 import hashlib
 import json
 import os
@@ -90,6 +91,8 @@ EVENT_AGENT_ROUTES: Dict[str, Dict[str, Any]] = {
     "price_alert_agent_task": {"agent": "ivan", "role": "general", "complexity": "standard", "decision": False},
     "all_strategies_completed": {"agent": "tolik", "role": "strategy_analyst", "complexity": "standard", "decision": False},
     "task_due": {"agent": "orchestrator", "role": "orchestrator", "complexity": "standard", "decision": True},
+    "periodic_owner_report": {"agent": "vitek", "role": "controller", "complexity": "standard", "decision": False},
+    "periodic_owner_audit": {"agent": "vitek", "role": "controller", "complexity": "critical", "decision": False},
 }
 
 VITEK_ADDRESS_RE = re.compile(
@@ -178,6 +181,7 @@ def _default_state() -> Dict[str, Any]:
         "plans": {"day": None, "week": None},
         "events": [],
         "event_history": [],
+        "periodic_reports": [],
         "event_revision": 0,
         "bridge_event_cursor": 0,
         "history": [],
@@ -211,7 +215,7 @@ def _read() -> Dict[str, Any]:
     doc = _default_state()
     doc.update(stored)
     doc["schema_version"] = max(5, int(doc.get("schema_version") or 0))
-    for key in ("tasks", "incidents", "history", "events", "event_history", "client_telemetry"):
+    for key in ("tasks", "incidents", "history", "events", "event_history", "client_telemetry", "periodic_reports"):
         if not isinstance(doc.get(key), list):
             doc[key] = []
     for incident in doc.get("incidents") or []:
@@ -4390,6 +4394,169 @@ def _resolve_connection_incidents() -> set[str]:
     return resolved_ids
 
 
+def _periodic_owner_scope() -> Dict[str, Any]:
+    """Resolve the one owner workspace that receives operational reports."""
+    try:
+        from . import workspaces
+
+        for row in workspaces.runtime_monitor_scopes():
+            if isinstance(row, dict) and row.get("uses_owner_runtime"):
+                return _clean_conversation_scope(row)
+    except Exception:
+        pass
+    return {}
+
+
+def _periodic_delivery_enabled(setting: str) -> bool:
+    """Recheck both the single-owner lease and the owner's report switches."""
+    if not runtime_env.telegram_operational_delivery_active():
+        return False
+    try:
+        from . import telegram_service
+
+        status_doc = telegram_service.status()
+        settings = status_doc.get("settings") or {}
+        return bool(
+            status_doc.get("configured")
+            and status_doc.get("operational_delivery_active")
+            and settings.get("enabled")
+            and settings.get(setting)
+        )
+    except Exception:
+        return False
+
+
+def _remember_periodic_report(*, report_key: str, report_type: str,
+                              report: Dict[str, Any], message: Dict[str, Any]) -> None:
+    with _LOCK:
+        doc = _read()
+        rows = [
+            row for row in (doc.get("periodic_reports") or [])
+            if isinstance(row, dict) and str(row.get("report_key") or "") != report_key
+        ]
+        rows.append({
+            "report_key": report_key,
+            "report_type": report_type,
+            "report_id": str(report.get("report_id") or ""),
+            "generated_at_utc": str(report.get("generated_at_utc") or ""),
+            "published_at_utc": _now(),
+            "conversation_id": "default",
+            "message_id": str(message.get("message_id") or ""),
+            "route": "owner->vitek->team->sf_chat+telegram",
+        })
+        doc["periodic_reports"] = rows[-400:]
+        _append_history(
+            doc, "periodic_report_published", report_key=report_key,
+            report_type=report_type, report_id=report.get("report_id"),
+            message_id=message.get("message_id"),
+        )
+        _write(doc)
+
+
+def _deliver_periodic_owner_report(event: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(event.get("payload") or {})
+    report_type = str(payload.get("report_type") or "")
+    report_key = str(payload.get("report_key") or "")
+    setting = str(payload.get("telegram_setting") or "chief_agent_reports")
+    if not report_type or not report_key:
+        raise VitekError("Periodic report event is missing report_type/report_key.")
+    if not _periodic_delivery_enabled(setting):
+        return {
+            "ok": True, "skipped": True,
+            "reason": "telegram_report_setting_disabled_or_non_owner_environment",
+            "report_key": report_key,
+        }
+    scope = _clean_conversation_scope(event.get("conversation_scope"))
+    if runtime_env.is_production() and not scope:
+        raise VitekError("Production periodic report requires the owner workspace scope.")
+
+    from .ai_lab import chief_agent
+
+    request_id = f"periodic:{report_key}"
+    chain: List[Dict[str, Any]] = [{
+        "agent_id": "vitek", "agent_name": NAME,
+        "role": ROLE, "model": "deterministic controller", "provider": "local",
+        "purpose": "schedule and delivery ownership",
+    }]
+    if report_type == "backtest_audit":
+        report = chief_agent.audit_recent_backtests(
+            use_llm=True, send_telegram=False, scope=scope,
+            reuse_existing=True,
+        )
+        review = report.get("model_review") if isinstance(report.get("model_review"), dict) else {}
+        content_lines = [
+            "Команда завершила ежедневный аудит бэктестов.",
+            f"Проверено экспериментов: {int(report.get('experiments_checked') or 0)}",
+            f"Требуют внимания: {len(report.get('findings') or [])}",
+        ]
+        if str(review.get("content") or "").strip():
+            content_lines.append(str(review.get("content"))[:9000])
+        elif report.get("findings"):
+            content_lines.append(
+                "Первые флаги: "
+                + ", ".join(str(value) for value in (report["findings"][0].get("flags") or []))
+            )
+        content = "\n".join(content_lines)
+        if review:
+            chain.append({
+                "agent_id": "orchestrator", "agent_name": "StratForge Orchestrator",
+                "role": "research supervisor", "model": str(review.get("model") or ""),
+                "provider": str(review.get("provider") or ""),
+                "purpose": "backtest evidence review",
+            })
+        action_name = "periodic_backtest_audit"
+    else:
+        report = chief_agent.generate_periodic_report(
+            report_type, send_telegram=False, scope=scope, report_key=report_key,
+        )
+        content = str(report.get("content") or "")
+        chain.append({
+            "agent_id": "marina", "agent_name": "Марина",
+            "role": "финансовый аналитик", "model": "deterministic performance rules",
+            "provider": "local", "purpose": "verified performance metrics",
+        })
+        if str(report.get("period") or "") != "today":
+            chain.append({
+                "agent_id": "orchestrator", "agent_name": "StratForge Orchestrator",
+                "role": "analyst", "model": str(report.get("model") or ""),
+                "provider": str(report.get("provider") or ""),
+                "purpose": "period conclusions and recommendations",
+            })
+        action_name = f"periodic_{report_type}_report"
+    published = chief_agent.report_task_update(
+        conversation_id="default", text=content,
+        agent_name=NAME, model="deterministic controller", provider="local",
+        action_name=action_name, action_status="completed",
+        close=False, mirror_to_telegram=True, scope=scope,
+        request_id=request_id, participation_chain=chain,
+        telegram_setting=setting,
+    )
+    message = published.get("message") if isinstance(published.get("message"), dict) else {}
+    _remember_periodic_report(
+        report_key=report_key, report_type=report_type,
+        report=report, message=message,
+    )
+    return {
+        "ok": True,
+        "route": {"agent": NAME, "role": "controller", "team": [
+            str(row.get("agent_name") or "") for row in chain[1:]
+        ]},
+        "model": "deterministic controller", "provider": "local",
+        "content": content[:4000],
+        "report": {
+            "report_id": report.get("report_id"),
+            "report_key": report.get("report_key") or report_key,
+            "generated_at_utc": report.get("generated_at_utc"),
+            "period": report.get("period"),
+            "reused": bool(report.get("reused")),
+        },
+        "report_key": report_key,
+        "conversation_id": "default",
+        "message_id": str(message.get("message_id") or ""),
+        "replayed": bool(published.get("replayed")),
+    }
+
+
 def _analyze_system_event(event: Dict[str, Any]) -> Dict[str, Any]:
     kind = str(event.get("event_type") or "system_event")
     payload = dict(event.get("payload") or {})
@@ -4433,6 +4600,8 @@ def _analyze_system_event(event: Dict[str, Any]) -> Dict[str, Any]:
                 "recovered_events": recovered_events,
                 "recovered_tasks": recovered_tasks,
                 "reconciliation": reconciliation}
+    if kind in {"periodic_owner_report", "periodic_owner_audit"}:
+        return _deliver_periodic_owner_report(event)
     if kind == "connection_restored":
         resolved_ids = _resolve_connection_incidents()
         result = {
@@ -4935,8 +5104,75 @@ def ingest_bridge_events() -> Dict[str, Any]:
     return {"ok": True, "ingested": ingested, "invalid": invalid, "cursor": new_cursor}
 
 
+def _periodic_schedule_requests(local: datetime) -> List[Dict[str, str]]:
+    requests: List[Dict[str, str]] = []
+    if (local.hour, local.minute) >= (16, 0):
+        requests.append({
+            "event_type": "periodic_owner_report", "report_type": "daily",
+            "report_key": f"daily:{local.date().isoformat()}",
+            "telegram_setting": "daily_summary",
+        })
+    if local.weekday() == 4 and (local.hour, local.minute) >= (16, 5):
+        requests.append({
+            "event_type": "periodic_owner_report", "report_type": "weekly",
+            "report_key": f"weekly:{local.isocalendar().year}-W{local.isocalendar().week:02d}",
+            "telegram_setting": "weekly_summary",
+        })
+    last_day = calendar.monthrange(local.year, local.month)[1]
+    if local.day == last_day and (local.hour, local.minute) >= (16, 10):
+        requests.append({
+            "event_type": "periodic_owner_report", "report_type": "monthly",
+            "report_key": f"monthly:{local.strftime('%Y-%m')}",
+            "telegram_setting": "monthly_summary",
+        })
+    if (
+        local.month in {3, 6, 9, 12} and local.day == last_day
+        and (local.hour, local.minute) >= (16, 15)
+    ):
+        requests.append({
+            "event_type": "periodic_owner_report", "report_type": "quarterly",
+            "report_key": f"quarterly:{local.year}-Q{((local.month - 1) // 3) + 1}",
+            "telegram_setting": "quarterly_summary",
+        })
+    if (local.hour, local.minute) >= (16, 20):
+        requests.append({
+            "event_type": "periodic_owner_audit", "report_type": "backtest_audit",
+            "report_key": f"backtest-audit:{local.date().isoformat()}",
+            "telegram_setting": "chief_agent_reports",
+        })
+    return requests
+
+
+def _schedule_periodic_report_events(local: datetime) -> int:
+    if not runtime_env.telegram_operational_delivery_active():
+        return 0
+    scope = _periodic_owner_scope()
+    if runtime_env.is_production() and not scope:
+        return 0
+    queued = 0
+    for request in _periodic_schedule_requests(local):
+        setting = request["telegram_setting"]
+        if not _periodic_delivery_enabled(setting):
+            continue
+        result = emit_event(
+            request["event_type"], {
+                "report_type": request["report_type"],
+                "report_key": request["report_key"],
+                "telegram_setting": setting,
+                "local_date": local.date().isoformat(),
+            },
+            source="schedule", severity="info",
+            dedupe_key=f"periodic:{request['report_key']}",
+            dedupe_seconds=400 * 24 * 3600,
+            scope=scope,
+        )
+        queued += int(bool(result.get("queued")))
+    return queued
+
+
 def _schedule_housekeeping_event() -> None:
     local = _now_dt().astimezone(ZoneInfo(LOCAL_TIMEZONE))
+    _schedule_periodic_report_events(local)
     if local.weekday() < 5 and local.hour >= 6:
         key = local.date().isoformat()
         emit_event(

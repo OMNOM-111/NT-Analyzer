@@ -166,14 +166,22 @@ def select_model(service, *, context, persona_id, kind=None, selected_model_id=N
             raise ContractError("persona_application_role_mismatch")
     candidates = [item for item in service.models(context=context)["items"]
                   if item["status"] == "active" and item.get("persona_id") == str(persona.header.entity_id)]
+    # Connections other people share are not bound to anybody's Persona. They
+    # answer only direct requests, never application plans.
+    shared = ([item for item in service.shared_models(context=context) if item.get("execution_available") is True]
+              if kind is None else [])
     if selected_model_id is not None:
         selected_model_id = _identity(selected_model_id)
         # The page offers only executable connections; the server has to hold
         # the same line, or a crafted request names one that cannot run.
-        candidates = [item for item in candidates
+        candidates = [item for item in candidates + shared
                       if item["id"] == selected_model_id and item.get("execution_available") is True]
         if not candidates:
             raise ContractError("persona_model_selection_unavailable")
+    elif not candidates and shared:
+        # Nothing of one's own yet: work through the first shared connection,
+        # in a stable order. The task records that this is how it was chosen.
+        candidates = shared[:1]
     if len(candidates) != 1:
         raise ContractError("persona_model_ambiguous" if candidates else "persona_model_required")
     # Admission/model constructors recheck again before enqueue. No credential

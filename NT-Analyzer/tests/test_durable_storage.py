@@ -106,3 +106,15 @@ def test_jobqueue_durable_sweep_recovers_existing_queue_dirs(tmp_path: Path, mon
     assert row["status"] == "done"
     assert row["workspace_id"] == "ws_recovered"
     assert row["timeframe"] == "5 Minute"
+
+
+def test_transaction_scope_releases_sqlite_file_handle(tmp_path, monkeypatch):
+    import pytest
+    db = tmp_path / "disposable.sqlite3"
+    monkeypatch.setenv("NT_ANALYZER_SQLITE_PATH", str(db))
+    with durable.connect(tmp_path) as conn:
+        conn.execute("SELECT 1")
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        conn.execute("SELECT 1")
+    db.unlink()
+    assert not db.exists()

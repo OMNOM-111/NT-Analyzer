@@ -1065,6 +1065,21 @@ class OwnerGatewayChartAdapter:
             "to_ts": utc_query_stamp(end_time),
         }
         payload = fetch_gateway_json("/api/ops/runtime/bars", query)
+        # An older hub may resolve a bare root from its stale NT scan. Reuse
+        # the existing verified front-month overlay, never rewrite a fixed
+        # historical contract or guess the exchange's rollover calendar.
+        requested_root = " ".join(str(exact_contract or "").strip().upper().split())
+        if " " not in requested_root and not payload.get("bars"):
+            from . import jobqueue
+            catalog = jobqueue.read_instruments_catalog() or {}
+            rows = [row for row in catalog.get("instruments", []) if isinstance(row, dict)
+                    and str(row.get("root") or "").upper() == requested_root]
+            front = jobqueue.resolve_front_month(rows) or {}
+            candidate = str(front.get("instrument") or "").strip().upper()
+            if candidate.startswith(requested_root + " ") and candidate != str(payload.get("instrument") or "").upper():
+                replacement = fetch_gateway_json("/api/ops/runtime/bars", {**query, "instrument": candidate})
+                if replacement.get("bars"):
+                    payload = replacement
         instrument = str(payload.get("instrument") or exact_contract).upper()
         requested = " ".join(str(exact_contract or "").strip().upper().split())
         history = payload.get("history") if isinstance(payload.get("history"), dict) else {}

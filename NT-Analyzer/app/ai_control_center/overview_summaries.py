@@ -23,8 +23,13 @@ MEMORY_GONE = frozenset({"revoked", "expired", "archived", "retired", "supersede
 
 
 def _items(authorized, domain):
-    result = domain_gateway.list_domain(authorized, domain, identity=None, limit=READ_LIMIT, cursor=None)
-    return list(result.get("items") or []), bool(result.get("next_cursor"))
+    reader = authorized.get("summary_reader")
+    result = (reader(domain, identity=None, limit=READ_LIMIT, cursor=None) if reader else
+              domain_gateway.list_domain(authorized, domain, identity=None, limit=READ_LIMIT, cursor=None))
+    rows = list(result.get("items") or [])
+    if domain == "models":
+        rows += list(result.get("shared") or [])
+    return rows, bool(result.get("next_cursor"))
 
 
 def _guard(read):

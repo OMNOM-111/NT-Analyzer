@@ -381,10 +381,10 @@
     const reactionTotal = Object.values(reactions).reduce((sum, value) => sum + (Number(value) || 0), 0);
     return reactionTotal + (Number(post && post.comment_count) || 0) * 2 + (Number(post && post.share_count) || 0) * 3;
   }
-  function sortPosts(posts) {
+  function sortPosts(posts, recentOnly = false) {
     const rows = Array.isArray(posts) ? posts.slice() : [];
     return rows.sort((left, right) => {
-      if (STATE.sort === 'relevant') {
+      if (!recentOnly && STATE.sort === 'relevant') {
         const delta = relevanceScore(right) - relevanceScore(left);
         if (delta) return delta;
       }
@@ -423,15 +423,14 @@
       STATE.wallSavedCount = savedCount;
       if (doc.profile) renderViewer(profile);
       updateWallCounts(profile, savedCount);
-      const posts = sortPosts(doc.posts || []);
-      // The registration entry heads the member's own wall too, and only the
-      // wall — bookmarks are someone else's posts, not this profile's history.
+      const posts = sortPosts(doc.posts || [], true);
+      // A profile wall is chronological; registration remains its oldest entry.
       const milestone = STATE.wallTab === 'saved' ? '' : registrationCardHtml(doc.registration, profile);
-      const body = posts.map(post => postHtml(post, 'wall')).join('') || renderEmpty(
+      const body = posts.map(post => postHtml(post, 'wall')).join('') || (milestone ? '' : renderEmpty(
         STATE.wallTab === 'saved' ? 'Закладок пока нет' : 'На стене пока тихо',
         STATE.wallTab === 'saved' ? 'Сохранённые rich-публикации появятся здесь.' : 'Опубликуйте идею или подтверждённый результат.',
-      );
-      host.innerHTML = milestone + body;
+      ));
+      host.innerHTML = body + milestone;
       wirePostActions(host);
     } catch (error) {
       if (requestId === STATE.wallRequest) UI.renderError(host, error, loadWall);
@@ -740,7 +739,7 @@
       const follow = '<button type="button" class="btn ' + (org.is_following ? 'ghost' : 'primary')
         + '" data-follow-org="' + esc(org.org_id) + '" data-following="' + (org.is_following ? '1' : '0')
         + '">' + (org.is_following ? 'Вы читаете' : 'Подписаться') + '</button>';
-      const wall = (doc.posts || []).map(postHtml).join('')
+      const wall = sortPosts(doc.posts || [], true).map(postHtml).join('')
         || renderEmpty('На странице пока тихо', 'Публикации компании появятся здесь.');
       host.innerHTML = '<div class="community-profile-hero"><div class="community-profile-cover"><span>SF</span></div>'
         + '<div class="community-avatar xxl community-org-avatar" aria-hidden="true">SF</div>'
@@ -808,7 +807,7 @@
         + profileStats(profile)
         + '<div class="community-profile-actions">' + actions + '</div></div></div>'
         + '<div class="community-profile-wall"><h3>Стена ' + esc(profile.display_name || 'участника') + '</h3>'
-        + registrationCardHtml(doc.registration, profile) + wall + '</div>';
+        + wall + registrationCardHtml(doc.registration, profile) + '</div>';
       wirePeopleActions(host); wirePostActions(host);
       const edit = q('[data-modal-edit]', host); if (edit) edit.onclick = () => editProfile(profile);
       const message = q('[data-message-profile]', host); if (message) message.onclick = () => startMessage(message.dataset.messageProfile);

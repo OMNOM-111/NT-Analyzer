@@ -56,7 +56,7 @@ def test_aurora_page_controllers_call_real_endpoints():
         "ai-agents.js": "API.http.aiAgents",
         "backtesting.js": "API.http.reports",
         "news.js": "API.http.news",
-        "topstep.js": "API.http.topstepStatus",
+        "topstep.js": "API.http.topstepStrategyStatus",
     }
     for fname, needle in expected.items():
         js = (AURORA / "assets" / "pages" / fname).read_text(encoding="utf-8")

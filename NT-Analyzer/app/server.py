@@ -1786,6 +1786,9 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
         end = end or datetime.now(timezone.utc)
         start = end - timedelta(days=range_days)
     access_source = str((access_decision or {}).source if access_decision else "")
+    if access_source == "demo_replay":
+        from .market_data_demo import series
+        return series(requested_instrument, timeframe, limit, start=start, end=end, max_points=max_points)
     isolated_source = access_source in {"owned_provider", "personal_connector"}
     access_scope_key = str((access_decision or {}).scope_id if access_decision else "")
     remote_bars = None
@@ -2022,7 +2025,10 @@ def _market_bars_payload_impl(instrument: str, timeframe: str, limit: int,
                        and (lambda dt: dt is not None and (start is None or dt >= start)
                             and (end is None or dt < end))(_market_bar_time(row))]
         out["total"] = len(out["bars"])
-    if alerts_index is not None:
+    if access_source == "shared_trial":
+        # Sharing the chart feed never shares the owner's private price alerts.
+        out["alerts"] = []
+    elif alerts_index is not None:
         symbol = " ".join(str(instrument or "").strip().upper().split())
         out["alerts"] = list(alerts_index.get(symbol, []))
     elif production_mode:
@@ -3131,7 +3137,10 @@ class Handler(BaseHTTPRequestHandler):
                 resolved["capabilities"] = resolved_caps
                 nav = dict(resolved.get("nav") or {})
                 if str(resolved.get("ux_mode") or "") == "professional":
-                    nav["desktop"] = charts_allowed
+                    # The workspace shell remains usable during the product
+                    # trial even when no market-data source is connected.
+                    # Bars and sockets still require the separate decision.
+                    nav["desktop"] = bool(nav.get("desktop") or charts_allowed)
                 resolved["nav"] = nav
                 resolved["locked_nav"] = [
                     section for section in permissions.NAV_SECTIONS
@@ -3315,8 +3324,7 @@ class Handler(BaseHTTPRequestHandler):
                 ),
                 "market_data_entitlement_required": (
                     "Для live-графиков подключите собственный TopstepX или "
-                    "NinjaTrader. Продление владельцем открывает общий trial-feed "
-                    "только там, где подтверждено разрешение на redistribution."
+                    "NinjaTrader. Активная подписка или продление trial открывает общий live-mirror TopStep."
                 ),
                 "authentication_required": "Для live-графиков требуется вход.",
             }
@@ -5348,14 +5356,20 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             if path == "/api/dev/preview/exit":
+                preview_sandbox.finish_preview()
                 self._clear_session_cookie()
                 self._clear_device_credential_cookie()
                 self._clear_dev_preview_mode_cookie()
                 self._clear_preview_control_cookie()
-                self._json(HTTPStatus.OK, {
-                    "ok": True,
-                    "redirect_url": preview_sandbox.exit_url(),
-                })
+                try:
+                    self._json(HTTPStatus.OK, {
+                        "ok": True, "redirect_url": preview_sandbox.exit_url(),
+                    })
+                    self.wfile.flush()
+                finally:
+                    # Cleanup blocks new mutations immediately, but shutdown
+                    # must not race the response carrying the owner return URL.
+                    preview_sandbox._EXIT_RESPONSE_SENT.set()
                 return
             if path == "/api/dev/preview/identity":
                 self._json(HTTPStatus.OK, {
@@ -5455,19 +5469,32 @@ class Handler(BaseHTTPRequestHandler):
             self._err(HTTPStatus.FORBIDDEN, "loopback required", code="loopback_required")
             return
         try:
-            out = dev_preview.return_to_developer(
-                ip=client_ip or "127.0.0.1",
-                user_agent=str(self.headers.get("User-Agent") or "dev-return"),
-            )
+            current_token = self._cookie_value(runtime_env.session_cookie_name())
+            current = account_auth.authenticate_session(current_token)
+            if current and current.get("is_owner"):
+                out = {"session_token": current_token}
+            else:
+                out = dev_preview.return_to_developer(
+                    ip=client_ip or "127.0.0.1",
+                    user_agent=str(self.headers.get("User-Agent") or "dev-return"),
+                )
+            # A stale child tab can still finish its own disposable contour.
+            # The id never authorizes stopping a different, newer Preview.
+            preview_id = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("preview_id", [""])[0]
+            with dev_preview._SANDBOX_LOCK:
+                active = dev_preview._ACTIVE_SANDBOX or {}
+                if preview_id and active.get("preview_id") == preview_id:
+                    dev_preview._stop_active_sandbox_locked(remove_data=True)
         except dev_preview.DevPreviewError as exc:
             self._err(exc.status, str(exc), code=exc.code)
             return
-        self._set_session_cookie(str(out.get("session_token") or ""))
+        if not (current and current.get("is_owner")):
+            self._set_session_cookie(str(out.get("session_token") or ""))
         self._clear_dev_preview_mode_cookie()
         self.send_response(HTTPStatus.SEE_OTHER)
         for name, value in self._extra_headers:
             self.send_header(name, value)
-        self.send_header("Location", "/ui/")
+        self.send_header("Location", "/ui/index.html")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
 
@@ -6863,15 +6890,20 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(exc.status, str(exc))
                 return
             if avatar is None or not avatar.is_file():
-                self._err(HTTPStatus.NOT_FOUND, "Аватар не найден.")
-                return
-            try:
-                payload = avatar.read_bytes()
-            except OSError:
-                self._err(HTTPStatus.NOT_FOUND, "Аватар недоступен.")
-                return
-            suffix = avatar.suffix.lower()
-            mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}.get(suffix)
+                from . import preview_public
+                projected = preview_public.avatar_payload(profile_id)
+                if projected is None:
+                    self._err(HTTPStatus.NOT_FOUND, "Аватар не найден.")
+                    return
+                payload, mime = projected
+            else:
+                try:
+                    payload = avatar.read_bytes()
+                except OSError:
+                    self._err(HTTPStatus.NOT_FOUND, "Аватар недоступен.")
+                    return
+                suffix = avatar.suffix.lower()
+                mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}.get(suffix)
             if not mime:
                 self._err(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, "Формат аватара не поддерживается.")
                 return
@@ -7687,7 +7719,7 @@ class Handler(BaseHTTPRequestHandler):
                     for row in ai_chief_agent.list_conversations(scope=self._ai_conversation_scope()):
                         item = dict(row)
                         item["conversation_type"] = "ai"
-                        item["subtitle"] = "AI · Виктор и агенты"
+                        item["subtitle"] = "AI · Заместитель"
                         item["unread_count"] = max(0, int(notice_map.get(str(item.get("conversation_id") or ""), 0) or 0))
                         conversations.append(item)
                 # Newest first inside each group, with pinned AI topics always
@@ -7741,7 +7773,7 @@ class Handler(BaseHTTPRequestHandler):
                         raise sf_chat.SFChatError("Диалог не найден.", 404)
                     conversation = dict(conversation)
                     conversation["conversation_type"] = "ai"
-                    conversation["subtitle"] = "AI · Виктор и агенты"
+                    conversation["subtitle"] = "AI · Заместитель"
                     out = {"ok": True, "conversation": conversation, "messages": messages}
                 self._json(HTTPStatus.OK, out)
             except (community.CommunityError, sf_chat.SFChatError, ai_chief_agent.ChiefAgentError) as exc:
@@ -7859,6 +7891,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 out = account_auth.list_users(
                     (getattr(self, "_remote_context", None) or {}).get("user_id"))
+                if runtime_env.is_development():
+                    from .account_lifecycle import registry_rows
+                    out["deleted_accounts"] = registry_rows()
                 out["admin_capability_catalog"] = permissions.admin_capability_catalog()
                 for row in out.get("users") or []:
                     if row.get("is_owner"):
@@ -8127,6 +8162,12 @@ class Handler(BaseHTTPRequestHandler):
                 self._err(HTTPStatus.INTERNAL_SERVER_ERROR, f"telegram group status failed: {e}")
             return
 
+        if path == "/api/topstep/strategy-status":
+            self._json(HTTPStatus.OK, {"phase": "IN DEVELOPMENT", "configured": False,
+                "live_actions_enabled": False, "read_only": True, "transport": "Не подключён",
+                "username_configured": False, "api_key_configured": False,
+                "note": "Подключение разработанных стратегий к TopStep находится в разработке. Торговые операции недоступны. Источник котировок Рабочего стола настраивается отдельно."})
+            return
         if path == "/api/topstep/status":
             self._json(HTTPStatus.OK, integrations.topstep_status())
             return
@@ -9061,6 +9102,10 @@ class Handler(BaseHTTPRequestHandler):
                 limit = 200
             try:
                 scope = self._ai_conversation_scope()
+                if qs.get("request_id"):
+                    self._json(HTTPStatus.OK, {"ok": True, "receipt": ai_chief_agent.recover_conversation_reply(
+                        conversation_id, qs["request_id"][0], scope=scope)})
+                    return True
                 self._json(HTTPStatus.OK, {
                     "ok": True,
                     "conversation_id": conversation_id,
@@ -9414,6 +9459,25 @@ class Handler(BaseHTTPRequestHandler):
                 return
             time.sleep(0.25)
 
+    def _preview_shared_chat(self, body, *, stream):
+        from . import preview_shared_models
+        from .ai_control_center.states import ContractError
+        try:
+            with preview_sandbox.data_operation():
+                result = preview_shared_models.chat(self, body)
+            if stream:
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self._sse_write("final", result)
+                self._sse_write("done", {"ok": True})
+            else:
+                self._json(HTTPStatus.OK, result)
+        except ContractError:
+            self._err(HTTPStatus.FORBIDDEN, "Shared model call unavailable.", code="preview_shared_call_denied")
+
     def _ai_lab_orchestrator_sync(self, body: Dict[str, Any], *,
                                   scope: Dict[str, Any],
                                   mirror_to_telegram: bool) -> None:
@@ -9546,10 +9610,16 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/api/ai-lab/orchestrator/message/stream":
+            if preview_sandbox.enabled():
+                self._preview_shared_chat(body, stream=True)
+                return
             self._ai_lab_orchestrator_stream(body, scope=self._ai_conversation_scope())
             return
 
         if path == "/api/ai-lab/orchestrator/message":
+            if preview_sandbox.enabled():
+                self._preview_shared_chat(body, stream=False)
+                return
             self._ai_lab_orchestrator_sync(
                 body, scope=self._ai_conversation_scope(), mirror_to_telegram=True,
             )
@@ -10804,6 +10874,26 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path.startswith("/api/account/"):
+            if path in {"/api/account/delete/start", "/api/account/delete/confirm"}:
+                if not self._check_local_post():
+                    return
+                body = self._read_body()
+                if not isinstance(body, dict):
+                    self._err(400, "Некорректный запрос.")
+                    return
+                from . import account_lifecycle
+                context = getattr(self, "_remote_context", None) or {}
+                try:
+                    kwargs = {"user_id": context.get("user_id"), "session_id": str(context.get("session_id") or "")}
+                    if path.endswith("/start"):
+                        out = account_lifecycle.start(**kwargs, provider=str(body.get("provider") or ""))
+                    else:
+                        out = account_lifecycle.confirm(**kwargs, challenge_id=str(body.get("challenge_id") or ""),
+                            code=str(body.get("code") or ""), confirmation=str(body.get("confirmation") or ""))
+                    self._json(HTTPStatus.OK, out)
+                except (account_auth.AccountAuthError, security_devices.SecurityDeviceError) as exc:
+                    self._err(exc.status, str(exc), code=getattr(exc, "code", "account_delete_failed"))
+                return
             self._account_security_post(path)
             return
 

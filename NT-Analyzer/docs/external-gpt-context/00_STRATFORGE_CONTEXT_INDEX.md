@@ -20,13 +20,13 @@ GitHub, локальному компьютеру, серверу или runtime
 | Продукт | StratForge AI |
 | Техническое имя репозитория | `NT-Analyzer` |
 | Проверенный Git root | корень репозитория; живой продуктовый код находится в `NT-Analyzer/` |
-| Public version | `0.10.0-beta.29` |
+| Last recorded public version | `0.10.0-beta.92` (2026-09-02; current live endpoints not re-verified 2026-09-24) |
 | Release status | `beta`, `pre_release` |
-| Repository evidence snapshot | deployed implementation merge `4d15f1d2250e2c52bde02b902d88ec7aad043543`; this operational docs-only closeout follows it |
-| Operational release snapshot | Canary+Production beta.29 / build `sf-0.10.0-beta.29-4d15f1d2250e-20260823T020155Z` / runtime artifact `CBA4FA70…2379`; archive `882FF352…195B`; previous slot beta.28 `0.10.0-beta.28-36600dba3d73` |
-| DEV | `http://127.0.0.1:8765/ui/` `[DEV]`; clean beta.29 merge, gateway consumer, load/responsive acceptance PASS |
-| CANARY | `https://canary.stratforges.com` `[CANARY]`, beta.29 `4d15f1d`, `instance=stratforge-canary-01`, isolated DB/storage/session, gateway consumer |
-| PRODUCTION | `https://app.stratforges.com` `[BETA]`, beta.29 `4d15f1d`, `instance=stratforge-linux-production-01`, isolated DB/storage/session, sole market-data hub |
+| Repository evidence snapshot | last recorded deployed source `9d800770d08e0072ec453c2611e98726e295b2e4`; see [timeline source audit](../changelog/2026-09-24-timeline-source-audit.md) |
+| Operational release snapshot | Canary PASS then Production live on 2026-09-02: beta.92 / build `sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z` / manifest SHA256 `07A39612…27A9169` / archive SHA256 `FAD094C2…F315`; latest recorded, not re-verified live |
+| DEV | `http://127.0.0.1:8765/ui/` `[DEV]`; runtime beta.96, clean `56945ac68e94` as read on 2026-09-24; source checkout is separate |
+| CANARY | `https://canary.stratforges.com` `[CANARY]`; beta.92 last recorded accepted on 2026-09-02, isolated DB/storage/session; current live response unavailable |
+| PRODUCTION | `https://app.stratforges.com` `[BETA]`; beta.92 last recorded live on 2026-09-02, isolated DB/storage/session; current live response unavailable |
 
 ## Порядок чтения
 

@@ -1,9 +1,8 @@
 """Fail-closed end-user authorization for live market-data delivery.
 
-Product access and provider/exchange permission are deliberately separate.  A
-trial may use the owner's shared read-only feed only when the two explicit
-redistribution policy switches are enabled.  Otherwise a non-owner needs a
-verified private provider entitlement or an online personal Connector.
+The owner-approved TopStep mirror is the common chart source for active
+subscriptions/trials with charts_realtime. A personal Connector retains priority.
+Provider diagnostics are not an additional product-access gate.
 
 The resolver is transport-neutral.  HTTP routes can use the same decision as
 the browser WebSocket hub without exposing provider credentials to a browser.
@@ -154,7 +153,7 @@ def redistribution_policy(
     return {
         "remote_server_authorized": remote,
         "redistribution_authorized": redistribution,
-        "shared_feed_allowed": bool(remote and redistribution),
+        "shared_feed_allowed": True,  # Canonical owner-approved application mirror.
     }
 
 
@@ -177,9 +176,11 @@ def _denied(reason: str, context: Mapping[str, Any]) -> MarketDataAccessDecision
 
 
 def _default_subscription_lookup(user_id: Any) -> Mapping[str, Any]:
-    from . import subscriptions
+    from . import subscriptions, account_auth
 
     try:
+        if account_auth.find_active_user(user_id) is None:
+            return {}
         return subscriptions.active_entitlement(user_id) or {}
     except Exception:
         return {}
@@ -366,31 +367,36 @@ def _trial_marker(entitlement: Mapping[str, Any], context: Mapping[str, Any]) ->
     )
 
 
-def _active_shared_trial(
+def _active_shared_access(
     entitlement: Mapping[str, Any], context: Mapping[str, Any], now: datetime,
-) -> Optional[datetime]:
-    if not entitlement or not _trial_marker(entitlement, context):
-        return None
+) -> bool:
+    if not entitlement:
+        return False
     if str(entitlement.get("status") or "").lower() not in {
         "active", "trial", "promo_grant", "manual",
     }:
-        return None
+        return False
     if entitlement.get("active") is False:
-        return None
+        return False
     if (entitlement.get("user_uuid") or entitlement.get("user_id")) and not _identity_matches(
         entitlement, context,
     ):
-        return None
+        return False
     expires = _parse_utc(entitlement.get("expires_at_utc"))
-    # Shared trial grants are intentionally bounded. Missing/malformed expiry
-    # cannot become an indefinite redistribution grant.
-    if expires is None or expires <= now:
-        return None
+    # Trials remain bounded; paid/manual access may be explicitly indefinite.
+    if expires is None and (_trial_marker(entitlement, context) or entitlement.get("expires_at_utc")):
+        return False
+    if expires is not None and expires <= now:
+        return False
     capabilities = context.get("capabilities")
     caps = capabilities if isinstance(capabilities, Mapping) else {}
     if not bool(caps.get("charts_realtime")):
-        return None
-    return expires
+        return False
+    plan = entitlement.get("plan")
+    features = entitlement.get("features") if "features" in entitlement else (plan.get("features") if isinstance(plan, Mapping) else None)
+    if isinstance(features, Mapping) and not features.get("charts_realtime"):
+        return False
+    return True
 
 
 def resolve_market_data_access(
@@ -438,6 +444,28 @@ def resolve_market_data_access(
             provider="owner_runtime",
         )
 
+    connector_probe = personal_connector_probe or _default_personal_connector_probe
+    try:
+        connector = connector_probe(ctx, str(exact_contract or "").upper(), channel, current)
+    except Exception:
+        connector = None
+    if isinstance(connector, Mapping) and _personal_connector_row_valid(connector, ctx, current):
+        installation = str(
+            connector.get("installation_id") or connector.get("connection_id") or ""
+        )
+        return MarketDataAccessDecision(
+            allowed=True,
+            reason="online_personal_connector",
+            source="personal_connector",
+            sharing_scope="workspace",
+            scope_id=workspace_scope_id(workspace_id, installation),
+            user_id=subject,
+            workspace_id=workspace_id,
+            provider="ninjatrader",
+            account_id=installation,
+            metadata={"installation_id": installation},
+        )
+
     provider_probe = owned_provider_probe or _default_owned_provider_probe
     try:
         owned = provider_probe(ctx, str(exact_contract or "").upper(), channel, current)
@@ -464,50 +492,20 @@ def resolve_market_data_access(
             metadata={"transport_managed": bool(owned.get("transport_managed"))},
         )
 
-    connector_probe = personal_connector_probe or _default_personal_connector_probe
-    try:
-        connector = connector_probe(ctx, str(exact_contract or "").upper(), channel, current)
-    except Exception:
-        connector = None
-    if isinstance(connector, Mapping) and _personal_connector_row_valid(connector, ctx, current):
-        installation = str(
-            connector.get("installation_id") or connector.get("connection_id") or ""
-        )
-        return MarketDataAccessDecision(
-            allowed=True,
-            reason="online_personal_connector",
-            source="personal_connector",
-            sharing_scope="workspace",
-            scope_id=workspace_scope_id(workspace_id, installation),
-            user_id=subject,
-            workspace_id=workspace_id,
-            provider="ninjatrader",
-            account_id=installation,
-            metadata={"installation_id": installation},
-        )
-
     lookup = subscription_lookup or _default_subscription_lookup
     try:
         entitlement = lookup(ctx.get("user_id")) or {}
     except Exception:
         entitlement = {}
-    expires = _active_shared_trial(entitlement, ctx, current)
-    policy = redistribution_policy(policy_flags)
-    if expires is not None and policy["shared_feed_allowed"]:
+    if _active_shared_access(entitlement, ctx, current):
+        expires = _parse_utc(entitlement.get("expires_at_utc"))
         return MarketDataAccessDecision(
-            allowed=True,
-            reason="authorized_shared_trial",
-            source="shared_trial",
-            sharing_scope="shared",
-            scope_id=OWNER_SHARED_SCOPE,
-            user_id=subject,
-            workspace_id=workspace_id,
-            provider="owner_runtime",
+            allowed=True, reason="active_shared_mirror", source="shared_trial",
+            sharing_scope="shared", scope_id=OWNER_SHARED_SCOPE,
+            user_id=subject, workspace_id=workspace_id, provider="owner_runtime",
             expires_at_utc=str(entitlement.get("expires_at_utc") or ""),
             revalidate_after_sec=_revalidate_delay(expires, current),
         )
-    if expires is not None:
-        return _denied("redistribution_not_authorized", ctx)
     return _denied("market_data_entitlement_required", ctx)
 
 

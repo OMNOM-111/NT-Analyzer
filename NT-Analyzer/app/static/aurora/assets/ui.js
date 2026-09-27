@@ -265,13 +265,21 @@
     if (!face) return;
     const video = face.querySelector('video');
     if (!video) return;
-    try { video.loop = false; video.pause(); if (video.currentTime) video.currentTime = 0; } catch (e) { /* ignore */ }
+    try {
+      video.loop = false; video.pause();
+      if (video.dataset.deferredSrc && video.hasAttribute('src')) {
+        video.removeAttribute('src'); video.load();
+      } else if (video.currentTime) video.currentTime = 0;
+    } catch (e) { /* ignore */ }
     face.classList.remove('playing');
   }
   function agentFacePlay(face, opts) {
     if (!face || agentFaceReduceMotion()) return;
     const video = face.querySelector('video');
     if (!video) return;
+    if (video.dataset.deferredSrc && !video.hasAttribute('src')) {
+      video.src = video.dataset.deferredSrc; video.load();
+    }
     const loop = !!(opts && opts.loop) || face.classList.contains('speaking');
     video.loop = loop;
     face.classList.add('playing');
@@ -294,7 +302,7 @@
     if (ORCH_SPEECH.message) orchSpeechState({state: 'stopped'});
     ORCH_SPEECH.message = '';
     if (ORCH_SPEECH.button && ORCH_SPEECH.button.isConnected) {
-      ORCH_SPEECH.button.disabled = false; ORCH_SPEECH.button.textContent = 'Озвучить';
+      ORCH_SPEECH.button.disabled = false;
       ORCH_SPEECH.button.setAttribute('aria-pressed', 'false');
     }
     AGENT_SPEAK.gen += 1;
@@ -437,7 +445,13 @@
     const attrs = speaking ? ' loop autoplay' : '';
     const style = `--face-zoom:${crop.zoom};--face-cx:${crop.cx};--face-cy:${crop.cy};`;
     const msgAttr = options.messageId ? ` data-message-id="${esc(String(options.messageId))}"` : '';
-    return `<span class="agent-face${speaking ? ' speaking' : ''}${cls}" title="${esc(label)}" data-agent-face="${esc(id)}"${msgAttr} style="${style}"><video src="${esc(src)}" muted playsinline preload="metadata"${attrs} aria-hidden="true"></video></span>`;
+    // History can contain hundreds of replies. A paused video still allocates
+    // a decoder; show the same first frame until explicit speech starts it.
+    const deferred = !speaking && String(options.cls || '').split(/\s+/).includes('orch-msg-face');
+    const media = deferred
+      ? `data-deferred-src="${esc(src)}" poster="assets/agents/${esc(id)}/poster.png" preload="none"`
+      : `src="${esc(src)}" preload="metadata"`;
+    return `<span class="agent-face${speaking ? ' speaking' : ''}${cls}" title="${esc(label)}" data-agent-face="${esc(id)}"${msgAttr} style="${style}"><video ${media} muted playsinline${attrs} aria-hidden="true"></video></span>`;
   }
   function wireAgentFaces(root) {
     qsa('.agent-face', root || document).forEach((face) => {
@@ -1559,8 +1573,8 @@
 
   let impersonationLayoutCleanup = null;
   function syncImpersonationLayout() {
-    const bar = qs('#impersonation-banner');
-    const bottom = bar ? Math.max(0, Math.ceil(bar.getBoundingClientRect().bottom)) : 0;
+    const bars = qsa('#impersonation-banner, #dev-view-as-banner');
+    const bottom = Math.max(0, ...bars.map(bar => Math.ceil(bar.getBoundingClientRect().bottom)));
     document.body.style.setProperty('--qa-drawer-top', bottom + 'px');
   }
   function renderImpersonationBanner(auth) {
@@ -1638,7 +1652,10 @@
     return isDevelopmentEnv() && !!(CURRENT_AUTH && CURRENT_AUTH.is_owner);
   }
 
+  let previewLayoutCleanup = null;
   function renderDevPreviewBanner() {
+    if (previewLayoutCleanup) previewLayoutCleanup();
+    previewLayoutCleanup = null;
     const old = qs('#dev-view-as-banner');
     if (old) old.remove();
     document.documentElement.classList.remove('dev-view-as-active', 'preview-sandbox-active');
@@ -1649,12 +1666,14 @@
         active_user: 'Активный пользователь',
         trusted_device: 'Доверенное устройство',
         pending_access: 'Новый неподтверждённый доступ',
+        shared_models_user: 'Новый пользователь · shared models',
+        ai_denied_user: 'Новый пользователь · AI запрещён',
       };
       const scenario = String(PREVIEW_CONTEXT.scenario || 'new_user');
       const bar = el(`<div id="dev-view-as-banner" class="dev-view-as-banner preview-sandbox-banner" role="status" aria-live="polite">
         <span class="dev-view-as-tag">PREVIEW / TEST USER</span>
         <span class="dev-view-as-role">${esc(scenarioLabels[scenario] || scenario)}</span>
-        <span class="dev-view-as-note">Только synthetic data · внешние действия заблокированы${PREVIEW_CONTEXT.promo_code ? ` · промокод ${esc(PREVIEW_CONTEXT.promo_code)}` : ''}</span>
+        <span class="dev-view-as-note">${PREVIEW_CONTEXT.external_side_effects === 'shared_models_only' ? 'Временные данные · реальные shared-запросы за счёт владельца · до $0.25' : 'Только synthetic data · внешние действия заблокированы'}${PREVIEW_CONTEXT.promo_code ? ` · промокод ${esc(PREVIEW_CONTEXT.promo_code)}` : ''}</span>
         <span class="preview-sandbox-actions">
           <button class="btn sm" type="button" data-preview-control="reset">Reset Preview</button>
           <button class="btn sm" type="button" data-preview-control="new-user">New Preview User</button>
@@ -1664,12 +1683,26 @@
       </div>`);
       document.body.appendChild(bar);
       document.documentElement.classList.add('preview-sandbox-active');
+      syncImpersonationLayout();
+      const previewResize = new ResizeObserver(syncImpersonationLayout);
+      previewResize.observe(bar);
+      previewLayoutCleanup = () => previewResize.disconnect();
       const run = async (button, action) => {
         qsa('[data-preview-control]', bar).forEach(item => { item.disabled = true; });
         try {
           const out = await action();
-          location.assign((out && out.redirect_url) || '/ui/');
+          if (['reset', 'new-user', 'exit'].includes(button.dataset.previewControl)) {
+            // This branch runs only on the disposable Preview origin.
+            // Its browser state must die with the corresponding server data.
+            try { localStorage.clear(); sessionStorage.clear(); } catch (_) { /* unavailable storage */ }
+          }
+          location.replace((out && out.redirect_url) || '/ui/');
         } catch (error) {
+          if (button.dataset.previewControl === 'exit' && PREVIEW_CONTEXT.exit_url) {
+            try { localStorage.clear(); sessionStorage.clear(); } catch (_) { /* unavailable storage */ }
+            location.replace(PREVIEW_CONTEXT.exit_url);
+            return;
+          }
           reportError(error);
           qsa('[data-preview-control]', bar).forEach(item => { item.disabled = false; });
           const newClient = qs('[data-preview-control="new-client"]', bar);
@@ -1757,7 +1790,7 @@
     const scenarios = Array.isArray(status.sandbox_scenarios) ? status.sandbox_scenarios : [];
     const active = status.active_sandbox || {};
     body.innerHTML = `
-      <div class="finance-note"><strong>Изолированный Preview sandbox.</strong> Каждый запуск создаёт отдельный процесс, synthetic user, собственные identity/session/device/workspace/trading stores и уникальные cookies. Owner data не копируются и не изменяются; e-mail, Telegram, платежи, брокеры, cloud AI и live orders заблокированы.</div>
+      <div class="finance-note"><strong>Изолированный Preview sandbox.</strong> Каждый запуск создаёт временного пользователя со своим workspace и выбранными правами. Данные владельца и API-ключи не копируются. В сценариях общих моделей доступны только явно расшаренные Local-модели (до 32 вызовов и $0.25 за 30 минут); остальные внешние вызовы, платежи и торговля заблокированы. Выход удаляет данные Preview; учёт реальных расходов остаётся у владельца подключения.</div>
       ${active.running ? `<div class="preview-active-note"><span class="badge pending">активен</span> Предыдущий sandbox: ${esc(active.scenario || '')}. Новый запуск безопасно заменит его.</div>` : ''}
       <div class="section-title">Acceptance-сценарий</div>
       <div class="dev-persona-grid preview-scenario-grid">${scenarios.map(item => `<button class="btn ghost dev-persona" data-preview-scenario="${esc(item.id)}"><strong>${esc(item.label)}</strong><span class="cab-sub">${esc(item.description || '')}</span></button>`).join('')}</div>
@@ -2310,7 +2343,10 @@
     const planBadge = isOwner
       ? '<span class="badge trial">★ Золотая звезда · Основатель</span>'
       : (sub.plan_id ? `<span class="badge ${(sub.status === 'active' || sub.status === 'promo_grant' || sub.status === 'founder') ? 'live' : 'archived'}">${esc(sub.status || '')}</span>` : '');
-    const expires = sub.expires_at_utc ? ('до ' + esc(sub.expires_at_utc)) : ((sub.plan_id || isOwner) ? 'бессрочно' : '');
+    const trialUsage = me.trial_usage;
+    const expires = sub.plan_id === 'trial_full' && trialUsage && !trialUsage.granted_elsewhere
+      ? `Осталось ${esc(trialHumanTime(trialUsage.remaining_sec))} активного использования`
+      : (sub.expires_at_utc ? ('до ' + esc(sub.expires_at_utc)) : ((sub.plan_id || isOwner) ? 'бессрочно' : ''));
     const modeLabel = uxMode === 'beginner' ? 'Студент' : (uxMode === 'professional' ? 'Профессионал' : 'не выбран');
     const modeCard = isOwner
       ? `<div class="cab-card"><h4>Режим интерфейса</h4><div class="cab-kv"><span class="k">Режим</span><span class="v"><strong>Профессионал</strong> <span class="badge live">владелец</span></span></div><div class="cab-sub">Владелец всегда в режиме «Профессионал». Для проверки новичка используйте Staging → impersonation.</div></div>`
@@ -2337,7 +2373,8 @@
       <div class="cab-card"><h4>Доступные разделы</h4><div class="chips-in">${(uxMode === 'beginner'
         ? ['Учебный терминал', 'Community']
         : activeFeatures.map(f => f.label)
-      ).map(label => `<span class="chip-tag">${esc(label)}</span>`).join('') || '<span class="cab-sub">Разделы не назначены</span>'}</div></div>`;
+      ).map(label => `<span class="chip-tag">${esc(label)}</span>`).join('') || '<span class="cab-sub">Разделы не назначены</span>'}</div></div>
+      ${!isOwner ? `<div class="cab-card"><h4>Удалить аккаунт</h4><p class="cab-sub">Удаляются ваши рабочие области, чаты, память, модели и личные настройки. Все сессии и общие доступы прекращаются. Сохраняются только минимальный аудит удаления и статистика расходов с отметкой «удалённый пользователь».</p><button class="btn sm danger" id="cab-delete-account">Удалить аккаунт</button><div id="cab-delete-form" hidden><p>Для подтверждения получите одноразовый код через подключённый канал.</p><button class="btn sm" id="cab-delete-code">Получить код</button><label>Код подтверждения<input id="cab-delete-otp" inputmode="numeric" autocomplete="one-time-code" maxlength="6"></label><label>Введите УДАЛИТЬ<input id="cab-delete-word" autocomplete="off"></label><button class="btn sm danger" id="cab-delete-confirm">Удалить навсегда</button><button class="btn sm ghost" id="cab-delete-cancel">Отмена</button></div><p id="cab-delete-status" role="status"></p></div>` : ''}`;
   }
 
   async function renderSharedQueueInto(node) {
@@ -2789,9 +2826,10 @@
       const planOptions = buildPlanOptions(plansData.plans || []);
       const monitoring = new Map((monitorData.users || []).map(row => [String(row.user_id), row]));
       node.innerHTML = `<div class="dchart-actions" style="justify-content:flex-start"><button class="btn primary" id="users-invite">＋ Пригласить (ссылка + промокод)</button></div>
-        <div class="finance-note"><strong>Хранилище:</strong> ${esc((data.storage || {}).backend || '—')} · ${data.storage && data.storage.encrypted ? 'зашифровано' : 'ещё не создано'}. После подтверждения личности новый аккаунт автоматически получает полный пробный доступ на 7 дней.</div>
+        <div class="finance-note"><strong>Хранилище:</strong> ${esc((data.storage || {}).backend || '—')} · ${data.storage && data.storage.encrypted ? 'зашифровано' : 'ещё не создано'}. После подтверждения личности новый аккаунт автоматически получает стартовый пробный доступ. Остаток активного времени показан в личном кабинете.</div>
         <div class="finance-note"><strong>Мониторинг:</strong> ${esc(monitorData.online_count || 0)} пользователей онлайн${monitorData.alert_count ? ` · <span class="support-alert-inline">⚠ ${esc(monitorData.alert_count)} предупреждений</span>` : ' · превышений нет'}. Показатели относятся к вкладкам StratForge AI.</div>
-        <div class="list account-user-list">${users.map(u => userRowHtml(u, catalog, planOptions, monitoring.get(String(u.user_id)))).join('') || '<div class="empty-state">Аккаунтов пока нет.</div>'}</div>`;
+        <div class="list account-user-list">${users.map(u => userRowHtml(u, catalog, planOptions, monitoring.get(String(u.user_id)))).join('') || '<div class="empty-state">Аккаунтов пока нет.</div>'}</div>
+        <details class="cab-card"><summary>Удалённые аккаунты · только чтение (${(data.deleted_accounts || []).length})</summary>${(data.deleted_accounts || []).map(row => `<div class="cab-kv"><span class="k">${row.account_type === 'test-preview' ? 'TEST/PREVIEW' : 'Аккаунт'} · deleted</span><span class="v">${esc(row.user_uuid)} · ${esc(row.deleted_at_utc)}<br>${esc(row.reason)} · fingerprint ${esc(row.identifier_fingerprint)}</span></div>`).join('') || '<p>Записей нет.</p>'}</details>`;
       const invite = qs('#users-invite', node);
       if (invite) invite.onclick = () => openAdminPanel('invites');
       qsa('[data-user-role]', node).forEach(s => s.onchange = async () => { s.disabled = true; try { await API.http.authUserRole(s.dataset.userRole, s.value); toast('Роль обновлена'); } catch (e) { reportError(e); } finally { s.disabled = false; } });
@@ -3411,6 +3449,34 @@
   }
   function renderProfileInto(cb, me) {
     cb.innerHTML = cabinetProfile(me);
+    const deleteButton = qs('#cab-delete-account', cb), deleteForm = qs('#cab-delete-form', cb);
+    let deletionChallenge = '';
+    if (deleteButton) {
+      const status = qs('#cab-delete-status', cb), sendCode = qs('#cab-delete-code', cb);
+      deleteButton.onclick = () => { deleteForm.hidden = false; deleteButton.hidden = true; };
+      qs('#cab-delete-cancel', cb).onclick = () => { deleteForm.hidden = true; deleteButton.hidden = false; deletionChallenge = ''; status.textContent = ''; };
+      sendCode.onclick = async () => {
+        sendCode.disabled = true; status.textContent = 'Отправляем код подтверждения…';
+        try {
+          const result = await API.http.accountDeleteStart({});
+          deletionChallenge = result.challenge_id;
+          status.textContent = `Код отправлен: ${result.masked_target || result.provider || ''}${result.delivery === 'preview_synthetic' ? ' · TEST-код: ' + (result.test_code || result.code || '') : ''}`;
+        } catch (error) { status.textContent = error.message || 'Не удалось отправить код.'; }
+        finally { sendCode.disabled = false; }
+      };
+      qs('#cab-delete-confirm', cb).onclick = async event => {
+        const word = qs('#cab-delete-word', cb).value, code = qs('#cab-delete-otp', cb).value;
+        if (!deletionChallenge || word !== 'УДАЛИТЬ' || !/^\d{6}$/.test(code)) { status.textContent = 'Получите код, введите 6 цифр и слово УДАЛИТЬ.'; return; }
+        event.currentTarget.disabled = true; status.textContent = 'Удаляем аккаунт и приватные данные…';
+        try {
+          await API.http.accountDeleteConfirm({challenge_id: deletionChallenge, code, confirmation: word});
+          const prefix = `desktop.workspaces.v2:${me.user?.id || me.user?.user_uuid || 'guest'}:`;
+          Object.keys(localStorage).filter(key => key.startsWith(prefix)).forEach(key => localStorage.removeItem(key));
+          status.textContent = 'Аккаунт удалён. Сессии прекращены.';
+          location.href = '/ui/';
+        } catch (error) { status.textContent = error.message || 'Не удалось завершить удаление.'; qs('#cab-delete-confirm', cb).disabled = false; }
+      };
+    }
     const personal = qs('#cab-personal-workspace', cb);
     if (personal) personal.onclick = async () => {
       const msg = qs('#cab-personal-workspace-msg', cb);
@@ -9103,7 +9169,7 @@
   orchApplySkin(orchLoadSkin());
   // Model selection is an internal responsibility of Vitek and the Manager.
   const ORCH_MODES = {
-    auto:     { label: 'Авто',         agent: '',          sub: 'подбирает модель под задачу',      ph: 'Напишите задачу обычным текстом…' },
+    auto:     { label: 'Авто',         agent: '',          sub: 'подбирает модель под задачу',      ph: 'Напишите сообщение…' },
   };
   function orchLoadMode() {
     return 'auto';
@@ -9111,7 +9177,7 @@
   function orchPersonaOptions(personas, selected, error) {
     const people = Array.isArray(personas) ? personas : [];
     const main = people.filter(person => person.main_assistant === true);
-    const defaultLabel = main.length === 1 ? `Заместитель: ${main[0].title || main[0].name || 'Persona'}${main[0].status === 'active' ? '' : ' · приостановлен'}` : main.length > 1 ? 'Правая рука: требуется уточнение' : 'Авто · заместитель не назначен';
+    const defaultLabel = main.length === 1 ? `Заместитель: ${main[0].title || main[0].name || 'Persona'}${main[0].status === 'active' ? '' : ' · приостановлен'}` : main.length > 1 ? 'Правая рука: требуется уточнение' : 'Заместитель';
     const options = [`<option value="">${esc(defaultLabel)}</option>`];
     people.forEach(person => {
       const id = String(person.id || '');
@@ -9120,7 +9186,7 @@
       options.push(`<option value="${esc(id)}"${id === selected ? ' selected' : ''}${person.status === 'active' ? '' : ' disabled'}>${esc(title)}${person.main_assistant === true ? ' · главный' : ''}${person.status === 'active' ? '' : ' · приостановлен'}</option>`);
     });
     if (selected && !people.some(person => person.id === selected)) options.push(`<option value="${esc(selected)}" selected disabled>Выбранная Persona недоступна — выберите другую</option>`);
-    return `<label for="orch-persona-select">Помощник <select class="btn sm" id="orch-persona-select" style="max-width:100%;min-width:0">${options.join('')}</select></label> <button class="btn sm" id="orch-persona-refresh" type="button" title="Обновить список Persona">Обновить</button><small style="display:block;overflow-wrap:anywhere">${esc(error || 'Выбирается личность, не модель. Доступны только поддерживаемые задания; имя не даёт новых прав.')}</small>`;
+    return `<label for="orch-persona-select">Помощник <select class="btn sm" id="orch-persona-select" style="max-width:100%;min-width:0">${options.join('')}</select></label> <button class="btn sm" id="orch-persona-refresh" type="button" title="Обновить список Persona">Обновить</button><small style="display:block;overflow-wrap:anywhere">${esc(error || 'Обсудите идею, задайте вопрос или поручите работу.')}</small>`;
   }
   async function orchLoadPersonaModels(reason = '') {
     // Loads only this Persona's connections; the server still decides which
@@ -9130,9 +9196,11 @@
     try {
       const data = await API.http.aiControlCenterDomain('models', {limit: 100}, {retries: 0});
       if (generation !== ORCH.personaGeneration || persona !== ORCH.personaId) return;
-      ORCH.personaModels = Array.isArray(data?.items) ? data.items : [];
-      if (!ORCH.personaModels.some(model => model.id === ORCH.selectedModelId && model.status === 'active' && model.persona_id === persona && model.execution_available === true)) ORCH.selectedModelId = '';
-      const available = ORCH.personaModels.some(model => model.persona_id === persona && model.status === 'active' && model.execution_available === true);
+      // A connection somebody shares is not bound to a Persona: any of this
+      // person's Personas may speak through it. Its key stays with its owner.
+      ORCH.personaModels = (Array.isArray(data?.items) ? data.items : []).concat(Array.isArray(data?.shared) ? data.shared : []);
+      if (!ORCH.personaModels.some(model => model.id === ORCH.selectedModelId && model.status === 'active' && orchModelServes(model, persona) && model.execution_available === true)) ORCH.selectedModelId = '';
+      const available = ORCH.personaModels.some(model => orchModelServes(model, persona) && model.status === 'active' && model.execution_available === true);
       ORCH.personaError = !available ? 'Нет проверенных доступных подключений этой Persona.'
         : reason === 'ambiguous' ? 'Выберите подключение в списке и отправьте сообщение ещё раз.' : '';
     } catch (_) {
@@ -9140,6 +9208,9 @@
       ORCH.personaModels = []; ORCH.selectedModelId = ''; ORCH.personaError = 'Подключения не загружены. Повторите выбор модели.';
     }
     orchRenderPersonaPicker();
+  }
+  function orchModelServes(model, persona) {
+    return model?.persona_id === persona || model?.ownership === 'shared';
   }
   function orchNeedsModelChoice(error) {
     return String(error?.code || error?.error || error?.message || error || '').includes('persona_model_ambiguous');
@@ -9150,8 +9221,8 @@
     const hidden = orchIsHumanConversation(ORCH.currentId) || isGuest() || ORCH.aiAvailable === false;
     wrap.hidden = hidden; wrap.setAttribute('aria-hidden', String(hidden));
     if (hidden) return;
-    const availableModels = (ORCH.personaModels || []).filter(model => model.persona_id === ORCH.personaId && model.status === 'active' && model.execution_available === true);
-    const modelPicker = ORCH.personaId ? `<div><button class="btn sm" id="orch-load-models" type="button">Выбрать модель</button>${availableModels.length ? `<label>Подключение <select class="btn sm" id="orch-persona-model" style="max-width:100%"><option value="">Без явного выбора (только одно подключение)</option>${availableModels.map(model => `<option value="${esc(model.id)}"${model.id === ORCH.selectedModelId ? ' selected' : ''}>${esc(model.label || model.title)}${model.can_execute_test_only === true ? ' · SYNTHETIC' : ''}</option>`).join('')}</select></label>` : ''}<small style="display:block">Смена подключения действует на следующее сообщение; Persona, лицо и история сохраняются.</small></div>` : '';
+    const availableModels = (ORCH.personaModels || []).filter(model => orchModelServes(model, ORCH.personaId) && model.status === 'active' && model.execution_available === true);
+    const modelPicker = ORCH.personaId ? `<div><button class="btn sm" id="orch-load-models" type="button">Выбрать модель</button>${availableModels.length ? `<label>Подключение <select class="btn sm" id="orch-persona-model" style="max-width:100%"><option value="">Без явного выбора (только одно подключение)</option>${availableModels.map(model => `<option value="${esc(model.id)}"${model.id === ORCH.selectedModelId ? ' selected' : ''}>${esc(model.label || model.title)}${model.ownership === 'shared' ? ' · общая' : ''}${model.can_execute_test_only === true ? ' · SYNTHETIC' : ''}</option>`).join('')}</select></label>` : ''}<small style="display:block">Смена подключения действует на следующее сообщение; Persona, лицо и история сохраняются.</small></div>` : '';
     const html = orchPersonaOptions(ORCH.personas, ORCH.personaId, ORCH.personaError) + modelPicker;
     if (wrap._personaHtml !== html) {
       wrap._personaHtml = html; wrap.innerHTML = html;
@@ -9207,7 +9278,7 @@
         || !(Array.isArray(personas) ? personas : []).some(person => person.id === selected && person.status === 'active')) throw new Error('Выбранная Persona недоступна. Обновите список и выберите помощника.');
     const result = { persona_id: selected };
     if (selectedModel) {
-      if (!models.some(model => model.id === selectedModel && model.persona_id === selected && model.status === 'active' && model.execution_available === true)) throw new Error('Выбранное подключение недоступно. Обновите список моделей.');
+      if (!models.some(model => model.id === selectedModel && orchModelServes(model, selected) && model.status === 'active' && model.execution_available === true)) throw new Error('Выбранное подключение недоступно. Обновите список моделей.');
       result.selected_model_id = selectedModel;
     }
     return result;
@@ -9327,7 +9398,7 @@
             <form class="orch-input" id="orch-form" autocomplete="off">
               <button class="orch-attach" id="orch-attach" type="button" title="Прикрепить изображение" aria-label="Прикрепить изображение" hidden>${icon('paperclip')}</button>
               <input id="orch-files" type="file" accept="image/png,image/jpeg,image/webp" multiple hidden>
-              <textarea id="orch-text" rows="1" maxlength="6000" placeholder="Напишите задачу обычным текстом…" ${offline ? 'disabled' : ''}></textarea>
+              <textarea id="orch-text" rows="1" maxlength="6000" placeholder="Напишите сообщение…" ${offline ? 'disabled' : ''}></textarea>
               <button class="orch-mic" id="orch-mic" type="button" title="Голосовой ввод" aria-label="Голосовой ввод" hidden>${icon('mic')}</button>
               <button class="orch-send" id="orch-send" type="submit" title="Отправить" aria-label="Отправить" ${offline ? 'disabled' : ''}>${icon('send')}</button>
             </form>
@@ -9670,7 +9741,7 @@
       return;
     }
     sub.textContent = current
-      ? String(current.subtitle || 'AI · Виктор и агенты')
+      ? String(current.subtitle || 'AI · Заместитель')
       : 'Люди и AI-помощники';
   }
   function orchRenderWorkState() {
@@ -10173,7 +10244,8 @@
   }
   function orchSpeechPersona(row) {
     if (orchPersonaId(row)) return row._persona || null;
-    const ref = String(row.agent_id || row.agent_name || '').toLowerCase();
+    const ref = row.agent_id === 'vitek' && row.agent_name === 'Заместитель'
+      ? 'manager' : String(row.agent_id || row.agent_name || '').toLowerCase();
     const face = AGENT_AVATAR_IDS[ref];
     if (!face) return null;
     // Historical staff replies retain their assets. Without a persisted Persona
@@ -10189,7 +10261,7 @@
     const available = !!configured && (!orchPersonaId(row) || ['active', 'draft'].includes(persona.status));
     const hint = orchPersonaId(row) ? (available ? 'Озвучить сохранённый ответ голосом персоны' : 'Персона или её голос недоступны. История сохранена.')
       : 'Исторический ответ: локальный голос устройства, без подключения провайдера';
-    return `<div class="orch-msg-meta"><button type="button" class="btn sm ghost" data-orch-speech="${esc(row.message_id)}" aria-pressed="false" title="${esc(hint)}" ${available ? '' : 'disabled'}>Озвучить</button> <span data-orch-speech-status role="status" aria-live="polite">${available ? '' : esc(hint)}</span></div>`;
+    return `<span data-orch-speech-status role="status" aria-live="polite" class="orch-msg-meta">${available ? '' : esc(hint)}</span>`;
   }
   function orchLoadPersonaAudio() {
     if (window.PersonaAudio?.create) return Promise.resolve(window.PersonaAudio);
@@ -10214,7 +10286,7 @@
     const button = ORCH_SPEECH.button, status = ORCH_SPEECH.status;
     if (button && button.isConnected) {
       button.disabled = false;
-      button.textContent = ['preparing', 'speaking'].includes(view.state) ? 'Остановить' : 'Озвучить';
+      button.setAttribute('aria-label', ['preparing', 'speaking'].includes(view.state) ? 'Остановить озвучивание' : 'Озвучить ответ через аватар');
       button.setAttribute('aria-pressed', ['preparing', 'speaking'].includes(view.state) ? 'true' : 'false');
     }
     if (status && status.isConnected) {
@@ -10227,6 +10299,9 @@
     if (!['preparing', 'speaking'].includes(view.state)) ORCH_SPEECH.message = '';
   }
   function wireOrchSpeech(container, messages, cid) {
+    qsa('[data-orch-speech]', container).forEach(face => face.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); face.click(); }
+    }));
     qsa('[data-orch-speech]', container).forEach(button => button.addEventListener('click', async () => {
       if (ORCH.currentId !== cid || !ORCH.open) return;
       const id = button.dataset.orchSpeech, row = messages.find(item => item.message_id === id);
@@ -10236,7 +10311,7 @@
       agentSpeakStop();
       const generation = ORCH_SPEECH.generation;
       ORCH_SPEECH.message = id; ORCH_SPEECH.button = button;
-      ORCH_SPEECH.status = button.parentElement?.querySelector('[data-orch-speech-status]');
+      ORCH_SPEECH.status = button.closest('.orch-msg')?.querySelector('[data-orch-speech-status]');
       orchSpeechState({state: 'preparing'});
       try {
         const module = await orchLoadPersonaAudio();
@@ -10265,7 +10340,7 @@
     if (!id) return '';
     const savedTransport = (row.actions || []).some(action => action?.verification_scope === 'transport_only'
       || action?.verification?.scope === 'transport_only' || action?.task_class === 'assistant_response');
-    const savedNote = savedTransport ? '<small>Сохранённая проверка относится только к получению текста. Содержание автоматически не оценено; профессиональный рейтинг не изменяется.</small>' : '';
+    const savedNote = savedTransport ? '<details><summary>Технические детали проверки</summary><small>Сохранённая проверка относится только к получению текста. Содержание автоматически не оценено; профессиональный рейтинг не изменяется.</small></details>' : '';
     if (!row._awLatest) return savedNote;
     const task = row._awTask;
     if (!task) return `<div class="orch-aw-task">Текущее состояние задачи недоступно. Проверка не считается завершённой.${savedNote}</div>`;
@@ -10274,7 +10349,7 @@
     const transportOnly = savedTransport || task.verification_scope === 'transport_only' || [task.task_class, task.rubric_key].includes('assistant_response');
     const verification = { passed: 'пройдена', failed: 'не пройдена', pending: 'ожидается' }[task.verification_status] || 'не получена';
     const verificationText = transportOnly ? `Техническая проверка получения ответа: ${verification}. Содержание автоматически не оценено; требуется отдельное решение человека. В профессиональный рейтинг не входит.` : `Автоматическая проверка: ${verification}. Приёмка владельцем — отдельное решение.`;
-    return `<section class="orch-aw-task" data-aw-chat-task="${esc(id)}" data-aw-state="${esc(task.display_status)}"><strong>${esc(task.display_title || 'Задача Agent World')}</strong><p>${esc(task.display_status_label || task.status_label || 'Состояние не получено')}</p><p>${esc(task.result_label || '')}</p><small>${esc(verificationText)}</small>${actions.includes('review_result') && review.status === 'pending' ? `<div class="orch-aw-actions"><button type="button" class="btn sm" data-aw-chat-review="accept" data-aw-task-id="${esc(id)}">Проверено: принять</button><button type="button" class="btn sm" data-aw-chat-review="reject" data-aw-task-id="${esc(id)}">Проверено: отклонить</button></div>` : ''}<a class="btn sm" href="/ui/ai-command-center.html#tab=work&task=${encodeURIComponent(id)}">Задача, история и действия</a></section>`;
+    return `<section class="orch-aw-task" data-aw-chat-task="${esc(id)}" data-aw-state="${esc(task.display_status)}"><strong>${esc(task.display_title || 'Задача Agent World')}</strong><p>${esc(task.display_status_label || task.status_label || 'Состояние не получено')}</p><p>${esc(task.result_label || '')}</p><details><summary>Технические детали проверки</summary><small>${esc(verificationText)}</small></details>${actions.includes('review_result') && review.status === 'pending' ? `<div class="orch-aw-actions"><button type="button" class="btn sm" data-aw-chat-review="accept" data-aw-task-id="${esc(id)}">Проверено: принять</button><button type="button" class="btn sm" data-aw-chat-review="reject" data-aw-task-id="${esc(id)}">Проверено: отклонить</button></div>` : ''}<a class="btn sm" href="/ui/ai-command-center.html#tab=work&task=${encodeURIComponent(id)}">Задача, история и действия</a></section>`;
   }
   function wireOrchAgentWorld(container, messages, cid) {
     qsa('[data-aw-chat-review]', container).forEach(button => button.addEventListener('click', async () => {
@@ -10479,18 +10554,25 @@
       : orchFooterHtml(row, isUser);
     const media = orchAttachmentsHtml(row);
     const personaId = orchPersonaId(row), persona = row._persona;
-    const faceRef = personaId ? persona?.avatar_key : agentRef;
-    const face = isUser ? '' : personaId && !AGENT_AVATAR_IDS[faceRef]
+    const faceRef = personaId ? persona?.avatar_key : agentRef === 'vitek' && row.agent_name === 'Заместитель' ? 'manager' : agentRef;
+    let face = isUser ? '' : personaId && !AGENT_AVATAR_IDS[faceRef]
       ? `<span class="orch-human-face" title="${esc(agentLabel)} · AI-помощник">${esc(agentLabel.slice(0, 1))}</span>` : agentAvatarHtml(faceRef, {
       label: agentLabel, cls: 'orch-msg-face', messageId: row.message_id || '',
     });
+    const voice = !isUser && orchSpeechPersona(row);
+    if (face && row.message_id && row.content && voice?.presentation?.resolved_voice_profile_id
+        && (!personaId || ['active', 'draft'].includes(voice.status))) {
+      face = face.replace('<span ', `<span role="button" tabindex="0" data-orch-speech="${esc(row.message_id)}" aria-label="Озвучить ответ через аватар" aria-pressed="false" `);
+    }
     // The answer wears its own header (who answered, on which model) and, while
     // it still waits for a verdict, the approve / reject pair sits on the card
     // itself instead of inside the collapsed details panel.
     const model = String(row.model || '').trim();
     const provider = String(row.provider || '').trim();
-    const head = isUser ? '' : `<div class="orch-msg-card-head"><span class="orch-msg-author">${esc(agentLabel)}</span>${model ? `<span class="orch-msg-model">модель: ${esc(model)}${provider ? ` (${esc(provider)})` : ''}</span>` : ''}${orchAwaitHtml(row)}</div>`;
-    const technical = orchAgentWorldTaskId(row) && (String(row.content || '').length > 500 || /^\s*[\[{]/.test(row.content || ''));
+    const conversational = !isUser && orchInferKind(row) === 'chat';
+    const head = isUser ? '' : `<div class="orch-msg-card-head"><span class="orch-msg-author">${esc(agentLabel)}</span>${model && model !== 'model pending' && !conversational ? `<span class="orch-msg-model">модель: ${esc(model)}${provider ? ` (${esc(provider)})` : ''}</span>` : ''}${orchAwaitHtml(row)}</div>`;
+    const textDeliverable = (row.actions || []).some(action => action?.task_class === 'assistant_response');
+    const technical = orchAgentWorldTaskId(row) && ((!textDeliverable && String(row.content || '').length > 500) || /^\s*[\[{]/.test(row.content || ''));
     const body = technical ? `<details class="orch-msg-body orch-aw-details"><summary>Полное сообщение и данные результата</summary><pre>${esc(row.content || '')}</pre></details>` : `<div class="orch-msg-body">${esc(row.content || '')}</div>`;
     return `<div class="orch-msg ${isUser ? 'user' : 'assistant'}"${personaId ? ` data-persona-id="${esc(personaId)}"` : ''}>${face}<div class="orch-msg-stack">${head}${body}${media}${actions}${footer}${orchSpeechHtml(row)}</div></div>`;
   }
@@ -10724,6 +10806,15 @@
   function orchErrorHtml(failure) {
     return `<span class="orch-err" role="status">${esc(failure.text)}</span><details class="orch-error-details"><summary>Технические подробности</summary><p><code>${esc(failure.code)}</code>${failure.status ? ` · HTTP ${esc(failure.status)}` : ''}</p><p>Повторная отправка автоматически не выполнялась. История задач и ошибок сохраняется.</p></details>`;
   }
+  function orchHistoryWindow(messages, cid, human) {
+    if (human) return { rows: messages, remaining: 0, newer: 0 };
+    if (ORCH.historyWindowId !== cid) {
+      ORCH.historyWindowId = cid; ORCH.historyWindowOffset = 0;
+    }
+    const newer = Math.min(ORCH.historyWindowOffset || 0, Math.max(0, messages.length - 1));
+    const end = messages.length - newer, remaining = Math.max(0, end - 30);
+    return { rows: messages.slice(remaining, end), remaining, newer };
+  }
   async function orchLoadMessages(cid, silent) {
     const box = qs('#orch-msgs'); if (!box) return;
     if (!cid) return false;
@@ -10766,6 +10857,9 @@
       if (!silent) { renderError(box, e, () => orchLoadMessages(cid)); return false; }
       return false;
     }
+    if (ORCH.currentId !== cid) return;
+    const historyWindow = orchHistoryWindow(messages, cid, human);
+    messages = historyWindow.rows;
     if (!human) {
       messages = await orchAgentWorldViews(messages, cid);
       messages = await orchPersonaViews(messages, cid);
@@ -10785,6 +10879,18 @@
     box.innerHTML = messages.length ? orchMessagesHtml(messages) : (human
       ? '<div class="empty-state">Личная переписка начнётся с первого сообщения.</div>'
       : '<div class="empty-state">Начните диалог: например «Разработай простую стратегию максимально быстро».</div>');
+    if (historyWindow.remaining || historyWindow.newer) {
+      box.insertAdjacentHTML('afterbegin', `<div class="flex gap-sm">${historyWindow.remaining ? `<button type="button" class="btn sm" data-orch-history="older">Предыдущие сообщения (${historyWindow.remaining})</button>` : ''}${historyWindow.newer ? `<button type="button" class="btn sm" data-orch-history="newer">Более новые (${historyWindow.newer})</button>` : ''}</div>`);
+      qsa('[data-orch-history]', box).forEach(button => button.addEventListener('click', async () => {
+        if (ORCH.sending) return;
+        button.disabled = true;
+        ORCH.historyWindowOffset = Math.max(0, historyWindow.newer + (button.dataset.orchHistory === 'older' ? 30 : -30));
+        ORCH.messagesSignature = '';
+        await orchLoadMessages(cid, true);
+        if (ORCH.currentId === cid) box.scrollTop = 0;
+        if (button.isConnected) button.disabled = false;
+      }));
+    }
     if (ORCH.transientError && ORCH.transientError.cid === cid) {
       box.insertAdjacentHTML('beforeend', `<div class="orch-msg assistant">${orchErrorHtml(ORCH.transientError)}</div>`);
     }
@@ -10853,6 +10959,10 @@
       return;
     }
     // optimistic render: show the owner message immediately
+    if (ORCH.historyWindowOffset) {
+      ORCH.historyWindowOffset = 0; ORCH.messagesSignature = '';
+      await orchLoadMessages(ORCH.currentId).catch(() => false);
+    }
     if (box.querySelector('.empty-state')) box.innerHTML = '';
     orchAppendMessage(box, { role: 'user', content: text, timestamp_utc: new Date().toISOString(), source: 'app' });
     // Live block contains only public progress labels. Provider chain-of-thought
@@ -10862,7 +10972,7 @@
         <div class="orch-think-live-label">${icon('spark')}<span>Передаю запрос…</span></div>
         <div class="orch-think-live-text"><span id="orch-live-think-body"></span></div>
       </div>
-      <div class="orch-msg assistant orch-live-answer" id="orch-live-body">${pendingPersona ? orchPendingPersonaFace(pendingPersona) : agentAvatarHtml('vitek', { speaking: true, label: 'Виктор', cls: 'orch-msg-face' })}<div class="orch-msg-stack"><span class="orch-dots"><i></i><i></i><i></i></span></div></div>
+      <div class="orch-msg assistant orch-live-answer" id="orch-live-body">${pendingPersona ? orchPendingPersonaFace(pendingPersona) : agentAvatarHtml('manager', { speaking: true, label: 'Заместитель', cls: 'orch-msg-face' })}<div class="orch-msg-stack"><span class="orch-dots"><i></i><i></i><i></i></span></div></div>
     </div>`);
     box.appendChild(live);
     wireAgentFaces(live);
@@ -10901,7 +11011,7 @@
         onFinal: (data) => {
           if (ORCH.currentId === cid && data && data.conversation_id) orchSaveCurrentId(data.conversation_id);
           removeThink();
-          const faceRef = (data && (data.agent_id || data.domain_agent || data.agent_name || data.agent)) || 'vitek';
+          const faceRef = (data && (data.agent_id || data.domain_agent || data.agent_name || data.agent)) || 'manager';
           const faceLabel = String((data && data.agent_name) || faceRef || 'Виктор');
           setLiveFace(faceRef, faceLabel);
           setLiveBody(esc(String((data && data.reply) || '')));

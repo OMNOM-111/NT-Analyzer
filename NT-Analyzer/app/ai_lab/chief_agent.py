@@ -1967,7 +1967,10 @@ def report_task_update(*, conversation_id: str, text: str,
                        provider: str = "local", action_name: str = "vitek_task",
                        action_status: str = "running", close: bool = False,
                        mirror_to_telegram: bool = True,
-                       scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                       scope: Optional[Dict[str, Any]] = None,
+                       request_id: str = "",
+                       participation_chain: Optional[List[Dict[str, Any]]] = None,
+                       telegram_setting: str = "chief_agent_reports") -> Dict[str, Any]:
     """Publish a non-chart task update in its originating app/Telegram chat.
 
     Victor used to send every result through ``report_chart_snapshot``. That
@@ -1978,13 +1981,41 @@ def report_task_update(*, conversation_id: str, text: str,
     scope_info = _normalize_conversation_scope(scope)
     cid = _safe_conversation_id(conversation_id or DEFAULT_CONVERSATION_ID)
     path = _conversation_file(cid, scope=scope)
+    request_key = re.sub(r"[^A-Za-z0-9_.:-]", "", str(request_id or ""))[:120]
+    if request_key:
+        existing = next((
+            row for row in _read_conversation(500, path=path, scope=scope)
+            if row.get("role") == "assistant" and row.get("request_id") == request_key
+        ), None)
+        if existing:
+            if mirror_to_telegram and _can_mirror_to_telegram(scope_info):
+                try:
+                    from .. import telegram_service
+                    telegram_service.send_chief_report(
+                        f"{agent_name or 'Виктор'} · поручение",
+                        [str(existing.get("content") or text or "")[:3200]],
+                        model_name=str(existing.get("model") or model or "internal"),
+                        provider_name=str(existing.get("provider") or provider or "local"),
+                        action_status=str(action_status or "running"),
+                        conversation_id=cid,
+                        conversation_title=_conversation_title(cid, scope=scope),
+                        dedupe_key=request_key,
+                        setting=telegram_setting,
+                    )
+                except Exception:
+                    pass
+            return {
+                "ok": True, "conversation_id": cid, "message": existing,
+                "replayed": True,
+            }
     message = _append_conversation(
         "assistant", str(text or "Обновление по поручению.").strip(),
         source="vitek_task", model=str(model or "internal"),
         provider=str(provider or "local"), agent_name=str(agent_name or "Виктор"),
         actions=[{"name": str(action_name or "vitek_task"),
                   "status": str(action_status or "running")}],
-        doubts=[], path=path, scope=scope,
+        doubts=[], path=path, scope=scope, request_id=request_key,
+        participation_chain=participation_chain,
     )
     _touch_conversation(
         cid, message_count=len(_read_conversation(500, path=path, scope=scope)), scope=scope,
@@ -2005,11 +2036,12 @@ def report_task_update(*, conversation_id: str, text: str,
                 model_name=str(model or "internal"), provider_name=str(provider or "local"),
                 action_status=str(action_status or "running"), conversation_id=cid,
                 conversation_title=_conversation_title(cid, scope=scope),
-                dedupe_key=str(message.get("message_id") or ""),
+                dedupe_key=str(request_key or message.get("message_id") or ""),
+                setting=telegram_setting,
             )
         except Exception:
             pass
-    return {"ok": True, "conversation_id": cid, "message": message}
+    return {"ok": True, "conversation_id": cid, "message": message, "replayed": False}
 
 
 def report_local_preview_result(*, conversation_id: str, title: str, text: str,
@@ -2059,6 +2091,26 @@ def _agent_world_request_key(value: str) -> str:
     if not isinstance(value, str) or not value or len(value) > 512:
         raise ChiefAgentError("Agent World request_id обязателен.")
     return "aw.live." + hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def recover_conversation_reply(conversation_id, request_id, *, scope):
+    """Read the persisted reply for one scoped ingress; never execute a model."""
+    if not isinstance(request_id, str) or not 1 <= len(request_id) <= 120:
+        raise ChiefAgentError("Invalid request identity")
+    rows = conversation_messages(conversation_id, limit=200, scope=scope)
+    keys = {request_id, _agent_world_request_key(request_id)}
+    ingress = [row for row in rows if row.get("request_id") in keys]
+    task_ids = {action.get("task_id") for row in ingress for action in row.get("actions") or []
+                if action.get("task_id")}
+    replies = [row for row in rows if row.get("role") == "assistant" and
+        (row.get("request_id") in keys or any(action.get("task_id") in task_ids
+            for action in row.get("actions") or []))]
+    if not replies:
+        return None
+    message = replies[-1]
+    return {"ok": True, "conversation_id": conversation_id, "reply": message.get("content", ""),
+        "message": message, "agent": message.get("agent_id"), "model": message.get("model"),
+        "actions": message.get("actions", []), "recovered_from_history": True}
 
 
 def report_agent_world_live_update(envelope: Dict[str, Any], *, history_delivery: bool = False,
@@ -4073,16 +4125,49 @@ def _execute_action(action: Dict[str, Any], owner_message: str = "",
 
 
 def generate_periodic_report(period: str, *, send_telegram: bool = True,
-                             scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                             scope: Optional[Dict[str, Any]] = None,
+                             report_key: str = "") -> Dict[str, Any]:
     from .. import performance, runtime
 
     normalized = str(period or "weekly").lower()
-    period_key = {"weekly": "week", "week": "week", "monthly": "month", "month": "month", "quarterly": "quarter", "quarter": "quarter"}.get(normalized)
+    period_key = {
+        "daily": "today", "day": "today", "today": "today",
+        "weekly": "week", "week": "week",
+        "monthly": "month", "month": "month",
+        "quarterly": "quarter", "quarter": "quarter",
+    }.get(normalized)
     if not period_key:
-        raise ChiefAgentError("Период отчёта должен быть weekly, monthly или quarterly.")
+        raise ChiefAgentError("Период отчёта должен быть daily, weekly, monthly или quarterly.")
     scope_info = _normalize_conversation_scope(scope)
     if _explicit_production() and not scope_info:
         raise ChiefAgentError("Production periodic report requires a user and workspace scope.")
+
+    identity = re.sub(
+        r"[^A-Za-z0-9_.:-]", "-",
+        str(report_key or f"{period_key}:{_pt_now().date().isoformat()}"),
+    )[:120]
+    filename_key = re.sub(r"[^A-Za-z0-9_.-]", "-", identity)
+    output_path = _report_output_dir(scope_info) / f"periodic-{period_key}-{filename_key}.json"
+    if output_path.is_file():
+        cached = read_json(output_path, {})
+        if isinstance(cached, dict) and cached.get("report_key") == identity:
+            cached = {**cached, "reused": True}
+            if send_telegram and _can_mirror_to_telegram(scope_info):
+                from .. import telegram_service
+                setting = {
+                    "today": "daily_summary", "week": "weekly_summary",
+                    "month": "monthly_summary", "quarter": "quarterly_summary",
+                }[period_key]
+                telegram_service.send_chief_report(
+                    f"Витёк · отчёт · {period_key}",
+                    [str(cached.get("content") or "")[:3500]],
+                    model_name=str(cached.get("model") or "unknown"),
+                    provider_name=str(cached.get("provider") or ""),
+                    conversation_id=DEFAULT_CONVERSATION_ID,
+                    conversation_title="Основной чат",
+                    dedupe_key=f"periodic:{identity}", setting=setting,
+                )
+            return cached
 
     def collect() -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
         scoped_snapshot = _scope_application_snapshot(_application_snapshot(), scope_info)
@@ -4098,44 +4183,61 @@ def generate_periodic_report(period: str, *, send_telegram: bool = True,
     else:
         metrics, experiments = collect()
     packet = {"period": period_key, "performance": metrics, "recent_ai_experiments": experiments}
-    complexity = "critical" if period_key in {"month", "quarter"} else "standard"
-    with universal_llm.usage_scope({
-        "user_id": scope_info.get("user_id"),
-        "user_name": scope_info.get("display_name"),
-        "workspace_id": scope_info.get("workspace_id"),
-        "conversation_id": DEFAULT_CONVERSATION_ID,
-        "request_source": f"orchestrator_{period_key}_report",
-    }):
-        try:
-            universal_llm.require_valid_production_scope()
-        except universal_llm.BudgetExceeded:
-            result = {
-                "content": (
-                    f"Отчёт за период {period_key} собран детерминированно. "
-                    "AI-интерпретация не запущена без привязки к "
-                    "пользователю и рабочей области."
-                ),
-                "actual_model": "scope policy",
-                "provider": "local",
-                "scope_blocked": True,
-            }
-        else:
-            result = agent_router.invoke_role(
-                "orchestrator",
-                json.dumps(packet, ensure_ascii=False, default=str)[:19000],
-                system_prompt=(
-                    "You are StratForge Orchestrator preparing a recurring owner report. "
-                    "Use only supplied metrics. Answer in Russian with sections: evidence, conclusions, "
-                    "problems/doubts, recommendations, and proposed next actions. Never authorize live trading."
-                ),
-                max_output_tokens=2500,
-                timeout=llm_timeouts.PERIODIC_REPORT,
-                purpose=f"orchestrator_{period_key}_report",
-                complexity=complexity,
-                cache_mode="off",
-            )
+    summary = metrics.get("strategy_summary") or metrics.get("summary") or {}
+    if period_key == "today":
+        win_rate = summary.get("win_rate")
+        result = {
+            "content": "\n".join([
+                "Марина собрала подтверждённую сводку за текущий день.",
+                f"Сделок: {int(summary.get('trades') or 0)}",
+                f"P&L после комиссии: ${float(summary.get('pnl') or 0):,.2f}",
+                f"Комиссия: ${float(summary.get('commission') or 0):,.2f}",
+                f"Win rate: {'—' if win_rate is None else f'{float(win_rate):.1f}%'}",
+            ]),
+            "actual_model": "deterministic performance rules",
+            "provider": "local",
+        }
+    else:
+        complexity = "critical" if period_key in {"month", "quarter"} else "standard"
+        with universal_llm.usage_scope({
+            "user_id": scope_info.get("user_id"),
+            "user_name": scope_info.get("display_name"),
+            "workspace_id": scope_info.get("workspace_id"),
+            "conversation_id": DEFAULT_CONVERSATION_ID,
+            "request_source": f"orchestrator_{period_key}_report",
+        }):
+            try:
+                universal_llm.require_valid_production_scope()
+            except universal_llm.BudgetExceeded:
+                result = {
+                    "content": (
+                        f"Отчёт за период {period_key} собран детерминированно. "
+                        "AI-интерпретация не запущена без привязки к "
+                        "пользователю и рабочей области."
+                    ),
+                    "actual_model": "scope policy",
+                    "provider": "local",
+                    "scope_blocked": True,
+                }
+            else:
+                result = agent_router.invoke_role(
+                    "orchestrator",
+                    json.dumps(packet, ensure_ascii=False, default=str)[:19000],
+                    system_prompt=(
+                        "You are StratForge Orchestrator preparing a recurring owner report for Vitek, "
+                        "the owner's deputy. Use only supplied metrics. Answer in Russian with sections: "
+                        "evidence, conclusions, problems/doubts, recommendations, and proposed next actions. "
+                        "Never authorize live trading."
+                    ),
+                    max_output_tokens=2500,
+                    timeout=llm_timeouts.PERIODIC_REPORT,
+                    purpose=f"orchestrator_{period_key}_report",
+                    complexity=complexity,
+                    cache_mode="off",
+                )
     report = {
         "report_id": f"ORCH-REPORT-{uuid.uuid4().hex[:10].upper()}",
+        "report_key": identity,
         "generated_at_utc": _now(),
         "period": period_key,
         "content": str(result.get("content") or "")[:15000],
@@ -4145,16 +4247,36 @@ def generate_periodic_report(period: str, *, send_telegram: bool = True,
         "cached_input_tokens": result.get("cached_input_tokens"),
         "output_tokens": result.get("output_tokens"),
         "cost_usd": result.get("cost_usd"),
+        "evidence": {
+            "period": metrics.get("period"),
+            "account": metrics.get("account"),
+            "summary": summary,
+            "trade_count": metrics.get("trade_count"),
+            "execution_count": metrics.get("execution_count"),
+            "dedupe": metrics.get("dedupe"),
+        },
+        "route": {
+            "requester": "owner",
+            "deputy": "vitek",
+            "contributors": ["marina", "orchestrator"] if period_key != "today" else ["marina"],
+            "delivery": ["sf_chat", "telegram"],
+        },
+        "reused": False,
     }
-    write_json_atomic(
-        _report_output_dir(scope_info) / f"{period_key}-{_pt_now().date().isoformat()}.json",
-        report,
-    )
+    write_json_atomic(output_path, report)
     if send_telegram and _can_mirror_to_telegram(scope_info):
         from .. import telegram_service
+        setting = {
+            "today": "daily_summary", "week": "weekly_summary",
+            "month": "monthly_summary", "quarter": "quarterly_summary",
+        }[period_key]
         telegram_service.send_chief_report(
-            f"Отчёт Orchestrator · {period_key}", [report["content"][:3500]],
+            f"Витёк · отчёт · {period_key}", [report["content"][:3500]],
             model_name=str(report.get("model") or "unknown"),
+            provider_name=str(report.get("provider") or ""),
+            conversation_id=DEFAULT_CONVERSATION_ID,
+            conversation_title="Основной чат",
+            dedupe_key=f"periodic:{identity}", setting=setting,
         )
     return report
 
@@ -5707,11 +5829,17 @@ def enqueue_event(event_type: str, payload: Dict[str, Any], *,
 
 
 def audit_recent_backtests(*, use_llm: bool = False, send_telegram: bool = False,
-                           scope: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                           scope: Optional[Dict[str, Any]] = None,
+                           reuse_existing: bool = False) -> Dict[str, Any]:
     today = _pt_now().date()
     scope_info = _normalize_conversation_scope(scope)
     if _explicit_production() and not scope_info:
         raise ChiefAgentError("Production backtest audit requires a user and workspace scope.")
+    output_path = _report_output_dir(scope_info) / f"daily-{today.isoformat()}.json"
+    if reuse_existing and output_path.is_file():
+        cached = read_json(output_path, {})
+        if isinstance(cached, dict) and cached.get("period") == today.isoformat():
+            return {**cached, "reused": True}
     experiments = []
     for exp in registry.list_experiments(limit=1000):
         if scope_info and str(exp.get("workspace_id") or "") != scope_info["workspace_id"]:
@@ -5792,15 +5920,15 @@ def audit_recent_backtests(*, use_llm: bool = False, send_telegram: bool = False
                 report["model_review"] = {
                     "agent_name": result.get("agent_name"),
                     "model": result.get("actual_model") or result.get("model"),
+                    "provider": result.get("provider"),
                     "content": str(result.get("content") or "")[:12000],
                     "input_tokens": result.get("input_tokens"),
                     "cached_input_tokens": result.get("cached_input_tokens"),
                     "output_tokens": result.get("output_tokens"),
                     "cost_usd": result.get("cost_usd"),
                 }
-    write_json_atomic(
-        _report_output_dir(scope_info) / f"daily-{today.isoformat()}.json", report,
-    )
+    report["reused"] = False
+    write_json_atomic(output_path, report)
     if send_telegram and _can_mirror_to_telegram(scope_info):
         from .. import telegram_service
         review = str((report.get("model_review") or {}).get("content") or "")
@@ -6813,8 +6941,9 @@ def poll_once() -> Dict[str, Any]:
         # It must not stop unrelated scheduled work or produce a success report.
         pass
     _mission_tick()
-    _scheduled_audit_tick()
-    _scheduled_reports_tick()
+    # Recurring owner reports are scheduled and delivered only by Vitek.  Keep
+    # this coordinator focused on missions/runtime analysis so two schedulers
+    # cannot call a model or publish the same report independently.
     try:
         from .. import runtime as runtime_module, workspaces
         scopes = workspaces.runtime_monitor_scopes()

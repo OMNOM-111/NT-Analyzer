@@ -13,6 +13,24 @@ ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE_JS = ROOT / "app" / "static" / "aurora" / "assets" / "desktop-template.js"
 
 
+def test_first_desktop_opens_chart_but_saved_empty_layout_is_preserved():
+    source = (ROOT / "app/static/aurora/assets/pages/desktop.js").read_text(encoding="utf-8")
+    load = source[source.index("  function loadStore() {"):source.index("  function migrate(raw) {")]
+    boot = source[source.index("  // ---- boot "):source.rindex("});")]
+    script = """
+    const STORE_KEY='test'; let saved=null, firstDesktopOpen=false, opened=0;
+    const localStorage={getItem:()=>saved,removeItem:()=>{}};
+    const migrate=x=>x, newLayout=(id,name)=>({id,name,windows:[]});
+    const mountLayout=()=>{},refreshContractsIfDue=()=>{},toast=()=>{};
+    const ensureAnyWindow=()=>{opened++;return Promise.resolve();};
+    """ + load + "\nlet first=loadStore();\n" + boot + """
+    if(opened!==1) throw Error('first visit did not open chart');
+    saved=JSON.stringify(first);firstDesktopOpen=false;
+    loadStore();
+    """ + boot + "\nif(opened!==1) throw Error('saved empty layout was replaced');"
+    subprocess.run(["node", "-e", script], cwd=ROOT, check=True, capture_output=True)
+
+
 def _eval(expression: str):
     source = TEMPLATE_JS.read_text(encoding="utf-8")
     script = source + "\nconsole.log(JSON.stringify(" + expression + "));"

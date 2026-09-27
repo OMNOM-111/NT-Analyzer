@@ -66,6 +66,19 @@ def _handle_get(handler, path: str, qs: dict) -> None:
                     "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
             return
         context, snapshot, service = _open(handler)
+        from .. import preview_shared_models
+        if preview_shared_models.enabled() and route == "overview":
+            from . import domain_gateway, overview_summaries
+            shared_domains = gateway.domain_service_for(handler)
+            authorized, models = shared_domains._open()
+            handler._json(200, {**domain_gateway.enrich_overview(authorized, {}),
+                "summaries": overview_summaries.build({**authorized, "summary_reader": shared_domains.list})})
+            return
+        if preview_shared_models.enabled() and (route == "tasks" or route.startswith("tasks/")):
+            identity = route.split("/", 1)[1] if "/" in route else None
+            result = gateway.domain_service_for(handler).list("tasks", identity=identity)
+            handler._json(200, result)
+            return
         if route == "overview":
             handler._json(200, gateway.enrich(service.overview(context=context), context, snapshot))
         elif route == "tasks":
@@ -209,6 +222,16 @@ def _handle_post(handler, path: str) -> None:
             if set(body) - {"image_data_url"}:
                 raise ContractError("invalid_chat_fields")
             task_id = UUID(route.split("/")[1])
+            from .. import preview_shared_models
+            if preview_shared_models.enabled():
+                detail = gateway.domain_service_for(handler).list("tasks", identity=str(task_id))
+                cid = (detail.get("task") or {}).get("conversation_id")
+                if not cid:
+                    raise ContractError("task_conversation_unavailable")
+                if body:
+                    raise ContractError("invalid_chat_fields")
+                handler._json(200, {"conversation_id": cid})
+                return
             task = service.task_detail(context=context, entity_id=task_id)
             if task is None:
                 handler._err(404, "Задача не найдена.", code="task_not_found")

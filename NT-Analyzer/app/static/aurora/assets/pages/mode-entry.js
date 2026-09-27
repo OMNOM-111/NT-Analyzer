@@ -101,6 +101,9 @@
       active_user: 'Активный пользователь',
       trusted_device: 'Доверенное устройство',
       pending_access: 'Новый неподтверждённый доступ',
+      shared_models_user: 'Новый пользователь · общие модели',
+      ai_denied_user: 'Новый пользователь · AI запрещён',
+      agent_world_operator: 'Синтетический оператор Agent World',
     };
     const scenario = String(previewContext.scenario || 'new_user');
     const bar = document.createElement('div');
@@ -116,7 +119,9 @@
     role.textContent = labels[scenario] || scenario;
     const note = document.createElement('span');
     note.className = 'dev-view-as-note';
-    note.textContent = 'Только synthetic data · внешние действия заблокированы';
+    note.textContent = previewContext.external_side_effects === 'shared_models_only'
+      ? 'Временные данные · реальные shared-запросы за счёт владельца · до $0.25'
+      : 'Только synthetic data · внешние действия заблокированы';
     const actions = document.createElement('span');
     actions.className = 'preview-sandbox-actions';
     const controls = [
@@ -136,21 +141,29 @@
     });
     bar.append(tag, role, note, actions);
     document.body.appendChild(bar);
-    const run = async (action) => {
+    const run = async (action, eraseBrowserState = true, exiting = false) => {
       Array.from(actions.querySelectorAll('button')).forEach(button => { button.disabled = true; });
       setStatus('Обновляю Preview sandbox…');
       try {
         const out = await action();
-        window.location.assign((out && out.redirect_url) || '/ui/');
+        if (eraseBrowserState) {
+          try { localStorage.clear(); sessionStorage.clear(); } catch (_) { /* unavailable storage */ }
+        }
+        window.location.replace((out && out.redirect_url) || '/ui/');
       } catch (error) {
+        if (exiting && previewContext.exit_url) {
+          try { localStorage.clear(); sessionStorage.clear(); } catch (_) { /* unavailable storage */ }
+          window.location.replace(previewContext.exit_url);
+          return;
+        }
         setStatus((error && error.message) || 'Preview sandbox недоступен.');
         renderPreviewBanner();
       }
     };
     actions.querySelector('[data-preview-control="reset"]').onclick = () => run(() => window.API.http.previewSandboxReset(scenario));
     actions.querySelector('[data-preview-control="new-user"]').onclick = () => run(() => window.API.http.previewSandboxNewUser());
-    actions.querySelector('[data-preview-control="new-client"]').onclick = () => run(() => window.API.http.previewSandboxSimulateClient());
-    actions.querySelector('[data-preview-control="exit"]').onclick = () => run(() => window.API.http.previewSandboxExit());
+    actions.querySelector('[data-preview-control="new-client"]').onclick = () => run(() => window.API.http.previewSandboxSimulateClient(), false);
+    actions.querySelector('[data-preview-control="exit"]').onclick = () => run(() => window.API.http.previewSandboxExit(), true, true);
   }
 
   function label(mode) { return mode === 'beginner' ? 'Студент' : 'Профессионал'; }

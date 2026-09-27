@@ -20,6 +20,26 @@ TOKEN = "owner-gateway-token-16"
 GATEWAY = "http://127.0.0.1:18767"
 
 
+def test_empty_root_history_uses_existing_front_catalog_but_fixed_contract_does_not(monkeypatch):
+    from app import jobqueue
+    monkeypatch.setattr(jobqueue, "read_instruments_catalog", lambda: {"instruments": [
+        {"root": "MES", "instrument": "MES 12-26", "expiry": "12-26", "data_last": "2026-09-24"}]})
+    seen = []
+    def fetch(path, query):
+        seen.append(query["instrument"])
+        if query["instrument"] == "MES 12-26":
+            return {"instrument": "MES 12-26", "live": True, "bars": [{"t": "now", "c": 100}]}
+        return {"instrument": "MES 09-26", "bars": []}
+    monkeypatch.setattr(gw, "fetch_gateway_json", fetch)
+    adapter = gw.OwnerGatewayChartAdapter()
+    assert adapter.history_range("MES", "5m")["bars"]
+    assert seen == ["MES", "MES 12-26"]
+    assert adapter.resolved_exact_contract("MES") == "MES 12-26"
+    seen.clear()
+    assert not adapter.history_range("MES 09-26", "5m")["bars"]
+    assert seen == ["MES 09-26"]
+
+
 def _lease_env(monkeypatch) -> Path:
     path = Path(tempfile.gettempdir()) / f"sf-md-hub-lease-{os.getpid()}-gw.json"
     monkeypatch.setenv("NTA_OWNER_MARKET_DATA_GATEWAY_LEASE_PATH", str(path))

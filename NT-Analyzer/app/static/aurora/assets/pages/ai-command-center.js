@@ -473,6 +473,9 @@
       invalid_api_key: 'Провайдер отклонил ключ. Проверьте подключение; ключ не сохранён в интерфейсе.', provider_auth_failed: 'Провайдер отклонил авторизацию. Проверьте ключ подключения.',
       endpoint_unavailable: 'Endpoint недоступен. Проверьте адрес и повторите проверку.', endpoint_not_allowed: 'Этот endpoint не разрешён сервером.',
       revision_conflict: 'Запись уже изменилась. Обновите её и проверьте новые данные перед повтором.', idempotency_conflict: 'Параметры повторного запроса изменились. Откройте действие заново после проверки истории.',
+      model_share_revoked: 'Владелец выключил общий доступ к модели. Новые вызовы запрещены; прежние ответы и история сохранены.',
+      model_share_not_found: 'Общая модель больше недоступна. Прежние ответы и история сохранены.',
+      preview_bridge_shared_only: 'Общий доступ к выбранной модели отозван. Новый вызов не выполнен; история сохранена.',
       external_blocked: 'Необходимое внешнее подключение недоступно. Действие не считается выполненным.',
       process_sources_changed: 'Результаты или их проверка изменились. Обновите предложения и проверьте новые источники; старая история сохранена.',
       process_suggestion_stale: 'Предложение уже изменилось. Откройте актуальную запись перед решением.',
@@ -1060,6 +1063,141 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const known = summary && !summary.unavailable ? rows(summary.items).map(item => ({ model: item.model, provider: item.provider, connections: item.connections, active: item.active })) : undefined;
       return modelGroupsFromTasks(rows(overview.tasks), known);
     }
+    // Own connections and the ones other people share with this person. A
+    // shared one carries only its name; the connection stays with its owner.
+    function modelConnections(data) { return items(data).concat(rows(data?.shared)); }
+    function shareSection(connections, reopen, data) {
+      const own = connections.filter(item => item.ownership !== 'shared');
+      const theirs = connections.filter(item => item.ownership === 'shared');
+      const usage = data?.shared_usage || {};
+      const ownIds = new Set(own.map(item => item.id)), theirIds = new Set(theirs.map(item => item.id));
+      const tokens = row => `${count(row.input_tokens)} / ${count(row.output_tokens)}`;
+      const spend = row => row.cost_unknown_calls ? `${esc(cost(row.cost_usd))} + ${count(row.cost_unknown_calls)} без цены` : esc(cost(row.cost_usd));
+      let html = '';
+      if (own.length) {
+        const switchable = own.some(item => rows(item.actions).some(action => action === 'share' || action === 'unshare'));
+        const on = own.some(item => item.shared === true);
+        html += `<label class="aw-switch-row"><input type="checkbox" data-aw-share="${esc(own.map(item => item.id).join(','))}" data-aw-share-reopen="${esc(reopen)}"${on ? ' checked' : ''}${data && switchable ? '' : ' disabled'}> Поделиться</label>`
+          + `<p class="aw-muted aw-hint-line">${on ? 'Включено: другие пользователи могут вызывать эту модель. Ключ и настройки подключения остаются у вас. Выключение сразу запрещает новые чужие вызовы; история сохраняется.'
+            : 'Выключено: модель доступна только вам. Если включить, другие пользователи смогут её вызывать, а ключ и настройки подключения останутся у вас.'}</p>`;
+        const used = rows(usage.by_others?.by_caller).filter(row => ownIds.has(row.model_id));
+        html += used.length ? `<h4>Использование другими</h4><table class="aw-mini-table"><thead><tr><th>Кто</th><th>Вызовов</th><th>Токены вх/вых</th><th>Стоимость</th><th>Последний</th></tr></thead><tbody>${used.map(row => `<tr><td>${esc(row.caller_name || 'Пользователь')}</td><td>${count(row.calls)}</td><td>${tokens(row)}</td><td>${spend(row)}</td><td>${esc(date(row.last_at))}</td></tr>`).join('')}</tbody></table><p class="aw-muted">Отдельно от ваших собственных запросов. Чужие чаты, память и задачи здесь не видны.</p>`
+          : on ? '<p class="aw-muted">Другие пользователи этой моделью ещё не пользовались.</p>' : '';
+        const recent = rows(usage.by_others?.recent).filter(row => ownIds.has(row.model_id));
+        if (recent.length) html += `<details><summary>История общих вызовов</summary><table class="aw-mini-table"><thead><tr><th>Когда / кто</th><th>Задача / агент</th><th>Итог</th><th>Токены вх/вых</th><th>Стоимость</th></tr></thead><tbody>${recent.map(row => `<tr><td>${esc(date(row.at))}<br>${esc(row.caller_name || 'Пользователь')}</td><td>${esc(row.task || 'Разговор')}<br>${esc(row.agent || 'Проверка модели')}</td><td>${esc(row.status)}</td><td>${tokens(row)}</td><td>${row.cost_usd == null ? 'Цена неизвестна' : esc(cost(row.cost_usd))}</td></tr>`).join('')}</tbody></table><p class="aw-muted">Идентификаторы используются для учёта. Содержимое чужих поручений и диалогов не раскрывается.</p></details>`;
+      }
+      if (theirs.length) {
+        html += `<p class="aw-note">${esc(theirs[0].note || 'Общая модель: ключ и настройки подключения остаются у владельца.')}</p>`;
+        const mine = rows(usage.mine_through_others?.by_model).filter(row => theirIds.has(row.model_id));
+        if (mine.length) {
+          const sum = key => mine.reduce((total, row) => total + (number(row[key]) || 0), 0);
+          html += `<p class="aw-model-spend"><span class="aw-muted">Ваши вызовы через общую модель:</span> ${count(sum('calls'))} · токены ${count(sum('input_tokens'))} / ${count(sum('output_tokens'))} · ${esc(cost(sum('cost_usd')))}</p>`;
+        }
+      }
+      return html;
+    }
+    async function toggleShare(input) {
+      const wanted = input.checked, data = cachedDomain('models');
+      const chosen = new Set(String(input.dataset.awShare || '').split(',').filter(Boolean));
+      const targets = items(data).filter(item => chosen.has(item.id)
+        && rows(item.actions).includes(wanted ? 'share' : 'unshare'));
+      if (!targets.length) { input.checked = !wanted; return; }
+      input.disabled = true;
+      try {
+        for (const item of targets) await API.aiControlCenterDomainAction('models', item.id, wanted ? 'share' : 'unshare', { payload: {}, idempotency_key: root.crypto.randomUUID() });
+        announce(wanted ? 'Модель открыта для общего доступа. Ключ и настройки остаются у вас.' : 'Общий доступ закрыт: новые чужие вызовы запрещены, история сохранена.');
+      } catch (_) {
+        input.checked = !wanted;
+        announce('Общий доступ не изменён. Повторите попытку.', true);
+      }
+      domainCache.delete('models');
+      await loadDomain('models');
+      const reopen = String(input.dataset.awShareReopen || '');
+      if (reopen.startsWith('lab:')) openLabModel(reopen.slice(4));
+      else if (reopen.startsWith('group:')) openModelGroup(reopen.slice(6));
+      await refresh({ background: true });
+    }
+    // The Lab lists registry models; a share belongs to the connection bound to
+    // one of them, so the switch appears only where such a connection exists.
+    function labShareSection(model) {
+      const data = cachedDomain('models');
+      if (!data || data.unavailable) return '';
+      const bound = items(data).filter(item => item.registry_id && item.registry_id === model.id);
+      if (!bound.length) {
+        const available = rows(data.owner_bindings).some(item => item.id === model.id);
+        return `<label class="aw-switch-row"><input type="checkbox" data-aw-registry-share="${esc(model.id)}"${available ? '' : ' disabled'}> Поделиться</label>`
+          + `<p class="aw-muted">${available ? 'Другие пользователи смогут вызывать модель; ключ остаётся у вас.' : 'Общий доступ недоступен: требуется включённое текстовое подключение с ключом и настроенной стоимостью.'}</p>`;
+      }
+      return shareSection(bound, 'lab:' + model.id, data);
+    }
+    async function shareRegistry(input) {
+      input.disabled = true;
+      try {
+        const bound = await API.aiControlCenterDomainAction('models', 'new', 'bind_catalog', {
+          payload: { registry_id: input.dataset.awRegistryShare }, idempotency_key: root.crypto.randomUUID() });
+        await API.aiControlCenterDomainAction('models', bound.id, 'share', { payload: {}, idempotency_key: root.crypto.randomUUID() });
+        domainCache.delete('models'); await loadDomain('models');
+        openLabModel(input.dataset.awRegistryShare);
+        announce('Общий доступ включён. Ключ и настройки остаются у владельца.');
+      } catch (_) { input.checked = false; input.disabled = false; announce('Не удалось открыть общий доступ. Проверьте подключение модели.', true); }
+    }
+    function modelTestControls(id, registry = false) {
+      return `<div class="aw-model-test"><div class="aw-actions"><button class="btn sm" ${registry ? 'data-aw-registry-test' : 'data-aw-inline-test'}="${esc(id)}">Проверить модель</button></div><div data-aw-test-result role="status" aria-live="polite"></div></div>`;
+    }
+    function modelTestOutcome(result, registry = false) {
+      const task = result?.task || result || {};
+      const ok = registry ? result?.ok === true && result?.application_cache_hit !== true && !!String(result?.response || '').trim() : task.status === 'succeeded' && result?.evaluation?.passed === true && result?.synthetic !== true;
+      const pending = !registry && ['planned', 'ready', 'queued', 'running', 'waiting', 'verifying'].includes(task.status);
+      const code = String(result?.error_code || task.error_code || result?.error || '');
+      const reason = /revoked|share.*denied|share.*not/.test(code) ? 'Владелец закрыл доступ к модели.'
+        : /budget|quota|429|limit/.test(code) ? 'Исчерпан лимит запросов или расходов. Проверьте лимиты подключения.'
+        : /key|auth|401|403|credential/.test(code) ? 'Провайдер не разрешил запрос. Проверьте ключ и доступ к модели.'
+        : /timeout|timed.out/.test(code) ? 'Модель не ответила вовремя. Провайдер может быть временно недоступен.'
+        : /inactive|disabled/.test(code) ? 'Подключение модели выключено.'
+        : /json|response_invalid/.test(code) ? 'Провайдер вернул некорректный ответ.'
+        : 'Не удалось получить корректный ответ. Проверьте подключение и доступность провайдера.';
+      return { ok, pending, text: ok ? 'Модель отвечает, всё работает.' : pending ? 'Проверяем… Ожидаем ответ модели.' : reason,
+        details: { status: task.status || (ok ? 'success' : 'failed'),
+          model: result?.actual_model || undefined, error: code || undefined,
+          response: String(result?.result_text || result?.response || '').slice(0, 1000) || undefined } };
+    }
+    async function testModelInline(button, registry = false) {
+      if (button.disabled) return;
+      const box = button.closest('.aw-model-test')?.querySelector('[data-aw-test-result]');
+      if (!box) return;
+      const show = view => { box.innerHTML = `<p class="${view.ok ? 'aw-good-text' : view.pending ? 'aw-muted' : 'aw-bad-text'}">${esc(view.text)}</p>${view.details ? `<details><summary>Технические детали</summary><pre>${esc(JSON.stringify(view.details, null, 2))}</pre></details>` : ''}`; };
+      button.disabled = true; button.textContent = 'Проверяем…';
+      show({ pending: true, text: 'Проверяем… Отправляем короткий запрос этой модели.' });
+      try {
+        let result;
+        if (registry) result = await API.aiAgentTest(button.dataset.awRegistryTest);
+        else {
+          result = button.dataset.awTestTask
+            ? await API.aiControlCenterDomainItem('model_tasks', button.dataset.awTestTask, { signal })
+            : await API.aiControlCenterDomainAction('models', button.dataset.awInlineTest, 'test', { payload: {}, idempotency_key: root.crypto.randomUUID() });
+          const id = result?.id || result?.task?.id;
+          if (id) button.dataset.awTestTask = id;
+          for (let attempt = 0; modelTestOutcome(result).pending && attempt < 45 && box.isConnected && !disposed; attempt++) {
+            show(modelTestOutcome(result));
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            if (!box.isConnected || disposed) return;
+            result = await API.aiControlCenterDomainItem('model_tasks', id, { signal });
+          }
+        }
+        const view = modelTestOutcome(result, registry);
+        show(view.pending ? { ...view, text: 'Проверка ещё выполняется. Можно обновить результат; новый запрос модели не отправится.' } : view);
+        if (!view.pending) delete button.dataset.awTestTask;
+        domainCache.delete('models');
+      } catch (error) {
+        if (error?.name !== 'AbortError') show(modelTestOutcome({ error: error?.code || error?.message || 'connection_unavailable' }, true));
+      } finally {
+        button.disabled = false;
+        button.textContent = button.dataset.awTestTask ? 'Обновить результат проверки' : 'Проверить модель';
+      }
+    }
+    function modelCallButtons(connections) {
+      return connections.map((item, index) => `${connections.length > 1 ? `<p class="aw-note">${item.ownership === 'shared' ? 'Общее подключение' : 'Подключение'} ${index + 1}</p>` : ''}${rows(item.actions).includes('test') ? modelTestControls(item.id) : ''}${rows(item.actions).includes('task') ? `<div class="aw-actions"><button class="btn sm" data-aw-card-model="${esc(item.id)}" data-aw-card-action="task">Дать задание</button></div>` : ''}`).join('');
+    }
     function modelRows(groups) {
       if (!groups.length) return smallEmpty('Моделей пока нет. Подключите модель по API — она проверится одним запросом.');
       // The bar is the model's share of the team's tasks; spend against a limit
@@ -1068,7 +1206,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       return groups.map(group => {
         const share = total ? Math.round(group.stats.total / total * 100) : 0;
         return `<button class="aw-mrow" data-aw-model-group="${esc(group.id)}"><span class="aw-icbox aw-t-cyan">${esc(prettyModel(group.id).slice(0, 1))}</span>`
-          + `<span class="aw-mrow-main"><strong>${esc(prettyModel(group.id))}</strong>${rated(group.stats) ? '' : ' <span class="aw-chip aw-chip-new">новая · без рейтинга</span>'}`
+          + `<span class="aw-mrow-main"><strong>${esc(prettyModel(group.id))}</strong>${rated(group.stats) ? '' : ' <span class="aw-chip aw-chip-new">новая · без рейтинга</span>'}${group.connections.length && group.connections.every(item => item.ownership === 'shared') ? ' <span class="aw-chip">общая</span>' : group.connections.some(item => item.shared === true) ? ' <span class="aw-chip">вы делитесь</span>' : ''}`
           + `<small>${group.stats.total ? esc(plural(group.stats.total, 'задача', 'задачи', 'задач')) : 'ещё не работала'} · ${esc(providerLabel(group.provider))} · ${esc(plural(group.connectionCount, 'подключение', 'подключения', 'подключений'))}</small>`
           + `<span class="aw-use" title="Доля задач команды: ${share}%"><span style="width:${share}%"></span></span></span>`
           + `<span class="aw-rate aw-rate-${rated(group.stats) ? rateTone(group.stats.rate) : 'none'}" title="${esc(rateTitle(group.stats))}">${rated(group.stats) ? esc(pct(group.stats.rate * 100)) : '—'}</span></button>`;
@@ -1573,11 +1711,18 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         + `<div class="aw-table-wrap"><table class="aw-lab-table aw-place-table"><thead><tr><th>Модель</th>${PLACE_COLUMNS.map(([, title]) => `<th>${esc(title)}</th>`).join('')}</tr></thead>`
         + `<tbody>${live.map(model => `<tr><td><strong>${esc(model.name || model.model)}</strong></td>${PLACE_COLUMNS.map(column => placeCell(model, column)).join('')}</tr>`).join('')}</tbody></table></div>`;
     }
+    function labSharingLabel(model) {
+      const data = cachedDomain('models');
+      if (!data || data.unavailable) return 'Доступ уточняется';
+      return items(data).some(item => item.registry_id === model.id && item.shared === true)
+        ? 'Общая · вы делитесь' : 'Приватная';
+    }
     function labModelRow(model) {
       const rate = labRate(model), left = quota(model);
       const worked = rows(model.by_role).slice(0, 3).map(row => `${labRole(row.role)} ${row.requests >= 3 ? pct(row.ok / row.requests * 100) : 'NEW'} (${count(row.requests)})`);
       return `<tr class="aw-lab-row${model.enabled ? '' : ' aw-lab-off'}" data-aw-lab-model="${esc(model.id)}" tabindex="0">`
         + `<td><div class="aw-lab-name"><span class="aw-icbox aw-t-cyan">${esc(String(model.name || model.model || '?').slice(0, 1).toUpperCase())}</span><span><strong>${esc(model.name || model.model)}</strong><small>${esc(providerLabel(model.provider))} · ${esc(model.model || '')}${model.enabled ? '' : ' · выключена'}</small></span></div></td>`
+        + `<td><span class="aw-chip">${esc(labSharingLabel(model))}</span></td>`
         + `<td>${worked.length ? esc(worked.join(', ')) : '<span class="aw-muted">ещё не работала</span>'}</td>`
         + `<td class="aw-num-cell">${count(model.requests_month)}<small>всего ${count(model.requests)}</small></td>`
         + `<td class="aw-num-cell"><b class="aw-rate aw-rate-${rateTone(rate)}" title="${esc(model.requests ? `Успешно ${model.ok} из ${model.requests} вызовов` : 'Вызовов ещё не было')}">${rate == null ? (model.requests ? 'NEW' : '—') : esc(pct(rate * 100))}</b>${model.errors ? `<small>ошибок ${count(model.errors)}</small>` : ''}</td>`
@@ -1589,7 +1734,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (!models.length) return smallEmpty('Моделей пока нет. Подключите модель по API — она проверится одним запросом.');
       const enabled = models.filter(model => model.enabled).length, spend = models.reduce((sum, model) => sum + (number(model.spend_month_usd) || 0), 0);
       return `<div class="aw-lab-totals"><span><b>${count(models.length)}</b> моделей</span><span><b>${count(enabled)}</b> включено</span><span><b>${esc(usd(spend))}</b> расход за месяц</span><span><b>${count(models.reduce((sum, model) => sum + (number(model.requests_month) || 0), 0))}</b> запросов за месяц</span></div>`
-        + `<div class="aw-table-wrap"><table class="aw-lab-table"><thead><tr><th>Модель</th><th>Где работала · успех</th><th>Запросов за месяц</th><th>Успех</th><th>Расход за месяц</th><th>Квота</th><th>Последний раз</th></tr></thead><tbody>${models.map(labModelRow).join('')}</tbody></table></div>`;
+        + `<div class="aw-table-wrap"><table class="aw-lab-table"><thead><tr><th>Модель</th><th>Доступ</th><th>Где работала · успех</th><th>Запросов за месяц</th><th>Успех</th><th>Расход за месяц</th><th>Квота</th><th>Последний раз</th></tr></thead><tbody>${models.map(labModelRow).join('')}</tbody></table></div>`;
     }
     function openLabModel(id) {
       const model = rows(labModels()).find(row => row.id === id);
@@ -1605,7 +1750,8 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         + `<p class="aw-model-spend"><span class="aw-muted">Квота:</span> ${esc(left.text)}${model.credit_expires_at_utc ? ` · <span class="aw-muted">грант до</span> ${esc(date(model.credit_expires_at_utc))}` : ''}</p>${left.used == null ? '' : `<span class="aw-use aw-use-lg"><span style="width:${Math.round(left.used)}%"></span></span>`}`
         + `<p class="aw-model-spend"><span class="aw-muted">Тариф:</span> ${number(model.input_price_usd_per_m) || number(model.output_price_usd_per_m) ? `${esc(usd(model.input_price_usd_per_m))} за 1 млн входных токенов, ${esc(usd(model.output_price_usd_per_m))} за 1 млн выходных` : model.billing_mode === 'free_tier' ? 'бесплатный доступ' : 'не указан'}</p>`
         + byRole + recent
-        + `<div class="aw-actions"><button class="btn sm" data-aw-connect-model>Подключить ещё модель</button></div>`, { size: 'model' });
+        + labShareSection(model)
+        + modelTestControls(model.id, true), { size: 'model' });
     }
     // Connecting a model: provider, model, key and how it is paid for. The key
     // goes straight to the encrypted store; the model then checks itself with
@@ -1684,22 +1830,29 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
     }
     function renderModels() {
       const lab = labModels();
+      const data = cachedDomain('models');
+      const own = modelConnections(data).filter(item => item.ownership !== 'shared');
+      const shared = modelConnections(data).filter(item => item.ownership === 'shared');
+      const sharedSection = () => bcard('Доступные общие модели', 'users', 'cyan',
+        '<p class="aw-muted">Доступ предоставлен другими участниками. Ключи и настройки принадлежат владельцам подключений.</p>'
+        + (shared.length ? modelRows(modelGroupsFromTasks(rows(overview.tasks), shared)) : smallEmpty('Общих моделей сейчас нет.')));
       if (lab) {
-        content.innerHTML = bcard('Подключённые модели', 'cpu', 'cyan', labModelTable(lab), '<button class="aw-link-button" data-aw-connect-model>+ подключить модель</button>')
+        content.innerHTML = bcard('Мои модели', 'cpu', 'cyan', labModelTable(lab), '<button class="aw-link-button" data-aw-connect-model>+ подключить модель</button>')
+          + (own.some(item => !item.registry_id) ? bcard('Мои дополнительные подключения', 'cpu', 'cyan', modelRows(modelGroupsFromTasks(rows(overview.tasks), own.filter(item => !item.registry_id)))) : '')
+          + (data && !data.unavailable ? sharedSection() : '')
           + '<p class="aw-muted aw-hint-line">Нажмите на модель: расход, квота, тариф, под какими агентами работала, успешность и последние вызовы.</p>'
           + bcard('Распределение по должностям', 'layers', 'violet', distribution(lab));
         return;
       }
-      const data = cachedDomain('models');
       if (!data) { content.innerHTML = bcard('Подключённые модели', 'cpu', 'cyan', loadingBlock('Загружаем подключённые модели…')); return; }
       if (data.unavailable) { content.innerHTML = bcard('Подключённые модели', 'cpu', 'cyan', readError({ status: data.unavailable })); return; }
-      content.innerHTML = bcard('Подключённые модели', 'cpu', 'cyan', modelRows(modelGroupsFromTasks(rows(overview.tasks), items(data))), '<button class="aw-link-button" data-aw-connect-model>+ подключить модель</button>')
-        + '<p class="aw-muted aw-hint-line">Нажмите на модель: расход, токены, рейтинг, под каким агентом работала лучше и хуже всего, «поделиться со всеми» и «выключить».</p>';
+      content.innerHTML = bcard('Мои модели', 'cpu', 'cyan', own.length ? modelRows(modelGroupsFromTasks(rows(overview.tasks), own)) : smallEmpty('Вы ещё не подключили собственные модели. Можно использовать доступные общие модели ниже.'), '<button class="aw-link-button" data-aw-connect-model>+ подключить модель</button>')
+        + sharedSection() + '<p class="aw-muted aw-hint-line">Нажмите на модель, чтобы проверить ответ и посмотреть свои запросы и расходы.</p>';
     }
     function openModelGroup(id) {
       const data = cachedDomain('models');
       const summary = overview?.summaries?.models;
-      const connections = data && !data.unavailable ? items(data) : summary && !summary.unavailable ? rows(summary.items) : undefined;
+      const connections = data && !data.unavailable ? modelConnections(data) : summary && !summary.unavailable ? rows(summary.items) : undefined;
       const group = modelGroupsFromTasks(rows(overview?.tasks), connections).find(entry => entry.id === id);
       if (!group) return;
       ++detailGeneration; detailKind = 'model_group'; actionForm = null;
@@ -1710,10 +1863,11 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         : '<p class="aw-muted">Новая модель: рейтинг появится после первых проверенных задач.</p>';
       openDrawer(prettyModel(group.id), `<div class="aw-model-head"><span class="aw-icbox aw-t-cyan aw-icbox-lg">${esc(prettyModel(group.id).slice(0, 1))}</span><div><b>${esc(prettyModel(group.id))}</b><small>${esc(providerLabel(group.provider))} · ${esc(plural(group.connectionCount, 'подключение', 'подключения', 'подключений'))}, активных ${count(group.activeCount)}</small></div></div>`
         + `<div class="aw-nums aw-nums-3">${bnum('Задач', stats.total ? count(stats.total) : '—')}${bnum('Токенов', '—')}${bnum('Рейтинг', rated(stats) ? pct(stats.rate * 100) : stats.ok + stats.bad ? 'NEW' : '—')}</div>`
-        + `<p class="aw-model-spend"><span class="aw-muted">Расход:</span> ${stats.spent == null ? 'не измерен' : esc(cost(stats.spent))} · <span class="aw-muted">токены и лимиты пока не учитываются</span></p>`
+        + `<p class="aw-model-spend"><span class="aw-muted">Расход:</span> ${stats.spent == null ? 'не измерен' : esc(cost(stats.spent))} · <span class="aw-muted">измеренный расход сохранённых задач</span></p>`
         + (best ? `<p class="aw-model-best">Лучше всего: <b class="aw-rate-good">${esc(name(best.agent))} ${esc(pct(best.rate * 100))}</b>${worst && worst !== best ? ` · хуже всего: <b class="aw-rate-low">${esc(name(worst.agent))} ${esc(pct(worst.rate * 100))}</b>` : ''}</p>` : '')
         + table
-        + `<label class="aw-switch-row" title="Появится вместе с общей моделью владельца"><input type="checkbox" disabled> Поделиться со всеми пользователями (только владелец) · в разработке</label>`
+        + shareSection(group.connections, 'group:' + group.id, data && !data.unavailable ? data : null)
+        + modelCallButtons(group.connections)
         + `<label class="aw-switch-row" title="Включение и выключение — в подключениях модели"><input type="checkbox" disabled ${group.activeCount > 0 ? 'checked' : ''}> Модель включена</label>`
         + `<p class="aw-muted"><code class="aw-model-code">${esc(group.id)}</code></p>`, { size: 'card' });
     }
@@ -2340,7 +2494,10 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         body = (proposals.length ? `<div class="aw-domain-grid">${proposals.map(domainItemCard).join('')}</div>` : smallEmpty('Предложений для проверки пока нет. Создайте решение, чтобы получить независимую оценку Court.'))
           + (authorizations.length ? `<details class="aw-technical"><summary>Разрешения на выполнение задач · ${count(authorizations.length)}</summary><p class="aw-note">Записываются автоматически, когда вы разрешаете выполнить конкретный запрос. Это не решения Court.</p><div class="aw-domain-grid">${authorizations.map(domainItemCard).join('')}</div></details>` : '');
       }
-      else body = items(data).length ? `<div class="aw-domain-grid">${items(data).map(key === 'automation' ? automationGrantCard : domainItemCard).join('')}</div>` : smallEmpty('Записей пока нет. Они появятся после первого подтверждённого действия.');
+      else {
+        const visibleItems = key === 'models' ? [...items(data), ...rows(data.shared)] : items(data);
+        body = visibleItems.length ? `<div class="aw-domain-grid">${visibleItems.map(key === 'automation' ? automationGrantCard : domainItemCard).join('')}</div>` : smallEmpty('Записей пока нет. Они появятся после первого подтверждённого действия.');
+      }
       body += processIntelligencePanel(data, key);
       if (key === 'automation') {
         const admin = data.capability_admin || {}, granted = admin.granted === true;
@@ -2855,8 +3012,18 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       if (labRow && shell.contains(labRow)) { openLabModel(labRow.dataset.awLabModel); return; }
       const graphRecord = event.target.closest?.('[data-aw-graph-record]');
       if (graphRecord && shell.contains(graphRecord) && graphRecord.dataset.awGraphRecord) { openDomain('memory').then(() => openDomainItem(graphRecord.dataset.awGraphRecord)); return; }
+      const shareSwitch = event.target.closest?.('input[data-aw-share]');
+      if (shareSwitch && currentDrawer?.contains(shareSwitch)) { void toggleShare(shareSwitch); return; }
+      const registryShare = event.target.closest?.('input[data-aw-registry-share]');
+      if (registryShare && currentDrawer?.contains(registryShare)) { void shareRegistry(registryShare); return; }
       const target = event.target.closest('button, a');
       if (!target) return;
+      if (currentDrawer?.contains(target) && target.dataset.awRegistryTest) { void testModelInline(target, true); return; }
+      if (currentDrawer?.contains(target) && target.dataset.awInlineTest) { void testModelInline(target); return; }
+      if (currentDrawer?.contains(target) && target.dataset.awCardModel) {
+        const id = target.dataset.awCardModel, action = target.dataset.awCardAction;
+        void openDomain('models').then(() => openDomainItem(id)).then(() => openDomainAction(action, id)); return;
+      }
       const inside = shell.contains(target) || (currentDrawer && currentDrawer.contains(target) && target.closest('.aw-inspector'));
       if (!inside) return;
       if (target.id === 'aw-log-toggle') { toggleLog(); return; }

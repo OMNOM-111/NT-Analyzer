@@ -1,19 +1,62 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-05T12:45:49Z
+- Last verified UTC: 2026-09-27T00:09:21Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Local source verified SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (clean beta.96 runtime; real handoff/manual delivery and original report/PNG verified, exact-code CI PASS)
-- Local verification UTC: 2026-09-05T19:05:43Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
-- Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
-- Protected Local program snapshot: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. New unified-source evidence is separate below; full-program/owner acceptance remains open.
+- Scope: Accepted Unified Local release candidate, Telegram report cutover and remaining immutable-release gates
+- Status: PARTIAL
+- Current Production version/build/artifact when known: `0.10.0-beta.92` / `sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z` / `art_57db4318cb8745d399d98bccf48de396`; runtime artifact SHA256 `07A3961277E3879357EE92A8471911FAFA4B57E1B3BF2D046E1BCA41D27A9169`
+
+Current release candidate (2026-09-26): **BETA / NOT DEPLOYED** — the owner
+accepted the current Unified Local as the release basis and deferred non-critical
+design polish. Candidate beta.97 removes the two independent periodic-report
+schedules, makes Vitek the single scheduler in the Deputy role and persists one
+report/result/delivery key across SF Chat and Telegram. Production is the sole
+default operational owner of the shared bot; Development and Canary stay passive
+for topics, updates, mirroring and reports. The existing Local service is still
+running unchanged until a verified replacement exists.
+
+The trace found that current owner reports came from Local, while server report
+settings were disabled. Local produced both deterministic summaries and a second
+Chief/Orchestrator report. Production owned the webhook, but all three
+environments shared the protected bot token while maintaining separate topic
+registries. That made reverse routing for a Local/Canary-created topic unsafe and
+did not exclude competing outbound senders. No messages, reports, keys, models or
+registries were deleted. Canonical details:
+[beta.97 Telegram/report candidate](../changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md).
+
+Open release gates: complete regression and bundle checks; PR and explicit merge
+decision; mandatory CI on the merged main SHA; one signed immutable artifact;
+verified backup/rollback before server data changes; Canary acceptance including
+one designated short Telegram exchange; separate owner approval for that exact
+artifact; same-artifact Production promotion and post-release duplicate/isolation
+checks. **IMPLEMENTATION COMPLETE pending verification; GIT CLOSEOUT IN PROGRESS;
+STAGE NOT CLOSED.**
+
+Checkpoint `f455043f`, draft PR #294: full Local regression **6087 passed / 134
+skipped / 0 failed** in 1:07:38. The exact 650-file pre-release bundle, context
+validator, timeline JavaScript syntax and diff checks PASS. Static, bridge and
+Ubuntu PR checks PASS; Windows and full `python-tests` remain pending at this
+checkpoint. Merge and environment release gates are unchanged.
+
+Scoped Local work completed: **BETA** — [Preview parity/account lifecycle](../changelog/2026-09-23-preview-parity-account-lifecycle.md). Historical DEMO acceptance is superseded by the current live-mirror contract below. Ordinary registration permissions; public surfaces shared, private data isolated. Fresh Preview/owner browser walkthrough, deletion/reset/exit receipts and full regression PASS. Test containers removed; owner access snapshot unchanged. Owner review and remote CI remain separate. No server/Canary/Production work authorized.
+- Local source verified SHA: 56945ac68e94cb7ffa031ef2312dec5a9ad80a54 (canonical live mirror; 6080 passed / 134 skipped across 293 files after complete affected-module reruns; full Preview/owner walkthrough plus final chart-lifetime follow-up; browser-tool interruption/recovery documented in the canonical receipt)
+- Local verification UTC: 2026-09-24T04:08:00Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
+- Historical UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
+- Historical protected Local program snapshot: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 was active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. New unified-source evidence is separate below; full-program/owner acceptance remains open.
 - Unified Local accepted base SHA: `4ae766ea0c3258a8bb049644ac2afbba6cb89330`
 - Protected Local branch snapshot: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; the active final branch is identified below, while #285 is an accepted integration input
-- Version: `0.10.0-beta.96`, `pre_release`; clean `2b6d0112` active on Local 8765, no Canary/Production promotion
+- Version: `0.10.0-beta.96`, `pre_release`; verified implementation `56945ac6` on Local 8765, no Canary/Production promotion
 - Integration state: scoped model/domain/Chat/NT/Desktop, real fact handoff, manual discussion, separate application observations, Consensus and Court verified; owner-dependent and full-program work remain
-- Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
+- Current Production version/build/artifact when known: last recorded beta.92, build `sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z`, artifact `art_57db4318cb8745d399d98bccf48de396`; accepted Canary and Production live on 2026-09-02. This supersedes the beta.87 snapshot; current public live identity was not re-verified during the 2026-09-24 timeline audit. See [timeline audit](../changelog/2026-09-24-timeline-source-audit.md).
+- The root [`timeline.html`](../../../timeline.html) is the owner-facing next-day handoff. Keep current post-beta.92 Local work in one open card with seven separate tasks: only registration has explicit owner approval (2026-09-24); Agent World needs owner visual/chat review, and other approvals are not recorded. Do not advance the batch on test PASS alone. Read the [decision record](../changelog/2026-09-24-timeline-owner-approval-workflow.md) and [mandatory workflow](../TIMELINE_MAINTENANCE.md) at session start; this handoff does not claim server promotion.
+- 2026-09-25 prepublication Local QA: 430 focused tests PASS; live owner MES/MNQ 12-26 and disposable Preview MBT 09-26 charts painted TopstepX/WS; checked Social/Chat/Agent World screens opened without console errors; 646-file bundle 4/4 PASS. With owner authorization, Preview registration, terms and first-device trust completed; a fresh Preview user received an SF Chat AI reply via an owner-shared model. A separate real Development user sent a private message to the owner; the owner saw it and sent a reply; the disposable user and conversation were self-deleted. The receiving side of that reply was not separately checked. A stale Preview bridge expires after 1800 seconds and breaks Social/Chat reads until a fresh launch. Permanent Social comment was blocked by automated action review, so no public write is claimed. Agent World still has the partial items in its master status, and the UI's chart task example says `MNQ 09-26` while the active chart is `MNQ 12-26`. The timeline shows a separate ✓ for checked internals and retains the overall ! and owner-approval gate. [Exact QA record](../changelog/2026-09-25-prepublication-local-qa.md).
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
+
+Current follow-up: **BETA** — [Local TopStep mirror and Preview corrections](../changelog/2026-09-24-local-preview-social-followup.md). The latest owner-approved contract is personal NinjaTrader first, otherwise common live TopStep mirror for active chart-capable trial/subscription users, including disposable Preview. No DEMO fallback. Legacy source flags do not gate end-user mirror admission. Social/avatar, sharing labels, shared-model revoke and one-click owner-session return passed the fresh Preview/owner walkthrough on clean 003e00d1. Charts follow the active disposable process rather than the paid-model 30-minute limit; final regression is 6080 PASS / 134 skipped across 293 files. Final runtime 56945ac6 retains active Preview charts beyond the AI-call time budget. The last browser-control interruption and canonical disposable cleanup are documented in the receipt; no owner session was replaced. Local only; no Server/Canary/Production changes.
+
+Local chart recovery (2026-09-23), branch `codex/fix-local-chart-gateway`: the supervisor origin correction is preserved in the 0a9bcf09 baseline and subsequent Local UX checkpoint; owner Desktop TopstepX charts were verified. The separate chart PR keeps its own closeout. Preserve TopstepX/SignalR and entitlement gates. Saved MBT 08-26 and the empty MNQ probe remain separate contract/provider observations. [Canonical incident](../changelog/2026-09-23-local-chart-gateway.md).
 
 - Isolated memory handoff (2026-09-21): `codex/unified-memory-service` adds the
   common read facade, context builder, stable identifiers, typed graph records,
@@ -202,6 +245,20 @@
   as `f9b94445`/`db85773f`; 31 of the 33 reviewed files are byte-identical to
   `db85773f` and the two that differ are changelogs, so the review binds to
   that commit.
+
+Historical Shared Models continuation (2026-09-22): continue `feat/shared-model-access` from
+recovered `548c995a` and checkpoint `f43a50de`; do not restart implementation.
+Disposable Preview profiles now use registration trial/personal-workspace
+provisioning without blanket permission grants. The old observer QA account's
+temporary `ai_lab` override was restored to its recorded baseline. Live shared
+model invocation in Preview passed (Chat + Agent World, usage/revoke/cleanup).
+Real HTTP QA also confirmed denied AI access, a fresh identity/workspace after
+reset, retained restrictions and container deletion; focused suite: 182 passed.
+Local scope is BETA: owner launch endpoint E2E passed, access settings before/after
+matched; full Linux 6035/131 skipped and Windows coverage 6032/134 skipped passed
+with runner-related retries documented. Draft PR #291 contains the continuation;
+self-hosted CI is queued, so merge/release acceptance remains open.
+[Canonical continuation record](../changelog/2026-09-22-shared-models-local-continuation.md).
 
 ## Resume point — 2026-09-09
 
@@ -527,22 +584,18 @@ Memory/Social, own-key and final owner acceptance remain open.
 
 ## Next safe step
 
-Save the owned Persona/V2 and read-only refresh correction after focused and
-mandatory short gates; the completed e45 full/PG receipts remain bound to e45.
-Prepare the next isolated 8804 cold backup and exact immutable source, then
-repeat selected Persona Chat → result → pending review → explicit decision and
-error → safe new attempt with matching counters and preserved history. Continue
-Memory, Coordinator/Router/Court, projects, scheduler, Preview and Social-prepare
-routes and their remaining new-code checks, not a fresh general audit.
+Review the updated draft PR #291, continued from the isolated
+`codex/shared-model-local-completion` checkout. Local code `0a9bcf09` has
+6044 passed / 134 skipped / 0 failures, bundle/context gates PASS and actual
+owner/new-user browser acceptance. Remote CI and owner review remain separate. Actual Local activation,
+disposable registration and short real shared-model requests were explicitly
+authorized and completed. The original owner access projection is unchanged;
+DeepSeek sharing is restored off and disposable Preview roots were removed.
 
-**Do not switch/restart Local 8765 or migrate its working DB.** Registration
-consent/device trust, the separate user's private key and a specific permanent
-real Social publication remain with the owner. No key is copied from owner
-storage; none of these holds blocks other implementation. Model quality,
-application report/PNG evidence, human review and design acceptance are separate.
-Record exact-SHA CI and owner acceptance honestly; empty PR checks, synthetic
-transport and historical reports do not certify the complete program. No merge,
-release, Canary/Production activation, paid external call or trade is authorized.
+This scoped Local acceptance does not close the whole Agent World program or
+its separate owner visual/provider/voice/remote-agent acceptance. Unified-memory
+migration and write-cutover flags remain off. Do not merge, release, activate
+Canary/Production, alter live trading or migrate owner data under this scope.
 
 ## Canonical evidence
 
@@ -555,3 +608,22 @@ release, Canary/Production activation, paid external call or trade is authorized
 - [Environments and release](04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md)
 - [AI agents and automation](07_AI_AGENTS_AND_AUTOMATION.md)
 - [Market data and Connector](06_MARKET_DATA_TRADING_CONNECTOR.md)
+
+Local new-user follow-up: runtime `0a9bcf09` preserves d9c53860 and checkpoints
+fdd40f90, 20ddf9dc, a06db104, 687b7b0d and fc737e96. Manual registration, shared
+test/task/Chat, separate owner usage, revoke, isolated Memory, disposable cleanup
+and trial page navigation passed. Owner Chat pages 181 saved messages without
+large-history rendering timeouts; collapse/reopen and console checks passed on
+the actual Local origin. Final native Windows regression passed: 6044 passed / 134 skipped / 0 failures; bundle/context/root-secret checks PASS.
+Market-data/trading permissions are unchanged. TopStep strategy tab is IN DEVELOPMENT. Canonical evidence: [new-user Local completion](../changelog/2026-09-23-new-user-local-completion.md).
+
+Local UX follow-up (2026-09-23): model checks now show progress/result inside
+an open card, with collapsible diagnostics and no duplicate connection button.
+New-user Preview conversations use a scoped Deputy response without creating
+Task/review records; explicit text work retains the task lifecycle and usage.
+[Change and verification record](../changelog/2026-09-23-model-card-deputy-chat-ux.md).
+Manual acceptance, 368 final-code related tests, successful disposable cleanup
+and full Windows coverage (6057 passed / 134 skipped; no unresolved failures)
+are recorded there. The first sweep found 24 test-port dependency failures;
+both affected whole files passed on rerun (66 tests), without runtime changes.
+No Canary/Production activation is authorized.

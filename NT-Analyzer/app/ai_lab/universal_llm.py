@@ -34,6 +34,13 @@ _REGISTRY_CONTEXT: contextvars.ContextVar[Any] = contextvars.ContextVar(
 _ALLOW_HIDDEN_RETRIES: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "stratforge_llm_hidden_retries", default=True
 )
+_TRANSMIT_CHECK = contextvars.ContextVar("stratforge_llm_transmit_check", default=None)
+
+
+def _check_transmission():
+    check = _TRANSMIT_CHECK.get()
+    if check is not None:
+        check()
 
 
 def _registry():
@@ -87,7 +94,8 @@ def usage_scope(context: Optional[Dict[str, Any]] = None):
     """
     clean = {
         key: (context or {}).get(key)
-        for key in ("user_id", "user_name", "workspace_id", "conversation_id", "request_source")
+        for key in ("user_id", "user_name", "workspace_id", "conversation_id", "request_source",
+                    "acting_agent")
         if (context or {}).get(key) not in (None, "")
     }
     steps: List[Dict[str, Any]] = []
@@ -104,6 +112,16 @@ def current_participation() -> List[Dict[str, Any]]:
     """Return the participation steps for the active usage_scope, if any."""
     steps = _PARTICIPATION_STEPS.get()
     return list(steps) if isinstance(steps, list) else []
+
+
+def shared_registry_filter() -> Optional[set]:
+    """Which registry models this request may use: None means all of them.
+
+    The sharing rule lives in the AI centre; this module is the one place the
+    AI Lab already crosses that boundary, so routing asks here.
+    """
+    from ..ai_control_center import model_sharing
+    return model_sharing.registry_filter(dict(_USAGE_CONTEXT.get() or {}))
 
 
 def current_usage_context() -> Dict[str, Any]:
@@ -139,8 +157,21 @@ def note_participation(step: Dict[str, Any]) -> None:
     })
 
 
-def _record_usage(row: Dict[str, Any]) -> None:
-    _registry().record_usage({**row, **dict(_USAGE_CONTEXT.get() or {})})
+def _record_usage(row: Dict[str, Any], *, shared_grant=None) -> None:
+    context = dict(_USAGE_CONTEXT.get() or {})
+    registry = _registry()
+    registry.record_usage({**row, **context})
+    # A call through somebody else's shared connection is also written to the
+    # sharing ledger, naming both people. Accounting above already succeeded
+    # and must never be undone by the second write.
+    try:
+        from ..ai_control_center import model_sharing
+        grant = (getattr(registry, "shared_grant", None)
+                 if registry is not agent_registry else shared_grant)
+        if registry is agent_registry or grant is not None:
+            model_sharing.observe(row, context, grant=grant)
+    except Exception:
+        pass
     steps = _PARTICIPATION_STEPS.get()
     if isinstance(steps, list):
         note_participation({
@@ -265,6 +296,7 @@ def _request_json(
     if _REGISTRY_CONTEXT.get() is not None:
         from ..ai_control_center.model_transport import PrivateTransportError, request_json
         try:
+            _check_transmission()
             return request_json(url, method=method, payload=payload, headers=headers, timeout=timeout)
         except PrivateTransportError as exc:
             raise UniversalLLMError(str(exc)) from None
@@ -274,6 +306,7 @@ def _request_json(
         request_headers["Content-Type"] = "application/json"
     request = urllib.request.Request(url, data=data, headers=request_headers, method=method)
     try:
+        _check_transmission()
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw = response.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
@@ -609,6 +642,7 @@ def _request_stream(
     }
     request = urllib.request.Request(url, data=data, headers=request_headers, method="POST")
     try:
+        _check_transmission()
         response = urllib.request.urlopen(request, timeout=timeout)
     except urllib.error.HTTPError as exc:
         try:
@@ -815,6 +849,19 @@ def invoke_agent(
     if not clean_prompt or len(clean_prompt) > 20_000:
         raise UniversalLLMError("Test prompt обязателен и должен быть короче 20 000 символов.")
     agent = _registry().get_agent(agent_id)
+    shared_grant = None
+    def check_shared_access():
+        from ..ai_control_center import model_sharing
+        if not model_sharing.registry_allowed(agent_id, dict(_USAGE_CONTEXT.get() or {})):
+            raise UniversalLLMError("Эта модель не открыта для общего доступа.")
+
+    if _REGISTRY_CONTEXT.get() is None:
+        # The global registry holds the owner's own connections. A request made
+        # for anybody else may use only the ones the owner has shared.
+        from ..ai_control_center import model_sharing
+        check_shared_access()
+        if model_sharing.registry_filter(dict(_USAGE_CONTEXT.get() or {})) is not None:
+            shared_grant = model_sharing.registry_share(agent_id)
     resolved_type = agent_registry.infer_endpoint_type(
         str(agent.get("provider") or ""), str(agent.get("model") or ""), str(agent.get("base_url") or "")
     )
@@ -885,7 +932,7 @@ def invoke_agent(
                 "pricing_basis": "Process-local exact response cache",
                 "status": "success", "elapsed_sec": round(time.time() - started, 3), "error": None,
             }
-            _record_usage(row)
+            _record_usage(row, shared_grant=shared_grant)
             if not _record_production_usage(
                 request_id, agent, request_role=request_role, purpose=purpose,
                 status="cache_hit", input_tokens=0, output_tokens=0, cost_usd=0.0,
@@ -947,8 +994,11 @@ def invoke_agent(
     usage: Dict[str, Any] = {}
     durable_usage_recorded = False
     provider_attempted = False
+    transmit_token = _TRANSMIT_CHECK.set(
+        check_shared_access if shared_grant is not None else getattr(_registry(), "revalidate", None))
     try:
         api_key = _registry().get_api_key(agent_id)
+        _check_transmission()
         # Stream only when a caller explicitly wants live reasoning/content
         # (the app chat SSE endpoint). Every other caller — Telegram, missions,
         # background jobs — keeps the untouched synchronous transport.
@@ -1007,7 +1057,7 @@ def invoke_agent(
             "status": "success",
             "elapsed_sec": round(time.time() - started, 3), "error": None,
         }
-        _record_usage(row)
+        _record_usage(row, shared_grant=shared_grant)
         durable_usage_recorded = _record_production_usage(
             request_id, agent, request_role=request_role, purpose=purpose,
             status="success", input_tokens=input_tokens, output_tokens=output_tokens,
@@ -1072,7 +1122,7 @@ def invoke_agent(
             "pricing_basis": agent.get("pricing_basis"), "status": "error",
             "elapsed_sec": round(time.time() - started, 3), "error": error,
         }
-        _record_usage(row)
+        _record_usage(row, shared_grant=shared_grant)
         durable_usage_recorded = _record_production_usage(
             request_id, agent, request_role=request_role, purpose=purpose,
             status="error", input_tokens=input_tokens, output_tokens=output_tokens,
@@ -1083,6 +1133,7 @@ def invoke_agent(
             error = "Production AI usage storage is unavailable."
         raise UniversalLLMError(error) from None
     finally:
+        _TRANSMIT_CHECK.reset(transmit_token)
         _release(reservation_id)
         if production_scope is not None and durable_reserved and not durable_usage_recorded:
             try:

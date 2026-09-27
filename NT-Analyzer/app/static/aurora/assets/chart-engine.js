@@ -269,10 +269,12 @@
       this._empty();
     }
 
-    setLivePriceEnabled(on) {
+    setLivePriceEnabled(on, nonLiveLabel = 'OFF') {
       const next = !!on;
-      if (this.livePriceEnabled === next) return this;
+      const label = nonLiveLabel === 'DEMO' ? 'DEMO' : 'OFF';
+      if (this.livePriceEnabled === next && this.nonLivePriceLabel === label) return this;
       this.livePriceEnabled = next;
+      this.nonLivePriceLabel = label;
       this._schedule();
       return this;
     }
@@ -964,13 +966,21 @@
         const tagColor = live ? (up ? P.up : P.down) : '#6b7280';
         ctx.strokeStyle = withA(tagColor, live ? 0.5 : 0.35); ctx.setLineDash([2, 3]); ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(plotW, y); ctx.stroke(); ctx.setLineDash([]);
-        const label = live ? fmtPrice(lastBar.c) : (`${fmtPrice(lastBar.c)} · OFF`);
+        const label = live ? fmtPrice(lastBar.c) : (`${fmtPrice(lastBar.c)} · ${this.nonLivePriceLabel || 'OFF'}`);
         // Exact values used by the canvas draw, exposed only as inert DOM
         // diagnostics for Development acceptance and regression automation.
         this.host.dataset.renderedPriceMarkerText = label;
         this.host.dataset.renderedPriceMarkerColor = tagColor;
         this.host.dataset.renderedPriceMarkerLive = String(live);
-        this._axisTag(ctx, P, plotW, y, L.axisW, label, tagColor);
+        // The explicit demo suffix is wider than the normal price axis.
+        // Let only that badge extend left into the plot, never beyond canvas.
+        let tagW = L.axisW;
+        if (!live && this.nonLivePriceLabel === 'DEMO') {
+          ctx.save(); ctx.font = '10px Inter, system-ui, sans-serif';
+          tagW = Math.max(tagW, Math.ceil(ctx.measureText(label).width) + 12);
+          ctx.restore();
+        }
+        this._axisTag(ctx, P, plotW - (tagW - L.axisW), y, tagW, label, tagColor);
       }
 
       this._geometry = { start, end, vis, barW, plotW, yOf, lo, hi, main, rows: L.rows, xOf, priceBottom: L.priceBottom };

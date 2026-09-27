@@ -2135,3 +2135,56 @@ def test_deliver_owner_alert_posts_chat_then_telegram(tmp_path, monkeypatch) -> 
     assert posts and "Обнаружил проблему" in posts[0]["text"]
     assert telegrams and telegrams[0]["dedupe_key"] == "vitek:VI-TEST"
     assert telegrams[0]["conversation_id"] == "default"
+
+
+def test_periodic_report_schedule_has_one_canonical_timetable() -> None:
+    friday_before_week = datetime(2026, 9, 25, 16, 4, tzinfo=timezone.utc)
+    friday_week = datetime(2026, 9, 25, 16, 5, tzinfo=timezone.utc)
+    quarter_close = datetime(2026, 9, 30, 16, 20, tzinfo=timezone.utc)
+
+    assert [row["report_type"] for row in vitek._periodic_schedule_requests(friday_before_week)] == ["daily"]
+    assert [row["report_type"] for row in vitek._periodic_schedule_requests(friday_week)] == ["daily", "weekly"]
+    assert [row["report_type"] for row in vitek._periodic_schedule_requests(quarter_close)] == [
+        "daily", "monthly", "quarterly", "backtest_audit",
+    ]
+
+
+def test_periodic_report_is_published_by_vitek_with_team_chain(tmp_path, monkeypatch) -> None:
+    from app.ai_lab import chief_agent
+
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(vitek, "_periodic_delivery_enabled", lambda setting: True)
+    monkeypatch.setattr(chief_agent, "generate_periodic_report", lambda *a, **k: {
+        "report_id": "ORCH-REPORT-ONE", "generated_at_utc": "2026-09-26T23:05:00Z",
+        "period": "week", "content": "Единый недельный отчёт.",
+        "model": "trusted-test-model", "provider": "test-provider",
+    })
+    published = []
+    monkeypatch.setattr(chief_agent, "report_task_update", lambda **kwargs: (
+        published.append(kwargs) or {
+            "message": {"message_id": "MSG-ONE"}, "replayed": False,
+        }
+    ))
+    remembered = []
+    monkeypatch.setattr(vitek, "_remember_periodic_report", lambda **kwargs: remembered.append(kwargs))
+
+    result = vitek._deliver_periodic_owner_report({
+        "event_type": "periodic_owner_report",
+        "payload": {
+            "report_type": "weekly", "report_key": "weekly:2026-W39",
+            "telegram_setting": "weekly_summary",
+        },
+        "conversation_scope": {
+            "user_id": "42", "workspace_id": "ws-owner",
+            "membership_role": "owner", "uses_owner_runtime": True,
+        },
+    })
+
+    assert result["ok"] is True
+    assert published[0]["agent_name"] == "Витёк"
+    assert published[0]["request_id"] == "periodic:weekly:2026-W39"
+    assert published[0]["telegram_setting"] == "weekly_summary"
+    assert [row["agent_name"] for row in published[0]["participation_chain"]] == [
+        "Витёк", "Марина", "StratForge Orchestrator",
+    ]
+    assert remembered[0]["report_key"] == "weekly:2026-W39"

@@ -2,7 +2,7 @@ UI.ready(async function () {
   const kpis = UI.qs('#topstep-kpis'); const checks = UI.qs('#topstep-checks');
   UI.renderLoading(kpis, 'Проверка TopStep…');
   try {
-    const status = await API.http.topstepStatus({ signal: UI.signal() });
+    const status = await API.http.topstepStrategyStatus({ signal: UI.signal() });
     const cards = [
       ['Фаза', status.phase || 'неизвестно', 'info'],
       ['API-конфигурация', status.configured ? 'настроена' : 'не настроена', status.configured ? 'pos' : 'warn'],
@@ -14,7 +14,6 @@ UI.ready(async function () {
       ['Username', status.username_configured],
       ['API key', status.api_key_configured],
       ['Read-only', status.read_only],
-      ['Без NinjaTrader', status.ninjatrader_independent],
       ['Live-команды отключены', !status.live_actions_enabled]
     ].map(row => `<div class="row"><div class="row-main"><div class="row-title">${row[0]}</div></div><span class="badge ${row[1] ? 'live' : 'archived'}">${row[1] ? 'да' : 'нет'}</span></div>`).join('');
     const note = UI.qs('#topstep-note');

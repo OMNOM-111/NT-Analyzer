@@ -613,3 +613,23 @@ def test_database_cleanup_is_documented_as_a_separate_operation():
     assert "Development" in doc
     assert "Production" in doc
     assert "maintenance" in doc.lower()
+
+
+def test_registration_post_suppresses_empty_wall_but_not_empty_saved():
+    import subprocess
+    script = r"""
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+const source=fs.readFileSync('app/static/aurora/assets/pages/community.js','utf8');
+const host={innerHTML:''};
+const state={viewer:{profile_id:'new'},wallTab:'posts',wallRequest:0};
+const ctx={STATE:state,q:()=>host,renderViewer:()=>{},updateWallCounts:()=>{},sortPosts:x=>x,
+ postHtml:p=>p.text,registrationCardHtml:r=>r?'REGISTRATION':'',renderEmpty:title=>title,
+ wirePostActions:()=>{},UI:{renderError:(_h,e)=>{throw e;}},
+ API:{http:{communityV2Profile:async()=>({profile:state.viewer,posts:[],registration:{}}),communityV2Saved:async()=>({posts:[]})}}};
+vm.createContext(ctx);vm.runInContext(source.slice(source.indexOf('  async function loadWall()'),source.indexOf('  async function loadFeed(')),ctx);
+(async()=>{await ctx.loadWall();assert.equal(host.innerHTML,'REGISTRATION');
+ state.wallTab='saved';await ctx.loadWall();assert.match(host.innerHTML,/Закладок пока нет/);})().catch(e=>{console.error(e);process.exitCode=1;});
+"""
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(["node", "-e", script], cwd=root, capture_output=True, text=True, encoding="utf-8", timeout=15)
+    assert result.returncode == 0, result.stdout + result.stderr

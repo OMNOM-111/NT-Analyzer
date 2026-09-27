@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 
 from .. import runtime_env, secure_store
 from . import paths
-from .io_utils import append_jsonl, read_json, write_json_atomic
+from .io_utils import append_jsonl, read_json, write_json_atomic, write_jsonl_atomic
 
 
 MAX_MONTHLY_BUDGET_USD = 20.0
@@ -615,6 +615,8 @@ def _usage_files() -> Iterable[Path]:
 
 
 def usage_rows(*, agent_id: Optional[str] = None, limit: int = 5000) -> List[Dict[str, Any]]:
+    from .. import account_lifecycle
+    deleted = {str(uid) for uid in account_lifecycle.deleted_legacy_ids()}
     rows: List[Dict[str, Any]] = []
     for path in _usage_files():
         try:
@@ -628,10 +630,28 @@ def usage_rows(*, agent_id: Optional[str] = None, limit: int = 5000) -> List[Dic
                 continue
             if not isinstance(row, dict):
                 continue
+            if str(row.get("user_id")) in deleted:
+                row["user_name"] = "Удалённый пользователь"
+                row["error"] = ""  # Provider errors can contain submitted content.
             if agent_id and str(row.get("agent_id") or "") != agent_id:
                 continue
             rows.append(row)
     return rows[-max(1, limit):]
+
+
+def anonymize_user_usage(user_id: int) -> None:
+    """Retain metering totals, remove personal display data under the writer lock."""
+    with _LOCK:
+        for path in _usage_files():
+            records = [json.loads(line) for line in path.read_text(encoding="utf-8-sig").splitlines() if line.strip()]
+            changed = False
+            for row in records:
+                if str(row.get("user_id")) == str(user_id):
+                    row["user_name"] = "Удалённый пользователь"
+                    row["error"] = ""
+                    changed = True
+            if changed:
+                write_jsonl_atomic(path, records)
 
 
 def _sum_cost(rows: Iterable[Dict[str, Any]], *, since: Optional[datetime] = None) -> float:
@@ -907,8 +927,12 @@ def record_usage(row: Dict[str, Any]) -> None:
             "user_id", "user_name", "workspace_id", "conversation_id", "request_source",
         )
     }
-    append_jsonl(usage_path(), safe)
     with _LOCK:
+        from .. import account_lifecycle
+        if str(safe.get("user_id")) in {str(uid) for uid in account_lifecycle.deleted_legacy_ids()}:
+            safe["user_name"] = "Удалённый пользователь"
+            safe["error"] = ""
+        append_jsonl(usage_path(), safe)
         doc = _read_doc()
         for index, agent in enumerate(doc["agents"]):
             if isinstance(agent, dict) and str(agent.get("id")) == str(row.get("agent_id")):

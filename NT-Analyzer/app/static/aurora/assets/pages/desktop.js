@@ -15,7 +15,11 @@ UI.ready(async function () {
   const { qs, el, toast } = UI;
 
   // ---- constants ---------------------------------------------------------
-  const STORE_KEY = 'desktop.workspaces.v2';
+  const desktopAuth = UI.CURRENT_AUTH || {};
+  // Preserve the accepted owner's layout. A regular account never inherits
+  // another person's drawings, chart windows or saved workspaces on this origin.
+  const STORE_KEY = desktopAuth.is_owner ? 'desktop.workspaces.v2'
+    : `desktop.workspaces.v2:${desktopAuth.user?.id || desktopAuth.user?.user_uuid || 'guest'}:${desktopAuth.active_workspace?.workspace_id || ''}`;
   const RESOLUTIONS = [
     { id: 'screen', label: 'Экран · под монитор', w: 0, h: 0 },
     { id: 'hd', label: 'HD · 1280×720', w: 1280, h: 720 },
@@ -266,6 +270,7 @@ UI.ready(async function () {
   viewport.appendChild(emptyEl);
 
   // ---- runtime state -----------------------------------------------------
+  let firstDesktopOpen = false;
   let store = loadStore();
   let layout = store.layouts[store.activeId];
   let template = loadTemplate();
@@ -282,7 +287,8 @@ UI.ready(async function () {
     let raw = null;
     try { raw = JSON.parse(localStorage.getItem(STORE_KEY) || 'null'); } catch (e) { raw = null; }
     if (raw && raw.layouts && raw.activeId && raw.layouts[raw.activeId]) return migrate(raw);
-    // first ever open → single empty workspace
+    // First visit opens a real chart; an intentionally emptied saved layout stays empty.
+    firstDesktopOpen = true;
     const id = 'w' + Date.now();
     return {
       activeId: id,
@@ -1218,13 +1224,16 @@ UI.ready(async function () {
       const asOf = freshness.market_feed_as_of_utc || freshness.data_as_of_utc || source.updated_at_utc || '';
       const asOfLabel = asOf ? ` · last ${String(asOf).replace('T', ' ').slice(0, 19)}` : '';
       const diag = payload.diagnostics || {};
-      const transport = marketDataWsOk ? 'WS' : 'HTTP';
+      const transport = status === 'demo_replay' ? 'REPLAY · HTTP' : marketDataWsOk ? 'WS' : 'HTTP';
       const hashShort = diag.series_hash ? String(diag.series_hash).slice(0, 8) : '';
       const contract = payload.resolvedInstrument || payload.resolved_instrument || (rec.model.config && rec.model.config.instrument) || '';
       const extra = hashShort ? ` · #${hashShort}` : '';
       let health = 'OFFLINE';
       let css = 'err';
-      if (offline || payload.market_data_available === false) {
+      if (status === 'demo_replay') {
+        health = 'DEMO · учебные данные';
+        css = 'wait';
+      } else if (offline || payload.market_data_available === false) {
         health = 'OFFLINE';
         css = 'err';
       } else if (live && marketFeedFresh && !marketFeedStale) {
@@ -1257,7 +1266,7 @@ UI.ready(async function () {
       rec._transport = transport;
       // Freeze price marker semantics for offline/stale.
       if (rec.chart && rec.chart.setLivePriceEnabled) {
-        try { rec.chart.setLivePriceEnabled(css === 'live'); } catch (e) { /* optional */ }
+        try { rec.chart.setLivePriceEnabled(css === 'live', status === 'demo_replay' ? 'DEMO' : 'OFF'); } catch (e) { /* optional */ }
       }
     } else {
       if (!rec.hasBars) {
@@ -1346,7 +1355,8 @@ UI.ready(async function () {
     if (text) {
       const bits = String(title || '').split(' · ');
       const dataAt = bits.indexOf('DATA');
-      text.textContent = dataAt >= 0 && bits[dataAt + 1] ? `DATA · ${bits[dataAt + 1]}` : (bits[1] || bits[0] || 'DATA');
+      text.textContent = bits[0] === 'DEMO' ? 'DEMO · учебные данные'
+        : dataAt >= 0 && bits[dataAt + 1] ? `DATA · ${bits[dataAt + 1]}` : (bits[1] || bits[0] || 'DATA');
     }
   }
 
@@ -2897,4 +2907,5 @@ UI.ready(async function () {
   try { localStorage.removeItem('desktop.contract-refresh-day'); } catch (e) { /* ignore */ }
   mountLayout();
   refreshContractsIfDue();
+  if (firstDesktopOpen) ensureAnyWindow().catch(() => toast('Не удалось открыть начальный график. Попробуйте «+ График».'));
 });

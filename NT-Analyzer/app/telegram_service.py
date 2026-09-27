@@ -8,7 +8,6 @@ paper/demo actions keep their explicit backend approval gates.
 """
 from __future__ import annotations
 
-import calendar
 import hashlib
 import html
 import json
@@ -27,7 +26,6 @@ from typing import Any, Dict, List, Optional
 
 from . import local_secrets
 from . import durable
-from . import performance
 from . import runtime
 from . import runtime_env
 from . import market_data
@@ -893,6 +891,10 @@ def disconnect() -> Dict[str, Any]:
 
 def configure_group(raw_group_id: str) -> Dict[str, Any]:
     """Bind a Telegram supergroup with forum topics as the app's chat mirror."""
+    if not runtime_env.telegram_operational_delivery_active():
+        raise TelegramServiceError(
+            "Эта среда не является владельцем рабочей Telegram-интеграции."
+        )
     gid = str(raw_group_id or "").strip()
     if not re.fullmatch(r"-?\d{5,}", gid):
         raise TelegramServiceError("Неверный ID группы Telegram (пример: -1001234567890).")
@@ -1170,6 +1172,10 @@ def ensure_topic(conversation_id: str, title: str = "") -> Dict[str, Any]:
     Deduplicated: an existing mapping is returned without creating a second
     topic. Requires group mode; raises otherwise.
     """
+    if not runtime_env.telegram_operational_delivery_active():
+        raise TelegramServiceError(
+            "Эта среда не владеет Telegram-темами SF Chat."
+        )
     gid = group_id()
     if not gid:
         raise TelegramServiceError("Групповой режим Telegram не настроен.")
@@ -1315,6 +1321,8 @@ def _send_raw(text: str, *, silent: bool = False, thread_id: Optional[int] = Non
 def send_photo_bytes(chat_id: Any, blob: bytes, *, caption: str = "", filename: str = "invite.png") -> bool:
     """Send a raw image (bytes) to a specific chat. Used for shareable artifacts
     like invitation cards. Not gated by chief-agent report settings."""
+    if not runtime_env.telegram_operational_delivery_active():
+        return False
     token = str(os.environ.get(TOKEN_ENV) or "").strip()
     chat = str(chat_id or "").strip()
     if not token or not chat or not blob:
@@ -1346,6 +1354,8 @@ def send_photo_bytes(chat_id: Any, blob: bytes, *, caption: str = "", filename: 
 def send_photo(image_path: Any, caption: str = "", *, conversation_id: Optional[str] = None,
                conversation_title: str = "", silent: bool = True) -> bool:
     """Upload a chart snapshot image into the conversation's Telegram topic."""
+    if not runtime_env.telegram_operational_delivery_active():
+        return False
     settings = load_settings()
     if not settings.get("enabled") or not settings.get("chief_agent_reports"):
         return False
@@ -1403,6 +1413,8 @@ def send_photo(image_path: Any, caption: str = "", *, conversation_id: Optional[
 def send_document(document_path: Any, caption: str = "", *, conversation_id: Optional[str] = None,
                   conversation_title: str = "", silent: bool = True) -> bool:
     """Upload a generated report/document into the bound Telegram topic."""
+    if not runtime_env.telegram_operational_delivery_active():
+        return False
     settings = load_settings()
     if not settings.get("enabled") or not settings.get("chief_agent_reports"):
         return False
@@ -1455,6 +1467,10 @@ def send_document(document_path: Any, caption: str = "", *, conversation_id: Opt
 
 def send_test() -> Dict[str, Any]:
     """Validate the configured bot and deliver one explicit test message."""
+    if not runtime_env.telegram_operational_delivery_active():
+        raise TelegramServiceError(
+            "Тестовая отправка запрещена: рабочей Telegram-интеграцией владеет другая среда."
+        )
     identity = _bot_identity()
     _send_raw(
         "✅ <b>Тест StratForge AI</b>\n"
@@ -1473,6 +1489,7 @@ def status() -> Dict[str, Any]:
     with _PAIR_LOCK:
         pairing_active = bool(_PAIRING and time.time() <= float(_PAIRING.get("expires_at") or 0))
     topics_doc = _load_topics()
+    operational_active = runtime_env.telegram_operational_delivery_active()
     inbox_rows = [
         row for row in (_read_json(_update_inbox_path()).get("items") or [])
         if isinstance(row, dict)
@@ -1486,8 +1503,10 @@ def status() -> Dict[str, Any]:
         "status": "connected" if (configured or (token_configured and group_ready)) else ("token_ready" if token_configured else "not_configured"),
         "token_configured": token_configured,
         "chat_configured": chat_configured,
-        "notifications_enabled": (configured or group_ready) and bool(settings.get("enabled")),
-        "commands_enabled": configured or group_ready,
+        "notifications_enabled": operational_active and (configured or group_ready) and bool(settings.get("enabled")),
+        "commands_enabled": operational_active and (configured or group_ready),
+        "operational_owner_environment": runtime_env.telegram_owner_environment(),
+        "operational_delivery_active": operational_active,
         "bot_username": bot_username(),
         "bot_name": str(settings.get("bot_name") or ""),
         "chat_label": str(settings.get("chat_label") or ""),
@@ -1534,6 +1553,8 @@ def _notify(setting: str, title: str, lines: List[str], *, urgent: bool = False,
             thread_id: Optional[int] = None, conversation_id: str = "",
             conversation_title: str = "", dedupe_key: str = "",
             queue_on_failure: bool = False) -> bool:
+    if not runtime_env.telegram_operational_delivery_active():
+        return False
     settings = load_settings()
     if not settings.get("enabled") or not settings.get(setting):
         return False
@@ -1658,7 +1679,8 @@ def send_chief_report(title: str, lines: List[str], *, urgent: bool = False,
                       provider_name: str = "", action_status: str = "",
                       conversation_id: Optional[str] = None,
                       conversation_title: str = "",
-                      dedupe_key: str = "") -> bool:
+                      dedupe_key: str = "",
+                      setting: str = "chief_agent_reports") -> bool:
     """Send a model-attributed chief-agent report through the normal settings gate.
 
     In group mode the report is delivered into the Telegram forum topic bound to
@@ -1675,7 +1697,7 @@ def send_chief_report(title: str, lines: List[str], *, urgent: bool = False,
         action_status=action_status,
     )
     return _notify(
-        "chief_agent_reports", title, visible_lines,
+        setting, title, visible_lines,
         urgent=urgent, conversation_id=str(conversation_id or ""),
         conversation_title=conversation_title, dedupe_key=dedupe_key,
         queue_on_failure=True,
@@ -1720,8 +1742,7 @@ def mirror_community_message(text: str, *, display_name: str = "",
     """
     try:
         from . import runtime_env
-        if runtime_env.is_staging() and not runtime_env.allow_owner_telegram_mirror():
-            # Staging default: do not touch any Telegram chats.
+        if not runtime_env.telegram_operational_delivery_active():
             return False
     except Exception:
         # A broken/missing safety policy must never become permission to send.
@@ -1788,10 +1809,10 @@ def mirror_owner_message(text: str, *, conversation_id: Optional[str] = None,
         return False
     try:
         from . import runtime_env
-        if not runtime_env.allow_owner_telegram_mirror():
+        if not runtime_env.telegram_operational_delivery_active():
             return False
     except Exception:
-        pass
+        return False
     body = str(text or "").strip()
     if not body:
         return False
@@ -2267,6 +2288,14 @@ def _dispatch_command_update(update: Dict[str, Any], *, private_id: str, gid: st
     if not handle_owner_commands:
         result["handler"] = "commands_disabled"
         return result
+    if not runtime_env.telegram_operational_delivery_active():
+        # Login/access callbacks above remain available, but a non-owner contour
+        # must never invoke an AI model or answer inside Production-owned topics.
+        result.update({
+            "handler": "operational_owner_elsewhere",
+            "consumed": True,
+        })
+        return result
     chat_id_str = str(chat.get("id") or "")
     chat_type = str(chat.get("type") or "")
     try:
@@ -2409,19 +2438,6 @@ def _pt_now(now_utc: datetime) -> datetime:
         return now_utc
 
 
-def _summary_lines(period_name: str, period_key: str) -> List[str]:
-    doc = performance.build_performance_response(period=period_key)
-    summary = doc.get("strategy_summary") or doc.get("summary") or {}
-    win_rate = summary.get("win_rate")
-    return [
-        f"Период: {period_name}",
-        f"Сделок: {int(summary.get('trades') or 0)}",
-        f"P&L после комиссии: ${float(summary.get('pnl') or 0):,.2f}",
-        f"Комиссия: ${float(summary.get('commission') or 0):,.2f}",
-        f"Win rate: {'—' if win_rate is None else f'{float(win_rate):.1f}%'}",
-    ]
-
-
 def _poll_news(state: Dict[str, Any], now_utc: datetime, initialized: bool) -> None:
     from . import integrations  # local import avoids an integrations/status cycle
 
@@ -2487,6 +2503,17 @@ def poll_once(*, now_utc: Optional[datetime] = None, announce_start: bool = Fals
         now = now.replace(tzinfo=timezone.utc)
     settings = load_settings()
     state = _load_state()
+    if not runtime_env.telegram_operational_delivery_active():
+        state["monitoring"] = False
+        state["initialized"] = False
+        state["operational_owner_environment"] = runtime_env.telegram_owner_environment()
+        state["last_poll_at_utc"] = now.isoformat()
+        _save_notifier_state(state)
+        return {
+            "ok": True, "active": False,
+            "reason": "operational_owner_elsewhere",
+            "owner_environment": runtime_env.telegram_owner_environment(),
+        }
     try:
         market_data.evaluate_alerts()
         for alert in market_data.pending_agent_alerts():
@@ -2592,28 +2619,6 @@ def poll_once(*, now_utc: Optional[datetime] = None, announce_start: bool = Fals
     except Exception as exc:
         state["price_alert_error"] = _safe_error(exc)
 
-    pt = _pt_now(now)
-    day_key = pt.date().isoformat()
-    if pt.hour >= 16 and state.get("daily_summary_key") != day_key:
-        if _notify("daily_summary", "📊 Сводка StratForge AI за день", _summary_lines("сегодня", "today")):
-            state["daily_summary_key"] = day_key
-    if pt.weekday() == 4 and (pt.hour, pt.minute) >= (16, 5):
-        week_key = f"{pt.isocalendar().year}-W{pt.isocalendar().week:02d}"
-        if state.get("weekly_summary_key") != week_key:
-            if _notify("weekly_summary", "📈 Сводка StratForge AI за неделю", _summary_lines("текущая неделя", "week")):
-                state["weekly_summary_key"] = week_key
-    last_day = calendar.monthrange(pt.year, pt.month)[1]
-    if pt.day == last_day and (pt.hour, pt.minute) >= (16, 10):
-        month_key = pt.strftime("%Y-%m")
-        if state.get("monthly_summary_key") != month_key:
-            if _notify("monthly_summary", "🗓 Сводка StratForge AI за месяц", _summary_lines("текущий месяц", "month")):
-                state["monthly_summary_key"] = month_key
-    if pt.month in {3, 6, 9, 12} and pt.day == last_day and (pt.hour, pt.minute) >= (16, 15):
-        quarter_key = f"{pt.year}-Q{((pt.month - 1) // 3) + 1}"
-        if state.get("quarterly_summary_key") != quarter_key:
-            if _notify("quarterly_summary", "📚 Сводка StratForge AI за квартал", _summary_lines("квартал", "quarter")):
-                state["quarterly_summary_key"] = quarter_key
-
     state["initialized"] = True
     state["monitoring"] = True
     state["last_poll_at_utc"] = now.isoformat()
@@ -2657,6 +2662,14 @@ def _command_worker_loop() -> None:
     next_webhook_check = 0.0
     webhook_active = False
     while not _STOP.is_set():
+        if not runtime_env.telegram_operational_delivery_active():
+            state = _load_state()
+            state["last_command_poll_at_utc"] = _now_iso()
+            state["last_command_transport"] = "disabled"
+            state["chief_command_error"] = "operational_owner_elsewhere"
+            _save_command_poll_state(state)
+            _STOP.wait(5.0)
+            continue
         try:
             _dispatch_update_inbox()
         except Exception as exc:
