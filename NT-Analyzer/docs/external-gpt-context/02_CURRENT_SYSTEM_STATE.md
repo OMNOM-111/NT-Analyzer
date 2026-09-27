@@ -1,11 +1,14 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
-- Last verified UTC: 2026-09-26T23:58:20Z
+- Last verified UTC: 2026-09-27T17:45:58Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Status: PARTIAL
-- Scope: Current factual subsystem snapshot: accepted Unified Local Development plus live-read Canary/Production beta.92 identity
-- Current Production version/build/artifact when known: `0.10.0-beta.92` / `sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z` / `art_57db4318cb8745d399d98bccf48de396`; runtime artifact SHA256 `07A3961277E3879357EE92A8471911FAFA4B57E1B3BF2D046E1BCA41D27A9169`
+- Scope: Current factual subsystem snapshot: live beta.97 incident plus beta.98 hotfix candidate
+- Current Production version/build/artifact when known: `0.10.0-beta.97` / `sf-0.10.0-beta.97-4f6bb0b3a0d2-20260927T060203Z` / `art_8fec9cdd6ed14dd19cb762291a2a756f`; runtime artifact SHA256 `B5FC667474ED38CD5AA3600F22E4DD97495958DCC906BCEAD1CA80CF2838F9D2`
+- Production incident 2026-09-27: authenticated owner and Professional overview sessions can enter a real full-page reload loop when the runtime-account response is graded `confirmed_live=false`. CDP proved a script-initiated reload from `nt-account-change`, with no redirect, auth/device loop, service worker or runtime exception. beta.92 contains the same latent defect and was not used as a misleading rollback. A minimal beta.98 candidate emits the event only for a real live-to-offline selected-account transition. [Incident record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md).
+- Operational cutover remains paused: Production report scheduler OFF; Local `StratForge Vitek` ON. Final beta.97 closeout is blocked.
+- Multi-user Telegram acceptance is not implemented: ordinary scoped users have browser SF Chat but no own Telegram topic/mirror; the current single shared forum cannot isolate topic visibility between members. Existing inbound ACL/worker scope checks reject foreign scoped topics, but the required second-user UX and private per-user/workspace topic container need a separate release. No unsafe second user was added to the owner forum.
 - Local source verified SHA: 56945ac68e94cb7ffa031ef2312dec5a9ad80a54 (canonical live mirror; 6080 passed / 134 skipped across 293 files after complete affected-module reruns; full Preview/owner walkthrough plus final chart-lifetime follow-up; browser-tool interruption/recovery documented in the canonical receipt)
 - Release-candidate code checkpoint: `73fa31ee`; merge, final-SHA CI, signed artifact and environment acceptance remain gated.
 - Release-candidate integration checkpoint: `f455043f`, draft PR #294. Full Local regression: 6087 passed / 134 skipped / 0 failed in 1:07:38; 650-file pre-release bundle and context validation PASS. Final PR jobs and merged-main-SHA CI remain separate gates.

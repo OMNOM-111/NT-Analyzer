@@ -1,18 +1,43 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-27T00:09:21Z
+- Last verified UTC: 2026-09-27T17:45:58Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Scope: Accepted Unified Local release candidate, Telegram report cutover and remaining immutable-release gates
+- Scope: Production beta.97 reload incident, beta.98 hotfix and multi-user Telegram blocker
 - Status: PARTIAL
-- Current Production version/build/artifact when known: `0.10.0-beta.92` / `sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z` / `art_57db4318cb8745d399d98bccf48de396`; runtime artifact SHA256 `07A3961277E3879357EE92A8471911FAFA4B57E1B3BF2D046E1BCA41D27A9169`
+- Current Production version/build/artifact when known: `0.10.0-beta.97` / `sf-0.10.0-beta.97-4f6bb0b3a0d2-20260927T060203Z` / `art_8fec9cdd6ed14dd19cb762291a2a756f`; runtime artifact SHA256 `B5FC667474ED38CD5AA3600F22E4DD97495958DCC906BCEAD1CA80CF2838F9D2`
 
-Current release candidate (2026-09-26): **BETA / NOT DEPLOYED** — the owner
+Urgent incident: **PRODUCTION CLOSEOUT BLOCKED**. Live CDP proved a genuine
+script-initiated full-page reload, not an auth/device/redirect/polling/exception
+loop. `ui.js` emitted `nt-account-change(detail:null)` on every cold offline
+account read; the overview listener called `location.reload()`. Blast radius is
+owner and ordinary Professional overview sessions with graded
+`confirmed_live=false`. beta.92 has the same latent trigger, so rollback was not
+used. The beta.98 candidate makes the null event transition-only and has targeted
+regression PASS. It must follow PR → main CI → new artifact → Canary → separate
+Production approval. [Incident record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md).
+
+Operational safety: Production report scheduler remains OFF; Local Windows task
+`StratForge Vitek` remains ON. Do not complete Telegram/report ownership cutover
+until the new Production artifact is accepted.
+
+Multi-user Telegram acceptance: **EXTERNAL BLOCKED**. One shared bot token is
+already used, and browser SF Chat/agent work is scoped, durable and deduplicated.
+However ordinary users do not get their own Telegram topic or mirror, and a
+single shared Telegram forum cannot hide other members' topic history. Foreign
+scoped inbound is rejected before model invocation, but the refusal has no
+own-chat/pairing CTA and legacy unscoped topics need fail-closed migration. Do
+not add a real second user to the owner forum. The next implementation must bind
+user + workspace + conversation + private chat/container + thread and verify the
+sender before routing.
+
+Historical pre-deployment checkpoint (2026-09-26): **SUPERSEDED BY THE LIVE
+INCIDENT ABOVE** — the owner
 accepted the current Unified Local as the release basis and deferred non-critical
 design polish. Candidate beta.97 removes the two independent periodic-report
 schedules, makes Vitek the single scheduler in the Deputy role and persists one
 report/result/delivery key across SF Chat and Telegram. Production is the sole
-default operational owner of the shared bot; Development and Canary stay passive
+default operational owner of the shared bot; Development and Canary were to stay passive
 for topics, updates, mirroring and reports. The existing Local service is still
 running unchanged until a verified replacement exists.
 
@@ -25,13 +50,11 @@ did not exclude competing outbound senders. No messages, reports, keys, models o
 registries were deleted. Canonical details:
 [beta.97 Telegram/report candidate](../changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md).
 
-Open release gates: complete regression and bundle checks; PR and explicit merge
-decision; mandatory CI on the merged main SHA; one signed immutable artifact;
-verified backup/rollback before server data changes; Canary acceptance including
-one designated short Telegram exchange; separate owner approval for that exact
-artifact; same-artifact Production promotion and post-release duplicate/isolation
-checks. **IMPLEMENTATION COMPLETE pending verification; GIT CLOSEOUT IN PROGRESS;
-STAGE NOT CLOSED.**
+Those beta.97 build and promotion gates completed, but final Production
+acceptance did not: the reload incident and multi-user Telegram architecture gap
+keep **STAGE NOT CLOSED**. The active release gates are now the beta.98 PR,
+merged-main CI, new signed artifact, Canary stability acceptance and a new
+artifact-specific Production approval.
 
 Checkpoint `f455043f`, draft PR #294: full Local regression **6087 passed / 134
 skipped / 0 failed** in 1:07:38. The exact 650-file pre-release bundle, context

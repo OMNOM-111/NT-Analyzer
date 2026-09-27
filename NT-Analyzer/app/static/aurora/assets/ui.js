@@ -6003,6 +6003,7 @@
       }).catch(() => setChip(lmC, 'off', 'LM Studio', 'статус недоступен'));
       const accountsTask = API.http.runtimeAccounts().then(accounts => {
         const listed = (accounts.accounts || accounts.online_accounts || []).filter(account => !account.is_system);
+        const previousAccount = selectedAccount;
         let preferred = selectedAccount && selectedAccount.account_name;
         if (!preferred) { try { preferred = localStorage.getItem(AuroraDomain.ACCOUNT_KEY); } catch (e) { /* ignore */ } }
         const confirmationGraded = Object.prototype.hasOwnProperty.call(accounts, 'confirmed_live');
@@ -6012,7 +6013,10 @@
           const lastKnown = AuroraDomain.selectAccount(listed, preferred);
           const grace = accounts.heartbeat_confirmation_state === 'grace';
           setChip(accC, grace ? 'warn' : 'bad', lastKnown ? `${lastKnown.account_name} · ${grace ? 'ожидание' : 'OFF'}` : 'Счёт недоступен', lastKnown ? `последние подтверждённые данные; ${grace ? 'ожидается heartbeat' : 'NinjaTrader offline'}` : 'свежий account snapshot отсутствует');
-          window.dispatchEvent(new CustomEvent('nt-account-change', { detail: null }));
+          // A cold start while the connector is already offline has no account
+          // transition to announce. Dispatching here unconditionally made the
+          // overview reload, repeat this branch, and reload forever.
+          if (previousAccount) window.dispatchEvent(new CustomEvent('nt-account-change', { detail: null }));
         } else {
           runtimeAccounts = listed;
           setSelectedAccount(preferred, false);
