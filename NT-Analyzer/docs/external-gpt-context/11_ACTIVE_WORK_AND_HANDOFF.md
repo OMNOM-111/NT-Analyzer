@@ -1,10 +1,39 @@
 # 11. Active Work and Handoff
 
-Scoped Local work completed: **BETA** — [Preview parity/account lifecycle](../changelog/2026-09-23-preview-parity-account-lifecycle.md). Historical DEMO acceptance is superseded by the current live-mirror contract below. Ordinary registration permissions; public surfaces shared, private data isolated. Fresh Preview/owner browser walkthrough, deletion/reset/exit receipts and full regression PASS. Test containers removed; owner access snapshot unchanged. Owner review and remote CI remain separate. No server/Canary/Production work authorized.
-
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-05T12:45:49Z
+- Last verified UTC: 2026-09-27T00:09:21Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
+- Scope: Accepted Unified Local release candidate, Telegram report cutover and remaining immutable-release gates
+- Status: PARTIAL
+- Current Production version/build/artifact when known: `0.10.0-beta.92` / `sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z` / `art_57db4318cb8745d399d98bccf48de396`; runtime artifact SHA256 `07A3961277E3879357EE92A8471911FAFA4B57E1B3BF2D046E1BCA41D27A9169`
+
+Current release candidate (2026-09-26): **BETA / NOT DEPLOYED** — the owner
+accepted the current Unified Local as the release basis and deferred non-critical
+design polish. Candidate beta.97 removes the two independent periodic-report
+schedules, makes Vitek the single scheduler in the Deputy role and persists one
+report/result/delivery key across SF Chat and Telegram. Production is the sole
+default operational owner of the shared bot; Development and Canary stay passive
+for topics, updates, mirroring and reports. The existing Local service is still
+running unchanged until a verified replacement exists.
+
+The trace found that current owner reports came from Local, while server report
+settings were disabled. Local produced both deterministic summaries and a second
+Chief/Orchestrator report. Production owned the webhook, but all three
+environments shared the protected bot token while maintaining separate topic
+registries. That made reverse routing for a Local/Canary-created topic unsafe and
+did not exclude competing outbound senders. No messages, reports, keys, models or
+registries were deleted. Canonical details:
+[beta.97 Telegram/report candidate](../changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md).
+
+Open release gates: complete regression and bundle checks; PR and explicit merge
+decision; mandatory CI on the merged main SHA; one signed immutable artifact;
+verified backup/rollback before server data changes; Canary acceptance including
+one designated short Telegram exchange; separate owner approval for that exact
+artifact; same-artifact Production promotion and post-release duplicate/isolation
+checks. **IMPLEMENTATION COMPLETE pending verification; GIT CLOSEOUT IN PROGRESS;
+STAGE NOT CLOSED.**
+
+Scoped Local work completed: **BETA** — [Preview parity/account lifecycle](../changelog/2026-09-23-preview-parity-account-lifecycle.md). Historical DEMO acceptance is superseded by the current live-mirror contract below. Ordinary registration permissions; public surfaces shared, private data isolated. Fresh Preview/owner browser walkthrough, deletion/reset/exit receipts and full regression PASS. Test containers removed; owner access snapshot unchanged. Owner review and remote CI remain separate. No server/Canary/Production work authorized.
 - Local source verified SHA: 56945ac68e94cb7ffa031ef2312dec5a9ad80a54 (canonical live mirror; 6080 passed / 134 skipped across 293 files after complete affected-module reruns; full Preview/owner walkthrough plus final chart-lifetime follow-up; browser-tool interruption/recovery documented in the canonical receipt)
 - Local verification UTC: 2026-09-24T04:08:00Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
 - Historical UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
@@ -13,7 +42,9 @@ Scoped Local work completed: **BETA** — [Preview parity/account lifecycle](../
 - Protected Local branch snapshot: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; the active final branch is identified below, while #285 is an accepted integration input
 - Version: `0.10.0-beta.96`, `pre_release`; verified implementation `56945ac6` on Local 8765, no Canary/Production promotion
 - Integration state: scoped model/domain/Chat/NT/Desktop, real fact handoff, manual discussion, separate application observations, Consensus and Court verified; owner-dependent and full-program work remain
-- Current Production version/build/artifact when known: recorded beta.87, build `sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z`; not re-verified here
+- Current Production version/build/artifact when known: last recorded beta.92, build `sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z`, artifact `art_57db4318cb8745d399d98bccf48de396`; accepted Canary and Production live on 2026-09-02. This supersedes the beta.87 snapshot; current public live identity was not re-verified during the 2026-09-24 timeline audit. See [timeline audit](../changelog/2026-09-24-timeline-source-audit.md).
+- The root [`timeline.html`](../../../timeline.html) is the owner-facing next-day handoff. Keep current post-beta.92 Local work in one open card with seven separate tasks: only registration has explicit owner approval (2026-09-24); Agent World needs owner visual/chat review, and other approvals are not recorded. Do not advance the batch on test PASS alone. Read the [decision record](../changelog/2026-09-24-timeline-owner-approval-workflow.md) and [mandatory workflow](../TIMELINE_MAINTENANCE.md) at session start; this handoff does not claim server promotion.
+- 2026-09-25 prepublication Local QA: 430 focused tests PASS; live owner MES/MNQ 12-26 and disposable Preview MBT 09-26 charts painted TopstepX/WS; checked Social/Chat/Agent World screens opened without console errors; 646-file bundle 4/4 PASS. With owner authorization, Preview registration, terms and first-device trust completed; a fresh Preview user received an SF Chat AI reply via an owner-shared model. A separate real Development user sent a private message to the owner; the owner saw it and sent a reply; the disposable user and conversation were self-deleted. The receiving side of that reply was not separately checked. A stale Preview bridge expires after 1800 seconds and breaks Social/Chat reads until a fresh launch. Permanent Social comment was blocked by automated action review, so no public write is claimed. Agent World still has the partial items in its master status, and the UI's chart task example says `MNQ 09-26` while the active chart is `MNQ 12-26`. The timeline shows a separate ✓ for checked internals and retains the overall ! and owner-approval gate. [Exact QA record](../changelog/2026-09-25-prepublication-local-qa.md).
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT
 

@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>StratForge AI — история продукта</title>
+  <script>
+    try {
+      const saved = localStorage.getItem('stratforge-timeline-theme');
+      document.documentElement.dataset.theme = saved === 'light' || saved === 'dark'
+        ? saved : (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    } catch { document.documentElement.dataset.theme = 'light'; }
+  </script>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg:#f7f9fc; --card:#fff; --soft:#f0f5fa; --ink:#172b49;
+      --muted:#61738b; --line:#cbd8e7; --accent:#286fbd;
+      --good:#0b8b69; --wait:#af7518; --quiet:#8798ac;
+      --shadow:0 12px 32px #19395a10;
+    }
+    :root[data-theme="dark"] {
+      color-scheme:dark;
+      --bg:#0b1523; --card:#152338; --soft:#1e3048; --ink:#edf5ff;
+      --muted:#b3c2d4; --line:#3a4e67; --accent:#82b9ff;
+      --good:#58d5a9; --wait:#ffd083; --quiet:#9aacc1;
+      --shadow:0 12px 32px #03081160;
+    }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.4 "Segoe UI",Arial,sans-serif; }
+    button { font:inherit; cursor:pointer; }
+    button:focus-visible, a:focus-visible, .timeline-viewport:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+    a { color:var(--accent); }
+    .page { width:100%; padding:clamp(15px,1.5vw,34px); }
+    .masthead { display:flex; justify-content:space-between; align-items:start; gap:18px; }
+    .masthead h1 { margin:0; font-size:clamp(25px,2vw,39px); letter-spacing:-.035em; line-height:1.1; }
+    .masthead p { margin:5px 0 0; color:var(--muted); font-size:13px; }
+    .theme-toggle { display:flex; flex:none; align-items:center; gap:7px; padding:8px 12px; border:1px solid var(--line); border-radius:999px; background:var(--card); color:var(--ink); }
+    .theme-icon { color:var(--accent); font-size:17px; line-height:1; }
+    .environment-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:clamp(10px,1vw,18px); margin-top:clamp(17px,1.5vw,26px); }
+    .environment-card { min-width:0; padding:clamp(13px,1vw,18px); border:1px solid var(--line); border-radius:15px; background:var(--card); box-shadow:var(--shadow); }
+    .environment-card.local { border-top:3px solid var(--accent); }
+    .environment-card.canary { border-top:3px solid var(--wait); }
+    .environment-card.production { border-top:3px solid var(--good); }
+    .environment-head { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:2px 8px; }
+    .environment-head h2 { margin:0; text-transform:uppercase; font-size:12px; letter-spacing:.09em; }
+    .environment-count { margin-left:5px; color:var(--accent); font-weight:800; letter-spacing:0; }
+    .environment-head span { color:var(--muted); font-size:10px; }
+    .environment-version { margin:4px 0 10px; font-size:clamp(18px,1.3vw,24px); font-weight:760; letter-spacing:-.025em; }
+    .environment-features { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:4px 12px; margin:0; padding:0; list-style:none; }
+    .environment-features li { display:flex; align-items:baseline; gap:6px; min-width:0; font-size:11px; line-height:1.25; }
+    .environment-features li.unavailable { color:var(--quiet); }
+    .environment-features li.candidate { color:var(--wait); }
+    .capability-symbol { flex:none; width:10px; color:var(--good); font-weight:800; }
+    .unavailable .capability-symbol { color:var(--quiet); }
+    .candidate .capability-symbol { color:var(--wait); }
+    .capability-number { flex:none; color:var(--muted); font:10px/1.3 Consolas,monospace; }
+    .unavailable .capability-number { color:var(--quiet); }
+    .capability-qa { color:var(--good); font-size:10px; font-weight:700; }
+    .environment-summary { margin:7px 2px 0; color:var(--muted); font-size:11px; }
+    .environment-meta { display:flex; flex-wrap:wrap; gap:2px 12px; margin:12px 0 0; padding-top:8px; border-top:1px solid var(--line); color:var(--muted); font:10px/1.35 Consolas,monospace; overflow-wrap:anywhere; }
+    .history-heading { display:flex; justify-content:space-between; align-items:baseline; gap:12px; margin:clamp(22px,1.9vw,34px) 1px 12px; }
+    .history-heading h2 { margin:0; font-size:clamp(19px,1.4vw,26px); }
+    .jump-current { padding:5px 0; border:0; background:none; color:var(--accent); font-size:12px; font-weight:700; text-align:right; }
+    .jump-current:hover { text-decoration:underline; }
+    .timeline-shell { border:1px solid var(--line); border-radius:17px; background:var(--card); box-shadow:var(--shadow); overflow:hidden; }
+    .timeline-viewport { overflow-x:auto; overflow-y:hidden; overscroll-behavior-inline:contain; scrollbar-color:var(--line) transparent; scrollbar-width:thin; }
+    .timeline-track { --track-gap:clamp(8px,.55vw,14px); position:relative; display:grid; grid-template-columns:repeat(var(--milestone-count),minmax(202px,1fr)); gap:var(--track-gap); width:100%; padding:15px clamp(16px,1.2vw,32px) 20px; }
+    .milestone { position:relative; display:flex; flex-direction:column; min-width:0; scroll-snap-align:start; }
+    .milestone:not(:last-child)::before { content:''; position:absolute; top:54px; left:50%; width:calc(100% + var(--track-gap)); height:2px; background:var(--line); }
+    .milestone-dot { align-self:center; z-index:1; width:18px; height:18px; border:4px solid var(--accent); border-radius:50%; background:var(--card); box-shadow:0 0 0 5px var(--card); }
+    .milestone.current .milestone-dot { border-color:var(--wait); box-shadow:0 0 0 5px var(--card),0 0 0 7px var(--wait); }
+    .milestone-meta { display:flex; flex-direction:column; justify-content:center; align-items:center; height:46px; padding:0 2px 7px; text-align:center; }
+    .milestone-date { font-weight:700; font-size:11px; white-space:nowrap; }
+    .milestone-version { color:var(--muted); font-size:10px; line-height:1.2; }
+    .milestone-stem { align-self:center; width:1px; height:17px; background:var(--line); }
+    .milestone-card { display:flex; flex-direction:column; flex:1; min-height:180px; padding:13px; border:1px solid var(--line); border-radius:12px; background:var(--card); cursor:pointer; transition:border-color .15s ease,box-shadow .15s ease,transform .15s ease; }
+    .milestone-card:hover { border-color:var(--accent); box-shadow:var(--shadow); transform:translateY(-2px); }
+    .milestone-card:focus-visible { outline:3px solid var(--accent); outline-offset:3px; }
+    .milestone.current .milestone-card { border-color:var(--wait); background:var(--soft); }
+    .milestone-eyebrow { margin:0 0 4px; color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
+    .milestone-title-row { display:flex; align-items:flex-start; gap:9px; margin-bottom:9px; }
+    .milestone-avatar { display:grid; flex:none; place-items:center; width:31px; height:31px; border:1px solid var(--line); border-radius:10px; background:var(--soft); color:var(--accent); }
+    .milestone-avatar svg { width:19px; height:19px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .milestone.current .milestone-avatar { color:var(--wait); background:var(--card); }
+    .milestone-card h3 { margin:0; min-height:2.25em; font-size:clamp(14px,1vw,18px); line-height:1.13; letter-spacing:-.015em; }
+    .change-chips { display:flex; flex-wrap:wrap; align-content:start; gap:4px; min-height:55px; }
+    .change-chips span { padding:3px 7px; border:1px solid var(--line); border-radius:999px; background:var(--soft); font-size:10px; line-height:1.15; }
+    .milestone.current .change-chips span { background:var(--card); }
+    .milestone-status { display:flex; flex-wrap:wrap; justify-content:space-between; gap:2px 4px; margin:auto 0 0; padding:0; list-style:none; font-size:10px; }
+    .milestone-status li { white-space:nowrap; color:var(--muted); }
+    .milestone-status b { margin-right:3px; font-size:13px; }
+    .milestone-status .yes b { color:var(--good); }
+    .milestone-status .candidate b { color:var(--wait); }
+    .milestone-status .unconfirmed b { color:var(--quiet); }
+    .milestone-status .no b { color:var(--quiet); }
+    .milestone-owner-count { margin:5px 0 0; color:var(--wait); font-size:10px; font-weight:700; }
+    .details-hint { display:block; margin-top:8px; padding-top:6px; border-top:1px solid var(--line); color:var(--accent); font-size:11px; font-weight:700; }
+    .timeline-caption { display:flex; justify-content:space-between; gap:12px; margin:0; padding:8px 16px; border-top:1px solid var(--line); color:var(--muted); font-size:10px; }
+    .timeline-caption strong { color:var(--ink); }
+    .backdrop[hidden], .drawer[hidden] { display:none; }
+    .backdrop { position:fixed; inset:0; z-index:20; background:#0613249e; }
+    .drawer { position:fixed; top:0; right:0; bottom:0; z-index:21; width:min(510px,100vw); padding:clamp(19px,2vw,32px); overflow:auto; border-left:1px solid var(--line); background:var(--card); box-shadow:-22px 0 55px #04101e55; }
+    .drawer-head { display:flex; justify-content:space-between; align-items:start; gap:15px; }
+    .drawer-kicker { margin:0 0 6px; color:var(--muted); font-size:12px; }
+    .drawer h2 { margin:0; font-size:clamp(23px,1.7vw,29px); line-height:1.1; }
+    .drawer-intro { margin:15px 0 18px; color:var(--muted); }
+    .drawer h3 { margin:19px 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); }
+    .drawer ul { margin:0; padding-left:19px; }
+    .drawer li { margin:4px 0; }
+    .cumulative { columns:2; column-gap:25px; font-size:12px; }
+    .cumulative li { break-inside:avoid; }
+    .baseline-details { margin-top:12px; padding:9px 11px; border:1px solid var(--line); border-radius:9px; background:var(--soft); font-size:11px; }
+    .baseline-details summary { cursor:pointer; font-weight:700; }
+    .baseline-details ul { columns:2; margin-top:9px; color:var(--muted); }
+    .batch-readiness { margin:10px 0 13px; padding:9px 11px; border-left:3px solid var(--wait); border-radius:7px; background:var(--soft); font-size:12px; font-weight:700; }
+    .batch-task-list { display:grid; gap:8px; padding:0!important; list-style:none; }
+    .batch-task-list[hidden] { display:none; }
+    .batch-task-list > li { margin:0; padding:11px; border:1px solid var(--line); border-radius:9px; background:var(--soft); }
+    .batch-task-head { display:flex; justify-content:space-between; align-items:baseline; gap:6px; }
+    .batch-task-head strong { font-size:12px; }
+    .batch-task-state { color:var(--muted); font-size:10px; font-weight:700; text-align:right; }
+    .batch-task-state.approved { color:var(--good); }
+    .batch-task-state.review { color:var(--wait); }
+    .batch-task-label { margin:8px 0 2px; color:var(--muted); font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; }
+    .batch-task-copy { margin:0; font-size:11px; }
+    .batch-task-points { margin:2px 0 0!important; padding-left:16px!important; font-size:11px; }
+    .batch-task-points li { margin:2px 0; }
+    .batch-task-tech-qa { margin:7px 0 0; color:var(--good); font-size:11px; font-weight:700; }
+    .batch-task-tech-qa a { color:inherit; }
+    .owner-comment { margin:3px 0 0; font-size:11px; }
+    .task-deployment { display:flex; flex-wrap:wrap; gap:4px 9px; margin:7px 0 0; padding-top:7px; border-top:1px solid var(--line); font-size:10px; }
+    .task-deployment .yes { color:var(--good); }
+    .task-deployment .candidate { color:var(--wait); }
+    .task-deployment .no { color:var(--quiet); }
+    .batch-task-meta { display:flex; justify-content:space-between; flex-wrap:wrap; gap:3px 8px; color:var(--muted); font-size:10px; }
+    .delivery-progress { display:grid; gap:7px; margin:0; padding:0; list-style:none; }
+    .delivery-progress li { display:flex; gap:9px; margin:0; padding:8px 10px; border-radius:9px; background:var(--soft); }
+    .delivery-progress .progress-icon { flex:none; color:var(--good); font-weight:800; }
+    .delivery-progress .waiting .progress-icon { color:var(--quiet); }
+    .delivery-progress .partial .progress-icon { color:var(--wait); }
+    .delivery-progress strong { display:block; font-size:11px; }
+    .delivery-progress small { display:block; color:var(--muted); font-size:10px; }
+    .deployment-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:7px; padding:0!important; list-style:none; }
+    .deployment-list li { margin:0; padding:8px; border-radius:8px; background:var(--soft); font-size:11px; }
+    .deployment-list b { display:block; font-size:12px; }
+    .technical { margin-top:23px; padding-top:1px; border-top:1px solid var(--line); font-size:12px; }
+    .technical dl { display:grid; gap:10px; margin:0; }
+    .technical-row { display:grid; grid-template-columns:minmax(120px,42%) minmax(0,1fr); gap:10px; padding-top:8px; border-top:1px solid var(--line); }
+    .technical dt { font-weight:700; }
+    .technical dt small { display:block; margin-top:2px; color:var(--muted); font-size:10px; font-weight:400; }
+    .technical dd { margin:0; font:11px/1.4 Consolas,monospace; overflow-wrap:anywhere; }
+    .close-drawer { flex:none; width:35px; height:35px; border:1px solid var(--line); border-radius:50%; background:var(--soft); color:var(--ink); font-size:22px; line-height:1; }
+    body.drawer-open { overflow:hidden; }
+    @media (max-width:860px) { .environment-grid { grid-template-columns:1fr; } .environment-features { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+    @media (max-width:590px) { .page { padding:15px 11px 22px; } .masthead h1 { font-size:25px; } .theme-toggle { width:35px; height:35px; justify-content:center; padding:0; } .theme-label { display:none; } .environment-features { grid-template-columns:repeat(2,minmax(0,1fr)); } .history-heading { display:block; } .jump-current { margin-top:4px; text-align:left; } .timeline-track { padding-left:13px; padding-right:13px; } .timeline-caption { display:block; } .timeline-caption span { display:block; } .cumulative { columns:1; } .technical-row { grid-template-columns:1fr; gap:3px; } }
+    @media (prefers-reduced-motion:no-preference) { .drawer { animation:slide-in .2s ease-out; } @keyframes slide-in { from { transform:translateX(25px); opacity:.6; } to { transform:none; opacity:1; } } }
+  </style>
+</head>
+<body>
+<svg aria-hidden="true" width="0" height="0" style="position:absolute;overflow:hidden">
+  <symbol id="icon-rocket" viewBox="0 0 24 24"><path d="M5 15c-1.5 1.2-2 3-2 5 2 0 3.8-.5 5-2M9 15l-2-2 2-4c2-4 5-6 11-6 0 6-2 9-6 11l-4 2-2-2Z"/><circle cx="15" cy="9" r="1"/></symbol>
+  <symbol id="icon-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+  <symbol id="icon-layout" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></symbol>
+  <symbol id="icon-cloud" viewBox="0 0 24 24"><path d="M6 18a4 4 0 0 1-1-7.9A7 7 0 0 1 18 9a4.5 4.5 0 0 1 0 9H6Z"/><path d="m12 17 0-8m-3 3 3-3 3 3"/></symbol>
+  <symbol id="icon-package" viewBox="0 0 24 24"><path d="m12 2 9 5-9 5-9-5 9-5Zm-9 5v10l9 5 9-5V7M12 12v10"/></symbol>
+  <symbol id="icon-chart" viewBox="0 0 24 24"><path d="M3 3v18h18M6 16l4-5 3 2 5-7"/><path d="M17 6h1v1"/></symbol>
+  <symbol id="icon-shield" viewBox="0 0 24 24"><path d="M12 2 20 5v6c0 5-3 8-8 11-5-3-8-6-8-11V5l8-3Z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="icon-stack" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="5" rx="1"/><rect x="4" y="14" width="16" height="5" rx="1"/><path d="M8 7.5h.01M8 16.5h.01"/></symbol>
+  <symbol id="icon-network" viewBox="0 0 24 24"><circle cx="12" cy="4" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><path d="m11 6-5 10m7-10 5 10M7 18h10"/></symbol>
+</svg>
+<main class="page">
+  <header class="masthead">
+    <div><h1>История StratForge AI</h1><p>От первого рабочего NT-Analyzer до текущей разработки</p></div>
+    <button class="theme-toggle" id="theme-toggle" type="button"><span class="theme-icon" id="theme-icon" aria-hidden="true">☾</span><span class="theme-label" id="theme-label">Тёмная тема</span></button>
+  </header>
+
+  <section class="environment-grid" id="environments" aria-label="Состояние трёх сред"></section>
+  <p class="environment-summary" id="environment-summary"></p>
+
+  <section aria-labelledby="history-title">
+    <div class="history-heading"><h2 id="history-title">Развитие продукта</h2><button class="jump-current" id="jump-current" type="button">Сейчас: пакет перед следующим выпуском →</button></div>
+    <div class="timeline-shell">
+      <div class="timeline-viewport" tabindex="0" aria-label="Горизонтальная история StratForge; прокручивается вправо">
+        <div class="timeline-track" id="timeline-track"></div>
+      </div>
+      <p class="timeline-caption"><span><strong>✓</strong> подтверждено · <strong>!</strong> в разработке · <strong>○</strong> не входило в указанный выпуск · <strong>—</strong> нет подтверждения для этапа</span><span>Canary/Production: запись от 02.09.2026; * в beta.92 статус Local/Canary относится к Server</span></p>
+    </div>
+  </section>
+</main>
+
+<div class="backdrop" id="backdrop" hidden></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" aria-hidden="true" inert hidden>
+  <div class="drawer-head"><div><p class="drawer-kicker" id="drawer-kicker"></p><h2 id="drawer-title"></h2></div><button class="close-drawer" id="close-drawer" type="button" aria-label="Закрыть подробности">×</button></div>
+  <p class="drawer-intro" id="drawer-intro"></p>
+  <p class="batch-readiness" id="drawer-batch-readiness" hidden></p>
+  <details class="baseline-details" id="drawer-baseline-section" hidden><summary id="drawer-baseline-summary"></summary><ul id="drawer-baseline-list"></ul></details>
+  <section id="drawer-cumulative-section"><h3>Уже было к этому этапу</h3><ul class="cumulative" id="drawer-cumulative"></ul></section>
+  <section id="drawer-new-section"><h3 id="drawer-new-heading">Новое в этом этапе</h3><ul id="drawer-new"></ul><ul class="batch-task-list" id="drawer-batch-tasks" hidden></ul></section>
+  <section id="drawer-progress-section" hidden><h3>Путь к публикации</h3><ol class="delivery-progress" id="drawer-progress"></ol></section>
+  <section id="drawer-deployment-section"><h3>Где было доступно</h3><ul class="deployment-list" id="drawer-deployment"></ul></section>
+  <div class="technical"><h3>Техническое подтверждение</h3><dl id="drawer-technical"></dl></div>
+</aside>
+
+<script>
+  const featureNames = {
+    strategies:'Каталог стратегий', instruments:'Каталог инструментов', backtest:'Бэктест через NinjaTrader', batches:'Пакетные прогоны', reports:'Отчёты и история заданий', metrics:'Метрики и сделки', charts:'Графики результата', bridge:'NinjaTrader Bridge', risk:'Информационный Risk Profile', testedStrategy:'Проверенная стратегия', online:'Операционный контроль', aurora:'Интерфейс Aurora', aiLab:'AI-инструменты', documents:'Документы', auth:'Вход пользователей', workspaces:'Личные рабочие пространства', connector:'NinjaTrader Connector', releases:'Release Center', telegram:'Telegram-связь', catalog:'Каталог контрактов', social:'Социальная сеть', chat:'SF Chat', onboarding:'Новая регистрация', device:'Доверие устройству', sharing:'Поделиться моделями', previewCharts:'Графики для тестовых аккаунтов'
+  };
+  // Номера не переиспользуются. Новый пункт добавляется в конец после проверки источника.
+  const released = (id,name,first) => ({id,name,first,local:'yes',canary:'yes',production:'yes'});
+  const capabilities = [
+    released('strategies','Стратегии и инструменты','2026-04-29'),
+    released('reports','Отчёты и метрики','2026-04-29'),
+    released('backtest','Бэктест и пакеты','2026-04-29'),
+    released('charts','Графики результатов','2026-04-29'),
+    released('bridge','Связь с NinjaTrader','2026-04-29'),
+    released('risk','Risk Profile','2026-05-02'),
+    released('online','Операционный контроль','2026-06-28'),
+    released('aiLab','AI-инструменты и помощники','2026-06-28'),
+    released('documents','Документы','2026-06-28'),
+    released('aurora','Интерфейс Aurora','2026-06-28'),
+    released('practice','Практика / paper','2026-07-15'),
+    released('market','Рыночные данные','2026-07-16'),
+    released('auth','Вход и личные пространства','2026-08-01'),
+    released('releases','Release Center','2026-08-01'),
+    released('telegram','Telegram-связь','2026-08-01'),
+    released('catalog','Каталог контрактов','2026-09-02'),
+    {id:'social',name:'Социальная сеть',first:'2026-09-03',local:'yes',canary:'no',production:'no'},
+    {id:'chat',name:'SF Chat',first:'2026-09-04',local:'yes',canary:'no',production:'no'},
+    {id:'onboarding',name:'Новая регистрация',first:'2026-09-04',local:'yes',canary:'no',production:'no'},
+    {id:'device',name:'Доверие устройству',first:'2026-09-04',local:'yes',canary:'no',production:'no'},
+    {id:'agentWorld',name:'Agent World',first:'2026-09-14',local:'candidate',canary:'no',production:'no'},
+    {id:'sharing',name:'Поделиться моделями',first:'2026-09-22',local:'yes',canary:'no',production:'no'},
+    {id:'previewCharts',name:'Графики для тестовых аккаунтов',first:'2026-09-23',local:'yes',canary:'no',production:'no'}
+  ];
+  const environments = [
+    {kind:'local',name:'Local',qualifier:'активный runtime · 25.09.2026',version:'0.10.0-beta.96',build:'dev-0.10.0-beta.96-56945ac68e94',commit:'56945ac6'},
+    {kind:'canary',name:'Canary',qualifier:'последний подтверждённый artifact',version:'0.10.0-beta.92',build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'9d800770'},
+    {kind:'production',name:'Production',qualifier:'последний подтверждённый artifact',version:'0.10.0-beta.92',build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'9d800770'}
+  ];
+  const milestones = [
+    {
+      date:'2026-04-29',dateLabel:'29 апреля 2026',version:'MVP-1 · без SemVer',title:'Первый рабочий NT-Analyzer',icon:'rocket',changes:['Стратегии','Бэктест','Отчёты и метрики','Графики'],adds:['strategies','instruments','backtest','batches','reports','metrics','charts','bridge'],
+      newItems:['Каталог стратегий и инструментов из NinjaTrader.','Одиночные и пакетные бэктесты через Bridge.','Отчёты со сделками, метриками и графиками.','Локальный интерфейс и история заданий.'],
+      summary:'Первый зафиксированный в Git рабочий Local baseline. Создание стратегий, AI и публичный deploy в этом источнике не подтверждены.',
+      status:['yes','unconfirmed','unconfirmed'],notes:['Рабочий Local baseline','Публичного выпуска не зафиксировано','Публичного выпуска не зафиксировано'],
+      build:'не назначен',commit:'004bcc4121d2',artifact:'не выпускался',source:'Git 004bcc41: NT-Analyzer/README.md и app/static/index.html',sourceHref:'https://github.com/OMNOM-111/NT-Analyzer/blob/004bcc4121d2cbaf8a0eec6cdabf7504eb7931d2/NT-Analyzer/README.md'
+    },
+    {
+      date:'2026-05-02',dateLabel:'2 мая 2026',version:'Backtest tag v1.0.0',title:'Проверенная стратегия',icon:'check',changes:['Рабочая стратегия','Сверка с NinjaTrader','Risk Profile'],adds:['testedStrategy','risk'],
+      newItems:['Зафиксирована первая рабочая стратегия B1 ShortOnly.','Бэктест сверялся с NinjaTrader Strategy Analyzer.','Информационный Risk Profile появился в ранней линии проекта.'],
+      summary:'Исторический Git tag рабочей версии бэктеста; он не означает публичный Production deploy.',
+      status:['yes','unconfirmed','unconfirmed'],notes:['Локальный рабочий tag','Не подтверждено','Не подтверждено'],
+      build:'tag v1.0.0-backtest-working',commit:'7fc22e484cf1',artifact:'не зафиксирован',source:'Git tag v1.0.0-backtest-working; commits c52656ec и 7fc22e48',sourceHref:'https://github.com/OMNOM-111/NT-Analyzer/commit/7fc22e484cf195f1df9d14e65548bd9b445c9414'
+    },
+    {
+      date:'2026-06-28',dateLabel:'28 июня 2026',version:'Aurora · без SemVer',title:'Интерфейс всего продукта',icon:'layout',changes:['Семь разделов','AI Lab','Стратегии','Торговый контроль'],adds:['online','aurora','aiLab','documents'],
+      newItems:['Семь основных страниц Aurora подключены к реальным API.','Стратегии, документы, AI Lab и торговый контроль получили рабочий UI.','Графики, результаты и отчёты доступны в новой оболочке.'],
+      summary:'Зафиксирован переход основного UI на Aurora. Слово «production» в журнале UI означает основной маршрут приложения; публичный серверный deploy этого этапа не установлен.',
+      status:['yes','unconfirmed','unconfirmed'],notes:['Рабочий UI подтверждён','Нет записи о deploy','Нет записи о deploy'],
+      build:'не назначен',commit:'69cbcc4001e1',artifact:'не зафиксирован',source:'NT-Analyzer/docs/changelog/UI_INTEGRATION_LOG.md',sourceHref:'NT-Analyzer/docs/changelog/UI_INTEGRATION_LOG.md'
+    },
+    {
+      date:'2026-08-01',dateLabel:'1 августа 2026',version:'Server 0.9.0-dev.15',title:'Публичный StratForge',icon:'cloud',changes:['Local / Canary / Production','Личные пространства','Connector','Release Center'],adds:['auth','workspaces','connector','releases','telegram'],
+      newItems:['Первый точно идентифицированный публичный Linux baseline: Canary и Production готовы.','Личный вход, рабочие пространства и связь с NinjaTrader проверены.','Release workflow, откат и серверное хранение приняты; live trading выключен.'],
+      summary:'Stage 10 закрыл перенос на публичные Linux-контуры. Более ранний dev.13 был первым Linux cutover внутри этого этапа; dev.15 — подтверждённый итоговый baseline.',
+      status:['yes','yes','yes'],notes:['Отдельный Windows Development','Canary ready на dev.15','Production ready на dev.15'],
+      build:'0.9.0-dev.15-f05f287d',commit:'f05f287d3233',artifact:'0.9.0-dev.15-f05f287d',source:'Git 1031437b: NT-Analyzer/docs/STAGE10_CLOSURE_2026-08-01.md',sourceHref:'https://github.com/OMNOM-111/NT-Analyzer/blob/1031437bd27f9ea2f271249c9e867e184ac0695c/NT-Analyzer/docs/STAGE10_CLOSURE_2026-08-01.md'
+    },
+    {
+      date:'2026-08-12',dateLabel:'12 августа 2026',version:'Server 0.10.0-beta.1',title:'Надёжный выпуск',icon:'package',changes:['Единый artifact','Canary → Production','Откат'],adds:[],
+      newItems:['Один подписанный artifact прошёл Canary и Production.','Проверены ready/live, сохранение версии и откат.','Этот выпуск продолжил накопленный набор функций публичного baseline.'],
+      summary:'Первый подробно зафиксированный здесь beta.1 Production snapshot. Позднейший artifact от 13 августа с тем же номером проверялся отдельно только в Canary.',
+      status:['yes','yes','yes'],notes:['Тот же исходный commit','Accepted','Published'],
+      build:'sf-0.10.0-beta.1-6b6dc4589407-20260812T232811Z',commit:'6b6dc4589407',artifact:'0.10.0-beta.1-6b6dc458',source:'NT-Analyzer/docs/changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md',sourceHref:'NT-Analyzer/docs/changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md'
+    },
+    {
+      date:'2026-08-23',dateLabel:'23 августа 2026',version:'Server 0.10.0-beta.29',title:'Графики и интерфейс',icon:'chart',changes:['Живые графики','Несколько клиентов','Адаптивный UI'],adds:[],
+      newItems:['Улучшен fan-out рыночных графиков для нескольких клиентов.','Сохранены честные live/stale маркеры.','Проверена адаптивность основных страниц и графиков.'],
+      summary:'Улучшение уже существовавших графиков и интерфейса; один artifact прошёл Canary и Production.',
+      status:['yes','yes','yes'],notes:['Сборка проверена','Canary PASS','Production live'],
+      build:'sf-0.10.0-beta.29-4d15f1d2250e-20260823T020155Z',commit:'4d15f1d2250e',artifact:'art_ccaadc3a536e4272809d32073f072918',source:'NT-Analyzer/docs/changelog/2026-08-22-market-data-responsive-release-beta29.md',sourceHref:'NT-Analyzer/docs/changelog/2026-08-22-market-data-responsive-release-beta29.md'
+    },
+    {
+      date:'2026-09-01',dateLabel:'1 сентября 2026',version:'Server 0.10.0-beta.87',title:'Бэктест владельца',icon:'shield',changes:['Корректный доступ','Без ложного демо','Отчёты сохранены'],adds:[],
+      newItems:['Владелец больше не видит обычный бэктест как демоверсию.','Реальные demo-отчёты и права остальных пользователей сохранены.'],
+      summary:'Точечное исправление интерфейса и прав бэктеста было принято в Canary и Production.',
+      status:['yes','yes','yes'],notes:['Проверено','Canary PASS','Production live'],
+      build:'sf-0.10.0-beta.87-8f42158661e8-20260901T030837Z',commit:'8f42158661e8',artifact:'art_9ce9dbcb9a7a4fee9df6a54d40f29806',source:'NT-Analyzer/docs/changelog/2026-09-01-beta87-owner-backtest-demo-fix.md',sourceHref:'NT-Analyzer/docs/changelog/2026-09-01-beta87-owner-backtest-demo-fix.md'
+    },
+    {
+      date:'2026-09-02',dateLabel:'2 сентября 2026',version:'Server beta.92 · Connector 0.4.5-dev.1',title:'Каталог контрактов',icon:'stack',changes:['Контракты без кэша','Снимок каталога','NinjaTrader'],adds:['catalog'],
+      newItems:['Server beta.92 принимает контракт без заранее загруженной истории.','Connector 0.4.5-dev.1 стабилизировал снимок каталога.','Production-установка Connector принята; Local/Canary для этой версии Connector отдельно не подтверждены.'],
+      summary:'Сервер и Windows Connector имеют разные версии и разное подтверждение по средам.',
+      status:['yes','yes','yes'],statusLabels:['Local*','Canary*','Production'],notes:['Server beta.92; Connector dev.1 не подтверждён','Server beta.92; Connector dev.1 не подтверждён','Server beta.92 и Connector dev.1'],
+      build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'Server 9d800770d08e · Connector ff6fe049',artifact:'art_57db4318cb8745d399d98bccf48de396',source:'NT-Analyzer/docs/changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md',sourceHref:'NT-Analyzer/docs/changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md'
+    },
+    {
+      date:'2026-09-03',dateLabel:'3–26 сентября 2026',version:'Local beta.95 → beta.97 candidate',title:'Пакет перед публикацией',icon:'network',changes:['Социальная сеть','SF Chat ↔ Telegram','AI Центр','Ещё 4 задачи'],adds:['social','chat','onboarding','device','sharing','previewCharts'],current:true,batchId:'post-beta92-local',batchState:'release-candidate',
+      batchTasks:[
+        {capabilityId:'social',date:'3–26 сентября',title:'Социальная сеть',state:'ready',localTest:'passed',ownerApproval:'approved',goal:'Создать место для публикаций и общения пользователей StratForge.',implemented:['Сохраняются публикации и данные социальной части.','Есть страница компании; уведомления отделены от чата.'],ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска; некритичные детали дизайна отложены.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-telegram-report-cutover-release-candidate.md',source:'Запись о Local beta.95',sourceHref:'NT-Analyzer/docs/changelog/2026-09-04-beta95-unified-local-integration.md'},
+        {capabilityId:'chat',date:'3–26 сентября',title:'SF Chat',state:'ready',localTest:'passed',ownerApproval:'approved',goal:'Создать встроенный чат StratForge для общения пользователей.',implemented:['Диалоги разложены по папкам и дням.','Production — единственный владелец рабочих Telegram-тем; один message/request id защищает историю и доставку от дублей и циклов.','Периодические отчёты идут через Витька и команду в тот же SF Chat/Telegram диалог.'],ownerComment:'Владелец 26.09.2026 принял Local как основу выпуска; серверный двусторонний Telegram-smoke остаётся обязательной частью публикации.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-telegram-report-cutover-release-candidate.md',source:'Release candidate beta.97',sourceHref:'NT-Analyzer/docs/changelog/2026-09-26-telegram-report-cutover-release-candidate.md'},
+        {capabilityId:'onboarding',date:'4 сентября',title:'Новая регистрация',state:'ready',localTest:'passed',ownerApproval:'approved',goal:'Дать новому пользователю понятный путь от первого входа до создания профиля.',implemented:['Регистрация проходит три шага и заканчивается согласием с условиями.','Выбранное имя используется в профиле, социальной сети и SF Chat.'],ownerComment:'Утверждено владельцем 24.09.2026: дизайн и работа новой регистрации его устраивают. Решение относится именно к регистрации.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-24-timeline-owner-approval-workflow.md',source:'Запись о Local beta.96',sourceHref:'NT-Analyzer/docs/changelog/2026-09-04-beta96-visual-audit-and-first-device.md'},
+        {capabilityId:'device',date:'4–26 сентября',title:'Доверие первому устройству',state:'ready',localTest:'passed',ownerApproval:'approved',goal:'Дать человеку выбор, доверять первому устройству постоянно или до конца сессии.',implemented:['После подтверждённой регистрации первое устройство не требует второго кода.','Новый неизвестный клиент по-прежнему проходит обычное подтверждение.'],ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-telegram-report-cutover-release-candidate.md',source:'Запись о Local beta.96',sourceHref:'NT-Analyzer/docs/changelog/2026-09-04-beta96-visual-audit-and-first-device.md'},
+        {capabilityId:'agentWorld',date:'14–26 сентября',title:'Agent World',state:'development',localTest:'passed',ownerApproval:'approved',goal:'Собрать рабочую среду агентов, задач и их обсуждения в AI Центре.',implemented:['Есть кандидат с агентами, задачами, проверкой результата и связью с чатом.','Цепочка отчётов сведена к Пользователь → Заместитель → команда; Витёк — технический контроллер места Заместителя, а не дополнительное звено.','Программа остаётся IN DEVELOPMENT; приёмка текущей Local-основы не переименовывает незавершённые механизмы в AVAILABLE.'],technicalQa:'✓ Предпубликационная Local-проверка и целевые регрессии Telegram/отчётов PASS; полный release-candidate regression и final-SHA CI ещё впереди.',technicalQaHref:'NT-Analyzer/docs/changelog/2026-09-26-telegram-report-cutover-release-candidate.md',ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска; некритичные детали дизайна будут доработаны отдельно.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-telegram-report-cutover-release-candidate.md',nextStep:'После релиза продолжить некритичные дизайн-улучшения и закрывать оставшиеся механизмы по отдельным доказательствам.',source:'Оперативный статус Agent World',sourceHref:'NT-Analyzer/docs/current/AGENT_WORLD_MASTER_STATUS.md'},
+        {capabilityId:'sharing',date:'22–26 сентября',title:'Поделиться моделями',state:'ready',localTest:'passed',ownerApproval:'approved',goal:'Позволить владельцу модели дать другому пользователю доступ к её вызову.',implemented:['В карточке модели есть переключатель «Поделиться».','Вызов проверен из отдельного личного workspace без раскрытия ключа владельца.'],ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-telegram-report-cutover-release-candidate.md',source:'Local-проверка в Git',sourceHref:'https://github.com/OMNOM-111/NT-Analyzer/blob/77eda536f9909afd325ffcd2c89900c17744d4f3/NT-Analyzer/docs/changelog/2026-09-22-shared-models-local-continuation.md'},
+        {capabilityId:'previewCharts',date:'23–26 сентября',title:'Графики для тестовых аккаунтов',state:'ready',localTest:'passed',ownerApproval:'approved',goal:'Показывать живой график пользователю отдельного тестового аккаунта Preview.',implemented:['Первый экран тестового пользователя открывает график.','Доступ к графику сохраняется в пределах его одноразовой Preview-сессии.'],ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-telegram-report-cutover-release-candidate.md',source:'Local-проверка в Git',sourceHref:'https://github.com/OMNOM-111/NT-Analyzer/blob/56945ac68e94cb7ffa031ef2312dec5a9ad80a54/NT-Analyzer/docs/changelog/2026-09-24-local-preview-social-followup.md'}
+      ],
+      release:{artifactReady:false,canaryAccepted:false,productionLive:false},
+      summary:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска. Блокирующий Telegram/report контур исправлен в release candidate; merge, final-SHA CI, артефакт, Canary и Production остаются отдельными этапами.',
+      status:['candidate','no','no'],notes:['Local-основа принята; release candidate проходит закрытие','Пакет не развёрнут','Пакет не развёрнут'],
+      build:'active runtime dev-0.10.0-beta.96-56945ac68e94; beta.97 candidate pending final SHA',commit:'56945ac6 base / 73fa31ee Telegram-report correction',artifact:'единый release artifact ещё не собран',source:'beta.97 release candidate record',sourceHref:'NT-Analyzer/docs/changelog/2026-09-26-telegram-report-cutover-release-candidate.md'
+    }
+  ];
+
+  const element = (tag,className,textValue) => { const node=document.createElement(tag); if(className) node.className=className; if(textValue!==undefined) node.textContent=textValue; return node; };
+  const environmentRoot = document.getElementById('environments');
+  environments.forEach(env => {
+    const card=element('article',`environment-card ${env.kind}`);
+    const head=element('div','environment-head');
+    const title=element('h2','',env.name);
+    const available=capabilities.filter(capability => capability[env.kind]==='yes').length;
+    title.append(element('span','environment-count',`${available}/${capabilities.length}`));
+    head.append(title,element('span','',env.qualifier));
+    card.append(head,element('p','environment-version',env.version));
+    const list=element('ul','environment-features');
+    capabilities.forEach((capability,index) => {
+      const state=capability[env.kind];
+      const li=element('li',state==='yes'?'':state==='candidate'?'candidate':'unavailable');
+      li.append(element('span','capability-symbol',state==='yes'?'✓':state==='candidate'?'!':'○'),element('span','capability-number',String(index+1).padStart(2,'0')),element('span','',capability.name));
+      if (env.kind==='local' && capability.id==='agentWorld') li.append(element('span','capability-qa','✓ ядро проверено'));
+      list.append(li);
+    });
+    card.append(list);
+    const meta=element('p','environment-meta');
+    meta.append(element('span','','build '+env.build),element('span','','commit '+env.commit));
+    card.append(meta); environmentRoot.append(card);
+  });
+  const ahead=capabilities.filter(capability => capability.local==='yes' && capability.production==='no').length;
+  const candidates=capabilities.filter(capability => capability.local==='candidate').length;
+  document.getElementById('environment-summary').textContent=`${ahead} подтверждённых возможностей Local ещё нет в последнем записанном Production beta.92; ${candidates} функция остаётся в разработке. Номера одни во всех средах. ✓ здесь означает наличие функции, а не утверждение владельцем.`;
+
+  const track=document.getElementById('timeline-track');
+  track.style.setProperty('--milestone-count',String(milestones.length));
+  track.style.minWidth=`${milestones.length*210+(milestones.length-1)*14+64}px`;
+  const statusLabels=['Local','Canary','Production'];
+  const symbols={yes:'✓',candidate:'!',no:'○',unconfirmed:'—'};
+  const cumulative=[];
+  milestones.forEach((milestone,index) => {
+    milestone.adds.forEach(id => { if (!cumulative.includes(id)) cumulative.push(id); });
+    milestone.cumulative=[...cumulative];
+    const item=element('article',`milestone${milestone.current?' current':''}`);
+    const meta=element('div','milestone-meta');
+    meta.append(element('time','milestone-date',milestone.dateLabel),element('span','milestone-version',milestone.version));
+    meta.firstChild.dateTime=milestone.date;
+    item.append(meta,element('span','milestone-dot'),element('span','milestone-stem'));
+    const card=element('div','milestone-card');
+    card.setAttribute('role','button'); card.tabIndex=0;
+    card.setAttribute('aria-label',`Подробнее: ${milestone.title}`);
+    card.append(element('p','milestone-eyebrow',milestone.current?'СЕЙЧАС':'ЧТО ИЗМЕНИЛОСЬ'));
+    const titleRow=element('div','milestone-title-row');
+    const avatar=element('span','milestone-avatar'); avatar.setAttribute('aria-hidden','true');
+    const icon=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    const use=document.createElementNS('http://www.w3.org/2000/svg','use');
+    use.setAttribute('href',`#icon-${milestone.icon}`); icon.append(use); avatar.append(icon);
+    titleRow.append(avatar,element('h3','',milestone.title)); card.append(titleRow);
+    const chips=element('div','change-chips');
+    milestone.changes.forEach(change => chips.append(element('span','',change)));
+    card.append(chips);
+    if (milestone.batchTasks) {
+      const required=milestone.batchTasks.filter(task => task.required!==false);
+      const approved=required.filter(task => task.ownerApproval==='approved').length;
+      card.append(element('p','milestone-owner-count',`Владельцем утверждено: ${approved}/${required.length}`));
+    }
+    const statuses=element('ul','milestone-status');
+    milestone.status.forEach((state,i) => {
+      const li=element('li',state); li.append(element('b','',symbols[state]),document.createTextNode(milestone.statusLabels?.[i]||statusLabels[i])); statuses.append(li);
+    });
+    card.append(statuses);
+    card.append(element('span','details-hint','Подробнее →'));
+    card.addEventListener('click',() => openDrawer(index,card));
+    card.addEventListener('keydown',event => { if (event.key==='Enter'||event.key===' ') { event.preventDefault(); openDrawer(index,card); } });
+    item.append(card); track.append(item);
+  });
+  document.getElementById('jump-current').addEventListener('click',() => {
+    track.lastElementChild.scrollIntoView({behavior:'smooth',block:'nearest',inline:'end'});
+  });
+
+  const drawer=document.getElementById('drawer');
+  const backdrop=document.getElementById('backdrop');
+  let returnFocus=null;
+  function fillList(id,items) { const list=document.getElementById(id); list.replaceChildren(); items.forEach(value => list.append(element('li','',value))); }
+  function openDrawer(index,trigger) {
+    const item=milestones[index]; returnFocus=trigger;
+    document.getElementById('drawer-kicker').textContent=`${item.dateLabel} · ${item.version}`;
+    document.getElementById('drawer-title').textContent=item.title;
+    document.getElementById('drawer-intro').textContent=item.summary;
+    const isCurrent=Boolean(item.batchTasks);
+    const baseline=document.getElementById('drawer-baseline-section'); baseline.hidden=!isCurrent; baseline.open=false;
+    document.getElementById('drawer-cumulative-section').hidden=isCurrent;
+    const readiness=document.getElementById('drawer-batch-readiness'); readiness.hidden=!isCurrent;
+    if (isCurrent) {
+      const previous=capabilities.map((capability,index) => ({capability,index})).filter(entry => entry.capability.first<item.date && entry.capability.local==='yes');
+      document.getElementById('drawer-baseline-summary').textContent=`База до пакета: ${previous.length} подтверждённых возможностей · Показать список`;
+      fillList('drawer-baseline-list',previous.map(entry => `${String(entry.index+1).padStart(2,'0')} ${entry.capability.name}`));
+      const required=item.batchTasks.filter(task => task.required!==false);
+      const approved=required.filter(task => task.ownerApproval==='approved').length;
+      const localPassed=required.filter(task => task.localTest==='passed').length;
+      readiness.textContent=approved===required.length && localPassed===required.length
+        ? 'Локальная приёмка завершена · следующий шаг — собрать и проверить единый пакет для Canary.'
+        : `Не готов к публикации · Local test ${localPassed}/${required.length} · утверждено владельцем ${approved}/${required.length}.`;
+    } else fillList('drawer-cumulative',item.cumulative.map(id => featureNames[id]));
+    document.getElementById('drawer-new-heading').textContent=isCurrent?'Новое в текущем пакете':'Новое в этом этапе';
+    const newList=document.getElementById('drawer-new'); newList.hidden=isCurrent;
+    if (!isCurrent) fillList('drawer-new',item.newItems);
+    const taskList=document.getElementById('drawer-batch-tasks'); taskList.hidden=!isCurrent; taskList.replaceChildren();
+    item.batchTasks?.forEach(task => {
+      const li=element('li');
+      const head=element('div','batch-task-head');
+      const approvalLabel=task.ownerApproval==='approved'?'✓ Утверждено владельцем':task.state==='development'?'! Требует проверки':'○ Ждёт решения владельца';
+      head.append(element('strong','',task.title),element('span',`batch-task-state${task.ownerApproval==='approved'?' approved':task.state==='development'?' review':''}`,approvalLabel));
+      li.append(head,element('p','batch-task-label','Задача'),element('p','batch-task-copy',task.goal),element('p','batch-task-label','Что реализовано'));
+      const points=element('ul','batch-task-points'); task.implemented.forEach(point => points.append(element('li','',point))); li.append(points);
+      if (task.technicalQa) { const qa=element('p','batch-task-tech-qa',task.technicalQa); if (task.technicalQaHref) { const evidence=element('a','',' Протокол'); evidence.href=task.technicalQaHref; qa.append(evidence); } li.append(qa); }
+      li.append(element('p','batch-task-label','Комментарий / решение владельца'));
+      const comment=element('p','owner-comment',task.ownerComment);
+      if (task.approvalSourceHref) { const link=element('a','',' Запись решения'); link.href=task.approvalSourceHref; comment.append(link); }
+      li.append(comment);
+      if (task.nextStep) li.append(element('p','batch-task-label','Следующий шаг'),element('p','batch-task-copy',task.nextStep));
+      const capability=capabilities.find(entry => entry.id===task.capabilityId);
+      const ownerState=task.ownerApproval==='approved'?'yes':task.state==='development'?'candidate':'no';
+      const pipeline=[['Разработка',capability.local],['Local test',task.localTest==='passed'?'yes':'candidate'],['Владелец',ownerState],['Canary',capability.canary],['Production',capability.production]];
+      const deployment=element('div','task-deployment');
+      pipeline.forEach(([label,state]) => deployment.append(element('span',state,`${symbols[state]} ${label}`)));
+      li.append(deployment);
+      const meta=element('div','batch-task-meta');
+      const link=element('a','',task.source); link.href=task.sourceHref;
+      if (task.sourceHref.startsWith('https://')) { link.target='_blank'; link.rel='noopener noreferrer'; }
+      meta.append(element('time','',task.date),link);
+      li.append(meta); taskList.append(li);
+    });
+    const progressSection=document.getElementById('drawer-progress-section'); progressSection.hidden=!isCurrent;
+    const progress=document.getElementById('drawer-progress'); progress.replaceChildren();
+    if (isCurrent) {
+      const required=item.batchTasks.filter(task => task.required!==false);
+      const passed=required.filter(task => task.localTest==='passed').length;
+      const approved=required.filter(task => task.ownerApproval==='approved').length;
+      const steps=[
+        {label:'Код сохранён в Git',state:'done',detail:'Есть зафиксированные коммиты; это ещё не публикация.'},
+        {label:'Локальная сборка запущена',state:'done',detail:'beta.96, build dev-0.10.0-beta.96-56945ac68e94.'},
+        {label:'Local test',state:passed===required.length?'done':'partial',detail:`Пройдена проверка ${passed} из ${required.length} задач. Тесты не заменяют решение владельца.`},
+        {label:'Утверждение владельцем',state:approved===required.length?'done':'partial',detail:`Лично утверждена ${approved} из ${required.length} задач.`},
+        {label:'Единый пакет для сервера',state:item.release.artifactReady?'done':'waiting',detail:item.release.artifactReady?'Пакет подтверждён release evidence.':'Для этого batch единый release artifact ещё не зафиксирован.'},
+        {label:'Canary',state:item.release.canaryAccepted?'done':'waiting',detail:item.release.canaryAccepted?'Приёмка подтверждена release evidence.':'Этот batch на Canary не подтверждён.'},
+        {label:'Production',state:item.release.productionLive?'done':'waiting',detail:item.release.productionLive?'Публикация подтверждена release evidence.':'Последний записанный Production остаётся beta.92.'}
+      ];
+      steps.forEach(step => {
+        const li=element('li',step.state==='done'?'':step.state);
+        const copy=element('div'); copy.append(element('strong','',step.label),element('small','',step.detail));
+        li.append(element('span','progress-icon',step.state==='done'?'✓':step.state==='partial'?'!':'○'),copy); progress.append(li);
+      });
+    }
+    document.getElementById('drawer-deployment-section').hidden=isCurrent;
+    const deployment=document.getElementById('drawer-deployment'); deployment.replaceChildren();
+    if (!isCurrent) item.status.forEach((state,i) => { const li=element('li',state); li.append(element('b','',`${symbols[state]} ${item.statusLabels?.[i]||statusLabels[i]}`),document.createTextNode(item.notes[i])); deployment.append(li); });
+    const tech=document.getElementById('drawer-technical'); tech.replaceChildren();
+    const fields=[
+      {key:'build',label:isCurrent?'Локальная сборка':'Сборка этого этапа',hint:isCurrent?'Эта версия реально запущена на компьютере разработчика; проверена 24.09.2026.':'Идентификатор из исторической записи; не обязательно текущая версия.',value:item.build},
+      {key:'commit',label:'Код сохранён в Git',hint:'Коммит — сохранённый снимок изменений. Он не означает публикацию для пользователей.',value:item.commit},
+      {key:'artifact',label:'Пакет для сервера',hint:'Единый проверяемый пакет сначала передают на Canary, затем тот же пакет — в Production.',value:item.artifact},
+      ...(isCurrent?[{key:'canary',label:'Canary',hint:'Промежуточный сервер для проверки перед публикацией.',value:item.release.canaryAccepted?'Принято по release evidence':'Не опубликовано'},{key:'production',label:'Production',hint:'Сервер для всех пользователей после приёмки того же пакета.',value:item.release.productionLive?'Опубликовано по release evidence':'Этот пакет не опубликован'}]:[]),
+      {key:'source',label:'Источник подтверждения',hint:'Документ с фактами и результатами проверки этого этапа.',value:item.source}
+    ];
+    fields.forEach(field => {
+      const row=element('div','technical-row');
+      const dt=element('dt','',field.label); dt.append(element('small','',field.hint)); row.append(dt);
+      const dd=element('dd');
+      if (field.key==='source' && item.sourceHref) { const a=element('a','',field.value); a.href=item.sourceHref; if (item.sourceHref.startsWith('https://')) { a.target='_blank'; a.rel='noopener noreferrer'; } dd.append(a); }
+      else dd.textContent=field.value;
+      row.append(dd); tech.append(row);
+    });
+    backdrop.hidden=false; drawer.hidden=false; drawer.inert=false; drawer.setAttribute('aria-hidden','false');
+    document.body.classList.add('drawer-open'); document.getElementById('close-drawer').focus(); document.querySelector('main').inert=true;
+  }
+  function closeDrawer() {
+    drawer.hidden=true; drawer.inert=true; drawer.setAttribute('aria-hidden','true'); backdrop.hidden=true;
+    document.body.classList.remove('drawer-open'); document.querySelector('main').inert=false; returnFocus?.focus();
+  }
+  document.getElementById('close-drawer').addEventListener('click',closeDrawer);
+  backdrop.addEventListener('click',closeDrawer);
+  document.addEventListener('keydown',event => {
+    if (drawer.hidden) return;
+    if (event.key==='Escape') closeDrawer();
+    if (event.key==='Tab') {
+      const focusable=[...drawer.querySelectorAll('button,a[href],summary')].filter(node => !node.closest('[hidden]'));
+      const first=focusable[0],last=focusable[focusable.length-1];
+      if (event.shiftKey && document.activeElement===first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement===last) { event.preventDefault(); first.focus(); }
+    }
+  });
+  const themeToggle=document.getElementById('theme-toggle');
+  function updateTheme() {
+    const dark=document.documentElement.dataset.theme==='dark';
+    document.getElementById('theme-icon').textContent=dark?'☀':'☾';
+    document.getElementById('theme-label').textContent=dark?'Светлая тема':'Тёмная тема';
+    themeToggle.setAttribute('aria-label',dark?'Включить светлую тему':'Включить тёмную тему');
+    themeToggle.setAttribute('aria-pressed',String(dark));
+  }
+  themeToggle.addEventListener('click',() => {
+    const next=document.documentElement.dataset.theme==='dark'?'light':'dark';
+    document.documentElement.dataset.theme=next;
+    try { localStorage.setItem('stratforge-timeline-theme',next); } catch {}
+    updateTheme();
+  });
+  updateTheme();
+</script>
+</body>
+</html>

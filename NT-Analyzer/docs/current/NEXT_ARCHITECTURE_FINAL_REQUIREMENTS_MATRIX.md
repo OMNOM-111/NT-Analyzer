@@ -38,7 +38,7 @@ DEPENDENCY` (code done; real acceptance needs owner infra/credentials),
 | Multi-device (pending/approve/reject/revoke, session invalidation) | IMPLEMENTED | `app/security_devices.py`; `tests/test_phase4_trusted_devices.py` |
 | Permissions (owner/developer/ordinary, product modes; Mini App deprecated) | IMPLEMENTED | `app/permissions.py`; `tests/test_permissions.py`, `tests/test_ux_mode.py`; retired Mini App routes return HTTP 410 |
 | Environment isolation (cookie/CSRF/storage/DB/queue/host) | IMPLEMENTED live | Distinct Canary vs Production DB/role/queue/cookie/origin; CONNECT privilege negatives verified 2026-08-12 |
-| Telegram separation (per-env marker/queue/dedupe) | IMPLEMENTED / BETA | Production is unmarked; Canary uses `[CANARY]` and isolated queues/sessions while reusing the existing bot/webhook routing. Admin UI reported Telegram connected on both beta.29 environments |
+| Telegram separation (single operational owner/topic registry/queue/dedupe) | BETA release candidate | beta.97 makes Production the sole operational owner of the shared bot by default. Development and Canary retain login/access callbacks but cannot create topics, consume updates, mirror chats or send reports. Stable scoped keys protect one SF Chat result, one Telegram delivery and one model call across retries/restarts. Real Canary/Production acceptance remains pending. |
 | Release promotion (clean commit, signature, artifact/manifest SHA, Canary checks, exact-artifact Production) | IMPLEMENTED live | Beta.29 `4d15f1d` / runtime `CBA4FA70…2379` is live on both Canary and Production; exact-artifact invariant and authoritative promotion decision passed |
 | Blue-green / rollback (green readiness, drain, expand/migrate/contract, rollback switch) | IMPLEMENTED live | Real beta.29 Canary and Production eight-stage deploys PASS; pending migrations `0`; beta.28 is the verified previous/rollback slot |
 | Connector pairing (P-256, signed hello, workspace/capability mismatch, canary contour) | IMPLEMENTED; real pairing EXTERNAL | `app/connector_protocol.py`; `tests/test_connector*`. Real device enrollment = EXTERNAL |
@@ -72,6 +72,14 @@ DEPENDENCY` (code done; real acceptance needs owner infra/credentials),
 | Browser / visual E2E QA | BETA | Explicit owner authorization enabled real DEV/Canary/Production browser QA. Authenticated Canary/Production MES/MNQ charts, Documents/Admin, second clients and responsive breakpoints passed; broader owner design taste remains separate |
 
 ## E. Version readiness
+
+- Current release candidate: `0.10.0-beta.97`. The owner accepted the current
+  Unified Local as the release basis on 2026-09-26. Periodic reports now follow
+  `Пользователь → Заместитель/Vitek → Марина или Orchestrator → SF Chat +
+  Telegram`, with Production as the only default operational owner of the shared
+  bot. Final regression, merge approval, merged-SHA CI, signed artifact, Canary
+  acceptance and separate Production approval are still required; this is not a
+  deployment claim.
 
 - Current accepted version: `0.10.0-beta.29` (`VERSION.json`; channel `beta`, status `pre_release`). Live public API identity: git `4d15f1d2250e2c52bde02b902d88ec7aad043543`, build `sf-0.10.0-beta.29-4d15f1d2250e-20260823T020155Z`, runtime artifact SHA256 `CBA4FA70BD3868CBB80A8E8A42FE807B5401969CE09E1314671A73F51D132379` on both Canary and Production.
 - Development runtime still defaults `RELEASE_CHANNEL=dev` even while VERSION.json describes the next candidate.
