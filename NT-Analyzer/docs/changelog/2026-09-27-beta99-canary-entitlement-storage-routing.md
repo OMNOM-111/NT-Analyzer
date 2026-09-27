@@ -8,8 +8,8 @@ preserving Development's DPAPI-backed fail-closed behavior.
 
 Release issue: #298
 
-Source checkpoint SHA: assigned after the clean task commit; final source SHA
-requires merge to `main` and mandatory final-main CI.
+Source checkpoint SHA: `c68b19f9fa0c3161b31f42cb994db49f2f00faa3`;
+final source SHA requires merge to `main` and mandatory final-main CI.
 
 Verification result: IN PROGRESS (focused regression PASS; PR CI, merged-main
 CI, immutable artifact and full Canary acceptance remain gated)
@@ -59,11 +59,11 @@ verified before deleting the test account.
 
 ## Verification
 
-- focused `tests/test_trial_access.py`: 7 PASS;
+- focused affected registration/workspace/cabinet regression: 37 PASS;
 - new Canary-path test proves read/reference/write/status/audit use the
   authoritative server router even when Windows DPAPI is unavailable;
 - new Development-path test proves the DPAPI fail-closed behavior is preserved;
 - broader regression, pre-release bundle scan and CI remain required.
 
-Current closeout: **IMPLEMENTATION IN PROGRESS**; **GIT CLOSEOUT IN PROGRESS**;
+Current closeout: **IMPLEMENTATION COMPLETE**; **GIT CLOSEOUT IN PROGRESS**;
 **STAGE NOT CLOSED**.

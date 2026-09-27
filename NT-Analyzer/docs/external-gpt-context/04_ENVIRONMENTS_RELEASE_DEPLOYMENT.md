@@ -114,7 +114,8 @@ Production beta.97 identity remains:
 Issue #298 has a narrow Development correction: subscriptions now use the same
 authoritative server-storage predicate as accounts/workspaces for explicit
 Canary and Production, while Development retains DPAPI and its fail-closed
-behavior. Focused regression is 7 PASS. There is no beta.99 artifact, Canary
+behavior. Source checkpoint is `c68b19f9fa0c3161b31f42cb994db49f2f00faa3`;
+focused affected regression is 37 PASS. There is no beta.99 artifact, Canary
 deploy or Production approval; beta.98 and beta.97 runtime identities above are
 unchanged.
 

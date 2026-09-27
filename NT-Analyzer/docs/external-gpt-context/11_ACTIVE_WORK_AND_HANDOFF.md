@@ -78,9 +78,10 @@ manually or mutate the beta.98 artifact.
 beta.99 Development implements only that required storage boundary correction:
 subscription document read/reference/write, status and audit delegate to the
 existing authoritative server predicate used by account/workspace storage.
-Development DPAPI remains unchanged and fail-closed. Focused tests are 7 PASS;
-task commit, PR CI, merge, final-main CI, immutable artifact and Canary rerun are
-still required. [beta.99 record](../changelog/2026-09-27-beta99-canary-entitlement-storage-routing.md).
+Development DPAPI remains unchanged and fail-closed. Source checkpoint is
+`c68b19f9fa0c3161b31f42cb994db49f2f00faa3`; focused affected tests are 37
+PASS. PR CI, merge, final-main CI, immutable artifact and Canary rerun are still
+required. [beta.99 record](../changelog/2026-09-27-beta99-canary-entitlement-storage-routing.md).
 
 Checkpoint `f455043f`, draft PR #294: full Local regression **6087 passed / 134
 skipped / 0 failed** in 1:07:38. The exact 650-file pre-release bundle, context
