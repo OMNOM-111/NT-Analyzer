@@ -53,7 +53,7 @@ def database():
         assert not role["rolsuper"] and not role["rolbypassrls"]
         assert conn.execute("SELECT count(*) AS n FROM pg_tables WHERE schemaname='public' AND tableowner=current_user").fetchone()["n"] == 0
     with admin.transaction(Scope.global_service_scope(), read_only=True) as conn:
-        assert conn.execute("SELECT max(version) AS version FROM sf_schema_migrations").fetchone()["version"] == 23
+        assert conn.execute("SELECT max(version) AS version FROM sf_schema_migrations").fetchone()["version"] == 24
     return app, admin
 
 
@@ -416,9 +416,10 @@ def test_sql_payload_identity_binding_rejects_mismatched_or_missing_header(repo,
 
 
 def test_existing_worker_leases_remain_outside_agent_world_storage(repo):
+    from app.ai_control_center.server_model_sharing import _TABLES as model_tables
     with raw(repo.client, read_only=True) as conn:
         names = {row["relname"] for row in conn.execute("SELECT relname FROM pg_class WHERE relname LIKE 'sf_aw_%%' AND relkind='r'").fetchall()}
-    assert names == set(_TABLES)
+    assert names == set(_TABLES) | set(model_tables)
     assert not any("lease" in name or "job" in name for name in names)
     assert not hasattr(repo, "enqueue") and not hasattr(repo, "claim")
     # Atomic commits/inbox are domain effects. The existing worker job/lease
@@ -520,3 +521,51 @@ def test_bogus_publication_never_creates_a_valid_grant(repo):
     assert repo.read_memory_artifact(context=context(user=2), memory_id=active.header.entity_id, artifact_id=active.content.artifact_id) is None
     with raw(repo.client, read_only=True) as conn:
         assert conn.execute("SELECT count(*) AS n FROM sf_aw_memory_grants WHERE memory_id=%s", (active.header.entity_id,)).fetchone()["n"] == 0
+
+
+def test_server_share_credential_and_call_rls_on_disposable_tls_database(database, monkeypatch):
+    """Real RLS: a second account sees a descriptor, not the owner's secret."""
+    import base64
+    from app import runtime_env
+    from app.ai_control_center import server_model_sharing, server_secrets
+
+    app, admin = database
+    monkeypatch.setenv("STRATFORGE_DATABASE_URL", app.url)
+    monkeypatch.setattr(runtime_env, "deployment_environment", lambda: "canary")
+    monkeypatch.setattr(server_secrets.platform_secrets, "get", lambda name: base64.b64encode(b"q" * 32).decode())
+    def server_context(workspace):
+        identity = uuid4()
+        return c.RequestContext(scope=c.TenantScope(environment=c.Environment.CANARY,
+            workspace_id=workspace), user_uuid=identity,
+            actor=c.ActorRef(kind=c.ActorKind.HUMAN, actor_id=identity))
+    owner = server_context("ws_owner_server_01")
+    guest = server_context("ws_guest_server_01")
+    stranger = server_context("ws_other_server_01")
+    model_id, account_id = uuid4(), uuid4()
+    with admin.transaction(Scope.global_service_scope()) as conn:
+        conn.execute("TRUNCATE sf_aw_model_calls,sf_aw_model_share_events,sf_aw_model_shares,sf_aw_credentials RESTART IDENTITY")
+    credentials = server_secrets.ServerSecrets(None, owner)
+    credentials.set_secret("aw_provider." + str(account_id), "sk-owner-test-value")
+    assert credentials.get_secret("aw_provider." + str(account_id)) == "sk-owner-test-value"
+    assert server_secrets.ServerSecrets(None, guest).get_secret("aw_provider." + str(account_id)) is None
+    share = server_model_sharing.set_shared(owner, model_id=str(model_id), shared=True,
+        label="Shared test", provider="deepseek", model_key="deepseek-chat",
+        credential_source="user_supplied")
+    assert server_model_sharing.available(guest)[0]["model_id"] == str(model_id)
+    assert server_model_sharing.require(guest, model_id)["owner_user_uuid"] == str(owner.user_uuid)
+    with pytest.raises(ContractError, match="owner_mismatch"):
+        server_model_sharing.set_shared(guest, model_id=str(model_id), shared=False,
+            label="Shared test", provider="deepseek", model_key="deepseek-chat",
+            credential_source="user_supplied")
+    server_model_sharing.observe(guest, {"request_id": "req_disposable_rls_01", "status": "success",
+        "input_tokens": 2, "output_tokens": 3, "cost_usd": 0.0, "cost_known": True},
+        {"workspace_id": guest.scope.workspace_id, "conversation_id": "thread-test"}, share)
+    assert len(server_model_sharing.calls(owner, as_owner=True)) == 1
+    assert len(server_model_sharing.calls(guest, as_owner=False)) == 1
+    assert server_model_sharing.calls(stranger, as_owner=True) == []
+    server_model_sharing.set_shared(owner, model_id=str(model_id), shared=False,
+        label="Shared test", provider="deepseek", model_key="deepseek-chat",
+        credential_source="user_supplied")
+    assert server_model_sharing.available(guest) == []
+    with pytest.raises(ContractError, match="revoked"):
+        server_model_sharing.require(guest, model_id)

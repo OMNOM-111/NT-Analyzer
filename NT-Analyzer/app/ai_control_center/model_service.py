@@ -117,7 +117,12 @@ class ModelService:
         if not isinstance(context, c.RequestContext):
             raise ContractError("context_required")
         if context.scope.environment != c.Environment.DEVELOPMENT:
-            raise ContractError("model_development_only")
+            from .postgres_repository import PostgresAgentWorldRepository
+            if (context.scope.environment not in {c.Environment.CANARY, c.Environment.PRODUCTION}
+                    or not isinstance(self.repository, PostgresAgentWorldRepository)
+                    or not self.repository.client.production
+                    or self.repository.environment != context.scope.environment):
+                raise ContractError("model_server_storage_required")
         if not callable(self.admit):
             raise ContractError("model_admission_required")
         # Existing auth/device/membership/entitlement/capability/Preview/flags
@@ -329,7 +334,7 @@ class ModelService:
         validate_protocol(profile)
         shared = profile.get("source") == SHARED_SOURCE
         if shared:
-            self._grant(context, model_sharing.get(profile["shared_model_id"]))
+            self._grant(context, model_sharing.get(profile["shared_model_id"], context=context))
         selection = checkpoint.get("persona_selection")
         if selection is not None:
             bound = checkpoint.get("persona_id") if shared else profile["persona_id"]
@@ -365,7 +370,7 @@ class ModelService:
         verified_test = bool(active and test_only and last_test.get("passed") is True)
         from . import test_executor
         can_execute_test_only = verified_test and test_executor.enabled(context.scope.workspace_id)
-        share = model_sharing.get(str(model.header.entity_id))
+        share = model_sharing.get(str(model.header.entity_id), context=context)
         shareable = active and profile.get("connection_kind") == "model"
         shared = bool(share and share["shared"])
         return {"id": str(model.header.entity_id), "title": profile["label"], "label": profile["label"],
@@ -427,7 +432,7 @@ class ModelService:
             if profile.get("credential_source") == "user_supplied":
                 self.secrets.delete_secret(account.credential.key)
             # A retired connection is never available to anyone else either.
-            share = model_sharing.get(str(model.header.entity_id))
+            share = model_sharing.get(str(model.header.entity_id), context=context)
             if share and share["shared"]:
                 self._write_share(context, model, profile, False)
         return self.model_detail(context=context, model_id=model_id)
@@ -440,7 +445,7 @@ class ModelService:
             model_id=str(model.header.entity_id), shared=shared, label=profile["label"],
             provider=model.provider_key, model_key=model.model_key,
             credential_source=str(profile.get("credential_source") or ""),
-            registry_id=profile.get("existing_registry_id"))
+            registry_id=profile.get("existing_registry_id"), context=context)
 
     def set_sharing(self, *, context, model_id, shared):
         """The owner's switch. Off takes effect for the very next call."""
@@ -478,9 +483,9 @@ class ModelService:
             profile = self._json(context, record.profile)
             if profile.get("source") != SHARED_SOURCE:
                 return None
-            return model_sharing.get(profile["shared_model_id"]), record
+            return model_sharing.get(profile["shared_model_id"], context=context), record
         for share in model_sharing.available(environment=context.scope.environment.value,
-                                             caller_user_uuid=str(context.user_uuid)):
+                                             caller_user_uuid=str(context.user_uuid), context=context):
             if self._projection_id(context, share["model_id"]) == identity:
                 return share, None
         return None
@@ -489,8 +494,8 @@ class ModelService:
         if share is None:
             raise ContractError("model_share_not_found")
         model_sharing.require(share["model_id"], environment=context.scope.environment.value,
-                              caller_user_uuid=str(context.user_uuid))
-        return model_sharing.Grant(share, caller_user_uuid=str(context.user_uuid))
+                              caller_user_uuid=str(context.user_uuid), context=context)
+        return model_sharing.Grant(share, caller_user_uuid=str(context.user_uuid), context=context)
 
     def _materialize_shared(self, context, share):
         identity = self._projection_id(context, share["model_id"])
@@ -531,7 +536,7 @@ class ModelService:
         self._access(context)
         rows, seen = [], set()
         for share in model_sharing.available(environment=context.scope.environment.value,
-                                             caller_user_uuid=str(context.user_uuid)):
+                                             caller_user_uuid=str(context.user_uuid), context=context):
             identity = self._projection_id(context, share["model_id"])
             record = self.repository.get(context=context, kind=EntityKind.MODEL, entity_id=identity)
             rows.append(self._shared_detail(context, share, record))
@@ -541,7 +546,7 @@ class ModelService:
                 continue
             profile = self._json(context, record.profile)
             if profile.get("source") == SHARED_SOURCE:
-                rows.append(self._shared_detail(context, model_sharing.get(profile["shared_model_id"]), record))
+                rows.append(self._shared_detail(context, model_sharing.get(profile["shared_model_id"], context=context), record))
         return rows
 
     def shared_usage(self, *, context):
@@ -549,14 +554,14 @@ class ModelService:
         self._access(context)
         mine = {str(m.header.entity_id): self._json(context, m.profile).get("label")
                 for m in self._all(context, EntityKind.MODEL)}
-        by_others = model_sharing.owner_usage(str(context.user_uuid))
+        by_others = model_sharing.owner_usage(str(context.user_uuid), context=context)
         by_others["by_caller"] = [row | {"model_label": mine.get(row["model_id"], "")}
                                   for row in by_others["by_caller"] if row["model_id"] in mine]
         by_others["recent"] = [row | {"model_label": mine.get(row["model_id"], "")}
                                for row in by_others["recent"] if row["model_id"] in mine]
-        mine_through_others = model_sharing.caller_usage(str(context.user_uuid))
+        mine_through_others = model_sharing.caller_usage(str(context.user_uuid), context=context)
         labels = {row["model_id"]: row for row in model_sharing.available(
-            environment=context.scope.environment.value, caller_user_uuid=str(context.user_uuid))}
+            environment=context.scope.environment.value, caller_user_uuid=str(context.user_uuid), context=context)}
         mine_through_others["by_model"] = [row | {"model_label": (labels.get(row["model_id"]) or {}).get("label", "")}
                                            for row in mine_through_others["by_model"]]
         # The caller never learns the owner's model id, only their own projection's.
@@ -1002,7 +1007,7 @@ class ModelService:
             grant = None
             if shared:
                 try:
-                    grant = self._grant(context, model_sharing.get(profile["shared_model_id"]))
+                    grant = self._grant(context, model_sharing.get(profile["shared_model_id"], context=context))
                     connection, account, connection_profile = self._owner_connection(context, grant.share)
                 except ContractError as exc:
                     return self._fail(context, task, checkpoint, exc.code)

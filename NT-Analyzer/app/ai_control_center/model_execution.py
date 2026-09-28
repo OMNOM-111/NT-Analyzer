@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import math
 from datetime import datetime, timezone
+from uuid import UUID, uuid5
 
 from .. import ai_budgets, secure_store
 from ..ai_lab import agent_registry, universal_llm
@@ -153,6 +154,16 @@ class ModelExecutor:
                 raise ContractError("model_cancelled")
 
         check()
+        credentials = self.secrets
+        if shared is not None and hasattr(credentials, "for_owner"):
+            from .contracts import ActorKind, ActorRef, RequestContext, TenantScope
+            owner = UUID(shared.share["owner_user_uuid"])
+            owner_context = RequestContext(scope=TenantScope(environment=context.scope.environment,
+                    workspace_id=shared.share["owner_workspace_id"]), user_uuid=owner,
+                actor=ActorRef(kind=ActorKind.SERVICE,
+                    actor_id=uuid5(UUID("03c9b9db-145e-46af-b498-ccf25f80ff81"), "shared-credential-reader"),
+                    on_behalf_of=owner))
+            credentials = credentials.for_owner(owner_context)
         if profile.get("credential_source") == "owner_registry_binding":
             return self._owner(context=context, model=model, profile=profile, prompt=prompt,
                 system_prompt=system_prompt, conversation_id=conversation_id,
@@ -165,19 +176,35 @@ class ModelExecutor:
             raise ContractError("model_budget_exhausted")
         pricing = self.pricing(context, model, profile) if callable(self.pricing) else None
         adapter = PrivateRegistry(context=context, model=model, account=account, profile=profile,
-            limits=limits, secrets=self.secrets, revalidate=check, pricing=pricing,
+            limits=limits, secrets=credentials, revalidate=check, pricing=pricing,
             usage_reader=self.usage_reader, usage_writer=self.usage_writer)
         if shared is not None:
             adapter.shared_grant = dict(shared.share)
+        server_shared = shared is not None and hasattr(self.secrets, "for_owner")
+        def record_share(result, status):
+            if not server_shared:
+                return
+            from . import model_sharing
+            model_sharing.observe({**result, "request_id": request_id,
+                "status": status, "purpose": purpose},
+                {"user_id": str(context.user_uuid), "workspace_id": context.scope.workspace_id,
+                 "conversation_id": conversation_id, "acting_agent": acting_agent,
+                 "request_source": "agent_world." + request_id}, grant=shared.share)
         with universal_llm.registry_scope(adapter):
-            result = self._call(adapter.agent_id, context=context, prompt=prompt, system_prompt=system_prompt,
-                conversation_id=conversation_id, max_output_tokens=max_output_tokens, purpose=purpose,
-                check=check, admit=admit, request_id=request_id, acting_agent=acting_agent)
+            try:
+                result = self._call(adapter.agent_id, context=context, prompt=prompt, system_prompt=system_prompt,
+                    conversation_id=conversation_id, max_output_tokens=max_output_tokens, purpose=purpose,
+                    check=check, admit=admit, request_id=request_id, acting_agent=acting_agent)
+            except Exception:
+                record_share({}, "error")
+                raise
             # Some malicious endpoints echo their Authorization credential.
             # Never persist that echo as a model artifact or display it in chat.
-            key = self.secrets.get_secret(account.credential.key)
+            key = credentials.get_secret(account.credential.key)
             if key and key in json.dumps(result, ensure_ascii=False):
+                record_share(result, "blocked")
                 raise ContractError("model_provider_response_invalid")
+            record_share(result, "success")
             return result
 
     def _owner(self, *, context, model, profile, shared=None, **kwargs):
@@ -226,8 +253,18 @@ class ModelExecutor:
         admit(context, "provider_transmit", estimate)
         if not ai_budgets.check_budget(context.scope.workspace_id, estimate).get("ok"):
             raise ContractError("model_budget_exhausted")
+        from .. import runtime_env
+        usage_user_id = str(context.user_uuid)
+        if runtime_env.environment_explicit() and runtime_env.is_server_environment():
+            from .. import account_auth
+            user = account_auth.find_active_user_by_uuid(usage_user_id)
+            if not user:
+                raise ContractError("model_caller_invalid")
+            usage_user_id = str(user.get("user_id") or user.get("id") or "")
+            if not usage_user_id.isdigit():
+                raise ContractError("model_caller_invalid")
         try:
-            with universal_llm.usage_scope({"user_id": str(context.user_uuid),
+            with universal_llm.usage_scope({"user_id": usage_user_id,
                     "workspace_id": context.scope.workspace_id, "conversation_id": conversation_id,
                     "request_source": "agent_world." + str(request_id), "acting_agent": acting_agent}):
                 result = universal_llm.invoke_agent(agent_id, prompt, system_prompt=system_prompt,

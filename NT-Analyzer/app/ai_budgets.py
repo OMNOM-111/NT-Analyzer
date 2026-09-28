@@ -29,7 +29,8 @@ _DEV_RESULT: Dict[str, Any] = {
 
 
 def _is_prod() -> bool:
-    return runtime_env.is_production() and runtime_env.environment_explicit()
+    # Canary is a real PostgreSQL-backed server contour, not Development.
+    return (runtime_env.is_production() or runtime_env.is_canary()) and runtime_env.environment_explicit()
 
 
 def _check_request_id(request_id: str) -> None:

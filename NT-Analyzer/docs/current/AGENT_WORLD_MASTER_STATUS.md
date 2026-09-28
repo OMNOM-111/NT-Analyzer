@@ -1,5 +1,23 @@
 # Agent World — master status
 
+> **Current beta.96 package decision, 2026-09-27:** the owner explicitly accepted
+> the entire Local product package, including Agent World/AI Center and shared
+> models, as one decision. Timeline owner approval is 7/7; no repeat Local
+> acceptance is required. The product card remains `● In progress` because the
+> server Agent World and real non-owner shared-model invocation have not passed
+> Canary/Production. The older 2026-09-24 non-approval note and 34/36 / 80%
+> programme estimates below are historical development snapshots, not the
+> current owner decision. [Canonical decision](../changelog/2026-09-28-beta96-owner-decision-server-parity.md).
+>
+> **Server-parity implementation in PR #300 (not deployed):** authenticated
+> session/device/workspace admission, exact server workspace opt-in, existing
+> PostgreSQL Agent World repository, and an additive FORCE-RLS model share /
+> encrypted BYOK / usage ledger are under test. Local NT/Desktop adapters and
+> Development test executor stay Local. No Canary or Production PASS is claimed;
+> the disposable TLS PostgreSQL gate passed 74/74 with two principals and a
+> non-`BYPASSRLS` app role; PR/final-main CI, immutable artifact and live
+> owner/non-owner acceptance remain mandatory.
+
 > **Local QA 2026-09-25 на активном SHA `56945ac68e94`:** 238 связанных
 > тестов PASS, интерфейсы команды/памяти/задач открылись без ошибок консоли,
 > 646-файловый pre-release bundle прошёл 4/4 проверки. В истории поставлена

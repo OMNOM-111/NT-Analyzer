@@ -191,10 +191,11 @@ def select_model(service, *, context, persona_id, kind=None, selected_model_id=N
 
 
 def try_chat(message, *, scope, conversation_id, request_id, source, persona_id=None, selected_model_id=None):
-    from . import application_chat, domain_gateway, live_gateway, model_chat
+    from . import application_chat, domain_gateway, live_gateway, model_chat, server_gateway
     if selected_model_id is not None and persona_id is None:
         raise ContractError("persona_model_selection_unavailable")
-    if source != "app" or not live_gateway.configured(str((scope or {}).get("workspace_id") or "")):
+    workspace_id = str((scope or {}).get("workspace_id") or "")
+    if source != "app" or not (live_gateway.configured(workspace_id) or server_gateway.configured(workspace_id)):
         if persona_id is not None:
             raise ContractError("persona_chat_unavailable")
         return None
