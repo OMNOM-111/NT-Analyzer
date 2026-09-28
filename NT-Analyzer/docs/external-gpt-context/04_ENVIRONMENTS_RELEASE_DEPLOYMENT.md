@@ -3,7 +3,7 @@
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
 - Last verified UTC: 2026-09-28T03:06:00Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Current deployed artifact Git SHA: `68ba3a95f804800195bb6e8dff556dd843b8eb6e`
+- Current deployed source SHA: Canary `7b66bcb6abd486891870b0419afd93f8828dbb85`; Production `68ba3a95f804800195bb6e8dff556dd843b8eb6e`
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: PARTIAL
 
@@ -81,7 +81,36 @@ summary, source SHA and final verification PASS are present.
 The Environment Switcher opens the selected origin and never carries session
 or browser storage between origins.
 
-## Current environments: beta.99 technical runtime PASS / beta.96 product card PARTIAL
+## Current environments: Canary beta.100 deployed / Production beta.99 unchanged / beta.96 product card PARTIAL
+
+The owner-authorized PR #301 merge produced clean final-main SHA
+`7b66bcb6abd486891870b0419afd93f8828dbb85`. Mandatory CI
+[run 36471503031](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/36471503031)
+passed on attempt 2. The first attempt had one reproduced intermittent Windows
+loopback-fixture connection abort, not an application-code change. Release
+Center built exactly one signed immutable artifact and deployed it to Canary
+only. The backup command's short post-restart readiness window expired, but
+the unchanged beta.99 Canary returned to `/live` and `/ready` 200; separate
+read-only verification passed the backup manifest, dump, `pg_restore --list`,
+runtime/config checksums before deployment. Production was not promoted.
+
+| Field | beta.100 Canary checkpoint |
+| --- | --- |
+| Version / source SHA | `0.10.0-beta.100` / `7b66bcb6abd486891870b0419afd93f8828dbb85` |
+| Candidate / artifact | `rc_2aab86a85ef84ca7ad1e6733aebdbefb` / `art_de49135714cf48b6aace2a977fad334f` |
+| Build ID | `sf-0.10.0-beta.100-7b66bcb6abd4-20260928T210349Z` |
+| Archive / runtime manifest SHA256 | `2CCB46F376C4A6445295D7221BB753B959F08FBE1970065996AF7460C6CB4DB1` / `5FFE722FD86DE9892E7C150287C63CC3C8D3388DADD61AF3BA756C0A446812FF` |
+| Release dir / previous slot | `releases/0.10.0-beta.100-7b66bcb6abd4` / `releases/0.10.0-beta.99-68ba3a95f804` |
+| Pre-change backup / manifest SHA256 | `backups/pre-beta100-canary-peer-20260928T210636Z` / `7B8EB4C484A7BF6CD580B310460D52E752DE386C7450207697F3BEF82E7EEEDF` |
+| Deployment / health / migration | `dep_7cb0afa2c3ee48d9b0c3956bc8dbb15f`; `/live` and `/ready` PASS; migration max 24 |
+| Stage | `canary_checking`; full owner + non-owner parity **NOT YET PASS**; Production beta.99 |
+
+The server Agent World workspace opt-in and BYOK master key remain fail-closed
+until separately configured after the verified backup. No beta.100 owner or
+non-owner live invocation has been claimed. Production periodic delivery is OFF
+and Local `StratForge Vitek` remains ON.
+
+### Previous beta.99 technical runtime PASS
 
 Canary and Production now point to the same signed beta.99 technical artifact
 built from the exact final `main` SHA. Canary identity/readiness, verified
