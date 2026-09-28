@@ -5,6 +5,7 @@
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Scope: open beta.95 → beta.96 product card, beta.97–beta.99 technical iterations, paused closeout and multi-user Telegram blocker
 - Status: PARTIAL
+- Owner decision (2026-09-27 America/Los_Angeles): all seven Local beta.96 package tasks are explicitly approved as one frozen product package, `ownerApproval=approved` 7/7. Do not request another Local acceptance. The single remaining server-parity blocker is authenticated Agent World/AI Center plus a real non-owner shared-model invocation; see [decision and read-only probe](../changelog/2026-09-28-beta96-owner-decision-server-parity.md). A real separate Canary Professional user displayed live MBT TopstepX candles; server Preview sandbox being disabled is expected, not a chart blocker.
 - Current Production version/build/artifact when known: `0.10.0-beta.99` / `sf-0.10.0-beta.99-68ba3a95f804-20260928T021954Z` / `art_3ae473a96bb24d439fd5cb6d3a1d1096`; archive SHA256 `BD6FDEC99112154E9B0B4FBA26A2F1E257399D9B8FC15BC4500E1BD65AEBDC43`; runtime artifact SHA256 `081C9A99480C49BFBC13C29EA061E994B8310FB6A82EE431B31A38661952A2FB`
 
 Current product line: Local beta.95 → beta.96 is the single open product card;
@@ -97,12 +98,11 @@ signature, `/live`, `/ready`, owner login/API, and cache-disabled owner and
 existing non-owner Professional cold starts PASS with one expected navigation,
 zero runtime exceptions and no reload loop. Current queues are clear and the
 existing owner topic mapping persists. Production periodic delivery is paused;
-Local `StratForge Vitek` stays ON. Next product work is issue #296 or a separately
-approved model/orchestrator cutover. Full-package parity is still PARTIAL:
-final-source ancestry and 327 targeted tests PASS, but live Canary reports
-Agent World disabled (`IN DEVELOPMENT`) and Preview sandbox disabled. Do not
-enter `Ready for owner review` or `Done` until those technical gaps are resolved
-or explicitly re-scoped and full Canary is repeated. Do not delete the Canary
+Local `StratForge Vitek` stays ON. Ordinary-user Telegram issue #296 remains
+separate. Full-package parity is still PARTIAL: final-source ancestry and 327
+targeted tests PASS, but live Canary reports Agent World disabled and no real
+non-owner shared-model invocation. Do not enter `Ready for owner review` or
+`Done` until this server path passes full Canary and Production. Do not delete the Canary
 test account without action-time confirmation. Canonical evidence:
 [beta.96 product-card parity and status contract](../changelog/2026-09-27-beta96-product-card-parity-and-status-contract.md).
 
