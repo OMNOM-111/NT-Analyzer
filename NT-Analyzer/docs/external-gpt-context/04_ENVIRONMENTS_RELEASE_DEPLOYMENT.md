@@ -1,9 +1,9 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-09-28T02:37:24Z
+- Last verified UTC: 2026-09-28T03:06:00Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Current deployed artifact Git SHA: `4f6bb0b3a0d20712f249afdc9c93538567fd6a8d`
+- Current deployed artifact Git SHA: `68ba3a95f804800195bb6e8dff556dd843b8eb6e`
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: PARTIAL
 
@@ -15,9 +15,9 @@ reliable rollback for this state. The minimal code correction is a new beta.98
 cycle; no server hotfix or artifact mutation is allowed. beta.98 is now deployed
 to Canary from its own final main SHA and signed artifact. beta.98 then exposed
 issue #298 in real Professional registration. beta.99 is the separate narrow
-storage-routing cycle and has now passed Canary on its own final main SHA and
-immutable artifact. Production reports
-stay OFF and Local `StratForge Vitek` stays ON. See the
+storage-routing cycle and has now passed Canary and Production on its own final
+main SHA and the same immutable artifact. Production periodic delivery stays
+OFF and Local `StratForge Vitek` stays ON. See the
 [incident record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md).
 
 Historical pre-deployment contract (2026-09-26): beta.97 consolidates periodic owner reports under
@@ -81,15 +81,19 @@ summary, source SHA and final verification PASS are present.
 The Environment Switcher opens the selected origin and never carries session
 or browser storage between origins.
 
-## Current environments: beta.99 Canary PASS / beta.97 Production
+## Current environments: beta.99 technical runtime PASS / beta.96 product card PARTIAL
 
-Canary now points to the signed beta.99 artifact built from the exact final
-`main` SHA. Identity/readiness, a verified pre-deploy backup, real separate
-non-owner Professional registration, personal workspace, entitlement, session,
-cache-disabled cold start without reload-loop and restart persistence all PASS.
-Production remains on beta.97; beta.99 has no Production approval.
+Canary and Production now point to the same signed beta.99 technical artifact
+built from the exact final `main` SHA. Canary identity/readiness, verified
+backup, real separate non-owner Professional registration, personal workspace,
+entitlement, session, cache-disabled cold start and restart persistence PASS.
+Production identity/readiness, owner login/API, existing non-owner Professional
+session/workspace/entitlement and cache-disabled cold starts also PASS. These
+checks prove the scoped beta.99 correction, not full beta.96 package parity:
+live Canary reports Agent World and Preview sandbox disabled, so the open
+product card remains `In progress` and final product closeout is paused.
 
-| Field | beta.99 Canary |
+| Field | beta.99 Canary and Production |
 | --- | --- |
 | Version / source SHA | `0.10.0-beta.99` / `68ba3a95f804800195bb6e8dff556dd843b8eb6e` |
 | Candidate / artifact | `rc_dd6b884b2bfe4f7dace6c76bb6cbf12c` / `art_3ae473a96bb24d439fd5cb6d3a1d1096` |
@@ -97,10 +101,11 @@ Production remains on beta.97; beta.99 has no Production approval.
 | Archive SHA256 | `BD6FDEC99112154E9B0B4FBA26A2F1E257399D9B8FC15BC4500E1BD65AEBDC43` |
 | Manifest SHA256 | `081C9A99480C49BFBC13C29EA061E994B8310FB6A82EE431B31A38661952A2FB` |
 | Release dir | server data-root relative `releases/0.10.0-beta.99-68ba3a95f804` |
-| Backup | server data-root relative `backups/pre-beta99-canary-peer-20260928T022038Z` |
-| Stage | Canary PASS; Production not authorized |
+| Backups | `backups/pre-beta99-canary-peer-20260928T022038Z`; `backups/pre-beta99-production-peer-20260928T024620Z` |
+| Deployment IDs | Canary `dep_d4ebf1c42c3a450f99c530ed41cd62f8`; Production `dep_48d36d71b00e480eac201c3f3a71e0f1` |
+| Stage | beta.99 scoped Canary/Production PASS; beta.96 full-package Canary PARTIAL and product closeout paused |
 
-Production beta.97 identity remains:
+Immediate previous Production beta.97 identity remains preserved for rollback:
 
 | Field | Value |
 | --- | --- |
@@ -111,7 +116,7 @@ Production beta.97 identity remains:
 | Manifest SHA256 | `B5FC667474ED38CD5AA3600F22E4DD97495958DCC906BCEAD1CA80CF2838F9D2` |
 | Previous / rollback | beta.92 / `0.10.0-beta.92-9d800770d08e` (preserved; same latent reload trigger) |
 
-## beta.99 release progress
+## beta.99 technical iteration inside the open beta.96 product card
 
 Issue #298 has a narrow correction: subscriptions now use the same
 authoritative server-storage predicate as accounts/workspaces for explicit
@@ -119,8 +124,17 @@ Canary and Production, while Development retains DPAPI and its fail-closed
 behavior. Source checkpoint `c68b19f9fa0c3161b31f42cb994db49f2f00faa3`
 merged through PR #299 as `68ba3a95f804800195bb6e8dff556dd843b8eb6e`;
 focused affected regression is 37 PASS and final-main CI run `36365092457`
-passed. One signed immutable beta.99 artifact is accepted on Canary. Production
-approval and promotion remain open; beta.97 Production is unchanged.
+passed. One signed immutable beta.99 artifact was accepted for the scoped fix on
+Canary and then promoted unchanged to Production after exact artifact-specific
+owner approval.
+Production `/live`, `/ready`, owner auth/API and real non-owner Professional
+cold-start smoke PASS. Report delivery switches remain OFF and Local
+`StratForge Vitek` remains ON pending the separate model/orchestrator cutover.
+The beta.95 → beta.96 product card remains open: source ancestry and 327 targeted
+package tests PASS, while live Canary parity is PARTIAL because Agent World and
+Preview sandbox are disabled. beta.97–beta.99 retain their exact identities as
+technical iterations inside that card. See the
+[product-card parity and status record](../changelog/2026-09-27-beta96-product-card-parity-and-status-contract.md).
 
 Sources: [beta.98 incident record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md),
 [beta.97 candidate record](../changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md).

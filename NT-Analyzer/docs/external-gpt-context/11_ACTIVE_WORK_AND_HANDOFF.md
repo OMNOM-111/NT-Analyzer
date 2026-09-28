@@ -1,20 +1,21 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-28T02:37:24Z
+- Last verified UTC: 2026-09-28T03:06:00Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Scope: beta.97 Production baseline, beta.98 reload-loop history, beta.99 Canary PASS and multi-user Telegram blocker
+- Scope: open beta.95 → beta.96 product card, beta.97–beta.99 technical iterations, paused closeout and multi-user Telegram blocker
 - Status: PARTIAL
-- Current Production version/build/artifact when known: `0.10.0-beta.97` / `sf-0.10.0-beta.97-4f6bb0b3a0d2-20260927T060203Z` / `art_8fec9cdd6ed14dd19cb762291a2a756f`; runtime artifact SHA256 `B5FC667474ED38CD5AA3600F22E4DD97495958DCC906BCEAD1CA80CF2838F9D2`
+- Current Production version/build/artifact when known: `0.10.0-beta.99` / `sf-0.10.0-beta.99-68ba3a95f804-20260928T021954Z` / `art_3ae473a96bb24d439fd5cb6d3a1d1096`; archive SHA256 `BD6FDEC99112154E9B0B4FBA26A2F1E257399D9B8FC15BC4500E1BD65AEBDC43`; runtime artifact SHA256 `081C9A99480C49BFBC13C29EA061E994B8310FB6A82EE431B31A38661952A2FB`
 
-Current release line: beta.96 is the original Local feature package; beta.97 is
-its first server release after a new main/CI/artifact cycle; beta.98 is the
-separate reload-loop hotfix. Do not rename or collapse these versions. The
+Current product line: Local beta.95 → beta.96 is the single open product card;
+beta.97 is its first server release, beta.98 is its reload-loop hotfix and
+beta.99 is its server entitlement-storage correction. They are exact technical
+iterations inside beta.96, not separate product milestones. Do not rename or
+collapse their SHA/artifact history. The
 [chronology record](../changelog/2026-09-27-beta96-beta98-timeline-reconciliation.md)
 contains exact identities and owner approvals.
 
-Current release gate: **BETA.99 CANARY PASS; PRODUCTION REQUIRES A SEPARATE
-ARTIFACT-SPECIFIC OWNER APPROVAL**. Live CDP originally proved a genuine
+Current release gate: **BETA.99 SCOPED PRODUCTION PASS / BETA.96 PRODUCT CARD IN PROGRESS**. Live CDP originally proved a genuine
 script-initiated full-page reload, not an auth/device/redirect/polling/exception
 loop. `ui.js` emitted `nt-account-change(detail:null)` on every cold offline
 account read; the overview listener called `location.reload()`. Blast radius is
@@ -31,9 +32,10 @@ acceptance for beta.98 was BLOCKED; Production was not approved. [Incident
 record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md) and
 [storage blocker](../changelog/2026-09-27-canary-professional-registration-storage-blocker.md).
 
-Operational safety: Production report scheduler remains OFF; Local Windows task
-`StratForge Vitek` remains ON. Do not complete Telegram/report ownership cutover
-until the new Production artifact is accepted.
+Operational safety: Production periodic delivery switches remain OFF; Local
+Windows task `StratForge Vitek` remains enabled and Running. Interactive
+Production Telegram ownership stays active, but do not complete report cutover
+until the separate model/orchestrator route is accepted.
 
 Multi-user Telegram acceptance: **EXTERNAL BLOCKED / issue #296**. One shared bot token is
 already used, and browser SF Chat/agent work is scoped, durable and deduplicated.
@@ -82,18 +84,27 @@ run `36365092457` PASS. The signed immutable artifact
 `BD6FDEC99112154E9B0B4FBA26A2F1E257399D9B8FC15BC4500E1BD65AEBDC43`,
 runtime/manifest
 `081C9A99480C49BFBC13C29EA061E994B8310FB6A82EE431B31A38661952A2FB`)
-is accepted on Canary. A real separate Google Professional identity is non-owner,
+is accepted on Canary and promoted unchanged to Production. A real separate Google Professional identity is non-owner,
 has its own personal workspace, active entitlement and session; cache-disabled
 cold start and post-service-restart checks each showed one expected navigation,
 zero runtime exceptions and no reload loop. Candidate
-`rc_dd6b884b2bfe4f7dace6c76bb6cbf12c` is `canary_passed`.
+`rc_dd6b884b2bfe4f7dace6c76bb6cbf12c` is `production_live`.
 [beta.99 record](../changelog/2026-09-27-beta99-canary-entitlement-storage-routing.md).
 
-Next release action: obtain explicit owner approval for that exact beta.99
-artifact, then promote the same artifact without rebuild and perform Production
-smoke. Until then Production remains beta.97, Production report schedulers stay
-OFF and Local `StratForge Vitek` stays ON. Do not delete the Canary test account
-without action-time confirmation.
+Production promotion used approval `apr_07a3758b5207418bb70e2096971b2873`
+and deployment `dep_48d36d71b00e480eac201c3f3a71e0f1`. Identity,
+signature, `/live`, `/ready`, owner login/API, and cache-disabled owner and
+existing non-owner Professional cold starts PASS with one expected navigation,
+zero runtime exceptions and no reload loop. Current queues are clear and the
+existing owner topic mapping persists. Production periodic delivery is paused;
+Local `StratForge Vitek` stays ON. Next product work is issue #296 or a separately
+approved model/orchestrator cutover. Full-package parity is still PARTIAL:
+final-source ancestry and 327 targeted tests PASS, but live Canary reports
+Agent World disabled (`IN DEVELOPMENT`) and Preview sandbox disabled. Do not
+enter `Ready for owner review` or `Done` until those technical gaps are resolved
+or explicitly re-scoped and full Canary is repeated. Do not delete the Canary
+test account without action-time confirmation. Canonical evidence:
+[beta.96 product-card parity and status contract](../changelog/2026-09-27-beta96-product-card-parity-and-status-contract.md).
 
 Checkpoint `f455043f`, draft PR #294: full Local regression **6087 passed / 134
 skipped / 0 failed** in 1:07:38. The exact 650-file pre-release bundle, context
@@ -110,8 +121,8 @@ Scoped Local work completed: **BETA** — [Preview parity/account lifecycle](../
 - Protected Local branch snapshot: `codex/agent-world-owner-preview`, draft [PR #282](https://github.com/OMNOM-111/NT-Analyzer/pull/282) above foundation PR #281 and integration PR #280; the active final branch is identified below, while #285 is an accepted integration input
 - Historical Local origin: `0.10.0-beta.96`, source `56945ac6` on Local 8765. It was not itself promoted; beta.97 was the later server release of the evolving package and beta.98 is the subsequent hotfix.
 - Integration state: scoped model/domain/Chat/NT/Desktop, real fact handoff, manual discussion, separate application observations, Consensus and Court verified; owner-dependent and full-program work remain
-- Historical 2026-09-24 snapshot: Production was then beta.92. Current Production is beta.97 and Canary is beta.98 as recorded at the top; the earlier snapshot is retained only as history. See [timeline audit](../changelog/2026-09-24-timeline-source-audit.md).
-- The root [`timeline.html`](../../../timeline.html) is the owner-facing handoff. Read it, the [mandatory workflow](../TIMELINE_MAINTENANCE.md) and this current handoff before development, merge or release. Update the same open card until closeout; after Production publication, application-code change starts the next version/card. A version must have source/commit plus Development/CI evidence before artifact/Canary/Production.
+- Historical 2026-09-24 snapshot: Production was then beta.92. The current technical runtime is beta.99 on Canary and Production as recorded at the top; the earlier snapshot is retained only as history. See [timeline audit](../changelog/2026-09-24-timeline-source-audit.md).
+- The root [`timeline.html`](../../../timeline.html) is the owner-facing handoff. Read it, the [mandatory workflow](../TIMELINE_MAINTENANCE.md) and this current handoff before development, merge or release. Update the same open product card until verified Production closeout; a merely live technical artifact does not create a new product milestone. After the card legitimately reaches `Done`, new functionality starts the next version/card. A version must have source/commit plus Development/CI evidence before artifact/Canary/Production. All current/future cards use `Done / In progress / Ready for owner review / Planned` and retain separate Development / Local test / Owner / Canary / Production stages.
 - 2026-09-25 prepublication Local QA: 430 focused tests PASS; live owner MES/MNQ 12-26 and disposable Preview MBT 09-26 charts painted TopstepX/WS; checked Social/Chat/Agent World screens opened without console errors; 646-file bundle 4/4 PASS. With owner authorization, Preview registration, terms and first-device trust completed; a fresh Preview user received an SF Chat AI reply via an owner-shared model. A separate real Development user sent a private message to the owner; the owner saw it and sent a reply; the disposable user and conversation were self-deleted. The receiving side of that reply was not separately checked. A stale Preview bridge expires after 1800 seconds and breaks Social/Chat reads until a fresh launch. Permanent Social comment was blocked by automated action review, so no public write is claimed. Agent World still has the partial items in its master status, and the UI's chart task example says `MNQ 09-26` while the active chart is `MNQ 12-26`. The timeline shows a separate ✓ for checked internals and retains the overall ! and owner-approval gate. [Exact QA record](../changelog/2026-09-25-prepublication-local-qa.md).
 - Scope: Agent World integrated Local implementation and pending full owner acceptance; Production deployment facts are inherited evidence
 - Status: IN DEVELOPMENT

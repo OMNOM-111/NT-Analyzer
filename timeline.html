@@ -85,6 +85,11 @@
     .milestone-avatar svg { width:19px; height:19px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
     .milestone.current .milestone-avatar { color:var(--wait); background:var(--card); }
     .milestone-card h3 { margin:0; min-height:2.25em; font-size:clamp(14px,1vw,18px); line-height:1.13; letter-spacing:-.015em; }
+    .work-status { align-self:flex-start; margin:-2px 0 8px 40px; padding:3px 7px; border:1px solid var(--line); border-radius:999px; font-size:10px; font-weight:800; }
+    .work-status.done { color:var(--good); }
+    .work-status.in-progress { color:var(--wait); }
+    .work-status.owner-review { color:var(--accent); }
+    .work-status.planned { color:var(--quiet); }
     .change-chips { display:flex; flex-wrap:wrap; align-content:start; gap:4px; min-height:55px; }
     .change-chips span { padding:3px 7px; border:1px solid var(--line); border-radius:999px; background:var(--soft); font-size:10px; line-height:1.15; }
     .milestone.current .change-chips span { background:var(--card); }
@@ -121,8 +126,10 @@
     .batch-task-head { display:flex; justify-content:space-between; align-items:baseline; gap:6px; }
     .batch-task-head strong { font-size:12px; }
     .batch-task-state { color:var(--muted); font-size:10px; font-weight:700; text-align:right; }
-    .batch-task-state.approved { color:var(--good); }
-    .batch-task-state.review { color:var(--wait); }
+    .batch-task-state.done { color:var(--good); }
+    .batch-task-state.in-progress { color:var(--wait); }
+    .batch-task-state.owner-review { color:var(--accent); }
+    .batch-task-state.planned { color:var(--quiet); }
     .batch-task-label { margin:8px 0 2px; color:var(--muted); font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; }
     .batch-task-copy { margin:0; font-size:11px; }
     .batch-task-points { margin:2px 0 0!important; padding-left:16px!important; font-size:11px; }
@@ -185,7 +192,7 @@
       <div class="timeline-viewport" tabindex="0" aria-label="Горизонтальная история StratForge; прокручивается вправо">
         <div class="timeline-track" id="timeline-track"></div>
       </div>
-      <p class="timeline-caption"><span><strong>✓</strong> подтверждено · <strong>!</strong> в разработке · <strong>○</strong> не входило в указанный выпуск · <strong>—</strong> нет подтверждения для этапа</span><span>Текущий снимок: Local beta.96 · Canary beta.99 PASS · Production beta.97; * в исторической beta.92 статус Local/Canary относится к Server</span></p>
+      <p class="timeline-caption"><span><strong>✓ Done</strong> · <strong>● In progress</strong> · <strong>◉ Ready for owner review</strong> · <strong>○ Planned</strong>; этапы сред показываются отдельно</span><span>Текущий пакет: Local beta.95 → beta.96 · beta.97–beta.99 — технические итерации; Production runtime beta.99 live, product closeout остановлен</span></p>
     </div>
   </section>
 </main>
@@ -230,14 +237,14 @@
     {id:'chat',name:'SF Chat',first:'2026-09-04',local:'yes',canary:'yes',production:'candidate'},
     {id:'onboarding',name:'Новая регистрация',first:'2026-09-04',local:'yes',canary:'yes',production:'candidate'},
     {id:'device',name:'Доверие устройству',first:'2026-09-04',local:'yes',canary:'yes',production:'candidate'},
-    {id:'agentWorld',name:'Agent World',first:'2026-09-14',local:'candidate',canary:'candidate',production:'candidate'},
+    {id:'agentWorld',name:'Agent World',first:'2026-09-14',local:'candidate',canary:'no',production:'no'},
     {id:'sharing',name:'Поделиться моделями',first:'2026-09-22',local:'yes',canary:'yes',production:'candidate'},
-    {id:'previewCharts',name:'Графики для тестовых аккаунтов',first:'2026-09-23',local:'yes',canary:'yes',production:'candidate'}
+    {id:'previewCharts',name:'Графики для тестовых аккаунтов',first:'2026-09-23',local:'yes',canary:'no',production:'no'}
   ];
   const environments = [
     {kind:'local',name:'Local',qualifier:'активный runtime · 25.09.2026',version:'0.10.0-beta.96',build:'dev-0.10.0-beta.96-56945ac68e94',commit:'56945ac6'},
-    {kind:'canary',name:'Canary',qualifier:'beta.99 · acceptance PASS',version:'0.10.0-beta.99',build:'sf-0.10.0-beta.99-68ba3a95f804-20260928T021954Z',commit:'68ba3a95'},
-    {kind:'production',name:'Production',qualifier:'beta.97 live · closeout заблокирован',version:'0.10.0-beta.97',build:'sf-0.10.0-beta.97-4f6bb0b3a0d2-20260927T060203Z',commit:'4f6bb0b3'}
+    {kind:'canary',name:'Canary',qualifier:'beta.99 runtime PASS · полный пакет PARTIAL',version:'0.10.0-beta.99',build:'sf-0.10.0-beta.99-68ba3a95f804-20260928T021954Z',commit:'68ba3a95'},
+    {kind:'production',name:'Production',qualifier:'beta.99 live · product closeout остановлен',version:'0.10.0-beta.99',build:'sf-0.10.0-beta.99-68ba3a95f804-20260928T021954Z',commit:'68ba3a95'}
   ];
   const milestones = [
     {
@@ -297,20 +304,20 @@
       build:'sf-0.10.0-beta.92-9d800770d08e-20260902T035324Z',commit:'Server 9d800770d08e · Connector ff6fe049',artifact:'art_57db4318cb8745d399d98bccf48de396',source:'NT-Analyzer/docs/changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md',sourceHref:'NT-Analyzer/docs/changelog/2026-09-02-connector-0.4.5-catalog-snapshot-identity.md'
     },
     {
-      date:'2026-09-03',dateLabel:'3–27 сентября 2026',version:'beta.96 Development → beta.97 Production → beta.98 Canary blocked → beta.99 Canary PASS',title:'Единая линия feature-пакета и hotfix',icon:'network',changes:['Canary subscription storage','Production reload-loop','SF Chat ↔ Telegram','Ещё 5 задач'],adds:['social','chat','onboarding','device','sharing','previewCharts'],current:true,batchId:'post-beta92-local',batchState:'canary-passed',
+      date:'2026-09-03',dateLabel:'3–27 сентября 2026',version:'Продуктовый пакет Local beta.95 → beta.96',title:'SF Social, SF Chat и Agent World',icon:'network',changes:['beta.97–beta.99 внутри пакета','SF Chat ↔ Telegram','Reload-loop исправлен','Ещё 5 задач'],adds:['social','chat','onboarding','device','sharing','previewCharts'],current:true,batchId:'post-beta92-local',batchState:'in-progress',workStatus:'in_progress',
       batchTasks:[
-        {capabilityId:'social',date:'3–26 сентября',title:'Социальная сеть',state:'ready',localTest:'passed',ownerApproval:'approved',goal:'Создать место для публикаций и общения пользователей StratForge.',implemented:['Сохраняются публикации и данные социальной части.','Есть страница компании; уведомления отделены от чата.'],ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска; некритичные детали дизайна отложены.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md',source:'Запись о Local beta.95',sourceHref:'NT-Analyzer/docs/changelog/2026-09-04-beta95-unified-local-integration.md'},
-        {capabilityId:'chat',date:'3–27 сентября',title:'SF Chat',state:'ready',localTest:'passed',ownerApproval:'approved',goal:'Создать встроенный чат StratForge для общения пользователей.',implemented:['Диалоги разложены по папкам и дням.','В beta.97 реальный owner-path SF Chat ↔ Telegram прошёл в обе стороны; тема и привязка сохранились после restart.','Stable message/request/report keys защищают историю и доставку от дублей, циклов и повторных вызовов модели.','Периодические отчёты переведены на цепочку Пользователь → Заместитель → команда; Production принял operational Telegram ownership, но финальный scheduler cutover остаётся приостановлен до Production-приёмки beta.99 и закрытия model/orchestrator route.'],ownerComment:'Владелец 26.09.2026 принял Local как основу выпуска, 27.09.2026 разрешил merge PR #294 и затем отдельно подтвердил Production promotion точного beta.97 artifact art_8fec9cdd6ed14dd19cb762291a2a756f.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md',nextStep:'Ordinary-user multi-user Telegram onboarding и изоляция остаются отдельной задачей #296 и не являются готовой возможностью beta.97–beta.99.',source:'Release beta.97 и beta.98 incident record',sourceHref:'NT-Analyzer/docs/changelog/2026-09-27-beta98-production-reload-loop-hotfix.md'},
-        {capabilityId:'onboarding',date:'4 сентября',title:'Новая регистрация',state:'ready',localTest:'passed',ownerApproval:'approved',goal:'Дать новому пользователю понятный путь от первого входа до создания профиля.',implemented:['Регистрация проходит три шага и заканчивается согласием с условиями.','Выбранное имя используется в профиле, социальной сети и SF Chat.'],ownerComment:'Утверждено владельцем 24.09.2026: дизайн и работа новой регистрации его устраивают. Решение относится именно к регистрации.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-24-timeline-owner-approval-workflow.md',source:'Запись о Local beta.96',sourceHref:'NT-Analyzer/docs/changelog/2026-09-04-beta96-visual-audit-and-first-device.md'},
-        {capabilityId:'device',date:'4–26 сентября',title:'Доверие первому устройству',state:'ready',localTest:'passed',ownerApproval:'approved',goal:'Дать человеку выбор, доверять первому устройству постоянно или до конца сессии.',implemented:['После подтверждённой регистрации первое устройство не требует второго кода.','Новый неизвестный клиент по-прежнему проходит обычное подтверждение.'],ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md',source:'Запись о Local beta.96',sourceHref:'NT-Analyzer/docs/changelog/2026-09-04-beta96-visual-audit-and-first-device.md'},
-        {capabilityId:'agentWorld',date:'14–27 сентября',title:'Agent World',state:'development',localTest:'passed',ownerApproval:'approved',goal:'Собрать рабочую среду агентов, задач и их обсуждения в AI Центре.',implemented:['Есть кандидат с агентами, задачами, проверкой результата и связью с чатом.','Цепочка отчётов сведена к Пользователь → Заместитель → команда; Витёк — технический контроллер места Заместителя, а не дополнительное звено.','Программа остаётся IN DEVELOPMENT; приёмка текущей Local-основы не переименовывает незавершённые механизмы в AVAILABLE.'],technicalQa:'✓ beta.97: 6087 PASS / 134 skipped / 0 failed, final-main CI и immutable server release выполнены. beta.98: reload-loop hotfix; beta.99: PR #299, final-main CI, immutable artifact и real Professional Canary acceptance PASS.',technicalQaHref:'NT-Analyzer/docs/changelog/2026-09-27-beta99-canary-entitlement-storage-routing.md',ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска; некритичные детали дизайна будут доработаны отдельно.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md',nextStep:'После релиза продолжить некритичные дизайн-улучшения и закрывать оставшиеся механизмы по отдельным доказательствам.',source:'Оперативный статус Agent World',sourceHref:'NT-Analyzer/docs/current/AGENT_WORLD_MASTER_STATUS.md'},
-        {capabilityId:'sharing',date:'22–26 сентября',title:'Поделиться моделями',state:'ready',localTest:'passed',ownerApproval:'approved',goal:'Позволить владельцу модели дать другому пользователю доступ к её вызову.',implemented:['В карточке модели есть переключатель «Поделиться».','Вызов проверен из отдельного личного workspace без раскрытия ключа владельца.'],ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md',source:'Local-проверка в Git',sourceHref:'https://github.com/OMNOM-111/NT-Analyzer/blob/77eda536f9909afd325ffcd2c89900c17744d4f3/NT-Analyzer/docs/changelog/2026-09-22-shared-models-local-continuation.md'},
-        {capabilityId:'previewCharts',date:'23–26 сентября',title:'Графики для тестовых аккаунтов',state:'ready',localTest:'passed',ownerApproval:'approved',goal:'Показывать живой график пользователю отдельного тестового аккаунта Preview.',implemented:['Первый экран тестового пользователя открывает график.','Доступ к графику сохраняется в пределах его одноразовой Preview-сессии.'],ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md',source:'Local-проверка в Git',sourceHref:'https://github.com/OMNOM-111/NT-Analyzer/blob/56945ac68e94cb7ffa031ef2312dec5a9ad80a54/NT-Analyzer/docs/changelog/2026-09-24-local-preview-social-followup.md'}
+        {capabilityId:'social',date:'3–27 сентября',title:'SF Social',workStatus:'in_progress',localTest:'passed',ownerApproval:'approved',stages:{development:'yes',localTest:'yes',owner:'yes',canary:'yes',production:'candidate'},goal:'Создать место для публикаций и общения пользователей StratForge.',implemented:['Сохраняются публикации и данные социальной части.','Есть страница компании; уведомления отделены от чата.','Live Canary feed API и экран SF Social открылись для отдельного non-owner пользователя.'],ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска; некритичные детали дизайна отложены.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md',nextStep:'Завершить сквозную Production-проверку функции внутри полного пакета beta.96.',source:'Запись о Local beta.95',sourceHref:'NT-Analyzer/docs/changelog/2026-09-04-beta95-unified-local-integration.md'},
+        {capabilityId:'chat',date:'3–27 сентября',title:'SF Chat',workStatus:'in_progress',localTest:'passed',ownerApproval:'approved',stages:{development:'yes',localTest:'yes',owner:'yes',canary:'yes',production:'candidate'},goal:'Создать встроенный чат StratForge для общения пользователей.',implemented:['Диалоги разложены по папкам и дням.','В beta.97 реальный owner-path SF Chat ↔ Telegram прошёл в обе стороны; тема и привязка сохранились после restart.','Stable message/request/report keys защищают историю и доставку от дублей, циклов и повторных вызовов модели.','Периодические отчёты переведены на цепочку Пользователь → Заместитель → команда; Production scheduler остаётся выключен, Local StratForge Vitek — включён до отдельного model/orchestrator cutover.'],ownerComment:'Владелец 26.09.2026 принял Local как основу выпуска, 27.09.2026 разрешил merge PR #294 и отдельно подтвердил Production promotion точного beta.97 artifact art_8fec9cdd6ed14dd19cb762291a2a756f.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md',nextStep:'Завершить полный Production-паритет пакета; ordinary-user multi-user Telegram issue #296 остаётся отдельной следующей задачей.',source:'Release beta.97 и beta.98 incident record',sourceHref:'NT-Analyzer/docs/changelog/2026-09-27-beta98-production-reload-loop-hotfix.md'},
+        {capabilityId:'onboarding',date:'4–27 сентября',title:'Новая регистрация',workStatus:'in_progress',localTest:'passed',ownerApproval:'approved',stages:{development:'yes',localTest:'yes',owner:'yes',canary:'yes',production:'candidate'},goal:'Дать новому пользователю понятный путь от первого входа до создания профиля.',implemented:['Регистрация проходит три шага и заканчивается согласием с условиями.','Выбранное имя используется в профиле, социальной сети и SF Chat.','Отдельный Canary Google-пользователь подтверждён как non-owner Professional со своим workspace, entitlement и session.'],ownerComment:'Утверждено владельцем 24.09.2026: дизайн и работа новой регистрации его устраивают. Решение относится именно к регистрации.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-24-timeline-owner-approval-workflow.md',nextStep:'Завершить Production-проверку полного пользовательского пути пакета.',source:'Запись о Local beta.96',sourceHref:'NT-Analyzer/docs/changelog/2026-09-04-beta96-visual-audit-and-first-device.md'},
+        {capabilityId:'device',date:'4–27 сентября',title:'Доверие первому устройству',workStatus:'in_progress',localTest:'passed',ownerApproval:'approved',stages:{development:'yes',localTest:'yes',owner:'yes',canary:'yes',production:'candidate'},goal:'Дать человеку выбор, доверять первому устройству постоянно или до конца сессии.',implemented:['После подтверждённой регистрации первое устройство не требует второго кода.','Новый неизвестный клиент по-прежнему проходит обычное подтверждение.','Owner и non-owner cold-start без reload-loop проверены на beta.99.'],ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md',nextStep:'Закрыть полный пакетный Production acceptance, не ослабляя device confirmation.',source:'Запись о Local beta.96',sourceHref:'NT-Analyzer/docs/changelog/2026-09-04-beta96-visual-audit-and-first-device.md'},
+        {capabilityId:'agentWorld',date:'14–27 сентября',title:'Agent World',workStatus:'in_progress',localTest:'passed',ownerApproval:'approved',stages:{development:'yes',localTest:'yes',owner:'yes',canary:'no',production:'no'},goal:'Собрать рабочую среду агентов, задач и их обсуждения в AI Центре.',implemented:['Есть Local-кандидат с агентами, задачами, проверкой результата и связью с чатом.','Цепочка отчётов сведена к Пользователь → Заместитель → команда; Витёк — технический контроллер места Заместителя, а не дополнительное звено.','Live beta.99 сообщает agent_world.enabled=false и статус IN DEVELOPMENT; функция не считается принятой на Canary/Production.'],technicalQa:'327 targeted regression tests пакета PASS на финальном SHA; live Canary выявил отключённый Agent World, поэтому полный пакетный acceptance не является PASS.',technicalQaHref:'NT-Analyzer/docs/changelog/2026-09-27-beta96-product-card-parity-and-status-contract.md',ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска; это не заменяет Canary/Production acceptance отключённой функции.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md',nextStep:'Определить и устранить причину server-disabled Agent World либо получить явное owner-решение об изменении состава пакета; затем повторить Canary.',source:'Оперативный статус Agent World',sourceHref:'NT-Analyzer/docs/current/AGENT_WORLD_MASTER_STATUS.md'},
+        {capabilityId:'sharing',date:'22–27 сентября',title:'Поделиться моделями',workStatus:'in_progress',localTest:'passed',ownerApproval:'approved',stages:{development:'yes',localTest:'yes',owner:'yes',canary:'candidate',production:'candidate'},goal:'Позволить владельцу модели дать другому пользователю доступ к её вызову.',implemented:['В карточке модели есть переключатель «Поделиться».','Вызов проверен из отдельного личного workspace без раскрытия ключа владельца.','Canary capability ai_pro_models доступна, но отдельный live shared-model invocation в пакетной приёмке не повторён.'],ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md',nextStep:'Повторить живой изолированный вызов на Canary и Production в составе полного пакета.',source:'Local-проверка в Git',sourceHref:'https://github.com/OMNOM-111/NT-Analyzer/blob/77eda536f9909afd325ffcd2c89900c17744d4f3/NT-Analyzer/docs/changelog/2026-09-22-shared-models-local-continuation.md'},
+        {capabilityId:'previewCharts',date:'23–27 сентября',title:'Графики для новых / Preview-пользователей',workStatus:'in_progress',localTest:'passed',ownerApproval:'approved',stages:{development:'yes',localTest:'yes',owner:'yes',canary:'no',production:'no'},goal:'Показывать живой график новому пользователю и отдельному тестовому аккаунту Preview.',implemented:['Первый экран тестового пользователя в Local открывает график.','Доступ к графику сохраняется в пределах его одноразовой Preview-сессии.','Live beta.99 сообщает preview_sandbox.enabled=false; серверный паритет этой части пакета не доказан.'],ownerComment:'Владелец 26.09.2026 принял текущую Local-версию как основу выпуска; это не является серверным PASS.',approvalSourceHref:'NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md',nextStep:'Восстановить или явно согласовать серверный Preview contract и повторить Canary/Production acceptance.',source:'Local-проверка в Git',sourceHref:'https://github.com/OMNOM-111/NT-Analyzer/blob/56945ac68e94cb7ffa031ef2312dec5a9ad80a54/NT-Analyzer/docs/changelog/2026-09-24-local-preview-social-followup.md'}
       ],
-      release:{sourceReady:true,artifactReady:true,canaryAccepted:true,productionLive:false,productionBaseline:true,artifactVersion:'beta.99',canaryDetail:'beta.99 exact immutable artifact принят: real non-owner Professional workspace/entitlement/session, cold-start без reload-loop и restart persistence PASS.',productionDetail:'Production остаётся на beta.97; для beta.99 требуется отдельное artifact-specific подтверждение владельца.'},
-      summary:'История сохранена одной линией: beta.96 — исходный Local feature package; beta.97 — первый server release этого пакета с SF Chat ↔ Telegram, restart-persistent topics, stable-key dedupe и новой цепочкой отчётов; beta.98 — отдельный reload-loop hotfix, который на Canary выявил issue #298. beta.99 исправил только authoritative entitlement storage routing, прошёл PR #299, final-main CI, signed immutable artifact и реальную Canary Professional acceptance. Production остаётся на beta.97; scheduler cutover приостановлен, Local StratForge Vitek — ON. Ordinary-user Telegram issue #296 остаётся отдельной следующей задачей.',
-      status:['yes','yes','yes'],statusLabels:['Development/CI beta.99','Canary beta.99 PASS','Production beta.97'],notes:['main SHA 68ba3a95; final-main CI PASS','real non-owner Professional cold-start/restart PASS','beta.97 опубликована; beta.99 ждёт отдельное подтверждение'],
-      build:'beta.96: dev-0.10.0-beta.96-56945ac68e94 · beta.97: sf-0.10.0-beta.97-4f6bb0b3a0d2-20260927T060203Z · beta.98: sf-0.10.0-beta.98-0b9233d7c898-20260927T210136Z · beta.99: sf-0.10.0-beta.99-68ba3a95f804-20260928T021954Z',commit:'beta.96 56945ac6 · beta.97 4f6bb0b3a0d20712f249afdc9c93538567fd6a8d · beta.98 0b9233d7c8983adc0a3a6c37350a3974770cb738 · beta.99 68ba3a95f804800195bb6e8dff556dd843b8eb6e',artifact:'beta.97 art_8fec9cdd6ed14dd19cb762291a2a756f (Production) · beta.98 art_b05720a1f2d44672805b45b513f0203e (historical Canary) · beta.99 art_3ae473a96bb24d439fd5cb6d3a1d1096 (Canary PASS)',source:'beta.99 Canary entitlement storage routing',sourceHref:'NT-Analyzer/docs/changelog/2026-09-27-beta99-canary-entitlement-storage-routing.md'
+      release:{sourceReady:true,artifactReady:true,technicalCanaryAccepted:true,canaryAccepted:false,productionLive:true,productProductionAccepted:false,productionBaseline:true,artifactVersion:'beta.99',canaryDetail:'Техническая beta.99 acceptance (identity/readiness/restart/non-owner cold-start) PASS, но полный пакет beta.96 PARTIAL: Agent World и Preview sandbox выключены.',productionDetail:'Тот же beta.99 artifact уже опубликован без пересборки; live/ready и owner/non-owner cold-start PASS. Product closeout остановлен до полного паритета и отдельного owner-решения.'},
+      summary:'Открытая продуктовая карточка остаётся beta.95 → beta.96. beta.97, beta.98 и beta.99 — технические итерации её доведения: server/Telegram/reporting integration, reload-loop hotfix и server entitlement storage fix. Финальный SHA содержит beta.96 по ancestry, 327 targeted regression tests PASS, но live Canary не подтверждает весь принятый Local-состав: Agent World и Preview sandbox выключены. Поэтому общий статус — In progress; Production beta.99 технически live, однако product closeout остановлен. Scheduler Production OFF, Local StratForge Vitek ON. Ordinary-user Telegram issue #296 — отдельная следующая задача.',
+      status:['yes','candidate','candidate'],statusLabels:['Development/CI линии','Canary полного пакета','Production product closeout'],notes:['beta.96 source + beta.97–99 итерации сохранены','PARTIAL: Agent World и Preview sandbox выключены','beta.99 runtime live; карточка beta.96 не закрыта'],
+      build:'beta.96: dev-0.10.0-beta.96-56945ac68e94 · beta.97: sf-0.10.0-beta.97-4f6bb0b3a0d2-20260927T060203Z · beta.98: sf-0.10.0-beta.98-0b9233d7c898-20260927T210136Z · beta.99: sf-0.10.0-beta.99-68ba3a95f804-20260928T021954Z',commit:'beta.96 56945ac6 · beta.97 4f6bb0b3a0d20712f249afdc9c93538567fd6a8d · beta.98 0b9233d7c8983adc0a3a6c37350a3974770cb738 · beta.99 68ba3a95f804800195bb6e8dff556dd843b8eb6e',artifact:'beta.97 art_8fec9cdd6ed14dd19cb762291a2a756f (historical Production) · beta.98 art_b05720a1f2d44672805b45b513f0203e (historical Canary) · beta.99 art_3ae473a96bb24d439fd5cb6d3a1d1096 (same artifact live on Canary + Production)',source:'beta.96 product-card parity and status contract',sourceHref:'NT-Analyzer/docs/changelog/2026-09-27-beta96-product-card-parity-and-status-contract.md'
     }
   ];
 
@@ -346,6 +353,24 @@
   track.style.minWidth=`${milestones.length*210+(milestones.length-1)*14+64}px`;
   const statusLabels=['Local','Canary','Production'];
   const symbols={yes:'✓',candidate:'!',no:'○',unconfirmed:'—'};
+  const workStatusMeta={
+    done:{label:'✓ Done',className:'done'},
+    in_progress:{label:'● In progress',className:'in-progress'},
+    owner_review:{label:'◉ Ready for owner review',className:'owner-review'},
+    planned:{label:'○ Planned',className:'planned'}
+  };
+  const stageKeys=['development','localTest','owner','canary','production'];
+  const assertWorkStatusContract=(entry,label) => {
+    if (!workStatusMeta[entry.workStatus]) throw new Error(`${label}: unknown workStatus`);
+    if (entry.workStatus==='done' && entry.stages && !stageKeys.every(key => entry.stages[key]==='yes')) throw new Error(`${label}: Done requires all five stages`);
+    if (entry.workStatus==='owner_review' && (!entry.ownerReview || !entry.nextStep)) throw new Error(`${label}: owner review requires checklist and next step`);
+    if (entry.workStatus==='planned' && (!entry.goal || !Array.isArray(entry.requirements) || !entry.requirements.length)) throw new Error(`${label}: Planned requires goal and requirements`);
+  };
+  milestones.filter(item => item.workStatus).forEach(item => {
+    assertWorkStatusContract(item,item.title);
+    item.batchTasks?.forEach(task => assertWorkStatusContract(task,`${item.title} / ${task.title}`));
+    if (item.workStatus==='done' && (!item.release?.canaryAccepted || !item.release?.productProductionAccepted)) throw new Error(`${item.title}: Done requires Canary and Production acceptance`);
+  });
   const cumulative=[];
   milestones.forEach((milestone,index) => {
     milestone.adds.forEach(id => { if (!cumulative.includes(id)) cumulative.push(id); });
@@ -365,6 +390,10 @@
     const use=document.createElementNS('http://www.w3.org/2000/svg','use');
     use.setAttribute('href',`#icon-${milestone.icon}`); icon.append(use); avatar.append(icon);
     titleRow.append(avatar,element('h3','',milestone.title)); card.append(titleRow);
+    if (milestone.workStatus) {
+      const meta=workStatusMeta[milestone.workStatus];
+      card.append(element('span',`work-status ${meta.className}`,meta.label));
+    }
     const chips=element('div','change-chips');
     milestone.changes.forEach(change => chips.append(element('span','',change)));
     card.append(chips);
@@ -407,9 +436,8 @@
       const required=item.batchTasks.filter(task => task.required!==false);
       const approved=required.filter(task => task.ownerApproval==='approved').length;
       const localPassed=required.filter(task => task.localTest==='passed').length;
-      readiness.textContent=approved===required.length && localPassed===required.length
-        ? 'Локальная приёмка завершена · следующий шаг — собрать и проверить единый пакет для Canary.'
-        : `Не готов к публикации · Local test ${localPassed}/${required.length} · утверждено владельцем ${approved}/${required.length}.`;
+      const currentStatus=workStatusMeta[item.workStatus];
+      readiness.textContent=`${currentStatus.label} · Local test ${localPassed}/${required.length} · утверждено владельцем ${approved}/${required.length}. Полный Canary/Production-паритет пакета не закрыт.`;
     } else fillList('drawer-cumulative',item.cumulative.map(id => featureNames[id]));
     document.getElementById('drawer-new-heading').textContent=isCurrent?'Новое в текущем пакете':'Новое в этом этапе';
     const newList=document.getElementById('drawer-new'); newList.hidden=isCurrent;
@@ -418,19 +446,22 @@
     item.batchTasks?.forEach(task => {
       const li=element('li');
       const head=element('div','batch-task-head');
-      const approvalLabel=task.ownerApproval==='approved'?'✓ Утверждено владельцем':task.state==='development'?'! Требует проверки':'○ Ждёт решения владельца';
-      head.append(element('strong','',task.title),element('span',`batch-task-state${task.ownerApproval==='approved'?' approved':task.state==='development'?' review':''}`,approvalLabel));
+      const taskStatus=workStatusMeta[task.workStatus];
+      head.append(element('strong','',task.title),element('span',`batch-task-state ${taskStatus.className}`,taskStatus.label));
       li.append(head,element('p','batch-task-label','Задача'),element('p','batch-task-copy',task.goal),element('p','batch-task-label','Что реализовано'));
       const points=element('ul','batch-task-points'); task.implemented.forEach(point => points.append(element('li','',point))); li.append(points);
       if (task.technicalQa) { const qa=element('p','batch-task-tech-qa',task.technicalQa); if (task.technicalQaHref) { const evidence=element('a','',' Протокол'); evidence.href=task.technicalQaHref; qa.append(evidence); } li.append(qa); }
+      if (task.ownerReview) li.append(element('p','batch-task-label','Что проверяет владелец'),element('p','batch-task-copy',task.ownerReview));
+      if (task.requirements?.length) { li.append(element('p','batch-task-label','Основные требования')); const requirements=element('ul','batch-task-points'); task.requirements.forEach(point => requirements.append(element('li','',point))); li.append(requirements); }
+      if (task.plannedPeriod) li.append(element('p','batch-task-label','Плановый период'),element('p','batch-task-copy',task.plannedPeriod));
       li.append(element('p','batch-task-label','Комментарий / решение владельца'));
       const comment=element('p','owner-comment',task.ownerComment);
       if (task.approvalSourceHref) { const link=element('a','',' Запись решения'); link.href=task.approvalSourceHref; comment.append(link); }
       li.append(comment);
       if (task.nextStep) li.append(element('p','batch-task-label','Следующий шаг'),element('p','batch-task-copy',task.nextStep));
       const capability=capabilities.find(entry => entry.id===task.capabilityId);
-      const ownerState=task.ownerApproval==='approved'?'yes':task.state==='development'?'candidate':'no';
-      const pipeline=[['Разработка',capability.local],['Local test',task.localTest==='passed'?'yes':'candidate'],['Владелец',ownerState],['Canary',capability.canary],['Production',capability.production]];
+      const stages=task.stages||{development:capability.local,localTest:task.localTest==='passed'?'yes':'candidate',owner:task.ownerApproval==='approved'?'yes':'candidate',canary:capability.canary,production:capability.production};
+      const pipeline=[['Development',stages.development],['Local test',stages.localTest],['Owner',stages.owner],['Canary',stages.canary],['Production',stages.production]];
       const deployment=element('div','task-deployment');
       pipeline.forEach(([label,state]) => deployment.append(element('span',state,`${symbols[state]} ${label}`)));
       li.append(deployment);
@@ -447,13 +478,13 @@
       const passed=required.filter(task => task.localTest==='passed').length;
       const approved=required.filter(task => task.ownerApproval==='approved').length;
       const steps=[
-        {label:'Source и Development/CI',state:'done',detail:'beta.96 — исходный Local package; beta.97/98 сохранены как история; beta.99 merged-main SHA 68ba3a95 и обязательный final-main CI PASS.'},
-        {label:'Development-линия',state:'done',detail:'beta.96 → beta.97 → beta.98 → beta.99 без переименования или переписывания истории.'},
+        {label:'Source и Development/CI',state:'done',detail:'beta.96 — продуктовый Local package; beta.97–99 сохранены как технические итерации. Финальный main SHA 68ba3a95 и обязательный CI PASS.'},
+        {label:'Development-линия',state:'done',detail:'beta.96 → beta.97 → beta.98 → beta.99 без переименования SHA, artifacts или переписывания истории.'},
         {label:'Local test',state:passed===required.length?'done':'partial',detail:`Пройдена проверка ${passed} из ${required.length} задач. Тесты не заменяют решение владельца.`},
         {label:'Утверждение владельцем',state:approved===required.length?'done':'partial',detail:`Лично утверждена ${approved} из ${required.length} задач.`},
         {label:'Immutable artifact beta.99',state:item.release.artifactReady?'done':'waiting',detail:item.release.artifactReady?'beta.99 artifact подтверждён release evidence.':'Для beta.99 artifact ещё не создавался.'},
-        {label:'Canary',state:item.release.canaryAccepted?'done':'partial',detail:item.release.canaryDetail},
-        {label:'Production',state:item.release.productionLive?'done':'partial',detail:item.release.productionDetail}
+        {label:'Canary полного пакета beta.96',state:item.release.canaryAccepted?'done':'partial',detail:item.release.canaryDetail},
+        {label:'Production product closeout',state:item.release.productProductionAccepted?'done':'partial',detail:item.release.productionDetail}
       ];
       steps.forEach(step => {
         const li=element('li',step.state==='done'?'':step.state);
@@ -469,7 +500,7 @@
       {key:'build',label:isCurrent?'Сборки линии':'Сборка этого этапа',hint:isCurrent?'Каждая версия имеет собственный source/build и не возникает впервые на сервере.':'Идентификатор из исторической записи; не обязательно текущая версия.',value:item.build},
       {key:'commit',label:'Код сохранён в Git',hint:'Коммит — сохранённый снимок изменений. Он не означает публикацию для пользователей.',value:item.commit},
       {key:'artifact',label:'Пакет для сервера',hint:'Единый проверяемый пакет сначала передают на Canary, затем тот же пакет — в Production.',value:item.artifact},
-      ...(isCurrent?[{key:'canary',label:'Canary',hint:'Промежуточный сервер для проверки перед публикацией.',value:item.release.canaryAccepted?'beta.99 принята по release evidence':item.release.canaryDetail},{key:'production',label:'Production',hint:'Сервер для всех пользователей после приёмки того же пакета.',value:item.release.productionLive?'beta.99 опубликована по release evidence':item.release.productionDetail}]:[]),
+      ...(isCurrent?[{key:'canary',label:'Canary',hint:'Технический runtime PASS не закрывает продуктовую карточку без полного feature parity.',value:item.release.canaryDetail},{key:'production',label:'Production',hint:'Фактический live runtime и статус product closeout показываются раздельно.',value:item.release.productionDetail}]:[]),
       {key:'source',label:'Источник подтверждения',hint:'Документ с фактами и результатами проверки этого этапа.',value:item.source}
     ];
     fields.forEach(field => {
