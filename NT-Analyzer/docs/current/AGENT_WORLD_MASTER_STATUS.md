@@ -14,7 +14,8 @@
 > PostgreSQL Agent World repository, and an additive FORCE-RLS model share /
 > encrypted BYOK / usage ledger are under test. Local NT/Desktop adapters and
 > Development test executor stay Local. No Canary or Production PASS is claimed;
-> a disposable TLS PostgreSQL gate, final-main CI, immutable artifact and live
+> the disposable TLS PostgreSQL gate passed 74/74 with two principals and a
+> non-`BYPASSRLS` app role; PR/final-main CI, immutable artifact and live
 > owner/non-owner acceptance remain mandatory.
 
 > **Local QA 2026-09-25 на активном SHA `56945ac68e94`:** 238 связанных
