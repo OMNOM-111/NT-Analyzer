@@ -359,8 +359,14 @@ def _migrate_doc(doc: Dict[str, Any]) -> tuple[Dict[str, Any], bool]:
     return doc, changed
 
 
+def _authoritative_storage() -> bool:
+    """Route Canary and Production entitlement state through PostgreSQL."""
+    from . import storage_router
+    return storage_router.production_enabled()
+
+
 def _read_doc() -> Dict[str, Any]:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         from . import storage_router
         from .production_storage import StorageError
         try:
@@ -430,7 +436,7 @@ def _read_doc() -> Dict[str, Any]:
 def _read_doc_reference() -> Dict[str, Any]:
     """Return an internal read-only cache view while the caller holds _LOCK."""
     global _DOC_CACHE_KEY, _DOC_CACHE_DOC
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         return _read_doc()
     path = _store_path()
     key = _doc_cache_key(path)
@@ -452,7 +458,7 @@ def _read_doc_reference() -> Dict[str, Any]:
 
 def _write_doc(doc: Dict[str, Any]) -> None:
     doc, _ = _migrate_doc(doc)
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         from . import storage_router
         from .production_storage import StorageError
         try:
@@ -507,7 +513,7 @@ def _write_doc(doc: Dict[str, Any]) -> None:
 
 
 def storage_status() -> Dict[str, Any]:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         from . import storage_router
         return storage_router.storage_status()
     return {
@@ -1698,7 +1704,7 @@ def _entitlement_expiry(duration_days: int) -> str:
 
 
 def _audit(event: str, **values: Any) -> None:
-    if runtime_env.is_production() and runtime_env.environment_explicit():
+    if _authoritative_storage():
         from . import storage_router
         from .production_storage import StorageError
         try:
