@@ -388,7 +388,9 @@ def test_other_environment_does_not_open_unshared_registry(world, monkeypatch):
     from app import runtime_env
     usage = {"user_id": str(world["guest"].user_uuid), "workspace_id": "ws_guest_tests"}
     assert model_sharing.registry_filter(usage) == set()
-    monkeypatch.setattr(runtime_env, "is_development", lambda: False)
+    # Simulate an explicit server contour, not only a changed compatibility
+    # predicate while the fixture still declares Development.
+    monkeypatch.setattr(runtime_env, "deployment_environment", lambda: "canary")
     assert model_sharing.registry_filter(usage) == set()
     assert model_sharing.registry_allowed("AGT-ANYTHING0001", usage) is False
 

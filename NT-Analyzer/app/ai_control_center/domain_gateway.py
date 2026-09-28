@@ -264,7 +264,9 @@ def _executor(authorized, bind, *, secrets=None):
     # Server private connections are free-only. Their authoritative usage is
     # recorded by universal_llm through sf_ai_usage_events after transmission;
     # never append the Development JSONL registry inside a release directory.
-    server = authorized["context"].scope.environment in {Environment.CANARY, Environment.PRODUCTION}
+    server = (server_gateway.environment() is not None and
+              getattr(authorized["context"].scope, "environment", None)
+              in {Environment.CANARY, Environment.PRODUCTION})
     return ModelExecutor(budget_limits=_private_limits, owner_binding=bind, secrets=secrets,
         usage_reader=(lambda **kw: []) if server else None,
         usage_writer=(lambda row: None) if server else None)
@@ -274,7 +276,8 @@ def models(authorized, repo=None):
     from .model_service import ModelService
     store = repo or repository(authorized)
     secrets = None
-    if authorized["context"].scope.environment in {Environment.CANARY, Environment.PRODUCTION}:
+    if (server_gateway.environment() is not None and
+            authorized["context"].scope.environment in {Environment.CANARY, Environment.PRODUCTION}):
         from .server_secrets import ServerSecrets
         secrets = ServerSecrets(store, authorized["context"])
     def bind(context, model, profile):
@@ -286,7 +289,8 @@ def models(authorized, repo=None):
         chat_scope=authorized["chat_scope"],
         admit=lambda context, operation, estimate: _model_admit(authorized, context, operation, estimate),
         enqueue=lambda **kw: enqueue_model(authorized, **kw),
-        executor=_executor(authorized, bind, secrets=secrets), secrets=secrets,
+        executor=(_executor(authorized, bind, secrets=secrets) if secrets is not None
+                  else _executor(authorized, bind)), secrets=secrets,
         allowed_origins=tuple(item.strip() for item in os.environ.get("STRATFORGE_AGENT_WORLD_MODEL_ORIGINS", "").split(",") if item.strip()))
     from . import automation_authority
     service.mechanism_admit = lambda **kw: automation_authority.admit(authorized, service, **kw)

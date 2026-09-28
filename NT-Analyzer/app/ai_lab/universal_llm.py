@@ -169,7 +169,7 @@ def _record_usage(row: Dict[str, Any], *, shared_grant=None) -> None:
         from ..ai_control_center import model_sharing
         grant = (getattr(registry, "shared_grant", None)
                  if registry is not agent_registry else shared_grant)
-        if not runtime_env.is_server_environment() and (registry is agent_registry or grant is not None):
+        if not (runtime_env.environment_explicit() and runtime_env.is_server_environment()) and (registry is agent_registry or grant is not None):
             model_sharing.observe(row, context, grant=grant)
     except Exception:
         pass

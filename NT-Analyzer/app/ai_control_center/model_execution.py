@@ -255,7 +255,7 @@ class ModelExecutor:
             raise ContractError("model_budget_exhausted")
         from .. import runtime_env
         usage_user_id = str(context.user_uuid)
-        if runtime_env.is_server_environment():
+        if runtime_env.environment_explicit() and runtime_env.is_server_environment():
             from .. import account_auth
             user = account_auth.find_active_user_by_uuid(usage_user_id)
             if not user:

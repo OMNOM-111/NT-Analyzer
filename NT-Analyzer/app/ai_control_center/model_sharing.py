@@ -32,6 +32,13 @@ _LOCK = threading.RLock()
 _PREVIEW_PRINCIPAL = contextvars.ContextVar("shared_preview_principal", default=None)
 
 
+def _server_storage() -> bool:
+    # The compatibility library defaults to a Production label when no
+    # deployment profile is supplied. That is not a running server and must
+    # not route isolated Development services into PostgreSQL.
+    return runtime_env.environment_explicit() and runtime_env.is_server_environment()
+
+
 @contextmanager
 def preview_principal(person):
     """Trusted Local bridge attribution; never populated from public auth JSON."""
@@ -111,7 +118,7 @@ def set_shared(*, environment: str, owner_workspace_id: str, owner_user_uuid: st
     """Only the connection's own service calls this, after checking ownership."""
     if type(shared) is not bool:
         raise ContractError("model_share_invalid")
-    if runtime_env.is_server_environment():
+    if _server_storage():
         from . import server_model_sharing
         if (context is None or context.scope.environment.value != environment
                 or context.scope.workspace_id != owner_workspace_id
@@ -144,7 +151,7 @@ def set_shared(*, environment: str, owner_workspace_id: str, owner_user_uuid: st
 
 
 def get(model_id: str, *, context=None) -> Optional[Dict[str, Any]]:
-    if runtime_env.is_server_environment():
+    if _server_storage():
         if context is None:
             raise ContractError("model_server_scope_required")
         from . import server_model_sharing
@@ -156,7 +163,7 @@ def get(model_id: str, *, context=None) -> Optional[Dict[str, Any]]:
 
 
 def history(model_id: str, *, context=None) -> List[Dict[str, Any]]:
-    if runtime_env.is_server_environment():
+    if _server_storage():
         if context is None:
             raise ContractError("model_server_scope_required")
         from . import server_model_sharing
@@ -170,7 +177,7 @@ def history(model_id: str, *, context=None) -> List[Dict[str, Any]]:
 
 def available(*, environment: str, caller_user_uuid: str, context=None) -> List[Dict[str, Any]]:
     """Connections other people currently share. Never the caller's own."""
-    if runtime_env.is_server_environment():
+    if _server_storage():
         if (context is None or context.scope.environment.value != environment
                 or str(context.user_uuid) != caller_user_uuid):
             raise ContractError("model_server_scope_required")
@@ -189,7 +196,7 @@ def require(model_id: str, *, environment: str, caller_user_uuid: str, context=N
     from ..account_lifecycle import deleted_ids
     if str(caller_user_uuid) in deleted_ids():
         raise ContractError("model_caller_deleted")
-    if runtime_env.is_server_environment():
+    if _server_storage():
         if (context is None or context.scope.environment.value != environment
                 or str(context.user_uuid) != caller_user_uuid):
             raise ContractError("model_server_scope_required")
@@ -278,11 +285,13 @@ def registry_filter(usage_context: Dict[str, Any]) -> Optional[set]:
     their existing workspace budgets and allocation untouched until the owner
     extends this there deliberately.
     """
-    if runtime_env.is_server_environment():
+    if _server_storage():
         person = caller(usage_context)
         return None if person is None or person["is_owner"] else set()
     if not runtime_env.is_development():
-        return set()
+        # Preserve the legacy library fallback when no deployment profile is
+        # explicit. A real server has already taken the branch above.
+        return None
     person = caller(usage_context)
     if person is None or person["is_owner"]:
         return None
@@ -305,7 +314,7 @@ def require_registry_access(agent_id: str, usage_context: Dict[str, Any]) -> Non
 
 def observe(row: Dict[str, Any], usage_context: Dict[str, Any], *, grant: Optional[Dict[str, Any]] = None) -> None:
     """Write one ledger row when a call ran through somebody else's connection."""
-    if runtime_env.is_server_environment():
+    if _server_storage():
         if grant is None:
             return
         from . import server_model_sharing
@@ -365,7 +374,7 @@ def _summary(rows) -> Dict[str, Any]:
 
 def owner_usage(owner_user_uuid: str, *, limit: int = 50, context=None) -> Dict[str, Any]:
     """Calls other people made through this person's connections, by model and person."""
-    if runtime_env.is_server_environment():
+    if _server_storage():
         if context is None or str(context.user_uuid) != owner_user_uuid:
             raise ContractError("model_server_scope_required")
         from . import server_model_sharing
@@ -394,7 +403,7 @@ def owner_usage(owner_user_uuid: str, *, limit: int = 50, context=None) -> Dict[
 
 def caller_usage(caller_user_uuid: str, *, context=None) -> Dict[str, Any]:
     """What this person spent through connections other people share."""
-    if runtime_env.is_server_environment():
+    if _server_storage():
         if context is None or str(context.user_uuid) != caller_user_uuid:
             raise ContractError("model_server_scope_required")
         from . import server_model_sharing
