@@ -754,12 +754,15 @@ def test_production_runner_state_is_hidden_and_not_cancellable_cross_scope(
 
 def test_production_budget_denial_prevents_provider_call(isolated_agents, monkeypatch) -> None:
     from app import ai_budgets, runtime_env
+    from app.ai_control_center import model_sharing
 
     agent = agent_registry.create_agent(azure_payload(enabled=True))
     called = []
     recorded = []
     monkeypatch.setattr(runtime_env, "is_production", lambda: True)
     monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+    # Isolate the budget gate: this fixture has no authoritative account DB.
+    monkeypatch.setattr(model_sharing, "caller", lambda usage: {"is_owner": True})
     monkeypatch.setattr(
         ai_budgets, "reserve",
         lambda *_args, **_kwargs: {"ok": False, "code": "monthly_budget_exceeded"},
@@ -777,6 +780,7 @@ def test_production_budget_denial_prevents_provider_call(isolated_agents, monkey
 
 def test_response_cache_is_workspace_scoped_in_production(isolated_agents, monkeypatch) -> None:
     from app import ai_budgets, runtime_env
+    from app.ai_control_center import model_sharing
 
     response_cache.clear()
     agent = agent_registry.create_agent(azure_payload(enabled=True))
@@ -784,6 +788,7 @@ def test_response_cache_is_workspace_scoped_in_production(isolated_agents, monke
     records = []
     monkeypatch.setattr(runtime_env, "is_production", lambda: True)
     monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+    monkeypatch.setattr(model_sharing, "caller", lambda usage: {"is_owner": True})
     monkeypatch.setattr(ai_budgets, "reserve", lambda *_args, **_kwargs: {"ok": True, "reservation_id": "air_test"})
     monkeypatch.setattr(ai_budgets, "record_usage", lambda *args, **_kwargs: records.append(args) or {"ok": True})
     monkeypatch.setattr(universal_llm, "_request_json", lambda *_a, **_k: calls.append(True) or {

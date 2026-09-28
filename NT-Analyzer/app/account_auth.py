@@ -36,6 +36,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Deque, Dict, Optional, Tuple
+from uuid import UUID
 
 from . import auth_identity, legal, qr_code, runtime_env, secure_store
 
@@ -3764,6 +3765,40 @@ def local_session_is_active(session_id: str, user_id: Any) -> bool:
         return any(_session_id(row) == sid and int(row.get("user_id") or 0) == uid
                    and not row.get("revoked") and float(row.get("expires_at") or 0) > time.time()
                    and _session_confirmation_state(row) == "active" for row in doc.get("sessions", []))
+
+
+def server_session_is_active(session_id: str, user_id: Any, user_uuid: str) -> bool:
+    """Revalidate an already authenticated server request/worker lease.
+
+    A session id is never accepted as login proof. This reads the authoritative
+    PostgreSQL mirror after the HTTP handler admitted the cookie and device.
+    Revocation, expiry, user identity and confirmation are checked afresh.
+    """
+    if not runtime_env.is_server_environment() or not runtime_env.environment_explicit():
+        return False
+    sid = str(session_id or "")
+    try:
+        uid = int(user_id)
+        identity = str(UUID(str(user_uuid)))
+    except (TypeError, ValueError, AttributeError):
+        return False
+    if not sid or len(sid) > 160 or uid <= 0:
+        return False
+    from .production_storage import Scope, StorageError
+    from .production_storage.core import PostgresClient
+    try:
+        with PostgresClient(os.environ.get("STRATFORGE_DATABASE_URL", ""), production=True).transaction(
+                Scope.global_service_scope(), read_only=True) as conn:
+            row = conn.execute("""SELECT s.document AS session_document
+                FROM sf_auth_sessions s JOIN sf_users u ON u.user_id=s.user_id
+                WHERE s.session_id=%s AND s.user_id=%s AND s.user_uuid=%s
+                  AND u.user_uuid=%s AND s.revoked=FALSE
+                  AND s.expires_at>clock_timestamp() AND u.status='active'
+                LIMIT 1""", (sid, uid, identity, identity)).fetchone()
+    except StorageError:
+        return False
+    return bool(row and isinstance(row.get("session_document"), dict)
+                and _session_confirmation_state(row["session_document"]) == "active")
 
 
 def start_nt_telegram_confirm(

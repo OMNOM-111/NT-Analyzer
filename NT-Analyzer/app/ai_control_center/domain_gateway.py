@@ -16,7 +16,7 @@ import time
 from uuid import UUID
 
 from .. import account_auth, ai_budgets, permissions, preview_sandbox, runtime_env, workspaces
-from . import live_gateway
+from . import live_gateway, server_gateway
 from .contracts import ActorKind, ActorRef, Environment, RequestContext, TenantScope
 from .flags import Flag, REGISTRY, resolve
 from . import presentation
@@ -31,7 +31,8 @@ def access(scope, *, read_only=False):
     if preview_sandbox.enabled():
         from ..preview_shared_models import authorize
         return authorize(scope, read_only=read_only)
-    if not isinstance(scope, dict) or not live_gateway.configured(str(scope.get("workspace_id") or "")):
+    if not isinstance(scope, dict) or not (live_gateway.configured(str(scope.get("workspace_id") or ""))
+                                             or server_gateway.configured(str(scope.get("workspace_id") or ""))):
         raise ContractError("agent_world_local_disabled")
     try:
         uid, identity = int(scope.get("user_id") or 0), UUID(str(scope.get("user_uuid") or ""))
@@ -43,9 +44,12 @@ def access(scope, *, read_only=False):
         raise ContractError("agent_world_identity_required")
     session_id = str(scope.get("auth_session_id") or "")
     if session_id:
-        if not account_auth.local_session_is_active(session_id, uid):
+        session_active = (account_auth.server_session_is_active(session_id, uid, str(identity))
+                          if runtime_env.is_server_environment() else
+                          account_auth.local_session_is_active(session_id, uid))
+        if not session_active:
             raise ContractError("agent_world_session_expired")
-    elif user.get("is_owner") is not True:
+    elif runtime_env.is_server_environment() or user.get("is_owner") is not True:
         raise ContractError("agent_world_confirmed_session_required")
     workspace_reader = workspaces.require_workspace_access if read_only else workspaces.require_workspace_writer
     workspace = workspace_reader(uid, workspace_id=scope["workspace_id"])
@@ -63,7 +67,9 @@ def access(scope, *, read_only=False):
                   "display_name": str(scope.get("display_name") or ""), "capabilities": perm["capabilities"]}
     if session_id:
         normalized["auth_session_id"] = session_id
-    context = RequestContext(scope=TenantScope(environment=Environment.DEVELOPMENT, workspace_id=workspace["workspace_id"]),
+    server_environment = server_gateway.environment()
+    context = RequestContext(scope=TenantScope(environment=server_environment or Environment.DEVELOPMENT,
+                                                workspace_id=workspace["workspace_id"]),
                              user_uuid=identity, actor=ActorRef(kind=ActorKind.HUMAN, actor_id=identity))
 
     def admit():
@@ -78,7 +84,8 @@ def access(scope, *, read_only=False):
     return {"context": context, "chat_scope": normalized, "admit": admit,
             "refresh": lambda **kw: access(normalized, read_only=kw.get("read_only", read_only)),
             "source_scope": {"workspace_id": workspace["workspace_id"], "user_id": uid, "allow_legacy": False},
-            "snapshot": live_gateway.flag_snapshot(context), "read_only": read_only}
+            "snapshot": (server_gateway.flag_snapshot(context) if server_environment else
+                         live_gateway.flag_snapshot(context)), "read_only": read_only}
 
 
 def refresh_authority(authorized, *, read_only=None):
@@ -127,6 +134,12 @@ def repository(authorized):
         from .sqlite_repository import SQLiteAgentWorldRepository
         return SQLiteAgentWorldRepository(preview_sandbox.isolated_root() / "agent-world.sqlite3",
                                           read_only=authorized.get("read_only", False))
+    if authorized["context"].scope.environment in {Environment.CANARY, Environment.PRODUCTION}:
+        from ..production_storage.core import PostgresClient
+        from .postgres_repository import PostgresAgentWorldRepository
+        return PostgresAgentWorldRepository(PostgresClient(
+            os.environ.get("STRATFORGE_DATABASE_URL", ""), production=True),
+            environment=authorized["context"].scope.environment, read_only=authorized.get("read_only", False))
     backend = os.environ.get("STRATFORGE_AGENT_WORLD_STORAGE", "sqlite").strip().lower()
     if backend == "postgres":
         from ..production_storage.core import PostgresClient
@@ -232,7 +245,7 @@ def enqueue_model(authorized, *, context, task_id):
         return old
 
 
-def _executor(authorized, bind):
+def _executor(authorized, bind, *, secrets=None):
     """The provider transport, or a named workspace's local test executor.
 
     A private connection cannot point at a loopback stub -- the transport
@@ -248,21 +261,32 @@ def _executor(authorized, bind):
     from . import test_executor
     if test_executor.enabled(authorized["context"].scope.workspace_id):
         return test_executor.execute
-    return ModelExecutor(budget_limits=_private_limits, owner_binding=bind)
+    # Server private connections are free-only. Their authoritative usage is
+    # recorded by universal_llm through sf_ai_usage_events after transmission;
+    # never append the Development JSONL registry inside a release directory.
+    server = authorized["context"].scope.environment in {Environment.CANARY, Environment.PRODUCTION}
+    return ModelExecutor(budget_limits=_private_limits, owner_binding=bind, secrets=secrets,
+        usage_reader=(lambda **kw: []) if server else None,
+        usage_writer=(lambda row: None) if server else None)
 
 
 def models(authorized, repo=None):
     from .model_service import ModelService
+    store = repo or repository(authorized)
+    secrets = None
+    if authorized["context"].scope.environment in {Environment.CANARY, Environment.PRODUCTION}:
+        from .server_secrets import ServerSecrets
+        secrets = ServerSecrets(store, authorized["context"])
     def bind(context, model, profile):
         if context != authorized["context"]:
             raise ContractError("model_context_required")
         return owner_binding(authorized, profile.get("existing_registry_id"))["id"]
-    service = ModelService(repo or repository(authorized),
+    service = ModelService(store,
         mechanism_authorized=authorized,
         chat_scope=authorized["chat_scope"],
         admit=lambda context, operation, estimate: _model_admit(authorized, context, operation, estimate),
         enqueue=lambda **kw: enqueue_model(authorized, **kw),
-        executor=_executor(authorized, bind),
+        executor=_executor(authorized, bind, secrets=secrets), secrets=secrets,
         allowed_origins=tuple(item.strip() for item in os.environ.get("STRATFORGE_AGENT_WORLD_MODEL_ORIGINS", "").split(",") if item.strip()))
     from . import automation_authority
     service.mechanism_admit = lambda **kw: automation_authority.admit(authorized, service, **kw)
@@ -1063,7 +1087,8 @@ def enrich_overview(authorized, base=None):
                           "since": row.get("updated_at") or row.get("created_at"),
                           "task_class_label": row.get("task_class_label")
                                               or presentation.rubric_label(row.get("task_class"))})
-    return {**base, "enabled": True, "status": "IN DEVELOPMENT", "tasks": tasks, "agents": agents,
+    server_scope = context.scope.environment in {Environment.CANARY, Environment.PRODUCTION}
+    return {**base, "enabled": True, "status": "BETA" if server_scope else "IN DEVELOPMENT", "tasks": tasks, "agents": agents,
         "outcomes": model_outcomes + [row for row in base.get("outcomes") or [] if row.get("task_id") not in folded],
         "stats": {**base.get("stats", {}), **counts, "agents": len(agents),
                   "results_total": sum(len(row.get("outcomes") or []) for row in model_rows),
@@ -1074,10 +1099,11 @@ def enrich_overview(authorized, base=None):
                       "summary": row.get("display_title", row["title"]) + " · " + row.get("display_status_label", row["status"]),
                       "status": row["status"], "display_status": row.get("display_status"),
                       "task_id": row["id"], "time": row["updated_at"]} for row in tasks[:8]],
-        "attention": attention, "scope": {"environment": "development", "workspace_id": context.scope.workspace_id, "synthetic": False},
+        "attention": attention, "scope": {"environment": context.scope.environment.value, "workspace_id": context.scope.workspace_id, "synthetic": False},
         "capabilities": {"can_run_demo": False, "can_view_models": True, "can_call_models": can_models, "can_view_system": True},
         "flags": system(authorized)["flags"],
-        "limitations": ["Локальная разработка; не Canary/Production release.",
+        "limitations": (["Серверный Agent World ограничен подтверждённой сессией и собственной рабочей областью."] if server_scope
+                        else ["Локальная разработка; не Canary/Production release."]) + [
                         "Оценки — независимые проверки конкретных результатов, не прибыльность и не общая квалификация модели. NEW до трёх разных входов.",
                         "Court не исполняет решения. Фактические режимы Router, Execution V2 и расписаний показаны в System; наличие worker не означает их включение."]}
 

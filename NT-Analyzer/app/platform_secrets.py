@@ -69,6 +69,7 @@ KNOWN_SECRETS: Dict[str, str] = {
     "NTA_TELEGRAM_BOT_TOKEN": "Telegram bot token",
     "STRATFORGE_OWNER_MARKET_GATEWAY_TOKEN": "Owner market-data gateway token",
     "STRATFORGE_CONNECTOR_RELEASE_SIGNING_KEY": "Connector release signing key",
+    "STRATFORGE_AGENT_WORLD_CREDENTIAL_KEY": "Agent World server BYOK encryption key",
 }
 
 #: Secrets without which the environment must not pretend to work.

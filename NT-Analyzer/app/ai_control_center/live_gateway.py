@@ -174,14 +174,17 @@ def from_handler(handler) -> dict:
 
 def navigation(handler) -> dict:
     enabled = False
-    if configured():
+    from . import server_gateway
+    if configured() or server_gateway.configured():
         try:
             from . import domain_gateway
             authorized = domain_gateway.from_handler(handler, read_only=True)
             enabled = resolve(Flag.AI_COMMAND_CENTER_UI, scope=authorized["context"].scope, snapshot=authorized["snapshot"]).enabled
         except (ContractError, account_auth.AccountAuthError, workspaces.WorkspaceError, permissions.PermissionError):
             pass
-    return {"enabled": enabled, "synthetic": False, "status": "IN DEVELOPMENT", "url": "/ui/ai-command-center.html"}
+    return {"enabled": enabled, "synthetic": False,
+            "status": "BETA" if enabled and server_gateway.environment() else "IN DEVELOPMENT",
+            "url": "/ui/ai-command-center.html"}
 
 
 def service_args(authorized: dict) -> dict:

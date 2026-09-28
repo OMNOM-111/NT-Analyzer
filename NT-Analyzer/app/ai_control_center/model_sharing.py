@@ -107,10 +107,19 @@ def _share(row) -> Optional[Dict[str, Any]]:
 
 def set_shared(*, environment: str, owner_workspace_id: str, owner_user_uuid: str, model_id: str,
                shared: bool, label: str, provider: str, model_key: str, credential_source: str,
-               registry_id: Optional[str] = None) -> Dict[str, Any]:
+               registry_id: Optional[str] = None, context=None) -> Dict[str, Any]:
     """Only the connection's own service calls this, after checking ownership."""
     if type(shared) is not bool:
         raise ContractError("model_share_invalid")
+    if runtime_env.is_server_environment():
+        from . import server_model_sharing
+        if (context is None or context.scope.environment.value != environment
+                or context.scope.workspace_id != owner_workspace_id
+                or str(context.user_uuid) != owner_user_uuid):
+            raise ContractError("model_share_owner_mismatch")
+        return server_model_sharing.set_shared(context, model_id=model_id, shared=shared,
+            label=label, provider=provider, model_key=model_key,
+            credential_source=credential_source, registry_id=registry_id)
     with _db() as db:
         current = _share(db.execute("SELECT * FROM shares WHERE model_id = ?", (model_id,)).fetchone())
         if current is not None and (current["owner_user_uuid"] != owner_user_uuid
@@ -134,14 +143,24 @@ def set_shared(*, environment: str, owner_workspace_id: str, owner_user_uuid: st
         return _share(db.execute("SELECT * FROM shares WHERE model_id = ?", (model_id,)).fetchone())
 
 
-def get(model_id: str) -> Optional[Dict[str, Any]]:
+def get(model_id: str, *, context=None) -> Optional[Dict[str, Any]]:
+    if runtime_env.is_server_environment():
+        if context is None:
+            raise ContractError("model_server_scope_required")
+        from . import server_model_sharing
+        return server_model_sharing.get(context, model_id)
     with _db(create=False) as db:
         if db is None:
             return None
         return _share(db.execute("SELECT * FROM shares WHERE model_id = ?", (str(model_id),)).fetchone())
 
 
-def history(model_id: str) -> List[Dict[str, Any]]:
+def history(model_id: str, *, context=None) -> List[Dict[str, Any]]:
+    if runtime_env.is_server_environment():
+        if context is None:
+            raise ContractError("model_server_scope_required")
+        from . import server_model_sharing
+        return server_model_sharing.history(context, model_id)
     with _db(create=False) as db:
         if db is None:
             return []
@@ -149,8 +168,14 @@ def history(model_id: str) -> List[Dict[str, Any]]:
             "SELECT shared, at FROM share_events WHERE model_id = ? ORDER BY id", (str(model_id),))]
 
 
-def available(*, environment: str, caller_user_uuid: str) -> List[Dict[str, Any]]:
+def available(*, environment: str, caller_user_uuid: str, context=None) -> List[Dict[str, Any]]:
     """Connections other people currently share. Never the caller's own."""
+    if runtime_env.is_server_environment():
+        if (context is None or context.scope.environment.value != environment
+                or str(context.user_uuid) != caller_user_uuid):
+            raise ContractError("model_server_scope_required")
+        from . import server_model_sharing
+        return server_model_sharing.available(context)
     with _db(create=False) as db:
         if db is None:
             return []
@@ -159,11 +184,17 @@ def available(*, environment: str, caller_user_uuid: str) -> List[Dict[str, Any]
                ORDER BY label, model_id""", (environment, str(caller_user_uuid)))]
 
 
-def require(model_id: str, *, environment: str, caller_user_uuid: str) -> Dict[str, Any]:
+def require(model_id: str, *, environment: str, caller_user_uuid: str, context=None) -> Dict[str, Any]:
     """The live grant for one call. Checked again right before transmission."""
     from ..account_lifecycle import deleted_ids
     if str(caller_user_uuid) in deleted_ids():
         raise ContractError("model_caller_deleted")
+    if runtime_env.is_server_environment():
+        if (context is None or context.scope.environment.value != environment
+                or str(context.user_uuid) != caller_user_uuid):
+            raise ContractError("model_server_scope_required")
+        from . import server_model_sharing
+        return server_model_sharing.require(context, model_id)
     share = get(model_id)
     if share is None or share["environment"] != environment or share["owner_user_uuid"] == str(caller_user_uuid):
         raise ContractError("model_share_not_found")
@@ -175,13 +206,14 @@ def require(model_id: str, *, environment: str, caller_user_uuid: str) -> Dict[s
 class Grant:
     """What an executor receives for a shared call: a revocable right, no key."""
 
-    def __init__(self, share: Dict[str, Any], *, caller_user_uuid: str):
+    def __init__(self, share: Dict[str, Any], *, caller_user_uuid: str, context=None):
         self.share = dict(share)
         self.caller_user_uuid = str(caller_user_uuid)
+        self.context = context
 
     def check(self) -> Dict[str, Any]:
         current = require(self.share["model_id"], environment=self.share["environment"],
-                          caller_user_uuid=self.caller_user_uuid)
+                          caller_user_uuid=self.caller_user_uuid, context=self.context)
         if current["owner_user_uuid"] != self.share["owner_user_uuid"]:
             raise ContractError("model_share_revoked")
         return current
@@ -193,6 +225,8 @@ def registry_share(registry_id: str) -> Optional[Dict[str, Any]]:
     """The active share of the owner connection bound to one registry model."""
     if not registry_id:
         return None
+    if runtime_env.is_server_environment():
+        return None
     with _db(create=False) as db:
         if db is None:
             return None
@@ -203,6 +237,8 @@ def registry_share(registry_id: str) -> Optional[Dict[str, Any]]:
 
 
 def shared_registry_ids() -> set:
+    if runtime_env.is_server_environment():
+        return set()
     with _db(create=False) as db:
         if db is None:
             return set()
@@ -242,8 +278,11 @@ def registry_filter(usage_context: Dict[str, Any]) -> Optional[set]:
     their existing workspace budgets and allocation untouched until the owner
     extends this there deliberately.
     """
+    if runtime_env.is_server_environment():
+        person = caller(usage_context)
+        return None if person is None or person["is_owner"] else set()
     if not runtime_env.is_development():
-        return None
+        return set()
     person = caller(usage_context)
     if person is None or person["is_owner"]:
         return None
@@ -266,6 +305,21 @@ def require_registry_access(agent_id: str, usage_context: Dict[str, Any]) -> Non
 
 def observe(row: Dict[str, Any], usage_context: Dict[str, Any], *, grant: Optional[Dict[str, Any]] = None) -> None:
     """Write one ledger row when a call ran through somebody else's connection."""
+    if runtime_env.is_server_environment():
+        if grant is None:
+            return
+        from . import server_model_sharing
+        from .contracts import ActorKind, ActorRef, Environment, RequestContext, TenantScope
+        from uuid import UUID
+        person = caller(usage_context)
+        if person is None or person.get("invalid"):
+            raise ContractError("model_caller_invalid")
+        identity = UUID(person["user_uuid"])
+        context = RequestContext(scope=TenantScope(environment=Environment(runtime_env.deployment_environment()),
+            workspace_id=str(usage_context.get("workspace_id") or "")), user_uuid=identity,
+            actor=ActorRef(kind=ActorKind.HUMAN, actor_id=identity))
+        server_model_sharing.observe(context, row, usage_context, grant)
+        return
     if not runtime_env.is_development():
         return
     person = caller(usage_context)
@@ -309,12 +363,18 @@ def _summary(rows) -> Dict[str, Any]:
             "last_at": max((row["at"] for row in rows), default=None)}
 
 
-def owner_usage(owner_user_uuid: str, *, limit: int = 50) -> Dict[str, Any]:
+def owner_usage(owner_user_uuid: str, *, limit: int = 50, context=None) -> Dict[str, Any]:
     """Calls other people made through this person's connections, by model and person."""
-    with _db(create=False) as db:
-        rows = [dict(row) for row in (db.execute(
-            "SELECT * FROM calls WHERE owner_user_uuid = ? AND caller_user_uuid != ? ORDER BY at DESC",
-            (str(owner_user_uuid), str(owner_user_uuid))) if db is not None else [])]
+    if runtime_env.is_server_environment():
+        if context is None or str(context.user_uuid) != owner_user_uuid:
+            raise ContractError("model_server_scope_required")
+        from . import server_model_sharing
+        rows = server_model_sharing.calls(context, as_owner=True)
+    else:
+        with _db(create=False) as db:
+            rows = [dict(row) for row in (db.execute(
+                "SELECT * FROM calls WHERE owner_user_uuid = ? AND caller_user_uuid != ? ORDER BY at DESC",
+                (str(owner_user_uuid), str(owner_user_uuid))) if db is not None else [])]
     groups: Dict[tuple, List[Dict[str, Any]]] = {}
     from ..account_lifecycle import deleted_ids, active_preview_identities
     deleted = deleted_ids()
@@ -332,12 +392,18 @@ def owner_usage(owner_user_uuid: str, *, limit: int = 50) -> Dict[str, Any]:
     return {"total": _summary(rows), "by_caller": by_caller, "recent": recent}
 
 
-def caller_usage(caller_user_uuid: str) -> Dict[str, Any]:
+def caller_usage(caller_user_uuid: str, *, context=None) -> Dict[str, Any]:
     """What this person spent through connections other people share."""
-    with _db(create=False) as db:
-        rows = [dict(row) for row in (db.execute(
-            "SELECT * FROM calls WHERE caller_user_uuid = ? AND owner_user_uuid != ? ORDER BY at DESC",
-            (str(caller_user_uuid), str(caller_user_uuid))) if db is not None else [])]
+    if runtime_env.is_server_environment():
+        if context is None or str(context.user_uuid) != caller_user_uuid:
+            raise ContractError("model_server_scope_required")
+        from . import server_model_sharing
+        rows = server_model_sharing.calls(context, as_owner=False)
+    else:
+        with _db(create=False) as db:
+            rows = [dict(row) for row in (db.execute(
+                "SELECT * FROM calls WHERE caller_user_uuid = ? AND owner_user_uuid != ? ORDER BY at DESC",
+                (str(caller_user_uuid), str(caller_user_uuid))) if db is not None else [])]
     groups: Dict[str, List[Dict[str, Any]]] = {}
     for row in rows:
         groups.setdefault(row["model_id"], []).append(row)

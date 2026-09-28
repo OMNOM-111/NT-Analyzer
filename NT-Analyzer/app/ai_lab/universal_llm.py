@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import agent_registry, llm_timeouts, response_cache
+from .. import runtime_env
 
 
 _REGISTRY_CONTEXT: contextvars.ContextVar[Any] = contextvars.ContextVar(
@@ -168,7 +169,7 @@ def _record_usage(row: Dict[str, Any], *, shared_grant=None) -> None:
         from ..ai_control_center import model_sharing
         grant = (getattr(registry, "shared_grant", None)
                  if registry is not agent_registry else shared_grant)
-        if registry is agent_registry or grant is not None:
+        if not runtime_env.is_server_environment() and (registry is agent_registry or grant is not None):
             model_sharing.observe(row, context, grant=grant)
     except Exception:
         pass
@@ -210,7 +211,7 @@ def _production_budget_scope() -> Optional[Dict[str, Any]]:
     from .. import runtime_env
     from ..production_storage import Scope
 
-    if not (runtime_env.is_production() and runtime_env.environment_explicit()):
+    if not ((runtime_env.is_production() or runtime_env.is_canary()) and runtime_env.environment_explicit()):
         return None
     context = dict(_USAGE_CONTEXT.get() or {})
     workspace_id = str(context.get("workspace_id") or "").strip()

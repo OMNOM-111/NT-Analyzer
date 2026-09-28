@@ -15,7 +15,8 @@ def _error(handler, exc):
 
 def _base_overview(authorized):
     scope = authorized["chat_scope"]
-    if scope.get("is_owner") and scope.get("uses_owner_runtime") and scope.get("membership_role") == "owner":
+    if (gateway.configured(str(scope.get("workspace_id") or "")) and scope.get("is_owner")
+            and scope.get("uses_owner_runtime") and scope.get("membership_role") == "owner"):
         return gateway.overview(gateway.access(scope))
     return {}
 
@@ -29,7 +30,8 @@ def _task_detail(authorized, identity):
             if str(exc) not in {"model_record_not_found", "model_task_not_found"}:
                 raise
     scope = authorized["chat_scope"]
-    if not scope.get("is_owner") or not scope.get("uses_owner_runtime"):
+    if (not gateway.configured(str(scope.get("workspace_id") or ""))
+            or not scope.get("is_owner") or not scope.get("uses_owner_runtime")):
         return None
     owner = gateway.access(scope)
     detail = LiveBacktestService().task_detail(**gateway.service_args(owner), entity_id=UUID(identity))

@@ -383,14 +383,14 @@ def test_a_registry_call_by_somebody_else_is_written_to_the_owners_ledger(world)
     assert usage["recent"][0]["task"] == "thread-1" and usage["recent"][0]["agent"] == "orchestrator"
 
 
-def test_the_rule_applies_to_local_development_only_for_now(world, monkeypatch):
-    """Canary and Production keep their existing budgets and allocation untouched."""
+def test_other_environment_does_not_open_unshared_registry(world, monkeypatch):
+    """No non-owner fallback to the global registry outside Development."""
     from app import runtime_env
     usage = {"user_id": str(world["guest"].user_uuid), "workspace_id": "ws_guest_tests"}
     assert model_sharing.registry_filter(usage) == set()
     monkeypatch.setattr(runtime_env, "is_development", lambda: False)
-    assert model_sharing.registry_filter(usage) is None
-    assert model_sharing.registry_allowed("AGT-ANYTHING0001", usage) is True
+    assert model_sharing.registry_filter(usage) == set()
+    assert model_sharing.registry_allowed("AGT-ANYTHING0001", usage) is False
 
 
 def test_only_the_owner_of_a_connection_can_switch_it(world):
