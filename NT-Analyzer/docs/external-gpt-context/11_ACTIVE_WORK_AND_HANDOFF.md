@@ -1,9 +1,9 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-27T22:12:09Z
+- Last verified UTC: 2026-09-28T02:37:24Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Scope: beta.97 Production baseline, beta.98 blocked Canary acceptance, beta.99 entitlement-storage correction and multi-user Telegram blocker
+- Scope: beta.97 Production baseline, beta.98 reload-loop history, beta.99 Canary PASS and multi-user Telegram blocker
 - Status: PARTIAL
 - Current Production version/build/artifact when known: `0.10.0-beta.97` / `sf-0.10.0-beta.97-4f6bb0b3a0d2-20260927T060203Z` / `art_8fec9cdd6ed14dd19cb762291a2a756f`; runtime artifact SHA256 `B5FC667474ED38CD5AA3600F22E4DD97495958DCC906BCEAD1CA80CF2838F9D2`
 
@@ -13,8 +13,8 @@ separate reload-loop hotfix. Do not rename or collapse these versions. The
 [chronology record](../changelog/2026-09-27-beta96-beta98-timeline-reconciliation.md)
 contains exact identities and owner approvals.
 
-Urgent incident: **PRODUCTION CLOSEOUT BLOCKED; BETA.98 CANARY ACCEPTANCE
-BLOCKED BY ISSUE #298**. Live CDP proved a genuine
+Current release gate: **BETA.99 CANARY PASS; PRODUCTION REQUIRES A SEPARATE
+ARTIFACT-SPECIFIC OWNER APPROVAL**. Live CDP originally proved a genuine
 script-initiated full-page reload, not an auth/device/redirect/polling/exception
 loop. `ui.js` emitted `nt-account-change(detail:null)` on every cold offline
 account read; the overview listener called `location.reload()`. Blast radius is
@@ -22,12 +22,12 @@ owner and ordinary Professional overview sessions with graded
 `confirmed_live=false`. beta.92 has the same latent trigger, so rollback was not
 used. beta.98 makes the null event transition-only. PR #295 merged as
 `0b9233d7c8983adc0a3a6c37350a3974770cb738`; final-main CI `36346357025` PASS;
-signed artifact `art_b05720a1f2d44672805b45b513f0203e` is deployed on Canary.
+signed artifact `art_b05720a1f2d44672805b45b513f0203e` was deployed on Canary.
 Identity/readiness, restart and owner offline cold-start PASS. Real separate
 Professional registration then failed before cold-start: Canary subscriptions
 fell through to Windows DPAPI, leaving an active non-owner user with
 `initial_trial_pending=true` but no workspace, entitlement or session. Canary
-acceptance is BLOCKED; Production has not been approved. [Incident
+acceptance for beta.98 was BLOCKED; Production was not approved. [Incident
 record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md) and
 [storage blocker](../changelog/2026-09-27-canary-professional-registration-storage-blocker.md).
 
@@ -66,22 +66,34 @@ did not exclude competing outbound senders. No messages, reports, keys, models o
 registries were deleted. Canonical details:
 [beta.97 Telegram/report candidate](../changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md).
 
-Those beta.97 build and promotion gates completed, but final Production
-acceptance did not: the reload incident and multi-user Telegram architecture gap
-keep **STAGE NOT CLOSED**. The completed beta.98 gates are PR merge,
-merged-main CI, signed artifact, Canary deployment, restart and owner cold-start.
-The next required application action is a new source/version cycle for issue
-#298; real separate Professional cold-start and artifact-specific Production
-approval remain blocked behind it. Do not seed the missing workspace/entitlement
-manually or mutate the beta.98 artifact.
+Those beta.97 build and promotion gates completed, but the later reload incident
+required a forward-only hotfix cycle. beta.98 completed PR merge, merged-main CI,
+signed artifact, Canary deployment, restart and owner cold-start, then correctly
+stopped on issue #298. No data was seeded manually and beta.98 was not mutated.
 
-beta.99 Development implements only that required storage boundary correction:
+beta.99 implements only the required storage boundary correction:
 subscription document read/reference/write, status and audit delegate to the
 existing authoritative server predicate used by account/workspace storage.
-Development DPAPI remains unchanged and fail-closed. Source checkpoint is
-`c68b19f9fa0c3161b31f42cb994db49f2f00faa3`; focused affected tests are 37
-PASS. PR CI, merge, final-main CI, immutable artifact and Canary rerun are still
-required. [beta.99 record](../changelog/2026-09-27-beta99-canary-entitlement-storage-routing.md).
+Development DPAPI remains unchanged and fail-closed. Source checkpoint
+`c68b19f9fa0c3161b31f42cb994db49f2f00faa3` merged through PR #299 as final
+`main` SHA `68ba3a95f804800195bb6e8dff556dd843b8eb6e`; mandatory final-main CI
+run `36365092457` PASS. The signed immutable artifact
+`art_3ae473a96bb24d439fd5cb6d3a1d1096` (archive
+`BD6FDEC99112154E9B0B4FBA26A2F1E257399D9B8FC15BC4500E1BD65AEBDC43`,
+runtime/manifest
+`081C9A99480C49BFBC13C29EA061E994B8310FB6A82EE431B31A38661952A2FB`)
+is accepted on Canary. A real separate Google Professional identity is non-owner,
+has its own personal workspace, active entitlement and session; cache-disabled
+cold start and post-service-restart checks each showed one expected navigation,
+zero runtime exceptions and no reload loop. Candidate
+`rc_dd6b884b2bfe4f7dace6c76bb6cbf12c` is `canary_passed`.
+[beta.99 record](../changelog/2026-09-27-beta99-canary-entitlement-storage-routing.md).
+
+Next release action: obtain explicit owner approval for that exact beta.99
+artifact, then promote the same artifact without rebuild and perform Production
+smoke. Until then Production remains beta.97, Production report schedulers stay
+OFF and Local `StratForge Vitek` stays ON. Do not delete the Canary test account
+without action-time confirmation.
 
 Checkpoint `f455043f`, draft PR #294: full Local regression **6087 passed / 134
 skipped / 0 failed** in 1:07:38. The exact 650-file pre-release bundle, context

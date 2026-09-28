@@ -1,7 +1,7 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-09-27T22:12:09Z
+- Last verified UTC: 2026-09-28T02:37:24Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Current deployed artifact Git SHA: `4f6bb0b3a0d20712f249afdc9c93538567fd6a8d`
 - Scope: Environment isolation, immutable release, promotion and rollback
@@ -13,7 +13,10 @@ confirmed authenticated overview full-page reload loop when runtime accounts are
 already offline/unconfirmed. beta.92 contains the same trigger and is not a
 reliable rollback for this state. The minimal code correction is a new beta.98
 cycle; no server hotfix or artifact mutation is allowed. beta.98 is now deployed
-to Canary from its own final main SHA and signed artifact. Production reports
+to Canary from its own final main SHA and signed artifact. beta.98 then exposed
+issue #298 in real Professional registration. beta.99 is the separate narrow
+storage-routing cycle and has now passed Canary on its own final main SHA and
+immutable artifact. Production reports
 stay OFF and Local `StratForge Vitek` stays ON. See the
 [incident record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md).
 
@@ -78,25 +81,24 @@ summary, source SHA and final verification PASS are present.
 The Environment Switcher opens the selected origin and never carries session
 or browser storage between origins.
 
-## Current environments: beta.98 Canary / beta.97 Production
+## Current environments: beta.99 Canary PASS / beta.97 Production
 
-Canary now points to the signed beta.98 hotfix artifact. Identity/readiness,
-restart persistence and owner offline cold-start passed. Real separate
-Professional registration failed before cold-start: issue #298 shows Canary
-subscription storage falling through to Windows DPAPI, leaving a pending
-non-owner account without workspace, entitlement or session. Canary acceptance
-is BLOCKED. Production remains on beta.97 and has no beta.98 approval.
+Canary now points to the signed beta.99 artifact built from the exact final
+`main` SHA. Identity/readiness, a verified pre-deploy backup, real separate
+non-owner Professional registration, personal workspace, entitlement, session,
+cache-disabled cold start without reload-loop and restart persistence all PASS.
+Production remains on beta.97; beta.99 has no Production approval.
 
-| Field | beta.98 Canary |
+| Field | beta.99 Canary |
 | --- | --- |
-| Version / source SHA | `0.10.0-beta.98` / `0b9233d7c8983adc0a3a6c37350a3974770cb738` |
-| Candidate / artifact | `rc_8b8b51c156f844ce9829edeceb70e484` / `art_b05720a1f2d44672805b45b513f0203e` |
-| Build ID | `sf-0.10.0-beta.98-0b9233d7c898-20260927T210136Z` |
-| Archive SHA256 | `FEC858A913F5B90455ED34E10071204859D2CB2CC64EC1E0BC8024FD50CB5029` |
-| Manifest SHA256 | `F0E48884C3933E487349C8AB3673989FC5FEF180B85B72F7A507EE7EAA312D43` |
-| Release dir | server data-root relative `releases/0.10.0-beta.98-0b9233d7c898` |
-| Backup | server data-root relative `backups/pre-beta98-canary-peer-20260927T210222Z` |
-| Stage | Canary deployed; Professional acceptance BLOCKED by issue #298; Production not authorized |
+| Version / source SHA | `0.10.0-beta.99` / `68ba3a95f804800195bb6e8dff556dd843b8eb6e` |
+| Candidate / artifact | `rc_dd6b884b2bfe4f7dace6c76bb6cbf12c` / `art_3ae473a96bb24d439fd5cb6d3a1d1096` |
+| Build ID | `sf-0.10.0-beta.99-68ba3a95f804-20260928T021954Z` |
+| Archive SHA256 | `BD6FDEC99112154E9B0B4FBA26A2F1E257399D9B8FC15BC4500E1BD65AEBDC43` |
+| Manifest SHA256 | `081C9A99480C49BFBC13C29EA061E994B8310FB6A82EE431B31A38661952A2FB` |
+| Release dir | server data-root relative `releases/0.10.0-beta.99-68ba3a95f804` |
+| Backup | server data-root relative `backups/pre-beta99-canary-peer-20260928T022038Z` |
+| Stage | Canary PASS; Production not authorized |
 
 Production beta.97 identity remains:
 
@@ -109,15 +111,16 @@ Production beta.97 identity remains:
 | Manifest SHA256 | `B5FC667474ED38CD5AA3600F22E4DD97495958DCC906BCEAD1CA80CF2838F9D2` |
 | Previous / rollback | beta.92 / `0.10.0-beta.92-9d800770d08e` (preserved; same latent reload trigger) |
 
-## beta.99 Development only
+## beta.99 release progress
 
-Issue #298 has a narrow Development correction: subscriptions now use the same
+Issue #298 has a narrow correction: subscriptions now use the same
 authoritative server-storage predicate as accounts/workspaces for explicit
 Canary and Production, while Development retains DPAPI and its fail-closed
-behavior. Source checkpoint is `c68b19f9fa0c3161b31f42cb994db49f2f00faa3`;
-focused affected regression is 37 PASS. There is no beta.99 artifact, Canary
-deploy or Production approval; beta.98 and beta.97 runtime identities above are
-unchanged.
+behavior. Source checkpoint `c68b19f9fa0c3161b31f42cb994db49f2f00faa3`
+merged through PR #299 as `68ba3a95f804800195bb6e8dff556dd843b8eb6e`;
+focused affected regression is 37 PASS and final-main CI run `36365092457`
+passed. One signed immutable beta.99 artifact is accepted on Canary. Production
+approval and promotion remain open; beta.97 Production is unchanged.
 
 Sources: [beta.98 incident record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md),
 [beta.97 candidate record](../changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md).
