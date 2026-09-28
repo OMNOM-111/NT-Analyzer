@@ -105,14 +105,22 @@ runtime/config checksums before deployment. Production was not promoted.
 | Deployment / health / migration | `dep_7cb0afa2c3ee48d9b0c3956bc8dbb15f`; `/live` and `/ready` PASS; migration max 24 |
 | Stage | `canary_checking`; full owner + non-owner parity **NOT YET PASS**; Production beta.99 |
 
-The server Agent World workspace opt-in and BYOK master key remain fail-closed
-until separately configured after the verified backup. No beta.100 owner or
-non-owner live invocation has been claimed. Production periodic delivery is OFF
+The server Agent World workspace opt-in is now ON only for the confirmed owner
+and real separate Google Professional workspaces. A new Canary-only
+infrastructure encryption key is in the protected platform-secret store;
+no provider BYOK key was copied from Local or included in the artifact. The
+first configuration attempt was safely reverted because server-to-public-origin
+readiness returned 403 while external and correctly headed loopback readiness
+were 200; the operational check was corrected and the gate then applied without
+changing the artifact. The real non-owner Chrome session is blocked by its
+expired five-hour trial pending a legitimate Canary-only Professional grant.
+No beta.100 owner or non-owner live model invocation has been claimed, and
+full Canary acceptance remains PARTIAL. Production periodic delivery is OFF
 and Local `StratForge Vitek` remains ON.
 
 ### Previous beta.99 technical runtime PASS
 
-Canary and Production now point to the same signed beta.99 technical artifact
+At the previous beta.99 checkpoint, Canary and Production pointed to the same signed beta.99 technical artifact
 built from the exact final `main` SHA. Canary identity/readiness, verified
 backup, real separate non-owner Professional registration, personal workspace,
 entitlement, session, cache-disabled cold start and restart persistence PASS.
