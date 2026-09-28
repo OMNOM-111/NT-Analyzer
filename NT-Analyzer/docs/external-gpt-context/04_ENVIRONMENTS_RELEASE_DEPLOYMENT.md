@@ -1,11 +1,28 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-09-28T03:06:00Z
+- Last verified UTC: 2026-09-28T23:06:14Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Current deployed source SHA: Canary `7b66bcb6abd486891870b0419afd93f8828dbb85`; Production `68ba3a95f804800195bb6e8dff556dd843b8eb6e`
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: PARTIAL
+
+Current checkpoint superseding historical sections below: Canary runs the signed
+`0.10.0-beta.100` artifact `art_de49135714cf48b6aace2a977fad334f`
+from source `7b66bcb6abd486891870b0419afd93f8828dbb85`, build
+`sf-0.10.0-beta.100-7b66bcb6abd4-20260928T210349Z`, archive SHA256
+`2CCB46F376C4A6445295D7221BB753B959F08FBE1970065996AF7460C6CB4DB1`,
+runtime/manifest SHA256
+`5FFE722FD86DE9892E7C150287C63CC3C8D3388DADD61AF3BA756C0A446812FF`.
+`/live`, `/ready` and migration 0024 passed; `canary-previous` is beta.99 and
+verified pre-change backup is `backups/pre-beta100-canary-peer-20260928T210636Z`.
+The separate Google user's owner-UI Pro grant is active, but shared owner models
+are absent on Canary and no accepted secure Local DPAPI-to-server-vault migration
+exists in this artifact. Canary acceptance remains PARTIAL, not `canary_passed`.
+Production remains beta.99, artifact `art_3ae473a96bb24d439fd5cb6d3a1d1096`,
+source `68ba3a95f804800195bb6e8dff556dd843b8eb6e`; no beta.100 promotion
+or report-scheduler cutover occurred. See the
+[beta.100 release record](../changelog/2026-09-28-beta100-server-parity-release.md).
 
 Production incident 2026-09-27: beta.97 was promoted as immutable artifact
 `art_8fec9cdd6ed14dd19cb762291a2a756f`, but final closeout is blocked by a
