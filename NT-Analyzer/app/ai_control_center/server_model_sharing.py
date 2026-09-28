@@ -73,6 +73,13 @@ def set_shared(context, *, model_id, shared, label, provider, model_key, credent
     if type(shared) is not bool or credential_source != "user_supplied" or registry_id is not None:
         raise ContractError("model_share_invalid")
     identity = UUID(str(model_id))
+    # A shared descriptor is visible cross-workspace for invocation, but never
+    # writable there. Check it before SELECT FOR UPDATE: PostgreSQL combines
+    # SELECT and UPDATE RLS for that query and otherwise hides the foreign row.
+    visible = get(context, identity)
+    if visible is not None and (visible["owner_user_uuid"] != str(context.user_uuid)
+                                or visible["owner_workspace_id"] != context.scope.workspace_id):
+        raise ContractError("model_share_owner_mismatch")
     with _db(context, write=True) as conn:
         current = conn.execute("""SELECT * FROM sf_aw_model_shares WHERE environment=%s AND model_id=%s
             FOR UPDATE""", (context.scope.environment.value, identity)).fetchone()

@@ -416,9 +416,10 @@ def test_sql_payload_identity_binding_rejects_mismatched_or_missing_header(repo,
 
 
 def test_existing_worker_leases_remain_outside_agent_world_storage(repo):
+    from app.ai_control_center.server_model_sharing import _TABLES as model_tables
     with raw(repo.client, read_only=True) as conn:
         names = {row["relname"] for row in conn.execute("SELECT relname FROM pg_class WHERE relname LIKE 'sf_aw_%%' AND relkind='r'").fetchall()}
-    assert names == set(_TABLES)
+    assert names == set(_TABLES) | set(model_tables)
     assert not any("lease" in name or "job" in name for name in names)
     assert not hasattr(repo, "enqueue") and not hasattr(repo, "claim")
     # Atomic commits/inbox are domain effects. The existing worker job/lease
