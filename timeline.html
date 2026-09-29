@@ -478,7 +478,7 @@
       const passed=required.filter(task => task.localTest==='passed').length;
       const approved=required.filter(task => task.ownerApproval==='approved').length;
       const steps=[
-        {label:'Source и Development/CI',state:'partial',detail:'beta.96 — принятый Local package; beta.97–beta.100 сохранены как технические итерации. beta.101 разрабатывается; её source SHA и CI ещё не зафиксированы.'},
+        {label:'Source и Development/CI',state:'partial',detail:'beta.96 — принятый Local package; beta.97–beta.100 сохранены как технические итерации. beta.101 implementation commit 842d22a1, PR #303; обязательный CI на итоговом main SHA ещё не проходил.'},
         {label:'Development-линия',state:'partial',detail:'beta.96 → beta.97 → beta.98 → beta.99 → beta.100 → beta.101 Development без переименования прежних SHA и artifacts.'},
         {label:'Local test',state:passed===required.length?'done':'partial',detail:`Пройдена проверка ${passed} из ${required.length} задач. Тесты не заменяют решение владельца.`},
         {label:'Утверждение владельцем',state:approved===required.length?'done':'partial',detail:`Лично утверждена ${approved} из ${required.length} задач.`},
