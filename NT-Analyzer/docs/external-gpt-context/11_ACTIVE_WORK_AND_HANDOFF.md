@@ -1,13 +1,16 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-29T06:38:21Z
+- Last verified UTC: 2026-09-29T13:09:38Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Scope: open `0.10.0-beta.101` product card; beta.101 deployed to Canary with acceptance in progress, beta.100 historical PARTIAL and beta.99 Production
+- Current Canary source SHA: 58fbb23d1551e267dd7fe622c2414580820f3f8c; beta.102 Development branch is not yet a server artifact
+- Scope: one open Local beta.95 → beta.96 product card; beta.101 immutable Canary PARTIAL, beta.102 Development projection fix, beta.99 Production
 - Status: PARTIAL
 - Current Production version/build/artifact when known: `0.10.0-beta.99` / `sf-0.10.0-beta.99-68ba3a95f804-20260928T021954Z` / `art_3ae473a96bb24d439fd5cb6d3a1d1096`
 
 ## Current beta.101 Canary handoff (2026-09-29; supersedes older checkpoints below)
+
+New owner UI finding: all five imported `ProviderAccount → Model` connections have server-decryptable keys; the separate owner Lab registry is empty, so the AI Center incorrectly rendered “Мои модели” empty and classified them as additional. All four active connections passed real provider tests with persisted cost and `provider_verified`; an ordinary DeepSeek invocation also succeeded. The fifth GLM record is retired and intentionally non-callable. No key re-entry or duplicate connection. The owner's empty inbound-shared list is expected; two outbound Gemini shares remain. Technical beta.102 is the narrow Development UI projection fix plus regression, not a rebuilt beta.101. Do not claim full Canary PASS; non-owner shared invocation, owner browser test and remaining server-parity checks are pending. [Current diagnosis and exact mapping](../changelog/2026-09-29-beta102-migrated-model-projection.md).
 
 The owner kept one frozen Local beta.95 → beta.96 product package approved 7/7; beta.101 is its technical release iteration. PR #303 was owner-authorized and merged to final `main` SHA `58fbb23d1551e267dd7fe622c2414580820f3f8c`; mandatory CI [36526068091](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/36526068091) PASS. Exactly one signed immutable artifact `art_ed57f7076b6b46b78cc3309c55470016`, build `sf-0.10.0-beta.101-58fbb23d1551-20260929T063217Z`, archive SHA256 `E493DCE15A7B59AD1E4412046003754F29CA1A8492C5B317813374DAC565AFFE`, manifest/runtime SHA256 `99795E581E84C1CC4C2D42A233F8E337EA4ABB9267A15BF42353B1D963E87496` was deployed to Canary (`dep_45db3f6c48c549ad978b0f9a3e895501`, `canary_checking`) only after verified DB/runtime/config/secret backup `backups/pre-beta101-canary-peer-20260929T063236Z` (manifest SHA256 `C90F4A17F98F25BA386B04A1DF06B6E34B98C23BAE5549D7E4F4533586D659B3`); beta.100 is the immediate rollback slot. Public `/live` and `/ready` and Linux `ServerSecrets` without DPAPI PASS. The trusted Windows Local process transferred the original five owner models through pinned SSH stdin to Canary server re-encryption, migration `caea5f06-d5e6-5625-ab08-db5e6c944fcc`; no plaintext was persisted/output. Read-only real non-owner PostgreSQL/RLS probe now confirms two secret-free shared descriptors and no access to an owner model/key; the owner model-detail DTO contains no plaintext. Real owner direct BYOK, live provider test, non-owner shared invocation/ledger, creation and isolation of a second-user private model, share-off, restart persistence and frozen-package full Canary smoke are still PENDING. Do not call this Canary PASS or request Production approval yet. Production beta.99, scheduler OFF and Local `StratForge Vitek` ON are unchanged. [beta.101 record](../changelog/2026-09-28-beta101-server-secret-migration.md).
 
