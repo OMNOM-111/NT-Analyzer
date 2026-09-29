@@ -10,8 +10,9 @@ import math
 from datetime import datetime, timezone
 from uuid import UUID, uuid5
 
-from .. import ai_budgets, secure_store
+from .. import ai_budgets
 from ..ai_lab import agent_registry, universal_llm
+from .secret_store import LocalSecrets
 from .states import ContractError
 from .connection_protocol import validate as validate_protocol
 
@@ -125,7 +126,7 @@ class ModelExecutor:
     def __init__(self, *, budget_limits, secrets=None, pricing=None, owner_binding=None,
                  usage_reader=None, usage_writer=None):
         self.budget_limits = budget_limits
-        self.secrets = secrets or secure_store
+        self.secrets = secrets if secrets is not None else LocalSecrets()
         self.pricing = pricing
         self.owner_binding = owner_binding
         self.usage_reader, self.usage_writer = usage_reader, usage_writer
@@ -146,6 +147,11 @@ class ModelExecutor:
         the service; the caller never saw them. The grant is checked with every
         admission, so a share turned off stops the call before transmission.
         """
+        from .contracts import Environment
+        if context.scope.environment in {Environment.CANARY, Environment.PRODUCTION}:
+            from .server_secrets import ServerSecrets
+            if not isinstance(self.secrets, ServerSecrets):
+                raise ContractError("model_secure_storage_unavailable")
         def check():
             admit(context, "provider_transmit", 0.0)
             if shared is not None:
@@ -208,6 +214,11 @@ class ModelExecutor:
             return result
 
     def _owner(self, *, context, model, profile, shared=None, **kwargs):
+        from .contracts import Environment
+        if context.scope.environment is not Environment.DEVELOPMENT:
+            # A server must never resolve a Local DPAPI registry binding.
+            # beta.101 imports it as an owner-scoped ServerSecrets account.
+            raise ContractError("model_owner_binding_unavailable")
         if shared is not None:
             # Somebody else's call through the owner's registry binding: the
             # grant, not the caller's identity, is what allows it.

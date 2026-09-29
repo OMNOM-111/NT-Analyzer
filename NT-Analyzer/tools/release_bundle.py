@@ -55,6 +55,7 @@ _INCLUDED_FILES = (
     "tools/canary_manifest_trust.py",
     "tools/release_static_scan.py",
     "tools/verify_server_release.py",
+    "tools/owner_model_migrate.py",
 )
 # docs/legal ships so the pre-auth registration screen can serve the public
 # package, but the owner-only configuration must never leave the repository.

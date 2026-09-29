@@ -9,6 +9,7 @@ from __future__ import annotations
 import http.client
 import ipaddress
 import json
+import re
 import socket
 import ssl
 from urllib.parse import urlsplit
@@ -21,6 +22,22 @@ class PrivateTransportError(RuntimeError):
 MAX_RESPONSE_BYTES = 1024 * 1024
 _PREFIXES = ("", "/v1", "/api/v1", "/openai/v1", "/api/paas/v4", "/inference")
 _PATHS = frozenset(prefix + suffix for prefix in _PREFIXES for suffix in ("/chat/completions", "/responses"))
+_GEMINI_PATH = re.compile(r"/v1beta/models/[A-Za-z0-9._-]{1,120}:generateContent\Z")
+_AZURE_DEPLOYMENT_PATH = re.compile(r"/openai/deployments/[A-Za-z0-9._-]{1,120}/chat/completions\Z")
+_AZURE_VERSION = re.compile(r"api-version=\d{4}-\d{2}-\d{2}(?:-preview)?\Z")
+_AZURE_HOSTS = (".openai.azure.com", ".cognitiveservices.azure.com")
+
+
+def _approved_route(parsed):
+    host = parsed.hostname.lower()
+    if host == "generativelanguage.googleapis.com":
+        return bool(_GEMINI_PATH.fullmatch(parsed.path)) and not parsed.query
+    if any(host.endswith(suffix) and host != suffix for suffix in _AZURE_HOSTS):
+        if _AZURE_DEPLOYMENT_PATH.fullmatch(parsed.path):
+            return bool(_AZURE_VERSION.fullmatch(parsed.query))
+        return parsed.path in {"/openai/v1/chat/completions", "/openai/responses"} and (
+            not parsed.query or bool(_AZURE_VERSION.fullmatch(parsed.query)))
+    return parsed.path in _PATHS and not parsed.query
 
 
 def validate_target(url, *, resolver=None):
@@ -28,8 +45,8 @@ def validate_target(url, *, resolver=None):
     try:
         parsed = urlsplit(url)
         if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
-                or parsed.port not in (None, 443) or parsed.query or parsed.fragment
-                or parsed.path not in _PATHS or "%" in url or "\\" in url
+                or parsed.port not in (None, 443) or parsed.fragment
+                or not _approved_route(parsed) or "%" in url or "\\" in url
                 or len(url) > 350 or any(ord(c) < 33 or ord(c) > 126 for c in url)):
             raise ValueError()
         addresses = sorted({row[4][0] for row in resolver(parsed.hostname, 443, type=socket.SOCK_STREAM)})
@@ -40,7 +57,7 @@ def validate_target(url, *, resolver=None):
             raise ValueError()
     except (ValueError, OSError, TypeError, IndexError):
         raise PrivateTransportError("Private provider target denied.") from None
-    return parsed.hostname, parsed.path, addresses[0]
+    return parsed.hostname, parsed.path + ("?" + parsed.query if parsed.query else ""), addresses[0]
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):

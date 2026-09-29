@@ -458,10 +458,11 @@ def two_accounts(monkeypatch, tmp_path):
     """Owner and a brand-new user, each in their own workspace, real gateway."""
     from app.ai_control_center import domain_gateway as gateway
     from app.ai_control_center import test_executor
-    from app.ai_control_center import model_service
+    from app.ai_control_center import secret_store
     # This gateway test checks ownership, not the host OS credential backend.
     # Keep synthetic keys in memory on Linux as well as Windows.
-    monkeypatch.setattr(model_service, "secure_store", Secrets())
+    fixture_secrets = Secrets()
+    monkeypatch.setattr(secret_store, "for_context", lambda *_: fixture_secrets)
     monkeypatch.setenv("DEPLOYMENT_ENV", "development")
     monkeypatch.setenv("STRATFORGE_ENV", "development")
     monkeypatch.setenv("STRATFORGE_DEVELOPMENT_DATA_ROOT", str(tmp_path / "development"))

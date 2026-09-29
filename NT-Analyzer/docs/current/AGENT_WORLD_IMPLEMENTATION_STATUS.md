@@ -4,6 +4,19 @@ Canonical program status: **IN DEVELOPMENT**. This document describes the
 current unified source, not historical previews and not an accepted release.
 The target architecture and owner's visual references are unchanged.
 
+## Current release boundary (2026-09-28; supersedes historical checkpoints below)
+
+The owner accepted the unified Local package as one product card (7/7).
+Technical beta.100 is deployed only on Canary with PostgreSQL/RLS domain access,
+but full server-model parity is **PARTIAL**: no Local owner credential was
+migrated, and no real non-owner shared invocation is accepted. Technical
+beta.101 is now Development source for an explicit Local DPAPI/server SecretStore
+split, a one-shot owner-only migration/re-encryption path and narrowly guarded
+Gemini/Azure text invocation. There is no beta.101 server artifact or rollout
+yet. Production remains beta.99 and report scheduler OFF. See the
+[beta.101 change record](../changelog/2026-09-28-beta101-server-secret-migration.md)
+for current gates; the older source/PR/test statements below are historical.
+
 ## 2026-09-21 isolated memory delta
 
 Branch `codex/unified-memory-service` adds the disabled-by-default unified memory

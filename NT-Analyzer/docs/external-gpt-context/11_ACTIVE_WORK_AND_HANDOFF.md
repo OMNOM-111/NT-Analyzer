@@ -1,13 +1,43 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-28T03:06:00Z
+- Last verified UTC: 2026-09-28T23:06:14Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Scope: open beta.95 → beta.96 product card, beta.97–beta.99 technical iterations, paused closeout and multi-user Telegram blocker
+- Scope: open `0.10.0-beta.101` product card; beta.101 Development migration work, beta.100 Canary PARTIAL and beta.99 Production
 - Status: PARTIAL
+- Current Production version/build/artifact when known: `0.10.0-beta.99` / `sf-0.10.0-beta.99-68ba3a95f804-20260928T021954Z` / `art_3ae473a96bb24d439fd5cb6d3a1d1096`
+
+## Current beta.101 Development handoff (2026-09-28; supersedes older Local-only notes below)
+
+The owner kept the single beta.96 product package open and designated beta.101 as its next technical iteration. beta.100 is immutable and remains Canary PARTIAL; Production remains beta.99. Development implementation commit `842d22a1c68b9dea895f9df1d6b1627ada006b58` on `codex/beta101-server-secrets` is in [PR #303](https://github.com/OMNOM-111/NT-Analyzer/pull/303): `SecretStore`, safe Local owner-model snapshot/SSH-stream/server re-encryption, provider-specific private HTTPS routes and server refusal of Local DPAPI bindings. The Windows source process must run under the owner DPAPI profile with the correct Local data root; the server import must run against the environment-specific protected config and non-`BYPASSRLS` app role. No provider key or model has yet been migrated to Canary or Production. Do not mistake passing unit tests for real provider invocation or full parity. [beta.101 change record](../changelog/2026-09-28-beta101-server-secret-migration.md). Local focused tests and pre-release bundle check passed; disposable PostgreSQL tests remain opt-in/skipped here, and CI/owner merge approval are pending. After a new immutable beta.101 artifact, back up Canary before import and complete owner/non-owner acceptance. Production scheduler OFF; Local `StratForge Vitek` ON.
+
+## Previous beta.100 checkpoint (historical, still current Canary runtime)
+
+At this beta.100 checkpoint the single owner-approved (7/7) product card was
+labeled `0.10.0-beta.100`, originating in Local beta.95 → beta.96. beta.97–beta.100
+are technical server iterations inside that still-open card; beta.101 now continues it.
+Source `7b66bcb6abd486891870b0419afd93f8828dbb85`
+passed final-main CI and produced signed immutable artifact
+`art_de49135714cf48b6aace2a977fad334f`. It is deployed only to Canary;
+Production still runs beta.99. The owner approved a one-day Canary Pro grant
+for the separate Google user `8798656225084765`; the owner UI issued it and
+the refreshed Chrome session opened AI Center. Canary Models shows no shared
+model. Existing Local owner model/registry bindings depend on Windows DPAPI;
+beta.100 server execution requires protected owner-scoped PostgreSQL/RLS vault
+credentials. Copying metadata or ciphertext cannot make them callable. No
+provider secret was transferred; real connection test, non-owner invocation
+and full Canary parity are NOT PASS. Preserve the beta.100 artifact and backup,
+leave Production unchanged, and implement only a scoped, tested secure
+migration/re-encryption plus server binding path in the next technical source
+iteration before repeating Canary acceptance. The reported promo-code failure
+is for this same user but lacks a reproduced original request/result; do not
+change redemption logic or claim a cause from the currently unrestricted,
+unused voucher inventory alone. Production scheduler OFF; Local `StratForge
+Vitek` ON. [Exact record](../changelog/2026-09-28-beta100-server-parity-release.md).
+
 - Owner decision (2026-09-27 America/Los_Angeles): all seven Local beta.96 package tasks are explicitly approved as one frozen product package, `ownerApproval=approved` 7/7. Do not request another Local acceptance. The single remaining server-parity blocker is authenticated Agent World/AI Center plus a real non-owner shared-model invocation; see [decision and read-only probe](../changelog/2026-09-28-beta96-owner-decision-server-parity.md). A real separate Canary Professional user displayed live MBT TopstepX candles; server Preview sandbox being disabled is expected, not a chart blocker.
-- Active beta.100 technical iteration inside beta.96: PR #300 merged with owner permission to `main` SHA `c36a84bf528c63e511fac6714e83417e48ffa68c`. All five PR checks passed. An isolated TLS PostgreSQL database with non-`BYPASSRLS` app role passed 74/74 tests, including separate-principal share/key/usage isolation. The merge retained beta.99 in `VERSION.json`; the immutable builder will not sign this SHA as beta.100. A narrow release-identity correction and its own final-main CI must pass before building the only beta.100 artifact. The [beta.100 technical release record](../changelog/2026-09-28-beta100-server-parity-release.md) retains the source and gates. There is no beta.100 artifact or live server acceptance yet. Do not turn on the new server workspace gate or modify server DB/secret state without backup and verified rollback.
-- Current Production version/build/artifact when known: `0.10.0-beta.99` / `sf-0.10.0-beta.99-68ba3a95f804-20260928T021954Z` / `art_3ae473a96bb24d439fd5cb6d3a1d1096`; archive SHA256 `BD6FDEC99112154E9B0B4FBA26A2F1E257399D9B8FC15BC4500E1BD65AEBDC43`; runtime artifact SHA256 `081C9A99480C49BFBC13C29EA061E994B8310FB6A82EE431B31A38661952A2FB`
+- Active beta.100 technical iteration inside the open product card: PR #300 merged with owner permission to `main` SHA `c36a84bf528c63e511fac6714e83417e48ffa68c`. PR #301 corrected only release identity and handoff; all five checks passed on final PR head, and the owner-authorized merge produced exact final source SHA `7b66bcb6abd486891870b0419afd93f8828dbb85`. Mandatory `main` CI [run 36471503031](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/36471503031) passed on rerun attempt 2 after one reproduced intermittent Windows loopback test abort on attempt 1. From the clean exact SHA, Release Center built and signed one immutable beta.100 artifact `art_de49135714cf48b6aace2a977fad334f`, build `sf-0.10.0-beta.100-7b66bcb6abd4-20260928T210349Z`, archive SHA256 `2CCB46F376C4A6445295D7221BB753B959F08FBE1970065996AF7460C6CB4DB1`, manifest/runtime SHA256 `5FFE722FD86DE9892E7C150287C63CC3C8D3388DADD61AF3BA756C0A446812FF`; candidate `rc_2aab86a85ef84ca7ad1e6733aebdbefb` is `canary_checking`. Verified pre-change backup `backups/pre-beta100-canary-peer-20260928T210636Z` (manifest SHA256 `7B8EB4C484A7BF6CD580B310460D52E752DE386C7450207697F3BEF82E7EEEDF`) preserves DB/runtime/config/secrets and beta.99 rollback target. Canary deployment `dep_7cb0afa2c3ee48d9b0c3956bc8dbb15f` runs beta.100; `/live` and `/ready` PASS, migration 0024 applied, previous slot beta.99. An isolated TLS PostgreSQL database with non-`BYPASSRLS` app role passed 74/74 tests, including separate-principal share/key/usage isolation. The [beta.100 technical release record](../changelog/2026-09-28-beta100-server-parity-release.md) retains source and gates. Server workspace opt-in is ON only for the confirmed owner and separate Google workspace; a fresh Canary-only protected infrastructure encryption key is installed. No provider BYOK key was copied from Local. The non-owner's former five-hour trial-expired overlay was resolved by an owner-approved one-day Canary Pro grant, not by changing role or bypassing entitlement. The Models tab shows no shared models; full Canary parity and real shared-model invocation remain blocked by the missing secure Local-to-server migration/binding path. Production remains beta.99 and periodic reports remain OFF; Local `StratForge Vitek` stays ON.
+- Historical Production beta.99 identity detail: archive SHA256 `BD6FDEC99112154E9B0B4FBA26A2F1E257399D9B8FC15BC4500E1BD65AEBDC43`; runtime artifact SHA256 `081C9A99480C49BFBC13C29EA061E994B8310FB6A82EE431B31A38661952A2FB`.
 
 Current product line: Local beta.95 → beta.96 is the single open product card;
 beta.97 is its first server release, beta.98 is its reload-loop hotfix and

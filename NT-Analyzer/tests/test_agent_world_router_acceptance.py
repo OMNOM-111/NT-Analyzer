@@ -64,7 +64,7 @@ def routed(world, tmp_path, monkeypatch):
                               "max": max(values), "mean": sum(values) / len(values)})
         return response(text, actual_model="router-acceptance-transport-double", executor="router-acceptance-double",
                         external_call=False, cost_usd=0.0, elapsed_sec=.100 if kw["profile"]["label"] == "Slow" else .020)
-    monkeypatch.setattr(gateway, "_executor", lambda auth, bind: transport)
+    monkeypatch.setattr(gateway, "_executor", lambda auth, bind, **kwargs: transport)
     monkeypatch.setattr(mechanism_domains, "_quote", lambda **kw:
         {"allowed": True, "cost_usd": prices.get(str(kw["model"].header.entity_id), 0.0)})
     authorized, service = human(world)
@@ -268,7 +268,7 @@ def test_retry_with_another_preview_cannot_reuse_the_same_task_key(routed):
 def test_named_test_observations_never_qualify_real_routing(routed, monkeypatch, legacy):
     env = routed
     monkeypatch.setenv(test_executor.ENV, env.world.workspace)
-    monkeypatch.setattr(gateway, "_executor", lambda auth, bind: test_executor.execute)
+    monkeypatch.setattr(gateway, "_executor", lambda auth, bind, **kwargs: test_executor.execute)
     original_clean, original_put = ModelService._clean_receipt, ModelService._put
     if legacy:
         def old_clean(result, checkpoint):

@@ -10,6 +10,20 @@
 - Scope: Current components, trust boundaries, entities and key flows
 - Status: IN DEVELOPMENT
 
+## Current server-model delta (2026-09-28; supersedes the older Local snapshot below)
+
+The unified owner-approved Local beta.96 package is still one open product
+card. beta.100 deployed the existing Agent World PostgreSQL/FORCE-RLS repository
+and encrypted server BYOK/share tables on Canary, but owner-model transfer and
+real shared invocation are PARTIAL. beta.101 is Development-only source for
+`SecretStore`: Windows CurrentUser DPAPI locally; a separate Canary/Production
+AEAD backend whose master key is outside PostgreSQL and whose ciphertext is
+owner/workspace/environment-bound. A one-shot SSH/stdin trusted-process import
+will preserve Local model identities and re-encrypt directly under each target
+environment key. It has not run on Canary or Production. The older Local-only
+architecture and pending-adapter statements below are historical, not the
+current deployed-server assessment. [Current evidence](../changelog/2026-09-28-beta101-server-secret-migration.md).
+
 ## Previous verified model/domain checkpoint — aa54c294
 
 At that previous checkpoint, clean Local 8765 ran `aa54c2940150e540d8b594dbf1d6254e172adbfd`, beta.96,

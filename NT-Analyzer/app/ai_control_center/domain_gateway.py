@@ -200,12 +200,19 @@ def _private_limits(context, model, profile):
     from ..ai_lab import agent_registry
     pricing = agent_registry.managed_pricing(model.provider_key, model.model_key,
                   agent_registry.infer_billing_mode(model.provider_key, model.model_key, 0))
-    # No approved paid allowance exists for new private Development connections.
-    # Zero-cost managed endpoints can be checked without increasing any budget.
-    if pricing.get("pricing_status") != "free":
+    # Server calls are additionally reserved against the authoritative
+    # workspace ledger; Local Development retains its free-only policy.
+    if (pricing.get("pricing_status") != "free" and
+            context.scope.environment not in {Environment.CANARY, Environment.PRODUCTION}):
         raise ContractError("model_private_budget_not_configured")
-    return {"daily_budget_usd": agent_registry.MAX_SINGLE_CALL_USD,
-            "monthly_budget_usd": agent_registry.MAX_SINGLE_CALL_USD}
+    if pricing.get("pricing_status") not in {"free", "configured", "estimated"}:
+        raise ContractError("model_pricing_unavailable")
+    return {"daily_budget_usd": agent_registry.MAX_DAILY_BUDGET_USD if
+            context.scope.environment in {Environment.CANARY, Environment.PRODUCTION}
+            else agent_registry.MAX_SINGLE_CALL_USD,
+            "monthly_budget_usd": agent_registry.MAX_MONTHLY_BUDGET_USD if
+            context.scope.environment in {Environment.CANARY, Environment.PRODUCTION}
+            else agent_registry.MAX_SINGLE_CALL_USD}
 
 
 def enqueue_model(authorized, *, context, task_id):
@@ -261,25 +268,23 @@ def _executor(authorized, bind, *, secrets=None):
     from . import test_executor
     if test_executor.enabled(authorized["context"].scope.workspace_id):
         return test_executor.execute
-    # Server private connections are free-only. Their authoritative usage is
-    # recorded by universal_llm through sf_ai_usage_events after transmission;
-    # never append the Development JSONL registry inside a release directory.
+    # Server usage is recorded by universal_llm through sf_ai_usage_events;
+    # the private adapter reads its own durable cross-workspace aggregate.
+    # Never append the Development JSONL registry inside a release directory.
     server = (server_gateway.environment() is not None and
               getattr(authorized["context"].scope, "environment", None)
               in {Environment.CANARY, Environment.PRODUCTION})
+    from . import server_model_usage
     return ModelExecutor(budget_limits=_private_limits, owner_binding=bind, secrets=secrets,
-        usage_reader=(lambda **kw: []) if server else None,
+        usage_reader=server_model_usage.usage_rows if server else None,
         usage_writer=(lambda row: None) if server else None)
 
 
 def models(authorized, repo=None):
     from .model_service import ModelService
     store = repo or repository(authorized)
-    secrets = None
-    if (server_gateway.environment() is not None and
-            authorized["context"].scope.environment in {Environment.CANARY, Environment.PRODUCTION}):
-        from .server_secrets import ServerSecrets
-        secrets = ServerSecrets(store, authorized["context"])
+    from .secret_store import for_context
+    secrets = for_context(store, authorized["context"])
     def bind(context, model, profile):
         if context != authorized["context"]:
             raise ContractError("model_context_required")
@@ -289,8 +294,7 @@ def models(authorized, repo=None):
         chat_scope=authorized["chat_scope"],
         admit=lambda context, operation, estimate: _model_admit(authorized, context, operation, estimate),
         enqueue=lambda **kw: enqueue_model(authorized, **kw),
-        executor=(_executor(authorized, bind, secrets=secrets) if secrets is not None
-                  else _executor(authorized, bind)), secrets=secrets,
+        executor=_executor(authorized, bind, secrets=secrets), secrets=secrets,
         allowed_origins=tuple(item.strip() for item in os.environ.get("STRATFORGE_AGENT_WORLD_MODEL_ORIGINS", "").split(",") if item.strip()))
     from . import automation_authority
     service.mechanism_admit = lambda **kw: automation_authority.admit(authorized, service, **kw)
