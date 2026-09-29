@@ -1226,7 +1226,7 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
         + bcard('Недавняя активность', 'grid', 'blue', activityRows(5), '<button class="aw-link-button" data-aw-open-log>Смотреть все</button>')
         + bcard('Память и уроки', 'brain', 'violet', memoryBody(overview?.summaries?.memory, overview?.summaries?.knowledge), '<button class="aw-link-button" data-aw-tab="memory">Перейти</button>')
         + bcard('Ошибки и предупреждения', 'alert', 'red', problemsBody(), '<button class="aw-link-button" data-aw-tab="work" data-aw-filter="attention">Смотреть все</button>')
-        + `</div>` + bcard('Модели кратко', 'cpu', 'cyan', labModels() ? labModelBrief(labModels()) : modelRows(modelSummaryGroups()), '<button class="aw-link-button" data-aw-tab="models">Все модели</button>');
+        + `</div>` + bcard('Модели кратко', 'cpu', 'cyan', labModels()?.length ? labModelBrief(labModels()) : modelRows(modelSummaryGroups()), '<button class="aw-link-button" data-aw-tab="models">Все модели</button>');
     }
     function taskTable(tasks) {
       if (!tasks.length) return empty('Задач по этому фильтру нет', 'Измените фильтр или поиск. Новые задачи появятся здесь, как только команда их начнёт.');
@@ -1836,7 +1836,9 @@ return '<aside class="aw-note"><strong>Отдельный тестовый кл�
       const sharedSection = () => bcard('Доступные общие модели', 'users', 'cyan',
         '<p class="aw-muted">Доступ предоставлен другими участниками. Ключи и настройки принадлежат владельцам подключений.</p>'
         + (shared.length ? modelRows(modelGroupsFromTasks(rows(overview.tasks), shared)) : smallEmpty('Общих моделей сейчас нет.')));
-      if (lab) {
+      // An empty Local Lab registry is not an empty server Model roster. The
+      // migrated owner connections live in the workspace-scoped Model domain.
+      if (lab?.length) {
         content.innerHTML = bcard('Мои модели', 'cpu', 'cyan', labModelTable(lab), '<button class="aw-link-button" data-aw-connect-model>+ подключить модель</button>')
           + (own.some(item => !item.registry_id) ? bcard('Мои дополнительные подключения', 'cpu', 'cyan', modelRows(modelGroupsFromTasks(rows(overview.tasks), own.filter(item => !item.registry_id)))) : '')
           + (data && !data.unavailable ? sharedSection() : '')

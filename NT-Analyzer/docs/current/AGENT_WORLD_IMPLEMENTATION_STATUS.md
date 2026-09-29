@@ -4,18 +4,22 @@ Canonical program status: **IN DEVELOPMENT**. This document describes the
 current unified source, not historical previews and not an accepted release.
 The target architecture and owner's visual references are unchanged.
 
-## Current release boundary (2026-09-28; supersedes historical checkpoints below)
+## Current release boundary (2026-09-29; supersedes historical checkpoints below)
 
 The owner accepted the unified Local package as one product card (7/7).
-Technical beta.100 is deployed only on Canary with PostgreSQL/RLS domain access,
-but full server-model parity is **PARTIAL**: no Local owner credential was
-migrated, and no real non-owner shared invocation is accepted. Technical
-beta.101 is now Development source for an explicit Local DPAPI/server SecretStore
-split, a one-shot owner-only migration/re-encryption path and narrowly guarded
-Gemini/Azure text invocation. There is no beta.101 server artifact or rollout
-yet. Production remains beta.99 and report scheduler OFF. See the
-[beta.101 change record](../changelog/2026-09-28-beta101-server-secret-migration.md)
-for current gates; the older source/PR/test statements below are historical.
+Technical beta.101 is the signed immutable Canary artifact: five existing owner
+connections and secrets were imported into the Linux server store under RLS;
+all four active connections passed real provider tests without key re-entry, and
+an ordinary DeepSeek invocation succeeded. The fifth GLM record remains retired.
+Full server parity remains **PARTIAL**: new-user BYOK, authenticated
+owner UI, non-owner shared invocation, revocation, restart and package smoke
+are not yet accepted. Canary owner AI Center exposed a presentation defect:
+an empty legacy Lab roster hid imported workspace Models from “Мои модели”.
+Technical beta.102 is the narrow Development projection fix and has no server
+artifact yet. Production remains beta.99, report scheduler OFF and Local
+`StratForge Vitek` ON. See the [beta.101 evidence](../changelog/2026-09-28-beta101-server-secret-migration.md)
+and [beta.102 change record](../changelog/2026-09-29-beta102-migrated-model-projection.md);
+the older source/PR/test statements below are historical.
 
 ## 2026-09-21 isolated memory delta
 
