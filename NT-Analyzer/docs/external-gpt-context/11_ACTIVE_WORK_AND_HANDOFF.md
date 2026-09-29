@@ -1,17 +1,17 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-28T23:06:14Z
+- Last verified UTC: 2026-09-29T06:38:21Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Scope: open `0.10.0-beta.101` product card; beta.101 Development migration work, beta.100 Canary PARTIAL and beta.99 Production
+- Scope: open `0.10.0-beta.101` product card; beta.101 deployed to Canary with acceptance in progress, beta.100 historical PARTIAL and beta.99 Production
 - Status: PARTIAL
 - Current Production version/build/artifact when known: `0.10.0-beta.99` / `sf-0.10.0-beta.99-68ba3a95f804-20260928T021954Z` / `art_3ae473a96bb24d439fd5cb6d3a1d1096`
 
-## Current beta.101 Development handoff (2026-09-28; supersedes older Local-only notes below)
+## Current beta.101 Canary handoff (2026-09-29; supersedes older checkpoints below)
 
-The owner kept the single beta.96 product package open and designated beta.101 as its next technical iteration. beta.100 is immutable and remains Canary PARTIAL; Production remains beta.99. Development implementation commit `842d22a1c68b9dea895f9df1d6b1627ada006b58` on `codex/beta101-server-secrets` is in [PR #303](https://github.com/OMNOM-111/NT-Analyzer/pull/303): `SecretStore`, safe Local owner-model snapshot/SSH-stream/server re-encryption, provider-specific private HTTPS routes and server refusal of Local DPAPI bindings. The Windows source process must run under the owner DPAPI profile with the correct Local data root; the server import must run against the environment-specific protected config and non-`BYPASSRLS` app role. No provider key or model has yet been migrated to Canary or Production. Do not mistake passing unit tests for real provider invocation or full parity. [beta.101 change record](../changelog/2026-09-28-beta101-server-secret-migration.md). Local focused tests and pre-release bundle check passed; disposable PostgreSQL tests remain opt-in/skipped here, and CI/owner merge approval are pending. After a new immutable beta.101 artifact, back up Canary before import and complete owner/non-owner acceptance. Production scheduler OFF; Local `StratForge Vitek` ON.
+The owner kept one frozen Local beta.95 → beta.96 product package approved 7/7; beta.101 is its technical release iteration. PR #303 was owner-authorized and merged to final `main` SHA `58fbb23d1551e267dd7fe622c2414580820f3f8c`; mandatory CI [36526068091](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/36526068091) PASS. Exactly one signed immutable artifact `art_ed57f7076b6b46b78cc3309c55470016`, build `sf-0.10.0-beta.101-58fbb23d1551-20260929T063217Z`, archive SHA256 `E493DCE15A7B59AD1E4412046003754F29CA1A8492C5B317813374DAC565AFFE`, manifest/runtime SHA256 `99795E581E84C1CC4C2D42A233F8E337EA4ABB9267A15BF42353B1D963E87496` was deployed to Canary (`dep_45db3f6c48c549ad978b0f9a3e895501`, `canary_checking`) only after verified DB/runtime/config/secret backup `backups/pre-beta101-canary-peer-20260929T063236Z` (manifest SHA256 `C90F4A17F98F25BA386B04A1DF06B6E34B98C23BAE5549D7E4F4533586D659B3`); beta.100 is the immediate rollback slot. Public `/live` and `/ready` and Linux `ServerSecrets` without DPAPI PASS. The trusted Windows Local process transferred the original five owner models through pinned SSH stdin to Canary server re-encryption, migration `caea5f06-d5e6-5625-ab08-db5e6c944fcc`; no plaintext was persisted/output. Real owner direct BYOK, live provider test, non-owner shared invocation/ledger, share-off, private RLS, restart persistence and frozen-package full Canary smoke are still PENDING. Do not call this Canary PASS or request Production approval yet. Production beta.99, scheduler OFF and Local `StratForge Vitek` ON are unchanged. [beta.101 record](../changelog/2026-09-28-beta101-server-secret-migration.md).
 
-## Previous beta.100 checkpoint (historical, still current Canary runtime)
+## Previous beta.100 checkpoint (historical Canary PARTIAL; immediate rollback slot)
 
 At this beta.100 checkpoint the single owner-approved (7/7) product card was
 labeled `0.10.0-beta.100`, originating in Local beta.95 → beta.96. beta.97–beta.100

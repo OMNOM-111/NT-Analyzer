@@ -1,13 +1,31 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-09-28T23:06:14Z
+- Last verified UTC: 2026-09-29T06:38:21Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Current deployed source SHA: Canary `7b66bcb6abd486891870b0419afd93f8828dbb85`; Production `68ba3a95f804800195bb6e8dff556dd843b8eb6e`
+- Current deployed source SHA: Canary `58fbb23d1551e267dd7fe622c2414580820f3f8c`; Production `68ba3a95f804800195bb6e8dff556dd843b8eb6e`
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: PARTIAL
 
-Current checkpoint superseding historical sections below: Canary runs the signed
+Current checkpoint superseding historical sections below: Canary runs signed
+`0.10.0-beta.101` artifact `art_ed57f7076b6b46b78cc3309c55470016`
+from source `58fbb23d1551e267dd7fe622c2414580820f3f8c`, build
+`sf-0.10.0-beta.101-58fbb23d1551-20260929T063217Z`, archive SHA256
+`E493DCE15A7B59AD1E4412046003754F29CA1A8492C5B317813374DAC565AFFE`,
+runtime/manifest SHA256
+`99795E581E84C1CC4C2D42A233F8E337EA4ABB9267A15BF42353B1D963E87496`.
+Final-main CI `36526068091`, signature, public `/live` and `/ready` PASS;
+deployment `dep_45db3f6c48c549ad978b0f9a3e895501` is `canary_checking`.
+Verified pre-change backup `backups/pre-beta101-canary-peer-20260929T063236Z`
+(manifest SHA256 `C90F4A17F98F25BA386B04A1DF06B6E34B98C23BAE5549D7E4F4533586D659B3`)
+contains DB/runtime/config/secrets; `canary-previous` is beta.100. Linux
+`ServerSecrets` without DPAPI and protected import of the five existing Local
+owner models passed; real provider/non-owner/share/restart/full-package
+acceptance remains PENDING, so Canary is not `canary_passed`. Production is
+still beta.99 and report scheduler OFF; Local `StratForge Vitek` stays ON.
+[beta.101 release record](../changelog/2026-09-28-beta101-server-secret-migration.md).
+
+Historical beta.100 PARTIAL checkpoint: Canary ran signed
 `0.10.0-beta.100` artifact `art_de49135714cf48b6aace2a977fad334f`
 from source `7b66bcb6abd486891870b0419afd93f8828dbb85`, build
 `sf-0.10.0-beta.100-7b66bcb6abd4-20260928T210349Z`, archive SHA256
