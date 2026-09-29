@@ -100,7 +100,7 @@ def test_disabled_named_executor_does_not_produce_diagnostic_votes(court, monkey
     item = decision(court)
     monkeypatch.setenv(test_executor.ENV, "")
     # The public transport must not be allowed as a fallback in this fixture.
-    monkeypatch.setattr(gateway, "_executor", lambda *args: test_executor.execute)
+    monkeypatch.setattr(gateway, "_executor", lambda *args, **kwargs: test_executor.execute)
     with pytest.raises(ContractError, match="model_test_executor_disabled"):
         review(court, item)
 
