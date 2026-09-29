@@ -2,7 +2,7 @@
 
 Release title: beta.102 migrated server-model projection.
 Release summary: Show the five already-migrated owner Model connections under “Мои модели” when the legacy Lab registry is empty; no model, key or sharing data changes.
-Release PRs: pending.
+Release PRs: #305.
 Affected subsystems: AI Center model roster projection and UI regression tests.
 Release impact: new beta.102 source and, only after owner-authorized merge and final-main CI, a new signed immutable artifact and fresh Canary acceptance. beta.101 artifact is not modified.
 
@@ -12,7 +12,7 @@ Release impact: new beta.102 source and, only after owner-authorized merge and f
 
 Change summary: the current owner-approved beta.96 product package remains open. Immutable beta.101 is on Canary with partial acceptance. Its owner Model records and server-encrypted provider credentials imported correctly, but an empty legacy Lab registry incorrectly won the AI Center presentation branch, leaving “Мои модели” empty and placing the imported records only in “Мои дополнительные подключения”. beta.102 changes only that presentation choice and its regression coverage; it neither creates nor rewrites a ProviderAccount, Model, key or share binding.
 
-Source: branch `codex/beta102-migrated-model-projection`, based on final beta.101 `main` SHA `58fbb23d1551e267dd7fe622c2414580820f3f8c`. Final PR/merge SHA, CI and artifact identity are pending. This version must first pass Development/CI and the normal signed-artifact → Canary sequence; beta.101 must not be rebuilt or patched in place. Production remains beta.99. Production scheduler OFF and Local `StratForge Vitek` ON.
+Source: [PR #305](https://github.com/OMNOM-111/NT-Analyzer/pull/305), branch `codex/beta102-migrated-model-projection`, application change `78e51078` based on final beta.101 `main` SHA `58fbb23d1551e267dd7fe622c2414580820f3f8c`. The branch also carries the two unmerged, unchanged beta.101 Canary evidence commits from PR #304, so no separate evidence is lost. Final merge SHA, CI and artifact identity are pending. This version must first pass Development/CI and the normal signed-artifact → Canary sequence; beta.101 must not be rebuilt or patched in place. Production remains beta.99. Production scheduler OFF and Local `StratForge Vitek` ON.
 
 Canary diagnostic evidence before code change: owner-scoped read found five imported Models, five decryptable `ServerSecrets`, four active and one retired Model, and two share descriptors; non-owner RLS could read only the two secret-free descriptors and no owner Model/key. The owner UI's separate “Доступные общие модели” panel shows models shared *by other users*, so it is expected to be empty for this owner if nobody shares with them. The first short test of the existing DeepSeek connection, Model `9a3b3c33-7d75-500b-9f6e-82fcbec3381e`, produced provider-origin task `9ac80f21-6943-5fa3-90b1-a4d492a9ac55` with `real_model_response`, persisted cost and `provider_verified` / `connected=true`. No key was re-entered, printed or sent to a browser; no connection was duplicated. At that checkpoint only one provider route was verified; the subsequent tests below cover all active connections, not the non-owner shared route.
 
