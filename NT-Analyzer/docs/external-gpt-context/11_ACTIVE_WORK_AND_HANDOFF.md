@@ -4,11 +4,13 @@
 - Last verified UTC: 2026-09-29T13:09:38Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Current Canary source SHA: 58fbb23d1551e267dd7fe622c2414580820f3f8c; beta.102 Development branch is not yet a server artifact
-- Scope: one open Local beta.95 → beta.96 product card; beta.101 immutable Canary PARTIAL, beta.102 Development projection fix, beta.99 Production
+- Scope: one open Local beta.95 → beta.96 product card; beta.101 immutable Canary PARTIAL, beta.102 merged with final-main CI pending, beta.99 Production
 - Status: PARTIAL
 - Current Production version/build/artifact when known: `0.10.0-beta.99` / `sf-0.10.0-beta.99-68ba3a95f804-20260928T021954Z` / `art_3ae473a96bb24d439fd5cb6d3a1d1096`
 
 ## Current beta.101 Canary handoff (2026-09-29; supersedes older checkpoints below)
+
+beta.102 release checkpoint: owner-authorized PR #305 passed all five head checks and merged at 2026-09-29T18:44:02Z into exact `main` SHA `244d67805445571dda1aa1ec9d8c7f89f5923922`. Mandatory final-main CI [36614172579](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/36614172579) is queued/in progress; no beta.102 artifact or Canary deploy exists yet. The immutable beta.101 Canary and beta.99 Production are unchanged. [Release record](../changelog/2026-09-29-beta102-migrated-model-projection.md).
 
 New owner UI finding: all five imported `ProviderAccount → Model` connections have server-decryptable keys; the separate owner Lab registry is empty, so the AI Center incorrectly rendered “Мои модели” empty and classified them as additional. All four active connections passed real provider tests with persisted cost and `provider_verified`; an ordinary DeepSeek invocation also succeeded. The fifth GLM record is retired and intentionally non-callable. No key re-entry or duplicate connection. The owner's empty inbound-shared list is expected; two outbound Gemini shares remain. Technical beta.102 is the narrow Development UI projection fix plus regression, not a rebuilt beta.101. Do not claim full Canary PASS; non-owner shared invocation, owner browser test and remaining server-parity checks are pending. [Current diagnosis and exact mapping](../changelog/2026-09-29-beta102-migrated-model-projection.md).
 
