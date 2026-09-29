@@ -121,23 +121,6 @@ def test_worker_migration_and_class_contract(worker_store) -> None:
     assert all(row["enabled"] for row in configs.values())
 
 
-@pytest.mark.parametrize("kind", (
-    "agent_world_model", "agent_world_followup", "agent_world_external",
-))
-def test_existing_agent_world_kind_enters_scoped_postgres_queue(worker_store, kind: str) -> None:
-    scope = _scope(worker_store, 0)
-    job = worker_store["queue"].enqueue(
-        kind, {"scope": {"user_id": scope.user_id, "workspace_id": scope.workspace_id}},
-        scope=scope, idempotency_key=f"aw:{kind}:0001",
-    )
-    assert job["kind"] == kind
-    assert job["worker_class"] == "interactive_ai"
-    claimed = worker_store["queue"].claim("interactive_ai", worker_id=f"aw-{kind}")
-    assert claimed is not None
-    assert claimed["job_id"] == job["job_id"]
-    assert claimed["workspace_id"] == scope.workspace_id
-
-
 def test_enqueue_is_idempotent_and_enforces_payload_and_workspace_quota(worker_store) -> None:
     queue = worker_store["queue"]
     first = _enqueue(worker_store, 0, "worker:idempotent:0001", payload={"value": 1})

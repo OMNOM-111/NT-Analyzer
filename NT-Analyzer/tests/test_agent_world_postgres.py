@@ -21,13 +21,14 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from app import production_workers
 from app.ai_control_center import contracts as c
 from app.ai_control_center.events import EventData, EventEnvelope, MutationIdentity
 from app.ai_control_center.postgres_repository import PostgresAgentWorldRepository, _TABLES
 from app.ai_control_center.repositories import PageRequest
 from app.ai_control_center.states import ContractError, EntityKind
 from app.ai_control_center.storage_codec import encode_record
-from app.production_storage.core import PostgresClient, Scope, StorageConstraintError
+from app.production_storage.core import PostgresClient, Scope, StorageConstraintError, _jsonb
 from tests import test_agent_world_storage as parity
 from tests.test_agent_world_storage import arguments, artifact, context, memory, persona, update
 from tests.test_agent_world_contracts import record as example_record
@@ -65,6 +66,47 @@ def repo(database):
     with admin.transaction(Scope.global_service_scope()) as conn:
         conn.execute("TRUNCATE " + ",".join(_TABLES) + " RESTART IDENTITY")
     return PostgresAgentWorldRepository(app, environment=c.Environment.DEVELOPMENT)
+
+
+@pytest.mark.parametrize("kind", (
+    "agent_world_model", "agent_world_followup", "agent_world_external",
+))
+def test_existing_agent_world_kind_enters_scoped_postgres_queue(database, kind: str) -> None:
+    app, admin = database
+    user_id = 8_000_000_000 + uuid4().int % 1_000_000_000
+    workspace_id = "ws_aw_queue_" + uuid4().hex[:16]
+    scope = Scope(user_id=user_id, workspace_id=workspace_id)
+    with admin.transaction(Scope.global_service_scope()) as conn:
+        conn.execute(
+            "INSERT INTO sf_users(user_id,status,is_owner,document) VALUES(%s,'active',FALSE,%s)",
+            (user_id, _jsonb({"user_id": user_id, "status": "active", "is_owner": False})),
+        )
+        conn.execute(
+            """INSERT INTO sf_workspaces(workspace_id,owner_user_id,status,kind,document)
+               VALUES(%s,%s,'active','personal',%s)""",
+            (workspace_id, user_id, _jsonb({"workspace_id": workspace_id, "owner_user_id": user_id})),
+        )
+        conn.execute(
+            """INSERT INTO sf_workspace_memberships(workspace_id,user_id,role,document)
+               VALUES(%s,%s,'owner',%s)""",
+            (workspace_id, user_id, _jsonb({"workspace_id": workspace_id, "user_id": user_id, "role": "owner"})),
+        )
+    try:
+        queue = production_workers.ProductionQueue(app)
+        job = queue.enqueue(
+            kind, {"scope": {"user_id": user_id, "workspace_id": workspace_id}},
+            scope=scope, idempotency_key=f"aw:{kind}:0001",
+        )
+        assert job["kind"] == kind
+        assert job["worker_class"] == "interactive_ai"
+        claimed = queue.claim("interactive_ai", worker_id=f"aw-{kind}")
+        assert claimed is not None
+        assert claimed["job_id"] == job["job_id"]
+        assert claimed["workspace_id"] == workspace_id
+    finally:
+        with admin.transaction(Scope.global_service_scope()) as conn:
+            conn.execute("DELETE FROM sf_workspaces WHERE workspace_id=%s", (workspace_id,))
+            conn.execute("DELETE FROM sf_users WHERE user_id=%s", (user_id,))
 
 
 @contextmanager
