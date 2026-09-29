@@ -1,5 +1,7 @@
 # beta.101 — server secret storage and Local owner-model migration
 
+Canary RLS follow-up (2026-09-29): the real non-owner Google identity is not owner and has a distinct active personal workspace. Its PostgreSQL/RLS context sees exactly two explicit shared descriptors with no secret field, but cannot read an owner model record or decrypt that model's key. All five imported ciphertexts decrypt in the owner-scoped server process, while `ModelService.model_detail` contains none of their plaintext keys. The app DB role has no `BYPASSRLS`; all four model secret/share/usage tables have FORCE RLS. Unauthenticated public model-list GET returns 401. This does **not** replace the still-pending real non-owner browser invocation or private-model-from-second-user test.
+
 Release title: beta.101 server secret storage and owner-model migration.
 
 Release summary: technical iteration inside the same open, owner-approved (7/7) beta.96 product package. beta.100 remains an immutable historical Canary PARTIAL artifact; beta.101 is now deployed to Canary for acceptance. Production remains beta.99. No new product milestone, Telegram multi-user feature, design work, scheduler cutover or owner Local re-acceptance is included.
