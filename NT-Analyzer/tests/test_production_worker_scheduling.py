@@ -3,6 +3,8 @@ from __future__ import annotations
 import threading
 import time
 
+import pytest
+
 from app import production_workers, runtime_env
 
 
@@ -25,6 +27,16 @@ class _FakeQueue:
         if self.sweep_error:
             raise self.sweep_error
         return 0
+
+
+@pytest.mark.parametrize("kind", (
+    "agent_world_model", "agent_world_followup", "agent_world_external",
+))
+def test_agent_world_kinds_are_admitted_to_server_interactive_queue(kind: str) -> None:
+    # A missing mapping rejected a real Canary non-owner shared-model task
+    # after its Task record was saved but before worker dispatch (HTTP 500).
+    assert production_workers.KIND_WORKER_CLASS[kind] == "interactive_ai"
+    assert "interactive_ai" in production_workers.DEFAULT_WORKER_CLASSES
 
 
 def test_run_once_claims_without_running_stale_maintenance(monkeypatch) -> None:
