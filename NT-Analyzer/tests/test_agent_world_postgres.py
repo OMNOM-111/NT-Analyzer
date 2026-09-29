@@ -569,3 +569,106 @@ def test_server_share_credential_and_call_rls_on_disposable_tls_database(databas
     assert server_model_sharing.available(guest) == []
     with pytest.raises(ContractError, match="revoked"):
         server_model_sharing.require(guest, model_id)
+
+
+def test_owner_model_migration_real_postgres_rls_idempotent_and_revocable(database, monkeypatch):
+    """Opt-in only: one unchanged model ID, encrypted key, separate principal."""
+    import base64
+    from app import runtime_env
+    from app.ai_control_center import owner_model_migration, server_model_sharing, server_secrets
+    from app.ai_control_center.model_service import ModelService
+
+    app, admin = database
+    monkeypatch.setenv("DEPLOYMENT_ENV", "canary")
+    monkeypatch.setenv("STRATFORGE_DATABASE_URL", app.url)
+    monkeypatch.setattr(runtime_env, "deployment_environment", lambda: "canary")
+    monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+    monkeypatch.setattr(runtime_env, "is_server_environment", lambda: True)
+    monkeypatch.setattr(server_secrets.platform_secrets, "get", lambda name: base64.b64encode(b"m" * 32).decode())
+    with admin.transaction(Scope.global_service_scope()) as conn:
+        conn.execute("TRUNCATE " + ",".join((*_TABLES, "sf_aw_model_calls", "sf_aw_model_share_events",
+            "sf_aw_model_shares", "sf_aw_credentials")) + " RESTART IDENTITY")
+    owner_uuid, other_uuid = uuid4(), uuid4()
+    owner = c.RequestContext(scope=c.TenantScope(environment=c.Environment.CANARY,
+        workspace_id="ws_owner_migrate_01"), user_uuid=owner_uuid,
+        actor=c.ActorRef(kind=c.ActorKind.HUMAN, actor_id=owner_uuid))
+    other = c.RequestContext(scope=c.TenantScope(environment=c.Environment.CANARY,
+        workspace_id="ws_other_migrate_01"), user_uuid=other_uuid,
+        actor=c.ActorRef(kind=c.ActorKind.HUMAN, actor_id=other_uuid))
+    repository = PostgresAgentWorldRepository(PostgresClient(app.url, production=True),
+        environment=c.Environment.CANARY)
+    service = ModelService(repository, admit=lambda *_: None,
+        secrets=server_secrets.ServerSecrets(repository, owner))
+    model_id, account_id, persona_id = uuid4(), uuid4(), uuid4()
+    snapshot = {"schema_version": 1, "migration_id": str(uuid4()),
+        "source_environment": "development", "source_commit": "d" * 40,
+        "owner_uuid": str(owner_uuid), "owner_workspace_id": owner.scope.workspace_id,
+        "models": [{"model_id": str(model_id), "account_id": str(account_id),
+            "persona_id": str(persona_id), "persona_name": "Owner persona",
+            "persona_profile": {"description": "accepted Local"}, "persona_status": "active",
+            "model_status": "active", "account_status": "active", "label": "Owner model",
+            "provider": "deepseek", "model": "deepseek-v4-flash",
+            "base_url": "https://api.deepseek.com", "registry_id": None,
+            "shared": True, "secret": "fixture-server-migration-key",
+            "local_created_at": datetime.now(timezone.utc).isoformat()}]}
+    first = owner_model_migration.import_server_snapshot(service=service, context=owner,
+        snapshot=snapshot, assert_owner=lambda ctx: ctx == owner)
+    assert first["models"][0]["status"] == "imported"
+    assert ModelService(PostgresAgentWorldRepository(PostgresClient(app.url, production=True),
+        environment=c.Environment.CANARY), admit=lambda *_: None,
+        secrets=server_secrets.ServerSecrets(repository, owner)).model_detail(
+            context=owner, model_id=model_id)["provider_account_id"] == str(account_id)
+    assert server_secrets.ServerSecrets(repository, other).get_secret("aw_provider." + str(account_id)) is None
+    assert server_model_sharing.available(other)[0]["model_id"] == str(model_id)
+    with admin.transaction(Scope.global_service_scope(), read_only=True) as conn:
+        ciphertext = conn.execute("SELECT ciphertext FROM sf_aw_credentials WHERE account_id=%s",
+            (account_id,)).fetchone()["ciphertext"]
+    assert b"fixture-server-migration-key" not in bytes(ciphertext)
+    service.set_sharing(context=owner, model_id=model_id, shared=False)
+    second = owner_model_migration.import_server_snapshot(service=service, context=owner,
+        snapshot=snapshot, assert_owner=lambda ctx: ctx == owner)
+    assert second["models"][0]["status"] == "already_imported"
+    assert server_model_sharing.available(other) == []
+
+
+def test_ordinary_user_byok_survives_postgres_restart_without_foreign_visibility(database, monkeypatch):
+    import base64
+    from app import runtime_env
+    from app.ai_control_center import server_secrets
+    from app.ai_control_center.model_service import ModelService
+
+    app, admin = database
+    monkeypatch.setenv("DEPLOYMENT_ENV", "canary")
+    monkeypatch.setenv("STRATFORGE_DATABASE_URL", app.url)
+    monkeypatch.setattr(runtime_env, "deployment_environment", lambda: "canary")
+    monkeypatch.setattr(server_secrets.platform_secrets, "get", lambda name: base64.b64encode(b"n" * 32).decode())
+    with admin.transaction(Scope.global_service_scope()) as conn:
+        conn.execute("TRUNCATE " + ",".join((*_TABLES, "sf_aw_model_calls", "sf_aw_model_share_events",
+            "sf_aw_model_shares", "sf_aw_credentials")) + " RESTART IDENTITY")
+    user_uuid, foreign_uuid = uuid4(), uuid4()
+    user = c.RequestContext(scope=c.TenantScope(environment=c.Environment.CANARY,
+        workspace_id="ws_personal_byok_01"), user_uuid=user_uuid,
+        actor=c.ActorRef(kind=c.ActorKind.HUMAN, actor_id=user_uuid))
+    foreign = c.RequestContext(scope=c.TenantScope(environment=c.Environment.CANARY,
+        workspace_id="ws_personal_other_01"), user_uuid=foreign_uuid,
+        actor=c.ActorRef(kind=c.ActorKind.HUMAN, actor_id=foreign_uuid))
+    repository = PostgresAgentWorldRepository(PostgresClient(app.url, production=True),
+        environment=c.Environment.CANARY)
+    service = ModelService(repository, admit=lambda *_: None,
+        secrets=server_secrets.ServerSecrets(repository, user))
+    policy = service._put(user, {"version": "byok-test"})
+    persona = service._ensure(user, c.Persona, uuid4(), uuid4(), policy,
+        display_name="Personal", profile=service._put(user, {"description": "private"}))
+    service._walk(user, persona, "active")
+    connected = service.connect(context=user, payload={"label": "Own Gemini",
+        "provider": "gemini", "model": "gemini-2.5-flash",
+        "persona_id": str(persona.header.entity_id), "api_key": "fixture-own-key-only"},
+        idempotency_key="own-canary-byok")
+    restarted = ModelService(PostgresAgentWorldRepository(PostgresClient(app.url, production=True),
+        environment=c.Environment.CANARY), admit=lambda *_: None,
+        secrets=server_secrets.ServerSecrets(repository, user))
+    assert restarted.model_detail(context=user, model_id=connected["id"])["provider"] == "gemini"
+    assert restarted.secrets.get_secret("aw_provider." + connected["provider_account_id"]) == "fixture-own-key-only"
+    assert restarted.models(context=foreign)["items"] == []
+    assert server_secrets.ServerSecrets(repository, foreign).get_secret(
+        "aw_provider." + connected["provider_account_id"]) is None

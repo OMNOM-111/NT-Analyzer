@@ -146,6 +146,11 @@ def test_server_secret_is_encrypted_bound_to_owner_and_idempotent(monkeypatch):
     foreign = server_secrets.ServerSecrets(None, _context(workspace="ws_foreign_12345678"))
     with pytest.raises(ContractError, match="secure_storage_unavailable"):
         foreign.get_secret(identity)
+    production = c.RequestContext(scope=c.TenantScope(environment=c.Environment.PRODUCTION,
+        workspace_id=context.scope.workspace_id), user_uuid=context.user_uuid,
+        actor=c.ActorRef(kind=c.ActorKind.HUMAN, actor_id=context.user_uuid))
+    with pytest.raises(ContractError, match="secure_storage_unavailable"):
+        server_secrets.ServerSecrets(None, production).get_secret(identity)
 
 
 def test_model_server_admission_requires_tls_postgres_and_callback():
@@ -155,10 +160,54 @@ def test_model_server_admission_requires_tls_postgres_and_callback():
     calls = []
     ModelService(repo, admit=lambda *args: calls.append(args))._access(context)
     assert calls and calls[0][0] == context
+    with pytest.raises(ContractError, match="model_secure_storage_unavailable"):
+        ModelService(repo, admit=lambda *_: None)._access(context, "connect")
     with pytest.raises(ContractError, match="model_admission_required"):
         ModelService(repo, admit=None)._access(context)
     with pytest.raises(ContractError, match="model_server_storage_required"):
         ModelService(object(), admit=lambda *args: None)._access(context)
+
+
+def test_server_owner_binding_never_reads_local_dpapi_registry(monkeypatch):
+    from app.ai_control_center.model_execution import ModelExecutor
+    from app.ai_lab import agent_registry
+    monkeypatch.setattr(agent_registry, "get_agent", lambda *_: pytest.fail("server read Local registry"))
+    executor = ModelExecutor(budget_limits=lambda *_: {})
+    with pytest.raises(ContractError, match="model_owner_binding_unavailable"):
+        executor._owner(context=_context(), model=None,
+            profile={"existing_registry_id": "AGT-ABCDEFGHIJKL"})
+
+
+def test_server_model_usage_reads_only_bounded_aggregate(monkeypatch):
+    from contextlib import contextmanager
+    from app.ai_control_center import server_model_usage
+    from app import runtime_env
+    monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+    monkeypatch.setattr(runtime_env, "is_server_environment", lambda: True)
+    calls = []
+    class Connection:
+        def execute(self, query, params=None):
+            calls.append((query, params))
+            self.query = query
+            return self
+        def fetchone(self):
+            if "pg_roles" in self.query:
+                return {"rolsuper": False, "rolbypassrls": False}
+            if "pg_class" in self.query:
+                return {"owned": False, "relrowsecurity": True, "relforcerowsecurity": True}
+            return {"daily_used": 0.2, "monthly_used": 0.3}
+    class Client:
+        @contextmanager
+        def transaction(self, scope, *, read_only):
+            assert scope.global_service and read_only
+            yield Connection()
+    monkeypatch.setattr(server_model_usage, "PostgresClient", lambda *args, **kwargs: Client())
+    agent_id = "aw_model." + str(uuid4())
+    rows = server_model_usage.usage_rows(agent_id=agent_id)
+    assert len(rows) == 2 and sum(item["cost_usd"] for item in rows) == pytest.approx(0.3)
+    assert calls[-1][1][2] == agent_id
+    with pytest.raises(ContractError, match="model_usage_scope_denied"):
+        server_model_usage.usage_rows(agent_id="aw_model.attacker' OR TRUE--")
 
 
 def test_server_model_migration_has_forced_rls_for_every_sensitive_table():

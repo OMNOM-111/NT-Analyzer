@@ -105,6 +105,30 @@ def test_connect_same_key_different_config_conflicts(setup):
         service.connect(context=ctx, payload={**payload, "label": "Changed"}, idempotency_key="connect-one")
 
 
+@pytest.mark.parametrize("provider,model,base_url", [
+    ("gemini", "gemini-2.5-flash", None),
+    ("azure_foundry", "gpt-5-mini", "https://fixture.openai.azure.com/openai/responses?api-version=2025-04-01-preview"),
+    ("azure_foundry", "gpt-5-mini", "https://fixture.cognitiveservices.azure.com/openai/responses?api-version=2025-04-01-preview"),
+])
+def test_user_can_store_approved_gemini_or_azure_connection(setup, provider, model, base_url):
+    service, ctx, payload, _, _, _, secrets = setup
+    value = service.connect(context=ctx, payload={**payload, "provider": provider, "model": model,
+        "base_url": base_url}, idempotency_key="approved-provider-" + provider)
+    assert value["provider"] == provider and value["model"] == model
+    assert value["credentials_configured"] and len(secrets.values) == 1
+    assert payload["api_key"] not in json.dumps(value)
+
+
+@pytest.mark.parametrize("url", ["https://attacker.example/openai/v1",
+    "https://fixture.openai.azure.com/private", "https://fixture.openai.azure.com/openai/v1?key=leak"])
+def test_user_azure_connection_denies_unapproved_endpoint(setup, url):
+    service, ctx, payload, _, _, _, secrets = setup
+    with pytest.raises(ContractError):
+        service.connect(context=ctx, payload={**payload, "provider": "azure_foundry",
+            "base_url": url}, idempotency_key="azure-denied")
+    assert not secrets.values
+
+
 @pytest.mark.parametrize("changes", [
     {"base_url": "http://127.0.0.1"}, {"provider": "custom", "base_url": "https://evil.example/v1"},
     {"base_url": "https://user:pass@api.deepseek.com"}, {"base_url": "https://api.deepseek.com?api_key=leak"},
@@ -553,6 +577,34 @@ def test_transport_private_reserved_loopback_fail_closed(address):
     "https://api.example.com:444/v1/chat/completions", "https://api.example.com/v1/chat/completions?key=secret",
     "https://api.example.com/v1/chat/completions#x", "https://api.example.com/delete", "https://api.example.com/v1/%2e/chat/completions"])
 def test_transport_target_validation_before_dns(url):
+    with pytest.raises(transport.PrivateTransportError):
+        transport.validate_target(url, resolver=lambda *a, **kw: pytest.fail("unexpected DNS"))
+
+
+@pytest.mark.parametrize("url,expected_path", [
+    ("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+     "/v1beta/models/gemini-2.5-flash:generateContent"),
+    ("https://fixture.openai.azure.com/openai/responses?api-version=2025-04-01-preview",
+     "/openai/responses?api-version=2025-04-01-preview"),
+    ("https://fixture.openai.azure.com/openai/v1/chat/completions",
+     "/openai/v1/chat/completions"),
+    ("https://fixture.cognitiveservices.azure.com/openai/responses?api-version=2025-04-01-preview",
+     "/openai/responses?api-version=2025-04-01-preview"),
+])
+def test_transport_approved_private_provider_routes(url, expected_path):
+    result = transport.validate_target(url, resolver=lambda *a, **kw: [
+        (None, None, None, None, ("8.8.8.8", 443))])
+    assert result[1] == expected_path
+
+
+@pytest.mark.parametrize("url", [
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:delete",
+    "https://other.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+    "https://fixture.openai.azure.com/openai/responses?api-version=2025-04-01-preview&key=leak",
+    "https://fixture.openai.azure.com/openai/deployments/foo/chat/completions?api-version=bad",
+    "https://fixture.openai.azure.com/openai/v1/delete",
+])
+def test_transport_private_provider_routes_fail_closed_before_dns(url):
     with pytest.raises(transport.PrivateTransportError):
         transport.validate_target(url, resolver=lambda *a, **kw: pytest.fail("unexpected DNS"))
 

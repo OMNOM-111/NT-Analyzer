@@ -3,15 +3,20 @@
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
 - Last verified UTC: 2026-09-28T23:06:14Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Scope: open `0.10.0-beta.100` product card, Canary model migration blocker and pending parity
+- Scope: open `0.10.0-beta.101` product card; beta.101 Development migration work, beta.100 Canary PARTIAL and beta.99 Production
 - Status: PARTIAL
 - Current Production version/build/artifact when known: `0.10.0-beta.99` / `sf-0.10.0-beta.99-68ba3a95f804-20260928T021954Z` / `art_3ae473a96bb24d439fd5cb6d3a1d1096`
 
-## Current beta.100 handoff (2026-09-28; supersedes older Local-only notes below)
+## Current beta.101 Development handoff (2026-09-28; supersedes older Local-only notes below)
 
-The single owner-approved (7/7) product card is `0.10.0-beta.100`, originating
-in Local beta.95 → beta.96. beta.97–beta.100 are technical server iterations
-inside that open card. Source `7b66bcb6abd486891870b0419afd93f8828dbb85`
+The owner kept the single beta.96 product package open and designated beta.101 as its next technical iteration. beta.100 is immutable and remains Canary PARTIAL; Production remains beta.99. Branch `codex/beta101-server-secrets` is implementing a Development-only `SecretStore` boundary, safe Local owner-model snapshot/SSH-stream/server re-encryption, provider-specific private HTTPS routes and server refusal of Local DPAPI bindings. The Windows source process must run under the owner DPAPI profile with the correct Local data root; the server import must run against the environment-specific protected config and non-`BYPASSRLS` app role. No provider key or model has yet been migrated to Canary or Production. Do not mistake passing unit tests for real provider invocation or full parity. [beta.101 change record](../changelog/2026-09-28-beta101-server-secret-migration.md). Complete code/real disposable PostgreSQL tests/pre-release checks, then a scoped PR; merge and deployment require the owner gates. After a new immutable beta.101 artifact, back up Canary before import and complete owner/non-owner acceptance. Production scheduler OFF; Local `StratForge Vitek` ON.
+
+## Previous beta.100 checkpoint (historical, still current Canary runtime)
+
+At this beta.100 checkpoint the single owner-approved (7/7) product card was
+labeled `0.10.0-beta.100`, originating in Local beta.95 → beta.96. beta.97–beta.100
+are technical server iterations inside that still-open card; beta.101 now continues it.
+Source `7b66bcb6abd486891870b0419afd93f8828dbb85`
 passed final-main CI and produced signed immutable artifact
 `art_de49135714cf48b6aace2a977fad334f`. It is deployed only to Canary;
 Production still runs beta.99. The owner approved a one-day Canary Pro grant

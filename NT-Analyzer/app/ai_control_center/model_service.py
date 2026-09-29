@@ -17,9 +17,9 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 from uuid import UUID, uuid5
 
-from .. import secure_store
 from ..ai_lab import agent_registry
 from . import contracts as c
+from .secret_store import LocalSecrets
 from .events import EventData, EventEnvelope, MutationIdentity
 from .model_contracts import Evaluation
 from .model_evaluation import (APPLICATION_RUBRIC, APPLICATION_SOURCES, RUBRICS, VERSION,
@@ -38,7 +38,7 @@ _POLICY = {"version": "private-model-tasks-v1", "synthetic": False, "risk": "low
            "autonomy": "advice", "tools": [], "routing_effect": "none",
            "budget_authority": "existing_universal_llm_and_ai_budgets",
            "approval": "explicit_user_bounded_text_request", "court_approval": False}
-_SUPPORTED = ("openai", "deepseek", "openrouter", "github_models", "zai", "mistral", "groq", "custom")
+_SUPPORTED = ("openai", "deepseek", "openrouter", "github_models", "zai", "mistral", "groq", "gemini", "azure_foundry", "custom")
 _ACTIVE = frozenset({"planned", "ready", "running", "waiting", "blocked"})
 # A caller's local record of a connection somebody else shares with them. It
 # holds only what the share descriptor shows; the connection stays with its owner.
@@ -105,7 +105,7 @@ class ModelService:
         self.admit = admit
         self.enqueue = enqueue
         self.executor = executor
-        self.secrets = secrets or secure_store
+        self.secrets = secrets if secrets is not None else LocalSecrets()
         self.allowed_origins = frozenset(allowed_origins)
         # Optional trusted composition dependency, never an HTTP/task field.
         # Only explicit result handoffs require chat existence before a call.
@@ -118,11 +118,14 @@ class ModelService:
             raise ContractError("context_required")
         if context.scope.environment != c.Environment.DEVELOPMENT:
             from .postgres_repository import PostgresAgentWorldRepository
+            from .server_secrets import ServerSecrets
             if (context.scope.environment not in {c.Environment.CANARY, c.Environment.PRODUCTION}
                     or not isinstance(self.repository, PostgresAgentWorldRepository)
                     or not self.repository.client.production
                     or self.repository.environment != context.scope.environment):
                 raise ContractError("model_server_storage_required")
+            if operation != "read" and not isinstance(self.secrets, ServerSecrets):
+                raise ContractError("model_secure_storage_unavailable")
         if not callable(self.admit):
             raise ContractError("model_admission_required")
         # Existing auth/device/membership/entitlement/capability/Preview/flags
@@ -237,13 +240,19 @@ class ModelService:
         endpoint = str(value or default).strip().rstrip("/")
         try:
             parsed = urlsplit(endpoint)
+            azure_version = (provider == "azure_foundry" and bool(re.fullmatch(
+                r"api-version=\d{4}-\d{2}-\d{2}(?:-preview)?", parsed.query or "")))
             if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
-                    or parsed.query or parsed.fragment or parsed.port not in (None, 443)
+                    or (parsed.query and not azure_version) or parsed.fragment or parsed.port not in (None, 443)
                     or len(endpoint) > 250 or any(x in endpoint for x in ("\\", "\r", "\n"))):
                 raise ValueError()
         except ValueError:
             raise ContractError("model_endpoint_invalid") from None
-        if provider != "custom" and endpoint != default:
+        if provider == "azure_foundry":
+            if not parsed.hostname.lower().endswith((".openai.azure.com", ".cognitiveservices.azure.com")) or not re.fullmatch(
+                    r"(?:/openai/(?:responses|v1)|/openai/deployments/[A-Za-z0-9._-]{1,120})?", parsed.path):
+                raise ContractError("model_endpoint_not_allowed")
+        elif provider != "custom" and endpoint != default:
             raise ContractError("model_endpoint_not_allowed")
         if provider == "custom" and f"https://{parsed.hostname}" not in self.allowed_origins:
             raise ContractError("model_endpoint_not_allowed")
