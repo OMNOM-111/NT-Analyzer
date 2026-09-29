@@ -1057,6 +1057,19 @@ def test_models_view_lists_the_whole_roster_with_spend_quota_and_usage():
     assert "key_mask" not in script
 
 
+def test_empty_owner_lab_does_not_hide_migrated_server_models():
+    result = run_domain_ui("""
+      state.summaries={lab_models:{items:[]},models:{items:[{model:'requested-model',provider:'deepseek',connections:1,active:1}]}};
+      await click({awTab:'models'},'shell');
+      return {html:node('#aw-content').innerHTML,calls};
+    """)
+    assert 'Мои модели' in result['html']
+    assert 'requested-model' in result['html']
+    assert 'Мои дополнительные подключения' not in result['html']
+    assert 'Доступные общие модели' in result['html']
+    assert not any(call['method'] == 'post' for call in result['calls'])
+
+
 def test_team_forms_itself_and_lists_the_staff_in_one_table():
     script = SCRIPT.read_text(encoding="utf-8")
     auto = script.split("async function autoTeam(button)", 1)[1].split("function staffRow(", 1)[0]
