@@ -1,14 +1,18 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-30T04:52:00Z
+- Last verified UTC: 2026-09-30T07:26:38Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Current Canary source SHA: d695a8ddc5dccfc1252f0e94d59bb4e5325bc601; beta.103 signed artifact deployed, focused acceptance PASS after backed-up worker configuration correction
-- Scope: one open Local beta.95 → beta.96 product card; beta.102 and initial beta.103 Canary PARTIAL are historical, beta.103 final focused Canary PASS, beta.99 Production
+- Scope: one open Local beta.95 → beta.96 product card; beta.103 Canary focused PASS and Production runtime live, beta.104 AI Center read-path correction in Development
 - Status: PARTIAL
-- Current Production version/build/artifact when known: `0.10.0-beta.99` / `sf-0.10.0-beta.99-68ba3a95f804-20260928T021954Z` / `art_3ae473a96bb24d439fd5cb6d3a1d1096`
+- Current Production version/build/artifact when known: `0.10.0-beta.103` / `sf-0.10.0-beta.103-d695a8ddc5dc-20260930T013703Z` / `art_9d38fcd7bd33454786fdbfaf0e9cc25a`; product acceptance PENDING
 
-## Current beta.103 Canary handoff (2026-09-30)
+## Current beta.104 handoff (2026-09-30)
+
+Production beta.103 is live/ready on schema 24 with Production-specific model secrets readable by API and worker. Exact owner/non-owner Agent World workspace admission was corrected with backed-up Production config. The remaining real blocker is authenticated AI Center model/overview latency and intermittent Cloudflare 524. Isolated read-only timing of the exact Production code found hundreds of recursive authority checks and about 1,500 PostgreSQL connections per overview, versus fast anonymous 401; no provider dispatch occurred. A narrow beta.104 Development fix reuses authority within one read-only HTTP projection and performs fresh fail-closed revalidation before response. Focused tests PASS; PR, final-main CI, immutable artifact, Canary and Production remain PENDING. After focused Canary PASS, promote the same artifact and finish the agreed one-call Professional shared-model Production smoke, then reporting cutover and closeout. Scheduler OFF, Local `StratForge Vitek` ON. [Evidence and gates](../changelog/2026-09-30-beta104-ai-center-read-timeout.md).
+
+## Historical beta.103 pre-promotion handoff (2026-09-30)
 
 **Production promotion remains STOPPED.** The initial Production backup helper failure was traced to on-host Cloudflare HTTP 403 `1010`, not an API startup defect. A corrected ignored helper eventually passed a new complete quiesced backup gate at `backups/pre-beta103-production-peer-20260930T043957Z` (manifest SHA256 `34EAF4F0314CF5D4653919A2F892369EBF0708A4BDF831B3FC12EF57148B1FF2`, dump/runtime verified, all four services RUNNING, direct and off-host `/live`/`ready` 200 on beta.99); two earlier failed snapshots remain historical. Backed-up Production worker secret-dir config, additive schema 24, separate Production encryption key and trusted Local-to-Production import of the same five owner models then passed. Read-only beta.103 code under the actual Production API and worker process environments decrypted one owner secret without dispatch. However active beta.99 subsequently returned `/ready` HTTP 503 `database_migration_pending` because its code requires schema 23 while the owner-required pre-promotion import needs schema 24; `/live` stayed 200 on beta.99. No promotion, Production provider call, scheduler cutover or destructive rollback was performed. Preserve the imported data and backups; the owner was asked to choose a data-safe targeted rollback or explicitly allow exact-artifact promotion through this transitional old-code readiness mismatch. [Full bounded preflight evidence](../changelog/2026-09-29-beta103-server-agent-world-queue.md).
 

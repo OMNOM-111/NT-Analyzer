@@ -1,13 +1,25 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-09-30T04:07:00Z
+- Last verified UTC: 2026-09-30T07:26:38Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Current deployed source SHA: Canary `d695a8ddc5dccfc1252f0e94d59bb4e5325bc601`; Production `68ba3a95f804800195bb6e8dff556dd843b8eb6e`
+- Current deployed source SHA: Canary and Production `d695a8ddc5dccfc1252f0e94d59bb4e5325bc601`
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: PARTIAL
 
-Current checkpoint superseding historical sections below: Canary runs signed
+Current superseding checkpoint: Canary focused acceptance of beta.103 is PASS;
+the exact signed artifact `art_9d38fcd7bd33454786fdbfaf0e9cc25a` now also
+runs in Production on schema 24 with `/live` and `/ready` 200 and Production
+API/worker SecretStore read PASS. Production final product smoke is NOT PASS:
+authenticated AI Center models/overview may reach Cloudflare 524, and no new
+Production provider request has been dispatched for final acceptance. The
+Production scheduler remains OFF and Local `StratForge Vitek` ON. beta.104 is
+only a Development source correction of repeated read-only authority checks;
+there is no beta.104 artifact or deployment yet. Preserve the verified
+`pre-beta103-production-peer-20260930T043957Z` backup and beta.99 rollback
+slot. See the [focused change record](../changelog/2026-09-30-beta104-ai-center-read-timeout.md).
+
+Historical beta.103 Canary checkpoint: Canary runs signed
 `0.10.0-beta.103` artifact `art_9d38fcd7bd33454786fdbfaf0e9cc25a`
 from source `d695a8ddc5dccfc1252f0e94d59bb4e5325bc601`, build
 `sf-0.10.0-beta.103-d695a8ddc5dc-20260930T013703Z`, archive SHA256

@@ -130,6 +130,9 @@ def read_projection_authority(authorized):
         yield
     finally:
         authorized["admit"], authorized["refresh"] = original_admit, original_refresh
+    if (authorized["context"] != expected_context or authorized["chat_scope"] != expected_scope
+            or authorized["snapshot"] != expected_snapshot):
+        raise ContractError("agent_world_context_changed")
     current = access(expected_scope, read_only=True)
     if (current["context"] != expected_context or current["chat_scope"] != expected_scope
             or current["snapshot"] != expected_snapshot):
