@@ -1,13 +1,33 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-09-29T06:38:21Z
+- Last verified UTC: 2026-09-30T01:46:00Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Current deployed source SHA: Canary `58fbb23d1551e267dd7fe622c2414580820f3f8c`; Production `68ba3a95f804800195bb6e8dff556dd843b8eb6e`
+- Current deployed source SHA: Canary `d695a8ddc5dccfc1252f0e94d59bb4e5325bc601`; Production `68ba3a95f804800195bb6e8dff556dd843b8eb6e`
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: PARTIAL
 
 Current checkpoint superseding historical sections below: Canary runs signed
+`0.10.0-beta.103` artifact `art_9d38fcd7bd33454786fdbfaf0e9cc25a`
+from source `d695a8ddc5dccfc1252f0e94d59bb4e5325bc601`, build
+`sf-0.10.0-beta.103-d695a8ddc5dc-20260930T013703Z`, archive SHA256
+`7DB016ACD5E4CA96F02C8057778C1EDFD1E12702674E8642A71CBA764478A7EB`,
+runtime/manifest SHA256
+`0F440F977D0B3C55A7D546AA330DE42DCEBB7772CB56BE957A95D69E9FB05154`.
+Required PR checks and final-main CI `36651073820`, signature, public `/live`
+and `/ready` PASS; deployment `dep_d7084bd26b5341fabccfce5b41d750fe`
+is `canary_checking`. Verified pre-change backup
+`backups/pre-beta103-canary-peer-20260930T013728Z` (manifest SHA256
+`107F25C19DE782A58724A1851207CA8300933FA1444423DA14B1AB26007CC190`)
+contains DB/runtime/config and preserves beta.102 rollback. Focused real
+non-owner shared-model queue/provider/usage/share-off acceptance is PARTIAL:
+the prior Canary Pro test entitlement expired during CI and was renewed for
+one day through owner UI. One real task entered the interactive PostgreSQL
+worker, then failed with model_provider_error and no durable provider receipt;
+share-off was not tested. Production remains beta.99, report scheduler OFF and Local
+`StratForge Vitek` ON. [Release record](../changelog/2026-09-29-beta103-server-agent-world-queue.md).
+
+Historical beta.101 checkpoint: Canary ran signed
 `0.10.0-beta.101` artifact `art_ed57f7076b6b46b78cc3309c55470016`
 from source `58fbb23d1551e267dd7fe622c2414580820f3f8c`, build
 `sf-0.10.0-beta.101-58fbb23d1551-20260929T063217Z`, archive SHA256
