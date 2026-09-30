@@ -1,6 +1,7 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
+- Current superseding 2026-09-30 checkpoint: Production beta.104 signed artifact `art_b2ab8a4e5a19476b84fc2a3c1c8bfe89`, source `ef263f75a5f5ec8c42e652738199e852cac8b677`, is live/ready. Authenticated owner/Professional model GETs complete. Exactly one real shared Gemini request succeeded in PostgreSQL with sealed receipt, 58/34 tokens, cost and caller/owner audit, but the initiating HTTP POST reached 524 and its separate SF Chat result-delivery job dead-lettered on a SQLite-only claim-field validator. beta.105 narrowly corrects server POST admission cost and PostgreSQL delivery claim. Canary/Production acceptance and operational reporting cutover remain pending; scheduler OFF, Local `StratForge Vitek` ON. [New change record](../changelog/2026-09-30-beta105-production-model-completion.md). Older beta.103/beta.104 bullets below are historical checkpoints, not current status.
 - Last verified UTC: 2026-09-30T07:26:38Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Current Canary source SHA: d695a8ddc5dccfc1252f0e94d59bb4e5325bc601; beta.103 signed artifact deployed, focused acceptance PASS after backed-up worker configuration correction

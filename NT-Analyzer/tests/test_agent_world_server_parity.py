@@ -110,6 +110,57 @@ def test_nonowner_domain_access_rechecks_live_session_workspace_and_capability(m
         domain_gateway.access(scope)
 
 
+def test_model_post_coalesces_nested_admission_but_rechecks_before_queue_and_reply(monkeypatch):
+    identity = uuid4()
+    workspace_id = "ws_personal_12345678"
+    scope = {"user_id": 42, "user_uuid": str(identity), "workspace_id": workspace_id,
+             "auth_session_id": "sess_live_123", "is_owner": False}
+    state = {"session": True, "capability": True, "sessions": 0, "budgets": 0}
+    monkeypatch.setattr(domain_gateway.preview_sandbox, "enabled", lambda: False)
+    monkeypatch.setattr(live_gateway, "configured", lambda ws="": False)
+    monkeypatch.setattr(server_gateway, "configured", lambda ws="": ws == workspace_id)
+    monkeypatch.setattr(server_gateway, "environment", lambda: c.Environment.CANARY)
+    monkeypatch.setattr(server_gateway.audit_events, "record", lambda *a, **k: "aud_" + uuid4().hex)
+    monkeypatch.setattr(runtime_env, "is_server_environment", lambda: True)
+    monkeypatch.setattr(domain_gateway.account_auth, "find_active_user", lambda uid: {
+        "user_id": uid, "user_uuid": str(identity), "is_owner": False, "status": "active"})
+    def session(*_):
+        state["sessions"] += 1
+        return state["session"]
+    monkeypatch.setattr(domain_gateway.account_auth, "server_session_is_active", session)
+    workspace = {"workspace_id": workspace_id, "status": "active", "kind": "personal",
+                 "owner_user_id": 42, "membership": {"role": "owner"}}
+    monkeypatch.setattr(domain_gateway.workspaces, "require_workspace_writer", lambda uid, workspace_id: workspace)
+    monkeypatch.setattr(domain_gateway.permissions, "resolve_for_user_id", lambda *a: {
+        "capabilities": {"ai_lab": state["capability"], "ai_pro_models": state["capability"]}})
+    monkeypatch.setattr(domain_gateway.permissions, "enforce", lambda *a: None)
+    def budget(_workspace, _estimate):
+        state["budgets"] += 1
+        return {"ok": True}
+    monkeypatch.setattr(domain_gateway.ai_budgets, "check_budget", budget)
+    authorized = domain_gateway.access(scope)
+    state["sessions"] = 0
+    with domain_gateway.bounded_model_request_authority(authorized):
+        for _ in range(40):
+            domain_gateway._model_admit(authorized, authorized["context"], "shared_provider_transmit", 0.01)
+            assert domain_gateway.refresh_authority(authorized) is authorized
+        assert state["sessions"] == 0
+        assert state["budgets"] == 1
+        authorized["_request_model_recheck"]()
+        assert state["sessions"] == 2
+    assert state["sessions"] == 4
+    assert state["budgets"] == 3
+    assert "_request_model_recheck" not in authorized
+    state["session"] = False
+    with pytest.raises(ContractError, match="session_expired"):
+        with domain_gateway.bounded_model_request_authority(authorized):
+            authorized["_request_model_recheck"]()
+    state["session"] = True
+    with pytest.raises(ContractError, match="capability_required"):
+        with domain_gateway.bounded_model_request_authority(authorized):
+            state["capability"] = False
+
+
 def test_server_session_revalidation_checks_identity_and_device(monkeypatch):
     person = uuid4()
     monkeypatch.setattr(runtime_env, "is_server_environment", lambda: True)
