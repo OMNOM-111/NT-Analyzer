@@ -13,6 +13,8 @@ import os
 import re
 import sqlite3
 import time
+import copy
+from contextlib import contextmanager
 from uuid import UUID
 
 from .. import account_auth, ai_budgets, permissions, preview_sandbox, runtime_env, workspaces
@@ -95,6 +97,47 @@ def refresh_authority(authorized, *, read_only=None):
     if authorized.get("automation") or authorized["context"].actor.kind != ActorKind.HUMAN:
         raise ContractError("automation_refresh_required")
     return access(authorized["chat_scope"], read_only=mode)
+
+
+@contextmanager
+def read_projection_authority(authorized):
+    """Reuse one admission during a GET projection, then recheck before reply.
+
+    Model/overview projections call nested read helpers hundreds of times. On
+    PostgreSQL each recursive authority refresh opens a new transaction; the
+    same already-validated request can otherwise time out before responding.
+    This optimization is request-local and never applies to writes, worker
+    dispatch, automation, or Preview. PostgreSQL RLS remains active on every
+    repository read. A changed session, workspace, capability, or flag fails
+    closed at the final fresh authority check before HTTP serialization.
+    """
+    if (authorized.get("read_only") is not True or authorized.get("automation")
+            or authorized.get("preview_bridge")):
+        yield
+        return
+    original_admit, original_refresh = authorized["admit"], authorized["refresh"]
+    expected_scope, expected_context, expected_snapshot = (
+        copy.deepcopy(authorized["chat_scope"]), authorized["context"], authorized["snapshot"])
+
+    def same_read(**kwargs):
+        if kwargs.get("read_only", True) is not True:
+            raise ContractError("agent_world_read_only")
+        return authorized
+
+    authorized["admit"] = lambda: None
+    authorized["refresh"] = same_read
+    try:
+        yield
+    finally:
+        authorized["admit"], authorized["refresh"] = original_admit, original_refresh
+    if (authorized["context"] != expected_context or authorized["chat_scope"] != expected_scope
+            or authorized["snapshot"] != expected_snapshot):
+        raise ContractError("agent_world_context_changed")
+    current = access(expected_scope, read_only=True)
+    if (current["context"] != expected_context or current["chat_scope"] != expected_scope
+            or current["snapshot"] != expected_snapshot):
+        raise ContractError("agent_world_context_changed")
+    original_admit()
 
 
 def from_handler(handler, *, read_only=False):

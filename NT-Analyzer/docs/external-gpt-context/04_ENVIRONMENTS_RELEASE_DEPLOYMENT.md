@@ -1,13 +1,62 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-09-29T06:38:21Z
+- Last verified UTC: 2026-09-30T07:26:38Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Current deployed source SHA: Canary `58fbb23d1551e267dd7fe622c2414580820f3f8c`; Production `68ba3a95f804800195bb6e8dff556dd843b8eb6e`
+- Current deployed source SHA: Canary and Production `d695a8ddc5dccfc1252f0e94d59bb4e5325bc601`
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: PARTIAL
 
-Current checkpoint superseding historical sections below: Canary runs signed
+Current superseding checkpoint: Canary focused acceptance of beta.103 is PASS;
+the exact signed artifact `art_9d38fcd7bd33454786fdbfaf0e9cc25a` now also
+runs in Production on schema 24 with `/live` and `/ready` 200 and Production
+API/worker SecretStore read PASS. Production final product smoke is NOT PASS:
+authenticated AI Center models/overview may reach Cloudflare 524, and no new
+Production provider request has been dispatched for final acceptance. The
+Production scheduler remains OFF and Local `StratForge Vitek` ON. beta.104 is
+only a Development source correction of repeated read-only authority checks;
+there is no beta.104 artifact or deployment yet. Preserve the verified
+`pre-beta103-production-peer-20260930T043957Z` backup and beta.99 rollback
+slot. See the [focused change record](../changelog/2026-09-30-beta104-ai-center-read-timeout.md).
+
+Historical beta.103 Canary checkpoint: Canary runs signed
+`0.10.0-beta.103` artifact `art_9d38fcd7bd33454786fdbfaf0e9cc25a`
+from source `d695a8ddc5dccfc1252f0e94d59bb4e5325bc601`, build
+`sf-0.10.0-beta.103-d695a8ddc5dc-20260930T013703Z`, archive SHA256
+`7DB016ACD5E4CA96F02C8057778C1EDFD1E12702674E8642A71CBA764478A7EB`,
+runtime/manifest SHA256
+`0F440F977D0B3C55A7D546AA330DE42DCEBB7772CB56BE957A95D69E9FB05154`.
+Required PR checks and final-main CI `36651073820`, signature, public `/live`
+and `/ready` PASS; deployment `dep_d7084bd26b5341fabccfce5b41d750fe`
+is `canary_checking`. Verified pre-change backup
+`backups/pre-beta103-canary-peer-20260930T013728Z` (manifest SHA256
+`107F25C19DE782A58724A1851207CA8300933FA1444423DA14B1AB26007CC190`)
+contains DB/runtime/config and preserves beta.102 rollback. The initial
+focused Canary check was PARTIAL: one non-owner task reached the interactive
+PostgreSQL worker but failed before provider dispatch because that worker
+lacked `STRATFORGE_SECRETS_DIR`. A separate backup of its original wrapper
+(`backups/pre-beta103-canary-worker-secret-dir-20260930T025910Z/run-worker-canary.sh`,
+SHA256 `C3C8FE0C875ABF6CF572813DDBDCB2325E0F28023F8F615D91774CB033555FD2`)
+and a worker-only restart enabled the same Canary server secret directory as
+the API. No application code or artifact changed. The restarted worker read
+the owner secret, and exactly one new real non-owner Professional task
+`854edfb0-cc97-5a5e-82a1-10f664e40566` succeeded with a non-synthetic
+Gemini receipt, 57/33 tokens, $0.00 and matching owner/caller usage audit.
+After owner share-off, exactly one new foreign request was denied before
+job/provider dispatch with no new usage; history remained. The local Release
+Center candidate `rc_58652a4181e3497ca53003bacace24da` is now
+`canary_passed` with final PASS check `chk_0002fdbe50e44a9aa99823951f195369`
+and verification result PASS; the protected ledger was backed up first.
+Post-check `/live`
+and `/ready` are HTTP 200, so focused Canary acceptance is **PASS**. The
+earlier HTTP 524 overview is separate historical evidence, not a blocker of
+this scoped path. Production remains beta.99, report scheduler OFF and Local
+`StratForge Vitek` ON. Read-only Production comparison found its worker lacks
+the equivalent secret-dir setting, while its API has it; backed-up Production
+config correction and environment-specific secret import are prerequisites
+after separate artifact-specific owner approval. [Release record](../changelog/2026-09-29-beta103-server-agent-world-queue.md).
+
+Historical beta.101 checkpoint: Canary ran signed
 `0.10.0-beta.101` artifact `art_ed57f7076b6b46b78cc3309c55470016`
 from source `58fbb23d1551e267dd7fe622c2414580820f3f8c`, build
 `sf-0.10.0-beta.101-58fbb23d1551-20260929T063217Z`, archive SHA256
@@ -175,7 +224,7 @@ product card remains `In progress` and final product closeout is paused.
 | Release dir | server data-root relative `releases/0.10.0-beta.99-68ba3a95f804` |
 | Backups | `backups/pre-beta99-canary-peer-20260928T022038Z`; `backups/pre-beta99-production-peer-20260928T024620Z` |
 | Deployment IDs | Canary `dep_d4ebf1c42c3a450f99c530ed41cd62f8`; Production `dep_48d36d71b00e480eac201c3f3a71e0f1` |
-| Stage | beta.99 scoped Canary/Production PASS; beta.96 full-package Canary PARTIAL and product closeout paused |
+| Stage | Historical beta.99 checkpoint: scoped Canary/Production PASS; full-package Canary was then PARTIAL. Current beta.103 Canary PASS is recorded above; Production product closeout remains paused. |
 
 Immediate previous Production beta.97 identity remains preserved for rollback:
 
