@@ -1,7 +1,7 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-30T04:19:00Z
+- Last verified UTC: 2026-09-30T04:52:00Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Current Canary source SHA: d695a8ddc5dccfc1252f0e94d59bb4e5325bc601; beta.103 signed artifact deployed, focused acceptance PASS after backed-up worker configuration correction
 - Scope: one open Local beta.95 → beta.96 product card; beta.102 and initial beta.103 Canary PARTIAL are historical, beta.103 final focused Canary PASS, beta.99 Production
@@ -9,6 +9,8 @@
 - Current Production version/build/artifact when known: `0.10.0-beta.99` / `sf-0.10.0-beta.99-68ba3a95f804-20260928T021954Z` / `art_3ae473a96bb24d439fd5cb6d3a1d1096`
 
 ## Current beta.103 Canary handoff (2026-09-30)
+
+**Production promotion remains STOPPED.** The initial Production backup helper failure was traced to on-host Cloudflare HTTP 403 `1010`, not an API startup defect. A corrected ignored helper eventually passed a new complete quiesced backup gate at `backups/pre-beta103-production-peer-20260930T043957Z` (manifest SHA256 `34EAF4F0314CF5D4653919A2F892369EBF0708A4BDF831B3FC12EF57148B1FF2`, dump/runtime verified, all four services RUNNING, direct and off-host `/live`/`ready` 200 on beta.99); two earlier failed snapshots remain historical. Backed-up Production worker secret-dir config, additive schema 24, separate Production encryption key and trusted Local-to-Production import of the same five owner models then passed. Read-only beta.103 code under the actual Production API and worker process environments decrypted one owner secret without dispatch. However active beta.99 subsequently returned `/ready` HTTP 503 `database_migration_pending` because its code requires schema 23 while the owner-required pre-promotion import needs schema 24; `/live` stayed 200 on beta.99. No promotion, Production provider call, scheduler cutover or destructive rollback was performed. Preserve the imported data and backups; the owner was asked to choose a data-safe targeted rollback or explicitly allow exact-artifact promotion through this transitional old-code readiness mismatch. [Full bounded preflight evidence](../changelog/2026-09-29-beta103-server-agent-world-queue.md).
 
 Production promotion of exact artifact `art_9d38fcd7bd33454786fdbfaf0e9cc25a` was conditionally authorized, but **stopped at the backup gate before any config/import/promotion**. Quiesced beta.99 backup `backups/pre-beta103-production-peer-20260930T041641Z` has verified dump/runtime/manifest hashes; its helper exited 2 because the host-local post-restart HTTP probe returned `HTTPError`. Independent public `/live` and `/ready` both returned 200 on unchanged beta.99 afterward. Under the owner's fail-closed rule, the backup gate is not accepted; Production encryption key, owner-model import and worker wrapper remain untouched. Production scheduler OFF, Local `StratForge Vitek` ON. Resume only after the backup health-probe gate is resolved and remaining Production-specific prerequisites pass. [Exact preflight receipt](../changelog/2026-09-29-beta103-server-agent-world-queue.md).
 
