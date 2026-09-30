@@ -15,6 +15,7 @@ import sqlite3
 import time
 import copy
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from uuid import UUID
 
 from .. import account_auth, ai_budgets, permissions, preview_sandbox, runtime_env, workspaces
@@ -140,6 +141,56 @@ def read_projection_authority(authorized):
     original_admit()
 
 
+@contextmanager
+def bounded_model_request_authority(authorized):
+    """Coalesce nested admission reads for one explicit model task/test POST.
+
+    The HTTP handler and domain have already admitted this human request.
+    Revalidate the live session, workspace, capabilities, flags and budget
+    before queue dispatch and again before returning. The worker independently
+    revalidates before provider transmission; PostgreSQL RLS still applies to
+    every record operation. No other mutation or automation uses this scope.
+    """
+    if (authorized.get("read_only") or authorized.get("automation")
+            or authorized.get("preview_bridge") or not runtime_env.is_server_environment()):
+        yield
+        return
+    original_admit, original_refresh = authorized["admit"], authorized["refresh"]
+    expected_scope, expected_context, expected_snapshot = (
+        copy.deepcopy(authorized["chat_scope"]), authorized["context"], authorized["snapshot"])
+    budget = {"estimate": None}
+
+    def fresh():
+        if (authorized["context"] != expected_context or authorized["chat_scope"] != expected_scope
+                or authorized["snapshot"] != expected_snapshot):
+            raise ContractError("agent_world_context_changed")
+        current = access(expected_scope, read_only=False)
+        if (current["context"] != expected_context or current["chat_scope"] != expected_scope
+                or current["snapshot"] != expected_snapshot):
+            raise ContractError("agent_world_context_changed")
+        original_admit()
+        estimate = budget["estimate"] if budget["estimate"] is not None else 0.0
+        if not ai_budgets.check_budget(expected_context.scope.workspace_id, estimate).get("ok"):
+            raise ContractError("model_budget_exhausted")
+
+    def same_mutation(**kwargs):
+        if kwargs.get("read_only", False) is not False:
+            raise ContractError("agent_world_context_changed")
+        return authorized
+
+    authorized["admit"] = lambda: None
+    authorized["refresh"] = same_mutation
+    authorized["_request_model_budget"] = budget
+    authorized["_request_model_recheck"] = fresh
+    try:
+        yield
+        fresh()
+    finally:
+        authorized["admit"], authorized["refresh"] = original_admit, original_refresh
+        authorized.pop("_request_model_budget", None)
+        authorized.pop("_request_model_recheck", None)
+
+
 def from_handler(handler, *, read_only=False):
     raw = handler._remote_context or {}
     if ((raw.get("role") == "read_only" and not read_only) or (raw.get("source") != "local"
@@ -215,8 +266,12 @@ def _model_admit(authorized, context, operation, estimate):
     required = "ai_lab" if str(operation).startswith("shared_") else "ai_pro_models"
     if not current["chat_scope"]["capabilities"].get(required):
         raise ContractError("model_capability_required")
-    if not ai_budgets.check_budget(context.scope.workspace_id, estimate).get("ok"):
-        raise ContractError("model_budget_exhausted")
+    budget = authorized.get("_request_model_budget")
+    if budget is None or budget["estimate"] is None or estimate > budget["estimate"]:
+        if not ai_budgets.check_budget(context.scope.workspace_id, estimate).get("ok"):
+            raise ContractError("model_budget_exhausted")
+        if budget is not None:
+            budget["estimate"] = estimate
 
 
 def owner_binding(authorized, registry_id):
@@ -259,7 +314,10 @@ def _private_limits(context, model, profile):
 
 
 def enqueue_model(authorized, *, context, task_id):
-    authorized["admit"]()
+    if callable(authorized.get("_request_model_recheck")):
+        authorized["_request_model_recheck"]()
+    else:
+        authorized["admit"]()
     if context != authorized["context"]:
         raise ContractError("model_context_required")
     if authorized.get("preview_bridge"):
@@ -463,15 +521,37 @@ def _require_delivery_claim(job):
     current = worker_router.get(job.get("worker_job_id", job.get("id")),
                                 workspace_id=str(job.get("workspace_id") or "")) or {}
     now = time.time()
-    try:
-        live = all(math.isfinite(float(current.get(key) or 0)) and float(current.get(key) or 0) > now
-                   for key in ("locked_until", "deadline_at"))
-    except (TypeError, ValueError):
-        live = False
-    if (job.get("status") != "running" or not job.get("worker_id")
+    postgres_claim = "lease_owner" in job or "leased_until" in job
+    if postgres_claim:
+        def seconds(value):
+            if isinstance(value, datetime):
+                if value.tzinfo is None:
+                    raise ValueError("unscoped lease timestamp")
+                return value.astimezone(timezone.utc).timestamp()
+            return float(value or 0)
+        try:
+            lease = seconds(current.get("leased_until"))
+            started = seconds(current.get("started_at"))
+            timeout = float(current.get("timeout_sec") or 0)
+            live = (all(math.isfinite(value) for value in (lease, started, timeout))
+                    and lease > now and started > 0 and timeout > 0 and started + timeout > now)
+        except (TypeError, ValueError, OverflowError):
+            live = False
+        same_claim = (bool(job.get("lease_owner")) and bool(job.get("lease_token"))
+                      and current.get("lease_owner") == job.get("lease_owner")
+                      and str(current.get("lease_token")) == str(job.get("lease_token"))
+                      and current.get("started_at") == job.get("started_at")
+                      and current.get("timeout_sec") == job.get("timeout_sec"))
+    else:
+        try:
+            live = all(math.isfinite(float(current.get(key) or 0)) and float(current.get(key) or 0) > now
+                       for key in ("locked_until", "deadline_at"))
+        except (TypeError, ValueError):
+            live = False
+        same_claim = bool(job.get("worker_id")) and current.get("worker_id") == job.get("worker_id")
+    if (job.get("status") != "running" or not same_claim
             or job.get("kind") != "agent_world_model" or type(job.get("attempts")) is not int or job["attempts"] < 1
             or current.get("status") != "running" or current.get("kind") != "agent_world_model"
-            or current.get("worker_id") != job.get("worker_id")
             or current.get("attempts") != job.get("attempts")
             or current.get("payload") != job.get("payload")
             or str(current.get("user_id")) != str(job.get("user_id"))
@@ -1210,7 +1290,8 @@ def mutate(authorized, domain, identity, action, body):
                     resolve_binding=lambda ctx, rid: owner_binding(authorized, rid) if ctx == context else None)
         if action in {"test", "task"}:
             from . import model_chat
-            return model_chat.start(authorized, service, identity, payload, key, test=action == "test")
+            with bounded_model_request_authority(authorized):
+                return model_chat.start(authorized, service, identity, payload, key, test=action == "test")
         if action == "disconnect" and not payload:
             return service.disconnect(context=context, model_id=identity)
         if action in {"share", "unshare"} and not payload:

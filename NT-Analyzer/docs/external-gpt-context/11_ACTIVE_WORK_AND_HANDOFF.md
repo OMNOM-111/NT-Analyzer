@@ -8,7 +8,23 @@
 - Status: PARTIAL
 - Current Production version/build/artifact when known: `0.10.0-beta.103` / `sf-0.10.0-beta.103-d695a8ddc5dc-20260930T013703Z` / `art_9d38fcd7bd33454786fdbfaf0e9cc25a`; product acceptance PENDING
 
-## Current beta.104 handoff (2026-09-30)
+## Current beta.105 handoff (2026-09-30; supersedes older beta.104 paragraph below)
+
+Production now runs signed beta.104 artifact `art_b2ab8a4e5a19476b84fc2a3c1c8bfe89`
+from final `main` SHA `ef263f75a5f5ec8c42e652738199e852cac8b677`.
+Canary focused GET acceptance and Production identity/live/ready/owner and
+real Professional model GET paths passed. One Production Professional shared
+model task reached the actual Gemini provider once and succeeded durably with
+receipt, 58/34 tokens, cost and both audits; the HTTP POST returned 524 and
+terminal SF Chat delivery dead-lettered. The latter is a confirmed SQLite-vs-
+PostgreSQL lease field code defect; repeated nested write admission contributes
+to synchronous POST latency. Narrow beta.105 Development correction and focused
+regressions are in progress. No new provider retry, share-off, reporting
+cutover or product-card Done yet. Production scheduler OFF; Local
+`StratForge Vitek` ON. Preserve beta.104 and beta.103 backups and the prior
+PR #307 Canary PARTIAL evidence. [Current change record](../changelog/2026-09-30-beta105-production-model-completion.md).
+
+## Historical beta.104 handoff (2026-09-30)
 
 Production beta.103 is live/ready on schema 24 with Production-specific model secrets readable by API and worker. Exact owner/non-owner Agent World workspace admission was corrected with backed-up Production config. The remaining real blocker is authenticated AI Center model/overview latency and intermittent Cloudflare 524. Isolated read-only timing of the exact Production code found hundreds of recursive authority checks and about 1,500 PostgreSQL connections per overview, versus fast anonymous 401; no provider dispatch occurred. A narrow beta.104 Development fix reuses authority within one read-only HTTP projection and performs fresh fail-closed revalidation before response. Focused tests PASS; PR, final-main CI, immutable artifact, Canary and Production remain PENDING. After focused Canary PASS, promote the same artifact and finish the agreed one-call Professional shared-model Production smoke, then reporting cutover and closeout. Scheduler OFF, Local `StratForge Vitek` ON. [Evidence and gates](../changelog/2026-09-30-beta104-ai-center-read-timeout.md).
 

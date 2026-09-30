@@ -339,6 +339,40 @@ def test_model_history_ingress_rejects_invalid_claim_without_nan_bypass(claimed_
         gateway._require_delivery_claim(job)
 
 
+def _production_delivery_claim(env):
+    job = copy.deepcopy(env.job)
+    job["kind"] = "agent_world_model"
+    for key in ("worker_id", "locked_until", "deadline_at"):
+        job.pop(key, None)
+    job.update(lease_owner="production-worker", lease_token=str(uuid4()),
+               leased_until=datetime.now(timezone.utc) + timedelta(seconds=60),
+               started_at=datetime.now(timezone.utc) - timedelta(seconds=2), timeout_sec=30)
+    env.rows[env.job_id] = copy.deepcopy(job)
+    return job
+
+
+def test_production_model_delivery_accepts_current_postgres_lease_without_provider_replay(claimed_coordinator):
+    env = claimed_coordinator
+    job = _production_delivery_claim(env)
+    gateway._require_delivery_claim(job)
+    # A heartbeat may extend the same lease without changing its token.
+    env.rows[env.job_id]["leased_until"] += timedelta(seconds=30)
+    gateway._require_delivery_claim(job)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("lease_owner", "different-worker"), ("lease_token", "replaced-token"),
+    ("leased_until", datetime(2020, 1, 1, tzinfo=timezone.utc)),
+    ("timeout_sec", 0), ("cancel_requested", True), ("status", "queued"),
+])
+def test_production_model_delivery_fails_closed_on_stale_or_foreign_lease(claimed_coordinator, field, value):
+    env = claimed_coordinator
+    job = _production_delivery_claim(env)
+    env.rows[env.job_id][field] = value
+    with pytest.raises(ContractError, match="model_delivery_claim_required"):
+        gateway._require_delivery_claim(job)
+
+
 def test_accepted_review_delivery_after_entitlement_and_test_switch_expiry_is_history_only(synthetic_delivery, monkeypatch):
     env = synthetic_delivery
     assert local_worker.run_once(worker_id="review-expiry-source")["status"] == "succeeded"

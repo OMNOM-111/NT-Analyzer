@@ -1,6 +1,7 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
+- Current superseding 2026-09-30 checkpoint: beta.104 `art_b2ab8a4e5a19476b84fc2a3c1c8bfe89`, source `ef263f75a5f5ec8c42e652738199e852cac8b677`, build `sf-0.10.0-beta.104-ef263f75a5f5-20260930T142556Z`, archive SHA256 `6AB34734C0D3406634AE4E050AE957D05FCBB296B281FD9DF015C3D533D9BD1A`, runtime SHA256 `53074CE10A09D717D591E8CF79D7CA6D77325CCC6CEA029E9375935A1EB61C29`, reached Canary PASS for focused GET and same-artifact Production runtime live/ready. Production backup `pre-beta104-production-peer-20260930T144651Z` verified before promotion; beta.103 is the immediate previous slot. Real provider receipt/usage/audits passed once but Production HTTP POST524 and SF Chat delivery failed, so full acceptance is PARTIAL. beta.105 source correction is in Development. Production scheduler OFF, Local `StratForge Vitek` ON. [Current evidence](../changelog/2026-09-30-beta105-production-model-completion.md). The older beta.103 current-language checkpoint below is historical, not a live claim.
 - Last verified UTC: 2026-09-30T07:26:38Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Current deployed source SHA: Canary and Production `d695a8ddc5dccfc1252f0e94d59bb4e5325bc601`
