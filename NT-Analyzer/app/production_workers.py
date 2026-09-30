@@ -53,6 +53,13 @@ DEFAULT_WORKER_CLASSES: Dict[str, Dict[str, int]] = {
 
 KIND_WORKER_CLASS = {
     "ai_orchestrator": "interactive_ai",
+    # Agent World already has scoped handlers in local_worker._execute and
+    # domain_gateway.execute_worker. Admit those same kinds to the PostgreSQL
+    # queue used by Canary/Production; otherwise a real shared-model task is
+    # persisted but rejected before provider dispatch.
+    "agent_world_model": "interactive_ai",
+    "agent_world_followup": "interactive_ai",
+    "agent_world_external": "interactive_ai",
     "chart_batch": "chart",
     "telemetry_index": "telemetry",
     "durable_sweep": "maintenance",
