@@ -78,9 +78,32 @@ def test_nonowner_domain_access_rechecks_live_session_workspace_and_capability(m
     allowed = domain_gateway.access(scope)
     assert allowed["context"].scope.environment is c.Environment.CANARY
     allowed["admit"]()
+    history = domain_gateway.access(scope, read_only=True)
+    checks = {"sessions": 0}
+    def active_session(*_):
+        checks["sessions"] += 1
+        return state["session"]
+    monkeypatch.setattr(domain_gateway.account_auth, "server_session_is_active", active_session)
+    with domain_gateway.read_projection_authority(history):
+        for _ in range(40):
+            history["admit"]()
+            assert domain_gateway.refresh_authority(history) is history
+        assert checks["sessions"] == 0
+    assert checks["sessions"] == 2  # final live authority and original flag gate
+    assert history["admit"] is not None
+    with pytest.raises(ContractError, match="read_only"):
+        with domain_gateway.read_projection_authority(history):
+            domain_gateway.refresh_authority(history, read_only=False)
+    with pytest.raises(ContractError, match="context_changed"):
+        with domain_gateway.read_projection_authority(history):
+            state["capability"] = False
+    state["capability"] = True
     state["session"] = False
     with pytest.raises(ContractError, match="session_expired"):
         allowed["admit"]()
+    with pytest.raises(ContractError, match="session_expired"):
+        with domain_gateway.read_projection_authority(history):
+            history["admit"]()
     state["session"] = True
     state["capability"] = False
     with pytest.raises(ContractError, match="capability_required"):

@@ -80,9 +80,16 @@ def handle_get(handler, path, qs):
                 raise ContractError("invalid_domain_request")
             if set(qs) - {"limit", "cursor"}:
                 raise ContractError("invalid_domain_request")
-            result = domain_gateway.list_domain(authorized, parts[1], identity=parts[2] if len(parts) == 3 else None,
-                    limit=int((qs.get("limit") or ["50"])[0]), cursor=(qs.get("cursor") or [None])[0])
-            handler._json(200, domain_gateway.history_projection(authorized, result, domain=parts[1]))
+            if parts[1] == "models":
+                with domain_gateway.read_projection_authority(authorized):
+                    result = domain_gateway.list_domain(authorized, parts[1], identity=parts[2] if len(parts) == 3 else None,
+                            limit=int((qs.get("limit") or ["50"])[0]), cursor=(qs.get("cursor") or [None])[0])
+                    result = domain_gateway.history_projection(authorized, result, domain=parts[1])
+            else:
+                result = domain_gateway.list_domain(authorized, parts[1], identity=parts[2] if len(parts) == 3 else None,
+                        limit=int((qs.get("limit") or ["50"])[0]), cursor=(qs.get("cursor") or [None])[0])
+                result = domain_gateway.history_projection(authorized, result, domain=parts[1])
+            handler._json(200, result)
             return
         authorized = domain_gateway.from_handler(handler, read_only=True)
         # The overview is "кратко обо всём": the tab summaries come in the same
@@ -99,7 +106,9 @@ def handle_get(handler, path, qs):
                 handler._json(200, {**domain_gateway.history_projection(authorized, value),
                                     "snapshot": {"cached": True, "computed_at": computed_at}})
             else:
-                handler._json(200, domain_gateway.history_projection(authorized, overview_snapshot.fresh(authorized, build)))
+                with domain_gateway.read_projection_authority(authorized):
+                    result = domain_gateway.history_projection(authorized, overview_snapshot.fresh(authorized, build))
+                handler._json(200, result)
         elif route == "goal":
             handler._json(200, {"goal": goals.read(authorized)})
         elif route == "duty":

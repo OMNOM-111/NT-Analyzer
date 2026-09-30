@@ -101,6 +101,22 @@ def http_post(account, route, payload, **options):
     return handler
 
 
+def test_ai_model_and_overview_get_bound_authority_refreshes(models, monkeypatch):
+    """One read may project many records, but authority is rechecked at reply."""
+    original = gateway.access
+    calls = []
+    def counted(scope, *, read_only=False):
+        calls.append(read_only)
+        return original(scope, read_only=read_only)
+    monkeypatch.setattr(gateway, "access", counted)
+    for route in ("domains/models", "overview"):
+        calls.clear()
+        response = http_get(models.account, route)
+        assert response.status == 200
+        assert 2 <= len(calls) <= 5
+        assert all(calls)
+
+
 @pytest.fixture
 def models(ordinary, tmp_path, monkeypatch):
     authorized = gateway.access(ordinary.scope)
