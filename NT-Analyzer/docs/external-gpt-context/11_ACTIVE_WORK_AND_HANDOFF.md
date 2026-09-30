@@ -1,7 +1,7 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-30T04:07:00Z
+- Last verified UTC: 2026-09-30T04:19:00Z
 - Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
 - Current Canary source SHA: d695a8ddc5dccfc1252f0e94d59bb4e5325bc601; beta.103 signed artifact deployed, focused acceptance PASS after backed-up worker configuration correction
 - Scope: one open Local beta.95 → beta.96 product card; beta.102 and initial beta.103 Canary PARTIAL are historical, beta.103 final focused Canary PASS, beta.99 Production
@@ -9,6 +9,8 @@
 - Current Production version/build/artifact when known: `0.10.0-beta.99` / `sf-0.10.0-beta.99-68ba3a95f804-20260928T021954Z` / `art_3ae473a96bb24d439fd5cb6d3a1d1096`
 
 ## Current beta.103 Canary handoff (2026-09-30)
+
+Production promotion of exact artifact `art_9d38fcd7bd33454786fdbfaf0e9cc25a` was conditionally authorized, but **stopped at the backup gate before any config/import/promotion**. Quiesced beta.99 backup `backups/pre-beta103-production-peer-20260930T041641Z` has verified dump/runtime/manifest hashes; its helper exited 2 because the host-local post-restart HTTP probe returned `HTTPError`. Independent public `/live` and `/ready` both returned 200 on unchanged beta.99 afterward. Under the owner's fail-closed rule, the backup gate is not accepted; Production encryption key, owner-model import and worker wrapper remain untouched. Production scheduler OFF, Local `StratForge Vitek` ON. Resume only after the backup health-probe gate is resolved and remaining Production-specific prerequisites pass. [Exact preflight receipt](../changelog/2026-09-29-beta103-server-agent-world-queue.md).
 
 PR #306 is merged to final `main` SHA `d695a8ddc5dccfc1252f0e94d59bb4e5325bc601`. All five required PR checks PASS, including a rerun of the same Windows job/head after an unrelated transient loopback socket failure. Mandatory final-main CI [36651073820](https://github.com/OMNOM-111/NT-Analyzer/actions/runs/36651073820) PASS. Exactly one signed immutable beta.103 artifact `art_9d38fcd7bd33454786fdbfaf0e9cc25a` exists, build `sf-0.10.0-beta.103-d695a8ddc5dc-20260930T013703Z`, archive SHA256 `7DB016ACD5E4CA96F02C8057778C1EDFD1E12702674E8642A71CBA764478A7EB`, manifest/runtime SHA256 `0F440F977D0B3C55A7D546AA330DE42DCEBB7772CB56BE957A95D69E9FB05154`, signature verified. Verified Canary backup `backups/pre-beta103-canary-peer-20260930T013728Z` (manifest `107F25C19DE782A58724A1851207CA8300933FA1444423DA14B1AB26007CC190`) preserves DB/runtime/config and beta.102 rollback. The exact artifact was deployed as `dep_d7084bd26b5341fabccfce5b41d750fe`, state `canary_checking`; public `/live` and `/ready` PASS on beta.103 source/runtime identity. Production remains beta.99; scheduler OFF, Local `StratForge Vitek` ON. [Change record](../changelog/2026-09-29-beta103-server-agent-world-queue.md).
 
