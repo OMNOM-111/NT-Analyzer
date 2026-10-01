@@ -174,3 +174,38 @@ beta.103/beta.99 backups, user data and all release evidence. Ordinary-user
 Telegram issue #296, the backup-role privilege defect and noncritical UI/UX
 remain outside this finished product artifact; Cloudflare Web Analytics/CSP
 is a separate post-release stage.
+
+## 30 September 22:54–22:57 PT — owner-approved immediate report cutover PARTIAL
+
+The owner explicitly accepted possible duplicate 30 September reports and
+authorized immediate activation instead of waiting until 00:02 PT. The old
+watcher PID 41432 was stopped and no second watcher remained. The Local task
+stayed Disabled, Local Telegram notifications stayed OFF, Canary operational
+delivery was false, and Production had one active coordinator lease. The
+verified Production settings backup above remained intact. An operational
+helper's explicit same-day owner-approved path enabled the four scheduled
+Production settings without changing beta.105 code, artifact or schema.
+
+Production `/live` and `/ready` stayed HTTP 200. The Production controller
+published `daily:2026-09-30` once to SF Chat message `MSG-9E555D9F4351` and
+Telegram outbox `tgo_b07fe747dbe44116ab05b01f2482566c` was `sent` on
+attempt 1. Monthly `monthly:2026-09` and quarterly
+`quarterly:2026-Q3` were claimed three times each and ended `failed` before
+provider dispatch with `Нет доступной enabled-модели для роли orchestrator`.
+No monthly/quarterly report or provider receipt was created. The failed
+events remain durable evidence, not a reason to replay them blindly.
+
+Read-only inspection of the exact Production runtime showed the legacy
+`agent_router` registry contains 0 models and 0 enabled chat models with a
+key; its `app.secure_store` is Windows DPAPI-only and unavailable on Linux.
+Daily reporting is deterministic, whereas weekly/monthly/quarterly
+`generate_periodic_report()` invokes this legacy `orchestrator` router. The
+new owner models and Production SecretStore work through the server AI Center
+path, but this periodic route does not consume them. This is a concrete
+application-code integration gap, not a missing env flag or permission.
+No new code was authorized in this cutover instruction; beta.105 remains
+immutable, Production product/model smoke PASS, **full periodic reporting
+PARTIAL**, and the current product card must stay In progress rather than Done.
+Local remains OFF as directed; Canary is non-sender. Future weekly/monthly/
+quarterly delivery requires a narrow reviewed code iteration and real
+Canary/Production acceptance, not a direct DB/secret change or silent fallback.

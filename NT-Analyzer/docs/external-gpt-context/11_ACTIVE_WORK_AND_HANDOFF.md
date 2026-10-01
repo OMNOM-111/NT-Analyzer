@@ -1,10 +1,10 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-10-01T01:27:27Z
+- Last verified UTC: 2026-10-01T06:00:35Z
 - Verified against Git SHA: 91d8a4c1ac25f988b643ff71e119502a1df3d3f7
 - Current Canary source SHA: 91d8a4c1ac25f988b643ff71e119502a1df3d3f7; beta.105 focused acceptance PASS
-- Scope: owner-approved Local beta.95 → beta.96 product card completed through beta.105 same-artifact Canary and Production focused PASS; operational report cutover finishing at next PT midnight
+- Scope: owner-approved Local beta.95 → beta.96 product card reached beta.105 same-artifact Canary and Production model PASS; Production periodic reporting remains PARTIAL after a confirmed server orchestrator route gap
 - Status: PARTIAL
 - Current Production version/build/artifact when known: `0.10.0-beta.105` / `sf-0.10.0-beta.105-91d8a4c1ac25-20261001T001822Z` / `art_dda57f0beab14b83a3375d6ecff1caa8`; focused smoke PASS
 
@@ -25,21 +25,26 @@ was denied before job/provider/usage; `/live` and `/ready` 200. No full-package
 retest was performed. PR #307 preserves the prior Canary PARTIAL/PASS history
 and is already merged as evidence, not runtime code.
 
-Reporting cutover: Local 30 September daily/monthly/quarterly summaries were
-already sent, so the Local Telegram notification gate was paused before
-Production enabled its audit category. Production's one active coordinator
-lease produced `backtest-audit:2026-09-30` once: SF Chat message
-`MSG-72C68BD8C118`, Telegram outbox
-`tgo_902fca40f5f647259c1773c4d61d0848` `sent` on attempt 1. Canary is
-non-operational for the shared bot. After that server receipt, the Local
-`StratForge Vitek` task was backed up, disabled and its processes stopped;
-all Local history is preserved. A guarded one-shot watcher enables daily,
-weekly, monthly and quarterly Production flags after 00:02 PT 1 October,
-when it can no longer replay the Local 30 September summaries. Until the
-watcher confirms active flags and live/ready, do not report *full* periodic
-cutover complete. Protected settings backups and beta.104 previous slot are
-the rollback boundary. The ordinary-user Telegram path #296, backup role
-without `BYPASSRLS`, and noncritical UI remain separate next work; Cloudflare
+Reporting cutover: Production's one active coordinator lease produced
+`backtest-audit:2026-09-30` once: SF Chat message `MSG-72C68BD8C118`, Telegram
+outbox `tgo_902fca40f5f647259c1773c4d61d0848` sent on attempt 1. Local
+`StratForge Vitek` task and Telegram notification gate are OFF, and Canary is
+non-sender; all histories are preserved. The owner then explicitly accepted
+possible repeat reports and authorized same-day activation. The delayed
+watcher was stopped with no successor. All four Production schedule settings
+were enabled from their verified backup boundary. `daily:2026-09-30` was
+delivered once (SF Chat `MSG-9E555D9F4351`, Telegram outbox
+`tgo_b07fe747dbe44116ab05b01f2482566c`, sent attempt 1). Monthly and
+quarterly failed after three bounded claims before provider dispatch:
+`agent_router` has zero registered/enabled legacy models on Linux, where its
+DPAPI-only secret store is unavailable, and the new server owner-model store
+is not connected to this periodic route. Full reporting remains PARTIAL; do
+not close the product card as Done or attempt DB/secret bypasses. The next
+step needs a narrow authorized code iteration and real Canary/Production
+acceptance for weekly/monthly/quarterly, while beta.105 remains immutable.
+Protected settings backups and beta.104 previous slot are the rollback
+boundary. The ordinary-user Telegram path #296, backup role without
+`BYPASSRLS`, and noncritical UI remain separate next work; Cloudflare
 Web Analytics/CSP is post-release only. [Current release record](../changelog/2026-09-30-beta105-production-model-completion.md).
 
 ## Historical beta.104 handoff (2026-09-30)
