@@ -83,5 +83,19 @@ report execution exists. Real `monthly:2026-09`, `quarterly:2026-Q3` and
 The code release is live, but periodic delivery acceptance and the product-card
 closeout remain **PARTIAL**; do not mark `STAGE CLOSED` until those receipts PASS.
 
+The operational tooling inventory confirms a narrow acceptance-tooling gap.
+The backend already exposes the correct owner-only `POST /api/vitek/events`,
+but beta.106 has no periodic-smoke button that invokes it and no deployed
+CLI/service/admin action for this purpose. Release Center tools are intentionally
+limited to artifact lifecycle; Production storage tools cover schema, backup,
+retention and quota; Telegram/Operations runbooks expose health and service
+verification only. Direct SSH/SQL or browser credential extraction is not an
+accepted substitute. The minimal follow-up is an owner-only Operations UI
+control that calls the existing endpoint with an enumerated report type and
+stable dedupe key, then shows the existing event, SF Chat message and Telegram
+outbox receipts. This requires a new reviewed source commit and full immutable
+artifact -> Canary -> same-artifact Production cycle; it is not a beta.106
+runtime hotfix.
+
 Verification result: **PR/CI, immutable artifact, Canary and same-artifact
 Production PASS; real month/quarter/daily delivery acceptance PENDING.**

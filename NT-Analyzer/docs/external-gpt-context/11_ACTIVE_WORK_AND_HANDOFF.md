@@ -30,6 +30,17 @@ intended test events. Real month/quarter SF Chat/Telegram receipts and the daily
 regression are still pending. Do not mark the product card Done or Stage Closed.
 [Change record](../changelog/2026-10-01-beta106-periodic-owner-model-route.md).
 
+Sanctioned-tool inventory: beta.106 has the required owner-only
+`POST /api/vitek/events`, but no shipped periodic-smoke UI control and no
+documented CLI/service/admin action that invokes it. Release, storage,
+Telegram-consumer and Operations tools do not provide an event trigger. Do not
+replace that gap with direct SSH/SQL, copied browser credentials or broad
+system-keystroke automation. Minimal next source scope: add an owner-only
+Operations control over the existing endpoint with report-type allowlisting,
+stable dedupe keys and a receipt view for event status, SF Chat message ID and
+Telegram outbox ID. Because this changes shipped UI/runtime acceptance tooling,
+it starts a new commit/artifact/Canary/Production cycle.
+
 ## Current beta.105 handoff (2026-10-01 UTC)
 
 PR #309 merged to `main` SHA `91d8a4c1ac25f988b643ff71e119502a1df3d3f7`;
