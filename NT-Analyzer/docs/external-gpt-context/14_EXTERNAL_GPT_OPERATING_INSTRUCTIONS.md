@@ -1,8 +1,8 @@
 # 14. External GPT Operating Instructions
 
 - Context Pack document: 14_EXTERNAL_GPT_OPERATING_INSTRUCTIONS.md
-- Last verified UTC: 2026-08-13T09:49:37Z
-- Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
+- Last verified UTC: 2026-10-01T01:27:27Z
+- Verified against Git SHA: 91d8a4c1ac25f988b643ff71e119502a1df3d3f7
 - Scope: How an external GPT should reason and ask for extra files when using this pack
 - Status: DONE
 
