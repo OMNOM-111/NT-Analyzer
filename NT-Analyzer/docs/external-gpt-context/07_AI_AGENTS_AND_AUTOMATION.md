@@ -1,8 +1,8 @@
 # 07. AI Agents and Automation
 
 - Context Pack document: 07_AI_AGENTS_AND_AUTOMATION.md
-- Last verified UTC: 2026-09-05T12:45:49Z
-- Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
+- Last verified UTC: 2026-10-01T01:27:27Z
+- Verified against Git SHA: 91d8a4c1ac25f988b643ff71e119502a1df3d3f7
 - Local source verified SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (clean beta.96 runtime; real handoff/manual delivery and original report/PNG verified, exact-code CI PASS)
 - Local verification UTC: 2026-09-05T19:05:43Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release

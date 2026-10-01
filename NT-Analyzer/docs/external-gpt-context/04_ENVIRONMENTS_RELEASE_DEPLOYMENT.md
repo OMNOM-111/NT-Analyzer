@@ -1,14 +1,14 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Current superseding 2026-09-30 checkpoint: beta.104 `art_b2ab8a4e5a19476b84fc2a3c1c8bfe89`, source `ef263f75a5f5ec8c42e652738199e852cac8b677`, build `sf-0.10.0-beta.104-ef263f75a5f5-20260930T142556Z`, archive SHA256 `6AB34734C0D3406634AE4E050AE957D05FCBB296B281FD9DF015C3D533D9BD1A`, runtime SHA256 `53074CE10A09D717D591E8CF79D7CA6D77325CCC6CEA029E9375935A1EB61C29`, reached Canary PASS for focused GET and same-artifact Production runtime live/ready. Production backup `pre-beta104-production-peer-20260930T144651Z` verified before promotion; beta.103 is the immediate previous slot. Real provider receipt/usage/audits passed once but Production HTTP POST524 and SF Chat delivery failed, so full acceptance is PARTIAL. beta.105 source correction is in Development. Production scheduler OFF, Local `StratForge Vitek` ON. [Current evidence](../changelog/2026-09-30-beta105-production-model-completion.md). The older beta.103 current-language checkpoint below is historical, not a live claim.
-- Last verified UTC: 2026-09-30T07:26:38Z
-- Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Current deployed source SHA: Canary and Production `d695a8ddc5dccfc1252f0e94d59bb4e5325bc601`
+- Current superseding checkpoint (2026-10-01 UTC): PR #309 merged into exact `main` `91d8a4c1ac25f988b643ff71e119502a1df3d3f7`; required CI 36790534580 PASS. One signed immutable `0.10.0-beta.105` artifact `art_dda57f0beab14b83a3375d6ecff1caa8`, build `sf-0.10.0-beta.105-91d8a4c1ac25-20261001T001822Z`, archive SHA256 `2D1DD117E550A5DAD9EB07951DE938AD60BCD44B0F1E4994C258CD9DBAFF482F`, manifest/runtime SHA256 `0BE1FDFD05880F589F8CA36EFEFDB24719A44E57379E825AD662D31614DBFDF9`, reached focused Canary PASS and was promoted unchanged to Production. Verified backups: `pre-beta105-canary-peer-20261001T001844Z` and `pre-beta105-production-peer-20261001T003341Z`. Both `canary-current` and Production `current` resolve to release directory `0.10.0-beta.105-91d8a4c1ac25`; Production `previous` is beta.104. Real Professional model POST/provider/SF Chat/share-off smoke PASS; schema 24, `/live` and `/ready` 200. Production alone owns operational Telegram; control audit and daily summary delivered, Local Scheduled Task disabled, Canary non-sender. All report flags were enabled after explicit owner acceptance of possible duplicate 30 September reports, but monthly/quarterly failed on the legacy Linux orchestrator-model route. Full periodic cutover PARTIAL; no artifact/runtime/schema changes were made. [Detailed receipt](../changelog/2026-09-30-beta105-production-model-completion.md). All older beta.103/beta.104 checkpoints below are historical.
+- Last verified UTC: 2026-10-01T06:00:35Z
+- Verified against Git SHA: 91d8a4c1ac25f988b643ff71e119502a1df3d3f7
+- Current deployed source SHA: Canary and Production `91d8a4c1ac25f988b643ff71e119502a1df3d3f7`
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: PARTIAL
 
-Current superseding checkpoint: Canary focused acceptance of beta.103 is PASS;
+Historical beta.103 checkpoint (superseded by beta.105 above): Canary focused acceptance of beta.103 is PASS;
 the exact signed artifact `art_9d38fcd7bd33454786fdbfaf0e9cc25a` now also
 runs in Production on schema 24 with `/live` and `/ready` 200 and Production
 API/worker SecretStore read PASS. Production final product smoke is NOT PASS:

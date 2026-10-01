@@ -1,8 +1,8 @@
 # 03. Architecture and Data Model
 
 - Context Pack document: 03_ARCHITECTURE_AND_DATA_MODEL.md
-- Last verified UTC: 2026-09-05T12:45:49Z
-- Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
+- Last verified UTC: 2026-10-01T01:27:27Z
+- Verified against Git SHA: 91d8a4c1ac25f988b643ff71e119502a1df3d3f7
 - Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
 - Active scope: verified integrated Local, result presentation, same-input Consensus and three-model Court; full program and owner-dependent acceptance remain open

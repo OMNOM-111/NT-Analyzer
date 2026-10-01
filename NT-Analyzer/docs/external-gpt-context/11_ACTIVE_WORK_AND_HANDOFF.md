@@ -1,28 +1,68 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-09-30T07:26:38Z
-- Verified against Git SHA: 8f42158661e8247832c90bea8fc4d9f0071e647b
-- Current Canary source SHA: d695a8ddc5dccfc1252f0e94d59bb4e5325bc601; beta.103 signed artifact deployed, focused acceptance PASS after backed-up worker configuration correction
-- Scope: one open Local beta.95 → beta.96 product card; beta.103 Canary focused PASS and Production runtime live, beta.104 AI Center read-path correction in Development
+- Last verified UTC: 2026-10-01T06:00:35Z
+- Verified against Git SHA: 91d8a4c1ac25f988b643ff71e119502a1df3d3f7
+- Current Canary source SHA: 91d8a4c1ac25f988b643ff71e119502a1df3d3f7; beta.105 focused acceptance PASS
+- Scope: owner-approved Local beta.95 → beta.96 product card reached beta.105 same-artifact Canary and Production model PASS; Production periodic reporting remains PARTIAL after a confirmed server orchestrator route gap
 - Status: PARTIAL
-- Current Production version/build/artifact when known: `0.10.0-beta.103` / `sf-0.10.0-beta.103-d695a8ddc5dc-20260930T013703Z` / `art_9d38fcd7bd33454786fdbfaf0e9cc25a`; product acceptance PENDING
+- Current Production version/build/artifact when known: `0.10.0-beta.105` / `sf-0.10.0-beta.105-91d8a4c1ac25-20261001T001822Z` / `art_dda57f0beab14b83a3375d6ecff1caa8`; focused smoke PASS
 
-## Current beta.105 handoff (2026-09-30; supersedes older beta.104 paragraph below)
+## Current beta.106 Development handoff (2026-10-01 UTC)
 
-Production now runs signed beta.104 artifact `art_b2ab8a4e5a19476b84fc2a3c1c8bfe89`
-from final `main` SHA `ef263f75a5f5ec8c42e652738199e852cac8b677`.
-Canary focused GET acceptance and Production identity/live/ready/owner and
-real Professional model GET paths passed. One Production Professional shared
-model task reached the actual Gemini provider once and succeeded durably with
-receipt, 58/34 tokens, cost and both audits; the HTTP POST returned 524 and
-terminal SF Chat delivery dead-lettered. The latter is a confirmed SQLite-vs-
-PostgreSQL lease field code defect; repeated nested write admission contributes
-to synchronous POST latency. Narrow beta.105 Development correction and focused
-regressions are in progress. No new provider retry, share-off, reporting
-cutover or product-card Done yet. Production scheduler OFF; Local
-`StratForge Vitek` ON. Preserve beta.104 and beta.103 backups and the prior
-PR #307 Canary PARTIAL evidence. [Current change record](../changelog/2026-09-30-beta105-production-model-completion.md).
+The owner-authorized narrow patch is implemented on
+`codex/beta106-periodic-orchestrator` from docs-evidence base `35585304`.
+Canary/Production non-daily periodic generation now reads the one active
+general owner Persona model through the existing PostgreSQL Agent World store,
+ServerSecrets, universal provider client, workspace budget and usage ledger.
+Daily remains deterministic and Development/Local retains the legacy route.
+No secret, permission, schema, provider, feature, sender or schedule is added.
+Python compilation, 8 focused tests and 336 related regression tests PASS. A
+full collection recorded 6,131 PASS/140 skipped plus 13 expected isolation
+failures caused by a repository-local temporary root; the complete affected
+subset passed 91/91 with an external temporary root.
+PR/CI, merged main SHA, immutable artifact, Canary, same-artifact Production,
+real month/quarter delivery and daily regression are pending. Do not mark the
+product card Done. [Change record](../changelog/2026-10-01-beta106-periodic-owner-model-route.md).
+
+## Current beta.105 handoff (2026-10-01 UTC)
+
+PR #309 merged to `main` SHA `91d8a4c1ac25f988b643ff71e119502a1df3d3f7`;
+mandatory final-main CI 36790534580 PASS. Exactly one signed immutable
+beta.105 artifact `art_dda57f0beab14b83a3375d6ecff1caa8` (archive SHA256
+`2D1DD117E550A5DAD9EB07951DE938AD60BCD44B0F1E4994C258CD9DBAFF482F`,
+manifest/runtime SHA256
+`0BE1FDFD05880F589F8CA36EFEFDB24719A44E57379E825AD662D31614DBFDF9`)
+passed focused Canary and was promoted unchanged after verified Production
+backup. Canary and Production point to the same release directory; Production
+`previous` is beta.104. Real Professional shared Gemini POST completed without
+524, once through worker and SF Chat delivery, with a genuine durable receipt,
+26/3 tokens, cost and caller/owner audit. One post-share-off foreign request
+was denied before job/provider/usage; `/live` and `/ready` 200. No full-package
+retest was performed. PR #307 preserves the prior Canary PARTIAL/PASS history
+and is already merged as evidence, not runtime code.
+
+Reporting cutover: Production's one active coordinator lease produced
+`backtest-audit:2026-09-30` once: SF Chat message `MSG-72C68BD8C118`, Telegram
+outbox `tgo_902fca40f5f647259c1773c4d61d0848` sent on attempt 1. Local
+`StratForge Vitek` task and Telegram notification gate are OFF, and Canary is
+non-sender; all histories are preserved. The owner then explicitly accepted
+possible repeat reports and authorized same-day activation. The delayed
+watcher was stopped with no successor. All four Production schedule settings
+were enabled from their verified backup boundary. `daily:2026-09-30` was
+delivered once (SF Chat `MSG-9E555D9F4351`, Telegram outbox
+`tgo_b07fe747dbe44116ab05b01f2482566c`, sent attempt 1). Monthly and
+quarterly failed after three bounded claims before provider dispatch:
+`agent_router` has zero registered/enabled legacy models on Linux, where its
+DPAPI-only secret store is unavailable, and the new server owner-model store
+is not connected to this periodic route. Full reporting remains PARTIAL; do
+not close the product card as Done or attempt DB/secret bypasses. The next
+step needs a narrow authorized code iteration and real Canary/Production
+acceptance for weekly/monthly/quarterly, while beta.105 remains immutable.
+Protected settings backups and beta.104 previous slot are the rollback
+boundary. The ordinary-user Telegram path #296, backup role without
+`BYPASSRLS`, and noncritical UI remain separate next work; Cloudflare
+Web Analytics/CSP is post-release only. [Current release record](../changelog/2026-09-30-beta105-production-model-completion.md).
 
 ## Historical beta.104 handoff (2026-09-30)
 
@@ -667,7 +707,7 @@ to that deployment anchor, not to the Agent World branch.
 
 | Deployment metadata | Recorded value |
 | --- | --- |
-| Current Git SHA | `8f42158661e8247832c90bea8fc4d9f0071e647b` (pack-wide deployment anchor) |
+| Current Git SHA | `91d8a4c1ac25f988b643ff71e119502a1df3d3f7` (pack-wide deployed artifact source) |
 | Local accepted base SHA | `4ae766ea0c3258a8bb049644ac2afbba6cb89330` |
 
 This task did not access Canary/Production. The last recorded operational

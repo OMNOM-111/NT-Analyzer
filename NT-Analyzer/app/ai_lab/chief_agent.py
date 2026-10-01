@@ -4220,21 +4220,31 @@ def generate_periodic_report(period: str, *, send_telegram: bool = True,
                     "scope_blocked": True,
                 }
             else:
-                result = agent_router.invoke_role(
-                    "orchestrator",
-                    json.dumps(packet, ensure_ascii=False, default=str)[:19000],
-                    system_prompt=(
-                        "You are StratForge Orchestrator preparing a recurring owner report for Vitek, "
-                        "the owner's deputy. Use only supplied metrics. Answer in Russian with sections: "
-                        "evidence, conclusions, problems/doubts, recommendations, and proposed next actions. "
-                        "Never authorize live trading."
-                    ),
-                    max_output_tokens=2500,
-                    timeout=llm_timeouts.PERIODIC_REPORT,
-                    purpose=f"orchestrator_{period_key}_report",
-                    complexity=complexity,
-                    cache_mode="off",
+                prompt = json.dumps(packet, ensure_ascii=False, default=str)[:19000]
+                system_prompt = (
+                    "You are StratForge Orchestrator preparing a recurring owner report for Vitek, "
+                    "the owner's deputy. Use only supplied metrics. Answer in Russian with sections: "
+                    "evidence, conclusions, problems/doubts, recommendations, and proposed next actions. "
+                    "Never authorize live trading."
                 )
+                if runtime_env.environment_explicit() and runtime_env.is_server_environment():
+                    from ..ai_control_center import periodic_owner_model
+                    result = periodic_owner_model.invoke(
+                        scope=scope_info, prompt=prompt, system_prompt=system_prompt,
+                        max_output_tokens=2500,
+                        purpose=f"orchestrator_{period_key}_report",
+                        conversation_id=DEFAULT_CONVERSATION_ID,
+                        request_key=identity,
+                    )
+                else:
+                    result = agent_router.invoke_role(
+                        "orchestrator", prompt, system_prompt=system_prompt,
+                        max_output_tokens=2500,
+                        timeout=llm_timeouts.PERIODIC_REPORT,
+                        purpose=f"orchestrator_{period_key}_report",
+                        complexity=complexity,
+                        cache_mode="off",
+                    )
     report = {
         "report_id": f"ORCH-REPORT-{uuid.uuid4().hex[:10].upper()}",
         "report_key": identity,
