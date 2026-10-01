@@ -2357,6 +2357,63 @@ def test_periodic_report_cache_prevents_repeated_model_call(tmp_path, monkeypatc
     assert first["route"]["deputy"] == "vitek"
 
 
+def test_server_periodic_report_uses_owner_secret_store_route(tmp_path, monkeypatch) -> None:
+    from app import performance, runtime_env
+    from app.ai_control_center import periodic_owner_model
+
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    monkeypatch.setattr(performance, "build_performance_response", lambda **kwargs: {
+        "summary": {"trades": 2, "pnl": 40.0},
+        "strategy_summary": {"trades": 2, "pnl": 40.0},
+    })
+    monkeypatch.setattr(universal_llm, "require_valid_production_scope", lambda: None)
+    monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+    monkeypatch.setattr(runtime_env, "is_server_environment", lambda: True)
+    monkeypatch.setattr(chief_agent.agent_router, "invoke_role", lambda *_a, **_k: pytest.fail(
+        "server periodic route must not use the Local DPAPI registry"))
+    calls = []
+    monkeypatch.setattr(periodic_owner_model, "invoke", lambda **kwargs: (
+        calls.append(kwargs) or {"content": "Server report", "actual_model": "model-1",
+                                 "provider": "provider-1"}))
+
+    report = chief_agent.generate_periodic_report("monthly", send_telegram=False,
+        report_key="monthly:2026-09", scope={"user_id": 17,
+            "user_uuid": "77c6d443-29ec-45ac-8f6c-60dbbd4c70f2",
+            "workspace_id": "ws_periodic_owner", "membership_role": "owner",
+            "is_owner": True, "uses_owner_runtime": True})
+
+    assert report["content"] == "Server report"
+    assert report["provider"] == "provider-1"
+    assert len(calls) == 1
+    assert calls[0]["request_key"] == "monthly:2026-09"
+
+
+def test_server_daily_report_remains_deterministic(tmp_path, monkeypatch) -> None:
+    from app import performance, runtime_env
+    from app.ai_control_center import periodic_owner_model
+
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(chief_agent, "_application_snapshot", lambda: {})
+    monkeypatch.setattr(performance, "build_performance_response", lambda **kwargs: {
+        "summary": {"trades": 1, "pnl": 5.0, "commission": 0.5, "win_rate": 100.0},
+        "strategy_summary": {"trades": 1, "pnl": 5.0, "commission": 0.5, "win_rate": 100.0},
+    })
+    monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+    monkeypatch.setattr(runtime_env, "is_server_environment", lambda: True)
+    monkeypatch.setattr(periodic_owner_model, "invoke", lambda **kwargs: pytest.fail(
+        "daily must stay deterministic"))
+
+    report = chief_agent.generate_periodic_report("daily", send_telegram=False,
+        report_key="daily:2026-10-01", scope={"user_id": 17,
+            "user_uuid": "77c6d443-29ec-45ac-8f6c-60dbbd4c70f2",
+            "workspace_id": "ws_periodic_owner", "membership_role": "owner",
+            "is_owner": True, "uses_owner_runtime": True})
+
+    assert report["model"] == "deterministic performance rules"
+    assert report["provider"] == "local"
+
+
 def test_chart_task_and_snapshot_expose_execution_status_in_both_channels(tmp_path, monkeypatch) -> None:
     from app import telegram_service
 

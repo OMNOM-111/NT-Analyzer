@@ -8,6 +8,23 @@
 - Status: PARTIAL
 - Current Production version/build/artifact when known: `0.10.0-beta.105` / `sf-0.10.0-beta.105-91d8a4c1ac25-20261001T001822Z` / `art_dda57f0beab14b83a3375d6ecff1caa8`; focused smoke PASS
 
+## Current beta.106 Development handoff (2026-10-01 UTC)
+
+The owner-authorized narrow patch is implemented on
+`codex/beta106-periodic-orchestrator` from docs-evidence base `35585304`.
+Canary/Production non-daily periodic generation now reads the one active
+general owner Persona model through the existing PostgreSQL Agent World store,
+ServerSecrets, universal provider client, workspace budget and usage ledger.
+Daily remains deterministic and Development/Local retains the legacy route.
+No secret, permission, schema, provider, feature, sender or schedule is added.
+Python compilation, 8 focused tests and 336 related regression tests PASS. A
+full collection recorded 6,131 PASS/140 skipped plus 13 expected isolation
+failures caused by a repository-local temporary root; the complete affected
+subset passed 91/91 with an external temporary root.
+PR/CI, merged main SHA, immutable artifact, Canary, same-artifact Production,
+real month/quarter delivery and daily regression are pending. Do not mark the
+product card Done. [Change record](../changelog/2026-10-01-beta106-periodic-owner-model-route.md).
+
 ## Current beta.105 handoff (2026-10-01 UTC)
 
 PR #309 merged to `main` SHA `91d8a4c1ac25f988b643ff71e119502a1df3d3f7`;
