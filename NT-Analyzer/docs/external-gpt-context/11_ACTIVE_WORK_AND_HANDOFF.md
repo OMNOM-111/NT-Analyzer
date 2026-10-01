@@ -4,9 +4,9 @@
 - Last verified UTC: 2026-10-01T15:41:00Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Current Canary source SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885; beta.106 acceptance PASS
-- Scope: owner-approved Local beta.95 → beta.96 product card reached beta.105 same-artifact Canary and Production model PASS; Production periodic reporting remains PARTIAL after a confirmed server orchestrator route gap
-- Status: PARTIAL
-- Current Production version/build/artifact when known: `0.10.0-beta.106` / `sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z` / `art_7aebf504ae354ce7981c58359a1ff546`; health/readiness PASS, delivery receipt acceptance PARTIAL
+- Scope: owner-approved Local beta.95 → beta.96 product card, completed after beta.106 same-artifact Canary/Production reporting acceptance
+- Status: DONE
+- Current Production version/build/artifact when known: `0.10.0-beta.106` / `sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z` / `art_7aebf504ae354ce7981c58359a1ff546`; health/readiness and delivery receipt acceptance PASS; product package 7/7 Production accepted
 
 ## Current beta.106 release handoff (2026-10-01 UTC)
 
@@ -24,22 +24,23 @@ subset passed 91/91 with an external temporary root.
 Final-main CI 36857075970 PASS. Immutable artifact
 `art_7aebf504ae354ce7981c58359a1ff546` passed Canary and is Production live as
 deployment `dep_bf86528c36c944d1a5906f0586126b93`; public `/live` and `/ready`
-match exact beta.106 identity. Authenticated Vitek status shows no queued or
-running report event and no event error; browser automation did not submit the
-intended test events. Real month/quarter SF Chat/Telegram receipts and the daily
-regression are still pending. Do not mark the product card Done or Stage Closed.
+match exact beta.106 identity. The existing owner-authenticated browser session
+submitted exactly one accepted event per Weekly, Monthly and Quarterly type via
+the shipped CSRF-protected application API. Each completed with one real Gemini
+provider response, durable usage/report, corresponding SF Chat message and
+Telegram outbox `sent` with attempts=1. Stable report keys and matching message
+and outbox dedupe hashes establish one delivery per acceptance request. Daily
+and control audit had prior Production PASS on the unchanged route. Post-check
+Production `/live` and `/ready` are 200; one Production coordinator lease is
+active, Canary remains non-sender and Local `StratForge Vitek` is Disabled.
+The product card is Done; Release Center's terminal state is `production_live`
+with verification PASS (there is no separate `completed` state).
 [Change record](../changelog/2026-10-01-beta106-periodic-owner-model-route.md).
 
-Sanctioned-tool inventory: beta.106 has the required owner-only
-`POST /api/vitek/events`, but no shipped periodic-smoke UI control and no
-documented CLI/service/admin action that invokes it. Release, storage,
-Telegram-consumer and Operations tools do not provide an event trigger. Do not
-replace that gap with direct SSH/SQL, copied browser credentials or broad
-system-keystroke automation. Minimal next source scope: add an owner-only
-Operations control over the existing endpoint with report-type allowlisting,
-stable dedupe keys and a receipt view for event status, SF Chat message ID and
-Telegram outbox ID. Because this changes shipped UI/runtime acceptance tooling,
-it starts a new commit/artifact/Canary/Production cycle.
+Historical pre-acceptance note: the initial browser attempt did not submit an
+event. A raw POST without the CSRF token returned 403 and created no job. The
+subsequent sanctioned `window.API.http.vitekEvent` client used the real owner
+session and CSRF protection; no new runtime control or beta iteration was needed.
 
 ## Current beta.105 handoff (2026-10-01 UTC)
 

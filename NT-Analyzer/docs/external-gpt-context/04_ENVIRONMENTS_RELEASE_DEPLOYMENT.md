@@ -4,7 +4,7 @@
 - Last verified UTC: 2026-10-01T15:41:00Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Scope: Environment isolation, immutable release, promotion and rollback
-- Status: PARTIAL
+- Status: DONE
 - Latest checkpoint, superseding the beta.105 paragraph below (2026-10-01 UTC):
   PR #311 merged to exact `main`
   `e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885`; final-main CI 36857075970 PASS.
@@ -19,14 +19,22 @@
   same artifact reached Production as `dep_bf86528c36c944d1a5906f0586126b93`;
   Release Center recorded `production_live` and `same_immutable_artifact=true`.
   Public Production `/live` and `/ready` match the exact identity and all
-  readiness checks PASS. Periodic delivery receipt acceptance remains PARTIAL.
+  readiness checks PASS. One owner-authenticated Weekly, Monthly and Quarterly
+  request each produced a genuine owner-model result, durable usage/report,
+  SF Chat message and one Telegram outbox delivery (`sent`, attempts 1).
+  Daily and audit delivery were accepted on the unchanged route. Production is
+  the only Telegram sender, Local `StratForge Vitek` is Disabled and Canary is
+  non-sender. Product package 7/7 is Production PASS; PR #312 records the
+  documentation closeout without changing the deployed artifact.
   [Detailed receipt](../changelog/2026-10-01-beta106-periodic-owner-model-route.md).
+
+## Historical checkpoints (superseded by beta.106 PASS above)
 - Current superseding checkpoint (2026-10-01 UTC): PR #309 merged into exact `main` `91d8a4c1ac25f988b643ff71e119502a1df3d3f7`; required CI 36790534580 PASS. One signed immutable `0.10.0-beta.105` artifact `art_dda57f0beab14b83a3375d6ecff1caa8`, build `sf-0.10.0-beta.105-91d8a4c1ac25-20261001T001822Z`, archive SHA256 `2D1DD117E550A5DAD9EB07951DE938AD60BCD44B0F1E4994C258CD9DBAFF482F`, manifest/runtime SHA256 `0BE1FDFD05880F589F8CA36EFEFDB24719A44E57379E825AD662D31614DBFDF9`, reached focused Canary PASS and was promoted unchanged to Production. Verified backups: `pre-beta105-canary-peer-20261001T001844Z` and `pre-beta105-production-peer-20261001T003341Z`. Both `canary-current` and Production `current` resolve to release directory `0.10.0-beta.105-91d8a4c1ac25`; Production `previous` is beta.104. Real Professional model POST/provider/SF Chat/share-off smoke PASS; schema 24, `/live` and `/ready` 200. Production alone owns operational Telegram; control audit and daily summary delivered, Local Scheduled Task disabled, Canary non-sender. All report flags were enabled after explicit owner acceptance of possible duplicate 30 September reports, but monthly/quarterly failed on the legacy Linux orchestrator-model route. Full periodic cutover PARTIAL; no artifact/runtime/schema changes were made. [Detailed receipt](../changelog/2026-09-30-beta105-production-model-completion.md). All older beta.103/beta.104 checkpoints below are historical.
 - Last verified UTC: 2026-10-01T15:41:00Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Current deployed source SHA: Canary and Production `e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885`
 - Scope: Environment isolation, immutable release, promotion and rollback
-- Status: PARTIAL
+- Historical checkpoint status: PARTIAL
 
 Historical beta.103 checkpoint (superseded by beta.105 above): Canary focused acceptance of beta.103 is PASS;
 the exact signed artifact `art_9d38fcd7bd33454786fdbfaf0e9cc25a` now also

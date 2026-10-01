@@ -72,30 +72,48 @@ beta.105 events remain evidence of the original route failure.
   Public Production `/live` and `/ready` return beta.106, the exact source SHA,
   build and runtime artifact; all readiness checks are green.
 
-## Remaining acceptance
+## Final Production periodic acceptance — 2026-10-01
 
-The authenticated Production status after promotion reports no queued/running
-events, no event error, and `last_event_type=startup_audit` at
-`2026-10-01T15:26:23Z`. Attempts to submit the three owner-only report events
-through browser automation did not reach the API, so no duplicate or unknown
-report execution exists. Real `monthly:2026-09`, `quarterly:2026-Q3` and
-`daily:2026-10-01` SF Chat/Telegram message and outbox IDs are not yet recorded.
-The code release is live, but periodic delivery acceptance and the product-card
-closeout remain **PARTIAL**; do not mark `STAGE CLOSED` until those receipts PASS.
+The real Production owner session in Microsoft Edge identified the owner and
+loaded the shipped beta.106 UI. Three acceptance events were submitted through
+that page's existing `window.API.http.vitekEvent` client, which supplies its
+session-bound CSRF token to the existing owner-only `POST /api/vitek/events`.
+No cookie or secret was copied, no synthetic user/scheduler or direct database
+write was used, and each type received **one accepted request** with its own
+stable acceptance key. A preliminary raw same-origin POST without the app's
+CSRF header received HTTP 403 before admission; read-only status confirmed
+zero queued/running events and no provider dispatch. It was not a report run.
 
-The operational tooling inventory confirms a narrow acceptance-tooling gap.
-The backend already exposes the correct owner-only `POST /api/vitek/events`,
-but beta.106 has no periodic-smoke button that invokes it and no deployed
-CLI/service/admin action for this purpose. Release Center tools are intentionally
-limited to artifact lifecycle; Production storage tools cover schema, backup,
-retention and quota; Telegram/Operations runbooks expose health and service
-verification only. Direct SSH/SQL or browser credential extraction is not an
-accepted substitute. The minimal follow-up is an owner-only Operations UI
-control that calls the existing endpoint with an enumerated report type and
-stable dedupe key, then shows the existing event, SF Chat message and Telegram
-outbox receipts. This requires a new reviewed source commit and full immutable
-artifact -> Canary -> same-artifact Production cycle; it is not a beta.106
-runtime hotfix.
+| Type / acceptance key | Event / attempts | Owner provider receipt | SF Chat | Telegram outbox |
+| --- | --- | --- | --- | --- |
+| Weekly `accept-beta106:weekly:2026-10-01-01` | `VE-7B4E4B776973F6D835FD`, completed, 1 | Gemini 2.5 Flash; `REQ-A23C9BAD2BBB494C`; 684 input / 621 output tokens; cost $0.00; report `ORCH-REPORT-BAD1AE85F9` | `MSG-D19294251929` | `tgo_6b5bde80694c43ed8aee6f846e71fb2e`, sent, 1 |
+| Monthly `accept-beta106:monthly:2026-10-01-01` | `VE-716D96950E7107DD8155`, completed, 1 | Gemini 2.5 Flash; `REQ-1B569A3B22E94B8E`; 684 / 470 tokens; cost $0.00; report `ORCH-REPORT-AC148D5D9E` | `MSG-73A2D64809F8` | `tgo_c634051b060948feb09081c3706cf2ef`, sent, 1 |
+| Quarterly `accept-beta106:quarterly:2026-10-01-01` | `VE-7E1156B9462B4ADF1383`, completed, 1 | Gemini 2.5 Flash; `REQ-CAEE2452A5424E18`; 682 / 464 tokens; cost $0.00; report `ORCH-REPORT-F574835C77` | `MSG-AB1DDD0B3A14` | `tgo_bebee078fed64f5e93a9c83d748ac625`, sent, 1 |
 
-Verification result: **PR/CI, immutable artifact, Canary and same-artifact
-Production PASS; real month/quarter/daily delivery acceptance PENDING.**
+For each key, read-only Production inspection found exactly one completed event,
+one successful PostgreSQL `sf_ai_usage_events` row in the owner workspace, one
+persisted report file with real non-empty provider response, one indexed and
+physically persisted SF Chat message whose content hash matches that report,
+and one matching `sf_telegram_outbox` stable-key hash. Outbox documents were
+redacted after delivery by normal privacy policy; their status, attempts,
+dedupe hash and sent timestamp remain. The model executor disables hidden
+provider retries. Report-file reuse, SF Chat `request_id` replay handling and
+the outbox's `(bot_identity_hash, dedupe_hash)` uniqueness prevent a repeated
+delivery for the same key without issuing a second provider call to test it.
+The owner's visible SF Chat displayed all three reports. Daily remains the
+unchanged deterministic route already accepted on beta.105; no extra daily
+provider call was made.
+
+Final public Production `/live` and `/ready`: HTTP 200 on beta.106 source
+`e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885`, runtime artifact SHA256
+`0579C9C3FFD089EC91426D6F75B4E7ED257C612D9FBDD1F958561A50BEB0929C`.
+One Production coordinator lease remained active; Canary operational delivery
+and all report gates stayed OFF; Local `StratForge Vitek` remained Disabled.
+The beta.105 monthly/quarterly failed events are retained as historical
+evidence, not overwritten. No code, schema, provider, SecretStore, artifact or
+environment configuration changed during this acceptance. Production
+reporting and the seven-task owner-approved product package are **PASS**.
+
+Verification result: **FINAL Production PASS; Stage Closed.** Release Center's
+terminal candidate state is `production_live` (there is no separate literal
+`completed` state); the product closeout is recorded here and in Timeline.
