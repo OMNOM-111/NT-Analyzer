@@ -2,7 +2,7 @@
 
 - Context Pack document: 05_AUTH_USERS_SECURITY.md
 - Last verified UTC: 2026-10-01T01:27:27Z
-- Verified against Git SHA: 91d8a4c1ac25f988b643ff71e119502a1df3d3f7
+- Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
 - Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
 - Active scope: verified integrated Local, result presentation, same-input Consensus and three-model Court; full program and owner-dependent acceptance remain open
