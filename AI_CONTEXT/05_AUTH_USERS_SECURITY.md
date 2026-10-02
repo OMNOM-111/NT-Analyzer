@@ -10,6 +10,34 @@
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
 - Status: PARTIAL
 
+## beta.107 server relational account erasure — Development only (2026-10-02)
+
+The current branch implements the accepted Local `УДАЛИТЬ` + fresh,
+session/purpose-bound OTP contract using PostgreSQL on Canary/Production;
+schema 0025 and the adapter have passed disposable TLS PostgreSQL tests with
+the non-`BYPASSRLS` application role. This is **not deployed or accepted** in
+either server environment. No Chrome QA account has been deleted. The exact
+beta.106 `api_admission_saturated` handler trigger also remains unknown.
+
+| Server state | Erasure treatment | Boundary |
+| --- | --- | --- |
+| `sf_users`, provider identities, sessions/challenges, trusted/physical devices | DELETE | The authoritative auth document is frozen first; PostgreSQL mirrors are pruned in the later all-document transaction. Owner/service identities are refused. |
+| Personal `sf_workspaces`, memberships, active-workspace links, connector/entitlement rows, jobs/reservations/artifacts | DELETE | Only exact owned private workspaces; shared membership, foreign workspace rows and active work/live leases block. Dependent rows follow explicit FK ordering and checked mirror projections. |
+| Community profiles/posts/dependent interactions and SF Chat private conversations/messages/reads | DELETE | Exact profile/conversation identities in the authoritative documents, mirrored transactionally; referenced payload objects enter a durable cleanup outbox. |
+| Agent World private revisions/records/events/artifacts, memory grants, provider-account credentials | DELETE | Exact environment, workspace and owner UUID under scoped PostgreSQL RLS; shared model grants are revoked in the initial freeze. Server BYOK ciphertext is in `sf_aw_credentials`, not an untracked file. |
+| Owner-model share descriptors and model-call receipts | RETAIN + ANONYMIZE | Share becomes disabled with non-identifying label/provider; historical caller display names are replaced in every original caller workspace. Foreign model calls remain accounting evidence. |
+| `sf_ai_usage_events`, late provider usage, audit/operational events, identity history, deletion receipt | RETAIN + ANONYMIZE | Metering keeps tokens/cost with null live user/workspace and an HMAC fingerprint; late usage uses the same receipt. Active identity history is revoked, then its user FK becomes null. Minimal receipt keeps no raw email/subject. |
+| Workspace/strategy `sf_documents` and revisions | DELETE | Only documents under exact owned private workspace IDs; global/governance/changelog records remain. |
+| Artifact, avatar, community attachment, SF Chat upload, owned tenant runtime and legacy per-user orchestrator scopes | DELETE AFTER COMMIT | Exact object references or the canonical `u<id>__<workspace>` legacy scope are committed to `sf_account_erasure_objects`; checked roots and digests make retry possible. No guessed broad filesystem purge or cross-workspace traversal. |
+
+The test matrix currently covers owner/service/shared-workspace refusals,
+freeze-before-erasure, session/device removal, Social/Chat/Agent World/secret
+cleanup, share revocation, historical and late usage, receipt persistence,
+idempotent retry, transaction rollback, foreign-user preservation and a new
+Google identity using the released provider subject. Local OTP tests cover
+wrong/stale code, wrong session/purpose and exact confirmation. Real
+Canary/Production browser lifecycle and post-reboot Local checks are pending.
+
 Local Shared Models continuation (2026-09-22): registration's trial outbox now
 provisions the user's personal workspace with entitlement admission. Disposable
 Preview uses that path and no longer grants all permission overrides. Explicit

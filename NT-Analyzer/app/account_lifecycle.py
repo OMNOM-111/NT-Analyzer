@@ -29,6 +29,12 @@ def _registry_path():
 
 def record_deletion(user, reason, *, preview=False):
     """Idempotent insert only. Inputs are server-owned account rows."""
+    from . import storage_router
+    if storage_router.production_enabled():
+        raise account_auth.AccountAuthError(
+            "Server deletion receipts are written only by relational erasure.", 503,
+            code="erasure_backend_required",
+        )
     from . import preview_shared_models
     if preview_shared_models.transport_enabled():
         return preview_shared_models.request("/account-deleted", {
@@ -77,6 +83,10 @@ def record_deletion(user, reason, *, preview=False):
 
 
 def deleted_ids():
+    from . import storage_router
+    if storage_router.production_enabled():
+        from .production_storage import account_erasure
+        return account_erasure.deleted_ids()
     path = _registry_path()
     if not path.exists():
         return set()
@@ -85,6 +95,10 @@ def deleted_ids():
 
 
 def deleted_legacy_ids():
+    from . import storage_router
+    if storage_router.production_enabled():
+        from .production_storage import account_erasure
+        return account_erasure.deleted_legacy_ids()
     path = _registry_path()
     if not path.exists():
         return set()
@@ -94,6 +108,10 @@ def deleted_legacy_ids():
 
 def registry_rows():
     """Read-only projection for the already-authorized users.manage surface."""
+    from . import storage_router
+    if storage_router.production_enabled():
+        from .production_storage import account_erasure
+        return account_erasure.registry_rows()
     path = _registry_path()
     if not path.exists():
         return []
@@ -192,6 +210,9 @@ def _erase_social(uid, canonical):
 
 def _preflight(user):
     from . import storage_router
+    if storage_router.production_enabled():
+        from .production_storage import account_erasure
+        return account_erasure.preflight(user)
     if (not runtime_env.is_development() or storage_router.production_enabled()
             or os.environ.get("STRATFORGE_AGENT_WORLD_STORAGE", "sqlite").strip().lower() != "sqlite"):
         raise account_auth.AccountAuthError("Удаление доступно в Local; адаптер этого окружения ещё не принят.", 503)
@@ -228,6 +249,12 @@ def _freeze(uid, automatic_preview):
 
 def erase(user_id, *, reason, automatic_preview=False):
     """Internal authorized primitive. Callers authenticate/confirm beforehand."""
+    from . import storage_router
+    if storage_router.production_enabled():
+        if automatic_preview:
+            raise account_auth.AccountAuthError("Preview erasure is unavailable on server.", 403)
+        from .production_storage import account_erasure
+        return account_erasure.erase(int(user_id), reason=reason)
     from .ai_lab import chief_agent
     uid = int(user_id)
     with _LOCK:

@@ -900,7 +900,8 @@ class DocumentRepository:
         ("sf_commands", "user_id"),
         ("sf_jobs", "user_id"),
         ("sf_artifacts", "user_id"),
-        ("sf_ai_usage_events", "user_id"),
+        # sf_ai_usage_events is deliberately retained/anonymized by the
+        # account-erasure transaction (migration 0025), never pruned here.
         ("sf_ai_reservations", "user_id"),
         ("sf_market_data_subscriptions", "requested_by_user_id"),
     )

@@ -337,6 +337,12 @@ def _link_identity_in_doc(
 
 def _allocate_external_legacy_user_id(doc: Dict[str, Any]) -> int:
     used = {int(row.get("user_id") or 0) for row in doc.get("users") or [] if isinstance(row, dict)}
+    from . import storage_router
+    if storage_router.production_enabled():
+        # A deletion receipt retains the old compatibility ID. Reusing it
+        # would make late metering and audit records name the new account.
+        from . import account_lifecycle
+        used.update(account_lifecycle.deleted_legacy_ids())
     span = EXTERNAL_LEGACY_ID_CEILING - EXTERNAL_LEGACY_ID_FLOOR
     for _ in range(64):
         candidate = EXTERNAL_LEGACY_ID_FLOOR + secrets.randbelow(span)
@@ -2292,73 +2298,17 @@ def delete_user(owner_id: Any, user_id: Any) -> Dict[str, Any]:
         _audit("user_deleted", owner_id=int(owner_id), user_id=0,
                extra={"deleted_user_uuid": report["user_uuid"], "deleted_legacy_user_id": uid})
         return list_users(owner_id)
-    from . import workspaces
-    # The workspace store is a separate document, so its refusal has to happen
-    # before this one is mutated -- otherwise a shared-workspace rejection
-    # leaves the account deleted and its workspaces orphaned.
-    report = account_footprint(owner_id, uid)
-    # Owner protection outranks every other reason to refuse: the owner account
-    # is never deletable, whatever its workspaces look like.
+    # The PostgreSQL adapter freezes authority first, then updates all
+    # authoritative documents and relational mirrors in one erasure
+    # transaction. Never split workspace/auth deletion across commits.
+    report = account_footprint(owner_id, uid)  # users.manage authority.
     if report["is_owner"]:
         raise AccountAuthError("Аккаунт владельца нельзя удалить.", 403)
-    shared = report["workspaces"].get("shared_workspaces") or []
-    if shared:
-        raise AccountAuthError(
-            "Аккаунт владеет рабочей областью с другими участниками: "
-            + ", ".join(shared) + ". Передайте её другому владельцу.",
-            409, code="workspace_shared",
-        )
-    # Workspaces go first. sf_workspaces.owner_user_id is ON DELETE RESTRICT,
-    # so pruning sf_users while a workspace still names the account raises a
-    # foreign key violation that rolls the whole document write back. Purging
-    # afterwards -- as this did -- could therefore never succeed: the write it
-    # was waiting for had already failed.
-    workspaces.purge_user(report["user_uuid"], uid)
-    with _LOCK:
-        doc = _read_doc()
-        try:
-            _require_admin_capability_in_doc(doc, owner_id, "users.manage")
-        except AccountAuthError:
-            raise AccountAuthError("Нет разрешения удалять пользователей.", 403) from None
-        user = _user(doc, uid)
-        if user is None:
-            raise AccountAuthError("Пользователь не найден.", 404)
-        if user.get("is_owner"):
-            raise AccountAuthError("Аккаунт владельца нельзя удалить.", 403)
-        canonical = _user_uuid(user)
-        removed = {
-            "identities": len(_identities_for_user(doc, user)),
-            "sessions": len(_rows_for_account(doc, "sessions", canonical, uid)),
-            "challenges": len(_rows_for_account(doc, "challenges", canonical, uid)),
-            "trusted_devices": len(_rows_for_account(doc, "trusted_devices", canonical, uid)),
-            "security_challenges": len(_rows_for_account(doc, "security_challenges", canonical, uid)),
-        }
-        doc["users"] = [row for row in doc["users"] if int(row.get("user_id") or 0) != uid]
-        for key in ("sessions", "challenges", "trusted_devices", "security_challenges"):
-            doomed = {id(row) for row in _rows_for_account(doc, key, canonical, uid)}
-            doc[key] = [row for row in doc.get(key) or [] if id(row) not in doomed]
-        if canonical:
-            doc["auth_identities"] = [
-                row for row in _identity_rows(doc)
-                if not hmac.compare_digest(
-                    auth_identity.normalize_user_uuid(row.get("user_uuid")), canonical,
-                )
-            ]
-        _write_doc(doc)
-    for stale in _avatars_dir().glob(f"{uid}.*"):
-        try:
-            stale.unlink()
-        except OSError:
-            pass
-    # The audit actor is the owner who performed the deletion, never the
-    # account just removed: storage_router.append_audit turns values["user_id"]
-    # into the scope that fills sf_audit_events.user_id, which is a foreign key
-    # to sf_users. Naming the deleted account there fails the INSERT outright --
-    # ON DELETE SET NULL governs deletes of the parent, not inserts pointing at
-    # a row that is already gone. The deleted identity stays as plain payload.
+    from . import account_lifecycle
+    account_lifecycle.erase(uid, reason="owner_requested")
     _audit("user_deleted", owner_id=int(owner_id), user_id=0,
-           extra={"deleted_user_uuid": canonical, "deleted_legacy_user_id": uid,
-                  "removed": removed})
+           extra={"deleted_user_uuid": report["user_uuid"],
+                  "deleted_legacy_user_id": uid})
     return list_users(owner_id)
 
 

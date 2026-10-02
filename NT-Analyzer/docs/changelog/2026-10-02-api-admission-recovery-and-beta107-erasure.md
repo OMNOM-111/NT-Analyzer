@@ -15,3 +15,33 @@ Both environments stayed on `0.10.0-beta.106`, source `e7ecd2133c65f7ec6ce2bf8dc
 ## Source checkpoint and next development stage
 
 PR #313, a Local/documentation infrastructure checkpoint, passed all five required checks (Static, Ubuntu, Windows self-hosted, Python, bridge build) at head `67db21d569c533c6b1e33cbb7126f18135602320` and merged as `main` `bfc26c962bf3456cb1f811c421156245240ad1ac`. It did not change Canary/Production or complete the lifecycle task. A clean new branch `codex/beta107-relational-account-erasure` begins at that merged `main` for PostgreSQL account erasure and its tests. No beta.107 artifact or deployment exists yet. The current Timeline card stays `In progress`; Local post-reboot acceptance and real Chrome account delete/re-register are still pending.
+
+## beta.107 Development checkpoint (2026-10-02T18:44Z)
+
+The unmerged beta.107 branch now has PostgreSQL migration 0025 and a scoped,
+two-phase server erasure adapter. Phase one blocks the account, revokes sessions
+and active owner-model sharing. Phase two, in one PostgreSQL transaction,
+removes exact private auth/workspace/entitlement/connector/Social/SF Chat and
+Agent World rows, retains a minimal receipt, revokes identity history and
+anonymizes historical usage/model-call display names. Referenced object files
+are removed only after a durable database cleanup manifest commits. The
+existing self-delete OTP/session/confirmation and `users.manage` owner-delete
+admission remain in front of the adapter. Owner, service and shared-workspace
+deletes fail closed. Late provider usage retains cost without resurrecting a
+deleted identity; re-registration cannot reuse a deleted compatibility ID.
+
+Disposable loopback TLS PostgreSQL with application role `NOSUPERUSER
+NOBYPASSRLS` applied migrations 0001–0025 from scratch; six focused
+real-database erasure cases and five pure-plan cases passed. The cases cover
+transaction rollback/retry, foreign-user preservation, private Agent World
+records/artifacts and BYOK ciphertext deletion, share revocation, historical
+and late usage, identity-history retention, owned private documents, file
+manifest cleanup, active live-control lease refusal and released Google
+subject re-linking. The existing Device Trust/Agent World run yielded 138 PASS
+and one pre-existing test-scope failure: its BYOK ciphertext assertion used a
+global RLS scope, which is never allowed to see owner ciphertext. The test
+was changed to the owner scope; its focused rerun passed. This was a test
+correction, not a runtime/security relaxation. The full affected regression
+suite and pre-release bundle checks still need a final rerun after the branch
+is complete. No real account was deleted; no grant, server schema or artifact
+was changed. Canary and Production remain beta.106.

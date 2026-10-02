@@ -1,10 +1,16 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-10-02T17:47:20Z
+- Last verified UTC: 2026-10-02T18:44:00Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: IN DEVELOPMENT
+- beta.107 is Development source only: migration 0025 and the relational
+  erasure adapter passed initial disposable PostgreSQL/RLS tests. Its VERSION
+  is `0.10.0-beta.107`; there is no clean final source SHA, PR CI, signed
+  artifact, Canary or Production promotion yet. Do not apply this test schema
+  or the erasure workflow to the live beta.106 databases. Current Canary and
+  Production release identity, Telegram sender and rollback remain as below.
 - Current operational checkpoint: both servers still run the exact beta.106
   artifact below. Guarded Canary API restart followed by guarded Production API
   restart restored public/backend `/live` and `/ready` to 200, with admission
