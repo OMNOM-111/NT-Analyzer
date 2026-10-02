@@ -1,7 +1,7 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-10-02T05:14:45Z
+- Last verified UTC: 2026-10-02T11:09:18Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Current Canary source SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885; beta.106 acceptance PASS
 - Scope: closed beta.95 → beta.106 product card plus separate Local Runtime & Documentation Canonicalization task
@@ -41,8 +41,11 @@ incident, environment parity and AI_CONTEXT/documentation governance.
 - This root `AI_CONTEXT/` is the new canonical context path. All 15 tracked
   files were moved with `git mv`; relative links have been rebased and
   validated. The exporter, agent instructions and CI documentation gate were
-  updated; 21 focused documentation tests PASS locally. PR/main adoption is
-  not yet complete.
+  updated; 21 focused documentation tests PASS locally. The owner-stable old
+  root `AI_CONTEXT` path is now a junction to this exact canonical directory;
+  its handoff file hash matches through both paths. PR #313 remains draft;
+  all five required checks passed at clean branch head `2c60367fc593`, but
+  PR/main adoption and real Windows reboot acceptance are not complete.
 - Fresh read-only owner browser click-through loaded Social, Chat and all six
   Agent World tabs in Local/Canary/Production. Public Canary/Production
   registration reached step 1/3. The separate Chrome non-owner Professional
@@ -51,6 +54,12 @@ incident, environment parity and AI_CONTEXT/documentation governance.
   guest registration and actual post-reboot startup were not independently
   observed. These are limits of the *new* parity task, not a reversal of
   beta.106's already accepted 7/7 Product/Production evidence.
+- The Chrome Google account was matched in owner UI: Production user
+  `8813453773725695`, Canary user `8798656225084765`, both active and
+  non-owner. Its `Полное управление` workspace label does not provide product
+  entitlement. Owner UI supports audited Pro grant with `0=бессрочно`, but
+  no grant has been applied while browser-action confirmation is pending;
+  Pro includes Live-read/Live-control as well as AI/SF Chat/charts.
 
 Next: finish Git/PR/CI of the scoped launcher and documentation gate; use
 ordinary real non-owner access for the remaining fresh chart/security visual

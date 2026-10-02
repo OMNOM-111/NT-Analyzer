@@ -73,6 +73,18 @@ card remains Done with 7/7 Production PASS.
   governance instructions, link references and CI documentation gate were
   updated together. Focused documentation tests: 21 PASS. PR/main adoption
   and post-reboot startup observation remain pending.
+- PR #313 remains draft at clean branch SHA
+  `2c60367fc5934d397a921af95c6b5440d28f3ac7`; its five required PR
+  checks passed. The current Local listener (PID 28188) reports that exact
+  clean Development SHA, beta.106, `/live` 200 and `/ready` 200. This is still
+  not a Windows reboot acceptance.
+- The requested stable owner path
+  `C:\Users\dimon\Documents\Анализатор стратегий NinjaTrader\AI_CONTEXT`
+  was absent and is now a Windows junction to the sole tracked canonical
+  `local-current\AI_CONTEXT`. SHA256 of `11_ACTIVE_WORK_AND_HANDOFF.md`
+  through both paths matches
+  `803B7C8E9E5657F05536B82B849F6A1CE1851471316A7A791294CA89DC252E72`.
+  No historical context file was deleted or copied into a divergent tree.
 
 ## Dirty old checkout classification — no deletion
 
@@ -115,8 +127,17 @@ DPAPI path, not Production secrets; server environments keep isolated
 PostgreSQL/SecretStore state. Production remains sole Telegram/report sender,
 Canary non-sender, Local Vitek Disabled.
 
-The real Chrome Professional trial has expired in both Canary and Production,
-so fresh non-owner chart/security click-through cannot be represented as PASS
+The real Chrome Professional trial has expired in both Canary and Production.
+The authenticated Chrome account is `cherevkodmitro77@gmail.com`, matched in
+the owner UI to separate Production user ID `8813453773725695` and Canary
+user ID `8798656225084765`. Both owner user panels show active, non-owner,
+`Полное управление` workspace access, while the account UI shows
+`Пробный доступ завершён` after five hours of active use. Workspace control
+does not grant product entitlement. The owner UI offers an auditable
+Pro plan grant with `Срок дней (0=бессрочно)`; no grant has yet been applied
+at this checkpoint. A browser-action confirmation is pending because Pro
+also includes Live-read/Live-control capability. Thus, fresh non-owner
+chart/security click-through cannot be represented as PASS
 without a legitimate entitlement action. The previous beta.106 product-card
 7/7 Production PASS remains historically valid. This new canonicalization
 card remains In progress; no new server artifact or release iteration exists.
