@@ -45,3 +45,16 @@ correction, not a runtime/security relaxation. The full affected regression
 suite and pre-release bundle checks still need a final rerun after the branch
 is complete. No real account was deleted; no grant, server schema or artifact
 was changed. Canary and Production remain beta.106.
+
+## beta.107 Development PR checkpoint (2026-10-02)
+
+The scoped branch was committed at `7979e32b1175d4730cd20e71a5c954206645027a`
+and opened as PR #314. The final affected suite passed 170/170 against a
+fresh disposable TLS PostgreSQL schema 25 and a `NOBYPASSRLS` application
+role. `pre_release_check.py`, Context Pack validation and documentation-sync
+validation passed. Legacy per-user orchestrator scopes were included in the
+durable exact-object cleanup plan; the test proves another user's scope
+survives. Git worktree was clean after commit. Required PR CI is pending;
+no merge, beta.107 artifact, Canary/Production schema change or real-account
+delete has occurred. The saturation trigger remains UNKNOWN despite both
+environments' current public `/live` and `/ready` returning 200.

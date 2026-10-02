@@ -5,7 +5,7 @@ Release summary: Bring the accepted Local account-delete contract to Canary and
 Production through scoped PostgreSQL/RLS transactions. Preserve minimal
 deletion and usage evidence while removing the account's private identity,
 workspace, Social, SF Chat, Agent World, model-secret and object data.
-Release PRs: pending beta.107 task PR.
+Release PRs: #314 (Development; required CI pending).
 Affected subsystems: Auth and device trust, workspaces, entitlements,
 Community/SF Chat, Agent World, ServerSecrets, AI usage, PostgreSQL schema 0025.
 Release impact: New additive server migration; a verified backup, exact

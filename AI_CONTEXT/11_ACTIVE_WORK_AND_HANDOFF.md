@@ -1,7 +1,7 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-10-02T18:44:00Z
+- Last verified UTC: 2026-10-02T19:13:00Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Current Canary source SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885; beta.106 accepted, current health recovered
 - Scope: closed beta.95 → beta.106 product card plus In progress Local recovery / beta.107 erasure task
@@ -10,18 +10,20 @@
 
 ## Current task — Local Runtime & Documentation Canonicalization
 
-Development checkpoint (2026-10-02T18:44Z): branch
-`codex/beta107-relational-account-erasure` now contains VERSION beta.107,
-migration 0025 and a PostgreSQL/RLS server erasure adapter in an **uncommitted
-working tree**. A newly provisioned disposable TLS PostgreSQL applied 0001–0025
-from scratch; seven integration cases and five pure-plan cases passed. Tests
-cover freeze/rollback/retry, owner/service/shared refusal, private Social/Chat/
-Agent World/credential removal, usage/audit retention, file-object cleanup,
-foreign data preservation and a freed Google subject. The full affected suite,
-PR, CI, artifact, server backup/migration/QA and actual reboot are still
-pending. The server incident's exact retained handler route is still unknown.
+Development checkpoint (2026-10-02T19:13Z): PR #314 is open on committed
+`codex/beta107-relational-account-erasure` SHA
+`7979e32b1175d4730cd20e71a5c954206645027a`, with VERSION beta.107,
+migration 0025 and the PostgreSQL/RLS server erasure adapter. Fresh disposable
+TLS PostgreSQL applied 0001–0025 from scratch; 170/170 affected regression
+tests passed with a `NOBYPASSRLS` application role. Tests cover freeze/rollback/
+retry, owner/service/shared refusal, private Social/Chat/Agent World/credential
+removal, usage/audit retention, exact file and legacy AI-chat scope cleanup,
+foreign data preservation and a freed Google subject. Pre-release bundle,
+Context Pack and documentation validators passed. PR required CI, final-main
+CI, artifact, server backup/migration/QA and actual reboot remain pending.
+The server incident's exact retained handler route is still unknown.
 Do not infer beta.107 Canary/Production acceptance from this Development work.
-The next step is complete regression/pre-release checks and a clean task PR.
+The next step is PR CI; no server promotion is authorized by a local test.
 The historical beta.106 7/7 Done card remains unchanged.
 
 Latest checkpoint (2026-10-02T17:47Z): the 503 `api_admission_saturated`

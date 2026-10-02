@@ -1,20 +1,18 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
-- Last verified UTC: 2026-10-02T18:44:00Z
+- Last verified UTC: 2026-10-02T19:13:00Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Current Production version/build/artifact when known: `0.10.0-beta.106` / `sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z` / `art_7aebf504ae354ce7981c58359a1ff546`; deployment health and periodic delivery acceptance PASS
 - Scope: Closed beta.106 product release plus In progress Local recovery / beta.107 erasure task
 - Status: IN DEVELOPMENT
-- beta.107 Development update: `VERSION.json` now names
-  `0.10.0-beta.107` on the unmerged
-  `codex/beta107-relational-account-erasure` branch. PostgreSQL migration
-  0025 was applied from scratch on a disposable TLS loopback cluster with a
-  non-`BYPASSRLS` app role; seven real-database erasure cases and five
-  plan/security cases passed. Existing Agent World/Device Trust regression
-  yielded 138 PASS plus one old test using the wrong BYOK RLS read scope;
-  its owner-scoped correction passed separately. No beta.107 artifact or
-  server deploy exists; live Canary/Production remain beta.106. Full QA,
+- beta.107 Development update: `VERSION.json` names `0.10.0-beta.107` on
+  open PR #314, source `7979e32b1175d4730cd20e71a5c954206645027a`.
+  PostgreSQL migration 0025 applied from scratch on disposable TLS loopback
+  with non-`BYPASSRLS` app role; 170/170 affected regression tests and the
+  pre-release bundle check passed. The earlier BYOK test-scope correction
+  changed no runtime gate. PR CI is pending. No beta.107 artifact or server
+  deploy exists; live Canary/Production remain beta.106. Destructive QA,
   saturated-handler root cause and Windows reboot remain open.
 - Current post-release checkpoint: Canary and Production beta.106 API health was
   recovered with guarded API-only restarts after 503 `api_admission_saturated`.
