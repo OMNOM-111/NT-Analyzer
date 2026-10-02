@@ -1,10 +1,35 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-10-01T15:41:00Z
+- Last verified UTC: 2026-10-02T05:14:45Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: DONE
+- New post-release second-account QA checkpoint: the Chrome identity uses
+  different canonical users in Canary (`8798656225084765`) and Production
+  (`8813453773725695`). Both PostgreSQL entitlement stores retain expired
+  one-day Pro rows and exhausted trial usage; neither server was changed by
+  this read-only diagnosis. Shipped account erasure is Local/Preview-only,
+  not a safe server operation. PR #313 remains draft; no beta.106 artifact,
+  schema, sender, scheduler or release identity changed.
+- Current health is not the historical release snapshot: a read-only probe
+  on 2026-10-02T14:27–14:30Z returned 503 `api_admission_saturated` from
+  both public Canary and Production live/ready, and from Production's
+  host-local backend health, despite Supervisor RUNNING. Local health is
+  200. No server process, config, artifact or database was changed.
+- Current task: Local configuration and documentation only. `main` at task
+  start is `9483bac868d829f3891e5e09fe84c18d242cf9c6`, after the
+  documentation-only PR #312. Canary/Production still run the single beta.106
+  artifact below; neither was redeployed for the Local recovery. Canonical
+  Development now uses the separate `local-current` worktree and original
+  owner data root, while its old dirty root remains preserved as recovery
+  evidence. Local Scheduled Task `StratForge Vitek` remains Disabled; the
+  launcher pins Telegram ownership to Production and blocks a second Local
+  process or a wrong source path/SHA. New visual parity is partial: owner
+  AI Center/Social/Chat in all three environments and public registration
+  first step on both servers loaded; the existing Chrome non-owner trial is
+  expired, so a fresh chart/security check is not yet evidenced. This does
+  not alter the previous beta.106 release acceptance.
 - Latest checkpoint, superseding the beta.105 paragraph below (2026-10-01 UTC):
   PR #311 merged to exact `main`
   `e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885`; final-main CI 36857075970 PASS.
@@ -26,10 +51,10 @@
   the only Telegram sender, Local `StratForge Vitek` is Disabled and Canary is
   non-sender. Product package 7/7 is Production PASS; PR #312 records the
   documentation closeout without changing the deployed artifact.
-  [Detailed receipt](../changelog/2026-10-01-beta106-periodic-owner-model-route.md).
+  [Detailed receipt](../NT-Analyzer/docs/changelog/2026-10-01-beta106-periodic-owner-model-route.md).
 
 ## Historical checkpoints (superseded by beta.106 PASS above)
-- Current superseding checkpoint (2026-10-01 UTC): PR #309 merged into exact `main` `91d8a4c1ac25f988b643ff71e119502a1df3d3f7`; required CI 36790534580 PASS. One signed immutable `0.10.0-beta.105` artifact `art_dda57f0beab14b83a3375d6ecff1caa8`, build `sf-0.10.0-beta.105-91d8a4c1ac25-20261001T001822Z`, archive SHA256 `2D1DD117E550A5DAD9EB07951DE938AD60BCD44B0F1E4994C258CD9DBAFF482F`, manifest/runtime SHA256 `0BE1FDFD05880F589F8CA36EFEFDB24719A44E57379E825AD662D31614DBFDF9`, reached focused Canary PASS and was promoted unchanged to Production. Verified backups: `pre-beta105-canary-peer-20261001T001844Z` and `pre-beta105-production-peer-20261001T003341Z`. Both `canary-current` and Production `current` resolve to release directory `0.10.0-beta.105-91d8a4c1ac25`; Production `previous` is beta.104. Real Professional model POST/provider/SF Chat/share-off smoke PASS; schema 24, `/live` and `/ready` 200. Production alone owns operational Telegram; control audit and daily summary delivered, Local Scheduled Task disabled, Canary non-sender. All report flags were enabled after explicit owner acceptance of possible duplicate 30 September reports, but monthly/quarterly failed on the legacy Linux orchestrator-model route. Full periodic cutover PARTIAL; no artifact/runtime/schema changes were made. [Detailed receipt](../changelog/2026-09-30-beta105-production-model-completion.md). All older beta.103/beta.104 checkpoints below are historical.
+- Current superseding checkpoint (2026-10-01 UTC): PR #309 merged into exact `main` `91d8a4c1ac25f988b643ff71e119502a1df3d3f7`; required CI 36790534580 PASS. One signed immutable `0.10.0-beta.105` artifact `art_dda57f0beab14b83a3375d6ecff1caa8`, build `sf-0.10.0-beta.105-91d8a4c1ac25-20261001T001822Z`, archive SHA256 `2D1DD117E550A5DAD9EB07951DE938AD60BCD44B0F1E4994C258CD9DBAFF482F`, manifest/runtime SHA256 `0BE1FDFD05880F589F8CA36EFEFDB24719A44E57379E825AD662D31614DBFDF9`, reached focused Canary PASS and was promoted unchanged to Production. Verified backups: `pre-beta105-canary-peer-20261001T001844Z` and `pre-beta105-production-peer-20261001T003341Z`. Both `canary-current` and Production `current` resolve to release directory `0.10.0-beta.105-91d8a4c1ac25`; Production `previous` is beta.104. Real Professional model POST/provider/SF Chat/share-off smoke PASS; schema 24, `/live` and `/ready` 200. Production alone owns operational Telegram; control audit and daily summary delivered, Local Scheduled Task disabled, Canary non-sender. All report flags were enabled after explicit owner acceptance of possible duplicate 30 September reports, but monthly/quarterly failed on the legacy Linux orchestrator-model route. Full periodic cutover PARTIAL; no artifact/runtime/schema changes were made. [Detailed receipt](../NT-Analyzer/docs/changelog/2026-09-30-beta105-production-model-completion.md). All older beta.103/beta.104 checkpoints below are historical.
 - Last verified UTC: 2026-10-01T15:41:00Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Current deployed source SHA: Canary and Production `e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885`
@@ -46,7 +71,7 @@ Production scheduler remains OFF and Local `StratForge Vitek` ON. beta.104 is
 only a Development source correction of repeated read-only authority checks;
 there is no beta.104 artifact or deployment yet. Preserve the verified
 `pre-beta103-production-peer-20260930T043957Z` backup and beta.99 rollback
-slot. See the [focused change record](../changelog/2026-09-30-beta104-ai-center-read-timeout.md).
+slot. See the [focused change record](../NT-Analyzer/docs/changelog/2026-09-30-beta104-ai-center-read-timeout.md).
 
 Historical beta.103 Canary checkpoint: Canary runs signed
 `0.10.0-beta.103` artifact `art_9d38fcd7bd33454786fdbfaf0e9cc25a`
@@ -83,7 +108,7 @@ this scoped path. Production remains beta.99, report scheduler OFF and Local
 `StratForge Vitek` ON. Read-only Production comparison found its worker lacks
 the equivalent secret-dir setting, while its API has it; backed-up Production
 config correction and environment-specific secret import are prerequisites
-after separate artifact-specific owner approval. [Release record](../changelog/2026-09-29-beta103-server-agent-world-queue.md).
+after separate artifact-specific owner approval. [Release record](../NT-Analyzer/docs/changelog/2026-09-29-beta103-server-agent-world-queue.md).
 
 Historical beta.101 checkpoint: Canary ran signed
 `0.10.0-beta.101` artifact `art_ed57f7076b6b46b78cc3309c55470016`
@@ -101,7 +126,7 @@ contains DB/runtime/config/secrets; `canary-previous` is beta.100. Linux
 owner models passed; real provider/non-owner/share/restart/full-package
 acceptance remains PENDING, so Canary is not `canary_passed`. Production is
 still beta.99 and report scheduler OFF; Local `StratForge Vitek` stays ON.
-[beta.101 release record](../changelog/2026-09-28-beta101-server-secret-migration.md).
+[beta.101 release record](../NT-Analyzer/docs/changelog/2026-09-28-beta101-server-secret-migration.md).
 
 Historical beta.100 PARTIAL checkpoint: Canary ran signed
 `0.10.0-beta.100` artifact `art_de49135714cf48b6aace2a977fad334f`
@@ -118,7 +143,7 @@ exists in this artifact. Canary acceptance remains PARTIAL, not `canary_passed`.
 Production remains beta.99, artifact `art_3ae473a96bb24d439fd5cb6d3a1d1096`,
 source `68ba3a95f804800195bb6e8dff556dd843b8eb6e`; no beta.100 promotion
 or report-scheduler cutover occurred. See the
-[beta.100 release record](../changelog/2026-09-28-beta100-server-parity-release.md).
+[beta.100 release record](../NT-Analyzer/docs/changelog/2026-09-28-beta100-server-parity-release.md).
 
 Production incident 2026-09-27: beta.97 was promoted as immutable artifact
 `art_8fec9cdd6ed14dd19cb762291a2a756f`, but final closeout is blocked by a
@@ -131,7 +156,7 @@ issue #298 in real Professional registration. beta.99 is the separate narrow
 storage-routing cycle and has now passed Canary and Production on its own final
 main SHA and the same immutable artifact. Production periodic delivery stays
 OFF and Local `StratForge Vitek` stays ON. See the
-[incident record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md).
+[incident record](../NT-Analyzer/docs/changelog/2026-09-27-beta98-production-reload-loop-hotfix.md).
 
 Historical pre-deployment contract (2026-09-26): beta.97 consolidates periodic owner reports under
 the Vitek/Deputy controller and makes Production the sole default operational
@@ -141,9 +166,9 @@ login/access callbacks. That candidate later completed its immutable promotion,
 but its final closeout is superseded by the live incident above. The required
 sequence for beta.98 remains merge → final-main-SHA CI → one signed immutable
 artifact → Canary acceptance → separate owner approval → same artifact in
-Production. [Candidate record](../changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md).
+Production. [Candidate record](../NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md).
 
-Development supervisor origin correction (2026-09-23): default identity is the actual `http://127.0.0.1:<port>` listener, never the Production hub hostname. An explicitly configured Development HTTPS origin is supported. This prevents false gateway self-loop isolation while preserving true self-loop rejection. [Incident and verification](../changelog/2026-09-23-local-chart-gateway.md). No server release is included.
+Development supervisor origin correction (2026-09-23): default identity is the actual `http://127.0.0.1:<port>` listener, never the Production hub hostname. An explicitly configured Development HTTPS origin is supported. This prevents false gateway self-loop isolation while preserving true self-loop rejection. [Incident and verification](../NT-Analyzer/docs/changelog/2026-09-23-local-chart-gateway.md). No server release is included.
 
 Local-only Preview change (2026-09-22): the two shared-model QA profiles may call
 one authenticated parent loopback service for catalog/invoke only. Other outbound
@@ -155,7 +180,7 @@ Local 8765 now runs clean `c9a9d7e6a3080988af1c90ff65f2520b0e74cc70`, build
 `dev-0.10.0-beta.96-c9a9d7e6a308`, Development, Preview=false. The owner Preview
 launch endpoint passed real-provider acceptance and cleanup; owner access settings
 matched the before snapshot exactly. This is a Local code switch, not a release artifact.
-[Canonical evidence](../changelog/2026-09-22-shared-models-local-continuation.md).
+[Canonical evidence](../NT-Analyzer/docs/changelog/2026-09-22-shared-models-local-continuation.md).
 
 ## Only supported release model
 
@@ -284,10 +309,10 @@ The beta.95 → beta.96 product card remains open: source ancestry and 327 targe
 package tests PASS, while live Canary parity is PARTIAL because Agent World and
 Preview sandbox are disabled. beta.97–beta.99 retain their exact identities as
 technical iterations inside that card. See the
-[product-card parity and status record](../changelog/2026-09-27-beta96-product-card-parity-and-status-contract.md).
+[product-card parity and status record](../NT-Analyzer/docs/changelog/2026-09-27-beta96-product-card-parity-and-status-contract.md).
 
-Sources: [beta.98 incident record](../changelog/2026-09-27-beta98-production-reload-loop-hotfix.md),
-[beta.97 candidate record](../changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md).
+Sources: [beta.98 incident record](../NT-Analyzer/docs/changelog/2026-09-27-beta98-production-reload-loop-hotfix.md),
+[beta.97 candidate record](../NT-Analyzer/docs/changelog/2026-09-26-beta97-telegram-report-cutover-release-candidate.md).
 
 ### Historical beta.86 snapshot
 
@@ -363,8 +388,8 @@ different artifact.
 
 ## Canonical evidence
 
-- [beta.79 secret management and cancel closeout](../changelog/2026-08-29-beta79-secret-management-and-cancel-closeout.md)
-- [environment and release identity ADR](../adr/0001-environments-and-release-identity.md)
+- [beta.79 secret management and cancel closeout](../NT-Analyzer/docs/changelog/2026-08-29-beta79-secret-management-and-cancel-closeout.md)
+- [environment and release identity ADR](../NT-Analyzer/docs/adr/0001-environments-and-release-identity.md)
 - `app/runtime_env.py`
 - `app/release_control.py`
 - `app/release_center.py`

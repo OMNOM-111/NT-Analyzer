@@ -1,12 +1,12 @@
 # 13. Test and Acceptance Matrix
 
 - Context Pack document: 13_TEST_AND_ACCEPTANCE_MATRIX.md
-- Last verified UTC: 2026-10-01T01:27:27Z
+- Last verified UTC: 2026-10-02T05:14:45Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Local source verified SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (clean beta.96 runtime; real handoff/manual delivery and original report/PNG verified, exact-code CI PASS)
 - Local verification UTC: 2026-09-05T19:05:43Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
-- Historical UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
-- Historical Local program delta: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active at that checkpoint; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. Full-program/owner acceptance was open then.
+- Historical UI correction: [SF Chat dialog receipt](../NT-Analyzer/docs/changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
+- Historical Local program delta: [integrated review record](../NT-Analyzer/docs/changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active at that checkpoint; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. Full-program/owner acceptance was open then.
 - Historical Local 8765: clean `2b6d0112bef88c5bfb73970de64ec5518443e56b`, build `dev-0.10.0-beta.96-2b6d0112bef8`, original owner data, Preview=false
 - Scope: Canonical test layers, release gates, acceptance and rollback expectations
 - Status: IN DEVELOPMENT
@@ -18,7 +18,7 @@ PASS on the same signed artifact as Production; Production beta.106 package
 Monthly and Quarterly request each; all produced owner-model provider usage,
 durable report, SF Chat message and one Telegram outbox `sent`/attempts=1.
 Daily and audit delivery had prior Production PASS on the unchanged route.
-Production `/live` and `/ready` returned 200. [Final beta.106 receipt](../changelog/2026-10-01-beta106-periodic-owner-model-route.md).
+Production `/live` and `/ready` returned 200. [Final beta.106 receipt](../NT-Analyzer/docs/changelog/2026-10-01-beta106-periodic-owner-model-route.md).
 
 ## Historical Local/program acceptance checkpoints
 
@@ -69,8 +69,8 @@ Execution V2, autonomous routines and an Agent World PG adapter are not implemen
 All ten flags default OFF; exact admitted Local workspace has eight paths ON,
 Router/Execution V2 OFF. Preview has separate synthetic flags, no real side effects.
 The earlier 93bb1298/other-SHA test and provider history is preserved in the
-[canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
-[integrated changelog](../changelog/2026-09-05-agent-world-integrated-local.md).
+[canonical status](../NT-Analyzer/docs/current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
+[integrated changelog](../NT-Analyzer/docs/changelog/2026-09-05-agent-world-integrated-local.md).
 
 ## Earlier scoped checkpoint verification
 
@@ -97,7 +97,7 @@ own-key and final owner acceptance remain open.
 | Python compile check | syntax-level regression | `python -m compileall -q app tests` | required in CI |
 | JS syntax check | Aurora assets syntax | CI `node --check` over `app/static/aurora/assets/**/*.js` | required in CI |
 | Exact artifact preflight | staged production bundle, runtime document reads, Python/JS syntax and bundle static scan | from `NT-Analyzer/`: `python tools/pre_release_check.py` | required before Git closeout; checkout-only PASS is insufficient |
-| Operational release closeout | accepted deployment/build/browser/readiness evidence | historical beta.29 example: [2026-08-22](../changelog/2026-08-22-market-data-responsive-release-beta29.md); last recorded identity in [current system state](02_CURRENT_SYSTEM_STATE.md) | required to answer “what is live now” per environment |
+| Operational release closeout | accepted deployment/build/browser/readiness evidence | historical beta.29 example: [2026-08-22](../NT-Analyzer/docs/changelog/2026-08-22-market-data-responsive-release-beta29.md); last recorded identity in [current system state](02_CURRENT_SYSTEM_STATE.md) | required to answer “what is live now” per environment |
 
 Historical beta.29 closeout result (not current Agent World evidence): targeted market/chart/Operations/responsive
 `251 passed`; full pytest `1924 passed, 32 skipped, 0 failed`;
@@ -108,8 +108,8 @@ without their explicit test DSNs and one Windows bash-syntax check.
 ## Agent World integrated Local verification
 
 Current slice results, explicit skips, browser evidence and source/PR identity
-are maintained in [the canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md)
-and [integrated change record](../changelog/2026-09-05-agent-world-integrated-local.md).
+are maintained in [the canonical status](../NT-Analyzer/docs/current/AGENT_WORLD_IMPLEMENTATION_STATUS.md)
+and [integrated change record](../NT-Analyzer/docs/changelog/2026-09-05-agent-world-integrated-local.md).
 They supersede neither historical release evidence nor the owner's design review.
 Tests include SQLite isolation/CAS/replay, independent fixture checks, bounded
 per-owner reads/runs, real Handler/CSRF/control admission, static page routing,
@@ -162,11 +162,11 @@ strict verification, then a subsequent cold chart timed out. Another explicit
 command produced the real PNG: 140/800 historical bars, same-chat report, OFFLINE.
 Failures were not overwritten. Fresh Court and read-only Social preview PASS;
 real multi-user Memory, permanent Social and private-key checks remain separate. See
-[ADR-0012](../adr/0012-agent-world-integrated-local.md).
+[ADR-0012](../NT-Analyzer/docs/adr/0012-agent-world-integrated-local.md).
 
 ## Historical pre-model evidence
 
-The [pre-model checkpoint archive](../archive/AGENT_WORLD_PRE_MODEL_CHECKPOINT_486DB834.md)
+The [pre-model checkpoint archive](../NT-Analyzer/docs/archive/AGENT_WORLD_PRE_MODEL_CHECKPOINT_486DB834.md)
 retains the earlier scope and browser/test evidence. For code
 `fc78677dfa258fb56042866a6764e8c8a45c42e6`, the final Windows full run was
 **3369 passed, 44 skipped** in 428.67 s; legacy **13/13** suites; exact bundle
@@ -208,11 +208,11 @@ and remaining provider/browser work are recorded above.
 
 | Area | Current status | Canonical evidence |
 | --- | --- | --- |
-| Backtest parity vs Strategy Analyzer | baseline passed; rerun after result-contract or execution-setting changes | [../operations/manual-validation.md](../operations/manual-validation.md) |
-| Real Windows Connector acceptance | still required for Production-grade Connector confidence | [../architecture/CONNECTOR_PROTOCOL_V1.md](../architecture/CONNECTOR_PROTOCOL_V1.md), [../../ANTIGRAVITY_STAGE9_HANDOFF.md](../../ANTIGRAVITY_STAGE9_HANDOFF.md) |
-| Market-data visual and higher-load acceptance | PASS: 12-page/24-chart Development load with one upstream, authenticated Canary 36-chart + second client, authenticated Production two-client MES/MNQ + MNQ 15m. Closed-market heartbeat was used honestly; no moving raw-trade claim | [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md) |
-| Responsive UI acceptance | PASS: 84/84 page/viewport checks, real mobile pointer journeys, and byte-identical Canary/Production smoke with zero whole-document overflow | [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md) |
-| Canary / Production release acceptance | PASS: beta.29 merge `4d15f1d`, runtime `CBA4FA70…2379`, one signed artifact, Canary `dep_de0615…`, Production `dep_8716b7…`, no rebuild | [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md) |
+| Backtest parity vs Strategy Analyzer | baseline passed; rerun after result-contract or execution-setting changes | [../operations/manual-validation.md](../NT-Analyzer/docs/operations/manual-validation.md) |
+| Real Windows Connector acceptance | still required for Production-grade Connector confidence | [../architecture/CONNECTOR_PROTOCOL_V1.md](../NT-Analyzer/docs/architecture/CONNECTOR_PROTOCOL_V1.md), [../../ANTIGRAVITY_STAGE9_HANDOFF.md](../NT-Analyzer/ANTIGRAVITY_STAGE9_HANDOFF.md) |
+| Market-data visual and higher-load acceptance | PASS: 12-page/24-chart Development load with one upstream, authenticated Canary 36-chart + second client, authenticated Production two-client MES/MNQ + MNQ 15m. Closed-market heartbeat was used honestly; no moving raw-trade claim | [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../NT-Analyzer/docs/changelog/2026-08-22-market-data-responsive-release-beta29.md) |
+| Responsive UI acceptance | PASS: 84/84 page/viewport checks, real mobile pointer journeys, and byte-identical Canary/Production smoke with zero whole-document overflow | [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../NT-Analyzer/docs/changelog/2026-08-22-market-data-responsive-release-beta29.md) |
+| Canary / Production release acceptance | PASS: beta.29 merge `4d15f1d`, runtime `CBA4FA70…2379`, one signed artifact, Canary `dep_de0615…`, Production `dep_8716b7…`, no rebuild | [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../NT-Analyzer/docs/changelog/2026-08-22-market-data-responsive-release-beta29.md) |
 
 Operationally accepted does **not** mean every adjacent provider is ready:
 physical Windows Connector enrollment remains separate, cross-user market-data

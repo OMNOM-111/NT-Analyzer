@@ -69,7 +69,8 @@ jobs:
           $url = "https://github.com/$env:GITHUB_REPOSITORY.git"
           git remote set-url origin $url
           if ($LASTEXITCODE -ne 0) { git remote add origin $url }
-          git -c http.extraheader="$header" fetch --no-tags --prune --depth=1 origin $env:GITHUB_SHA
+          # Two generations are needed for the documentation diff gate below.
+          git -c http.extraheader="$header" fetch --no-tags --prune --depth=2 origin $env:GITHUB_SHA
           if ($LASTEXITCODE -ne 0) { throw "fetch failed" }
           git checkout -q --force --detach FETCH_HEAD
           if ($LASTEXITCODE -ne 0) { throw "checkout failed" }
@@ -96,8 +97,12 @@ jobs:
           node --version
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
-      - name: Validate External GPT context pack
-        run: python tools/validate_external_gpt_context.py
+      - name: Validate canonical AI_CONTEXT and Timeline sync
+        run: |
+          python tools/validate_external_gpt_context.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/validate_documentation_sync.py --base 'HEAD^1'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run release test runner
         run: python -m tests
       - name: Run full pytest suite

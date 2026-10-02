@@ -1,25 +1,32 @@
 # 08. UI, UX and Product Contracts
 
 - Context Pack document: 08_UI_UX_AND_PRODUCT_CONTRACTS.md
-- Last verified UTC: 2026-10-01T01:27:27Z
+- Last verified UTC: 2026-10-02T05:14:45Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Local source verified SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (clean beta.96 runtime; real handoff/manual delivery and original report/PNG verified, exact-code CI PASS)
 - Local verification UTC: 2026-09-05T19:05:43Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
-- Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
-- Current program delta: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. Full-program/owner acceptance remains open.
+- Current UI correction: [SF Chat dialog receipt](../NT-Analyzer/docs/changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
+- Current program delta: [integrated review record](../NT-Analyzer/docs/changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. Full-program/owner acceptance remains open.
 - Active Local 8765: clean `2b6d0112bef88c5bfb73970de64ec5518443e56b`, build `dev-0.10.0-beta.96-2b6d0112bef8`, original owner data, Preview=false
 - Unified Local accepted base: beta.96, open PR #280; no Canary/Production promotion
 - Scope: Major UI areas, visibility rules and important UX contracts
 - Status: IN DEVELOPMENT
 
-The Agent World rows below describe the integrated Development delta, not a
-completed program acceptance. Clean 2b6d0112 is active with the completed
+Current product checkpoint: the seven accepted SF Social, SF Chat,
+registration, device trust, Agent World/AI Center, shared models and
+new-user charts capabilities are Production 7/7 PASS on beta.106. The
+post-release Local startup incident did not reopen that package. Current
+Local, Canary and Production browser checks for the separate canonicalization
+task are recorded in [the scoped change record](../NT-Analyzer/docs/changelog/2026-10-01-local-runtime-documentation-canonicalization.md).
+
+The older Agent World rows below are **historical Development evidence**, not
+the current deployment state. At that time clean 2b6d0112 was active with the completed
 in-app SF Chat dialogs, real typed handoff, separate application observations
 and manual routine/calendar chat delivery. Original NT report/PNG were reverified;
 the earlier ratings, Inspector/SF Chat, Consensus and Court evidence is preserved below.
-Real multi-user sharing, permanent Social and own-key/owner acceptance
-remain separate. The pack-wide deployment anchor is unchanged; Production was
-not rechecked. Local verification uses the explicit source SHA above.
+The then-open multi-user sharing, Social and owner gates were later resolved
+for the beta.106 product package; ordinary-user Telegram pairing is a separate
+future issue. Local verification in this older section uses its stated SHA.
 
 ## Completed SF Chat dialog correction — historical 95912cbf verification
 
@@ -35,8 +42,8 @@ cases added after collection); 352 focused regression, root/static/context and
 534-file staged/runtime bundles PASS. Exact-code CI 33970324754 is 3/3 PASS:
 Windows 4039/44, Linux 4042/41 and static, including all final auth-context cases.
 Skipped DB/platform cases are not new live PASS; this is no program/release closeout.
-Canonical status/evidence: [dialog change record](../changelog/2026-09-05-sf-chat-app-dialogs.md)
-and [program status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
+Canonical status/evidence: [dialog change record](../NT-Analyzer/docs/changelog/2026-09-05-sf-chat-app-dialogs.md)
+and [program status](../NT-Analyzer/docs/current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 
 ## Previous verified model/domain checkpoint — aa54c294
 
@@ -69,8 +76,8 @@ Execution V2, autonomous routines and an Agent World PG adapter are not implemen
 All ten flags default OFF; exact admitted Local workspace has eight paths ON,
 Router/Execution V2 OFF. Preview has separate synthetic flags, no real side effects.
 The earlier 93bb1298/other-SHA test and provider history is preserved in the
-[canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
-[integrated changelog](../changelog/2026-09-05-agent-world-integrated-local.md).
+[canonical status](../NT-Analyzer/docs/current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
+[integrated changelog](../NT-Analyzer/docs/changelog/2026-09-05-agent-world-integrated-local.md).
 
 ## Integrated review additions
 
@@ -209,14 +216,14 @@ completed user-key acceptance session; that one external path remains pending.
 
 ## Canonical evidence
 
-- [../architecture/UI_API_MAP.md](../architecture/UI_API_MAP.md)
-- [Current Agent World acceptance](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md)
-- [Integrated Local ADR](../adr/0012-agent-world-integrated-local.md)
-- [Integrated Local verification ledger](../changelog/2026-09-05-agent-world-integrated-local.md)
-- [../adr/0004-admin-panel-and-capabilities.md](../adr/0004-admin-panel-and-capabilities.md)
-- [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md)
-- [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md)
-- [Device Confirmation Development record](../changelog/2026-09-02-device-confirmation-trusted-access.md)
+- [../architecture/UI_API_MAP.md](../NT-Analyzer/docs/architecture/UI_API_MAP.md)
+- [Current Agent World acceptance](../NT-Analyzer/docs/current/AGENT_WORLD_IMPLEMENTATION_STATUS.md)
+- [Integrated Local ADR](../NT-Analyzer/docs/adr/0012-agent-world-integrated-local.md)
+- [Integrated Local verification ledger](../NT-Analyzer/docs/changelog/2026-09-05-agent-world-integrated-local.md)
+- [../adr/0004-admin-panel-and-capabilities.md](../NT-Analyzer/docs/adr/0004-admin-panel-and-capabilities.md)
+- [../changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md](../NT-Analyzer/docs/changelog/2026-08-13-final-acceptance-canary-0.10.0-beta.1.md)
+- [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../NT-Analyzer/docs/changelog/2026-08-22-market-data-responsive-release-beta29.md)
+- [Device Confirmation Development record](../NT-Analyzer/docs/changelog/2026-09-02-device-confirmation-trusted-access.md)
 - `app/static/aurora/assets/ui.js`
 - `app/static/aurora/assets/api.js`
 - `app/static/aurora/assets/pages/desktop.js`

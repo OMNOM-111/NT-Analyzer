@@ -4,7 +4,7 @@
 - Last verified UTC: 2026-10-01T01:27:27Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
-- Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
+- Current UI correction: [SF Chat dialog receipt](../NT-Analyzer/docs/changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
 - Active scope: verified integrated Local, result presentation, same-input Consensus and three-model Court; full program and owner-dependent acceptance remain open
 - Unified Local base: beta.96, open PR #280; owner-review branch is stacked above foundation PR #281; no merge or Canary/Production promotion
 - Scope: Current components, trust boundaries, entities and key flows
@@ -22,7 +22,7 @@ owner/workspace/environment-bound. A one-shot SSH/stdin trusted-process import
 will preserve Local model identities and re-encrypt directly under each target
 environment key. It has not run on Canary or Production. The older Local-only
 architecture and pending-adapter statements below are historical, not the
-current deployed-server assessment. [Current evidence](../changelog/2026-09-28-beta101-server-secret-migration.md).
+current deployed-server assessment. [Current evidence](../NT-Analyzer/docs/changelog/2026-09-28-beta101-server-secret-migration.md).
 
 ## Previous verified model/domain checkpoint — aa54c294
 
@@ -55,8 +55,8 @@ Execution V2, autonomous routines and an Agent World PG adapter are not implemen
 All ten flags default OFF; exact admitted Local workspace has eight paths ON,
 Router/Execution V2 OFF. Preview has separate synthetic flags, no real side effects.
 The earlier 93bb1298/other-SHA test and provider history is preserved in the
-[canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
-[integrated changelog](../changelog/2026-09-05-agent-world-integrated-local.md).
+[canonical status](../NT-Analyzer/docs/current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
+[integrated changelog](../NT-Analyzer/docs/changelog/2026-09-05-agent-world-integrated-local.md).
 
 ## System shape
 
@@ -247,9 +247,9 @@ composition; Router shadow and Execution V2 remain OFF. Preview retains its
 separate four-flag synthetic configuration. The 41 actual isolated PostgreSQL
 tests concern existing RLS/migrations `0001`–`0022`, not an Agent World PG adapter.
 No Agent World PG migration or non-DEV storage fallback is delivered here.
-See [ADR-0010](../adr/0010-agent-world-owner-review.md),
-[ADR-0011](../adr/0011-agent-world-real-local-jobs.md) and
-[the implementation status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
+See [ADR-0010](../NT-Analyzer/docs/adr/0010-agent-world-owner-review.md),
+[ADR-0011](../NT-Analyzer/docs/adr/0011-agent-world-real-local-jobs.md) and
+[the implementation status](../NT-Analyzer/docs/current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 
 ## Key data flows
 
@@ -281,9 +281,9 @@ See [ADR-0010](../adr/0010-agent-world-owner-review.md),
 
 ## Canonical evidence
 
-- [../adr/0001-environments-and-release-identity.md](../adr/0001-environments-and-release-identity.md)
-- [../adr/0002-unified-identity.md](../adr/0002-unified-identity.md)
-- [../adr/0003-trusted-devices-and-step-up.md](../adr/0003-trusted-devices-and-step-up.md)
-- [../architecture/CONNECTOR_PROTOCOL_V1.md](../architecture/CONNECTOR_PROTOCOL_V1.md)
-- [../architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md](../architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md)
+- [../adr/0001-environments-and-release-identity.md](../NT-Analyzer/docs/adr/0001-environments-and-release-identity.md)
+- [../adr/0002-unified-identity.md](../NT-Analyzer/docs/adr/0002-unified-identity.md)
+- [../adr/0003-trusted-devices-and-step-up.md](../NT-Analyzer/docs/adr/0003-trusted-devices-and-step-up.md)
+- [../architecture/CONNECTOR_PROTOCOL_V1.md](../NT-Analyzer/docs/architecture/CONNECTOR_PROTOCOL_V1.md)
+- [../architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md](../NT-Analyzer/docs/architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md)
 - [12_API_AND_SCHEMA_REFERENCE.md](12_API_AND_SCHEMA_REFERENCE.md)

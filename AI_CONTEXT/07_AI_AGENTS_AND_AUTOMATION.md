@@ -1,12 +1,12 @@
 # 07. AI Agents and Automation
 
 - Context Pack document: 07_AI_AGENTS_AND_AUTOMATION.md
-- Last verified UTC: 2026-10-01T01:27:27Z
+- Last verified UTC: 2026-10-02T05:14:45Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Local source verified SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (clean beta.96 runtime; real handoff/manual delivery and original report/PNG verified, exact-code CI PASS)
 - Local verification UTC: 2026-09-05T19:05:43Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
-- Historical UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
-- Historical Local program delta: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active at that checkpoint; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. Full-program/owner acceptance was open then.
+- Historical UI correction: [SF Chat dialog receipt](../NT-Analyzer/docs/changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
+- Historical Local program delta: [integrated review record](../NT-Analyzer/docs/changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active at that checkpoint; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. Full-program/owner acceptance was open then.
 - Historical Local scope: verified integrated Local, result presentation, same-input Consensus and three-model Court; full program and owner-dependent acceptance were open at that checkpoint
 - Scope: Agent hierarchy, AI Lab, queues, workspace boundaries and model-usage rules
 - Status: IN DEVELOPMENT
@@ -19,7 +19,7 @@ the existing owner Gemini model, durable usage/report, SF Chat and Telegram
 delivery. Daily/control audit had prior PASS on the unchanged route. Production
 is the only sender; Local `StratForge Vitek` is Disabled and Canary is
 non-sender. The seven-task product package is Production PASS; ordinary-user
-Telegram onboarding remains separate issue #296. [Final beta.106 evidence](../changelog/2026-10-01-beta106-periodic-owner-model-route.md).
+Telegram onboarding remains separate issue #296. [Final beta.106 evidence](../NT-Analyzer/docs/changelog/2026-10-01-beta106-periodic-owner-model-route.md).
 
 ## Historical Local/program checkpoints
 
@@ -54,8 +54,8 @@ Execution V2, autonomous routines and an Agent World PG adapter are not implemen
 All ten flags default OFF; exact admitted Local workspace has eight paths ON,
 Router/Execution V2 OFF. Preview has separate synthetic flags, no real side effects.
 The earlier 93bb1298/other-SHA test and provider history is preserved in the
-[canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
-[integrated changelog](../changelog/2026-09-05-agent-world-integrated-local.md).
+[canonical status](../NT-Analyzer/docs/current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
+[integrated changelog](../NT-Analyzer/docs/changelog/2026-09-05-agent-world-integrated-local.md).
 
 ## Agent hierarchy
 
@@ -219,9 +219,9 @@ The domain repository is SQLite-only in Development and fails closed elsewhere.
 The 41 actual isolated PostgreSQL/RLS checks cover existing migrations `0001`–
 `0022`, not Agent World PG storage. No new Production migration or acceptance is
 implied by local contract tests or simulated provider responses.
-See [ADR-0010](../adr/0010-agent-world-owner-review.md),
-[ADR-0011](../adr/0011-agent-world-real-local-jobs.md) and
-[Agent World status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
+See [ADR-0010](../NT-Analyzer/docs/adr/0010-agent-world-owner-review.md),
+[ADR-0011](../NT-Analyzer/docs/adr/0011-agent-world-real-local-jobs.md) and
+[Agent World status](../NT-Analyzer/docs/current/AGENT_WORLD_IMPLEMENTATION_STATUS.md).
 
 ## Bounded integrated handoff and manual review
 
@@ -250,10 +250,10 @@ The source/handoff links and job status are visible on the same page.
 
 ## Canonical evidence
 
-- [../agents/AGENTS.md](../agents/AGENTS.md)
-- [../agents/AI_LAB_CLOUD_AGENTS.md](../agents/AI_LAB_CLOUD_AGENTS.md)
-- [../architecture/UI_API_MAP.md](../architecture/UI_API_MAP.md)
-- [beta.61 worker idle performance closeout](../changelog/2026-08-27-beta61-worker-idle-performance.md)
+- [../agents/AGENTS.md](../NT-Analyzer/docs/agents/AGENTS.md)
+- [../agents/AI_LAB_CLOUD_AGENTS.md](../NT-Analyzer/docs/agents/AI_LAB_CLOUD_AGENTS.md)
+- [../architecture/UI_API_MAP.md](../NT-Analyzer/docs/architecture/UI_API_MAP.md)
+- [beta.61 worker idle performance closeout](../NT-Analyzer/docs/changelog/2026-08-27-beta61-worker-idle-performance.md)
 - `app/ai_lab/chief_agent.py`
 - `app/ai_lab/domain_agents.py`
 - `app/ai_lab/agent_tts.py`
@@ -262,4 +262,4 @@ The source/handoff links and job status are visible on the same page.
 - `app/ai_control_center/model_service.py`
 - `app/ai_control_center/application_chat.py`
 - `app/ai_control_center/social_publication.py`
-- [Domain/service verification record](../changelog/2026-09-05-agent-world-domain-services.md)
+- [Domain/service verification record](../NT-Analyzer/docs/changelog/2026-09-05-agent-world-domain-services.md)

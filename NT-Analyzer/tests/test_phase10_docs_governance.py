@@ -33,12 +33,12 @@ def test_canonical_docs_tree_exists():
     for name in (
         "current", "architecture", "operations", "security", "product",
         "agents", "strategies", "governance", "changelog", "adr", "archive",
-        "external-gpt-context",
     ):
         assert (DOCS / name).is_dir(), f"missing canonical docs dir: {name}"
     assert (DOCS / "archive" / "audits").is_dir()
     assert (DOCS / "DOCS_STRUCTURE.md").is_file()
-    assert (DOCS / "external-gpt-context" / "00_STRATFORGE_CONTEXT_INDEX.md").is_file()
+    assert (ROOT.parent / "AI_CONTEXT" / "00_STRATFORGE_CONTEXT_INDEX.md").is_file()
+    assert not (DOCS / "external-gpt-context").exists()
 
 
 def test_new_canonical_dirs_have_index_readme():
@@ -50,7 +50,7 @@ def test_docs_structure_map_covers_categories_and_archive():
     text = (DOCS / "DOCS_STRUCTURE.md").read_text(encoding="utf-8")
     for token in ("docs/archive/", "docs/agents/", "docs/strategies/",
                   "docs/security/", "docs/product/", "docs/changelog/",
-                  "docs/external-gpt-context/",
+                  "AI_CONTEXT/",
                   "migration map", "docs.manage_global"):
         assert token in text, f"migration map missing: {token}"
 

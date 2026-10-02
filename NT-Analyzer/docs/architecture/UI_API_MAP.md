@@ -66,7 +66,7 @@ live model/browser acceptance не заявлена. Canary/Production в это
   показывают историю и отмену, `experiments` сравнивает одинаковый input.
   `decisions`/`court`, `memory`, `projects`, `routines`/`calendar`, `publications`
   и `system` переиспользуют существующие authority и stores. Точные actions и
-  payload описаны в [API reference](../external-gpt-context/12_API_AND_SCHEMA_REFERENCE.md).
+  payload описаны в [API reference](../../../AI_CONTEXT/12_API_AND_SCHEMA_REFERENCE.md).
 - Настоящее SF Chat поручение модели использует сохранённое user message и
   выбранную собственную Model. Проверенный план Толика/Ивана поступает в
   существующие NinjaTrader/Desktop механизмы; план сам по себе не завершает
