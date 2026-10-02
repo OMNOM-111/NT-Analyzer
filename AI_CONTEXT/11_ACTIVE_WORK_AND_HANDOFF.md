@@ -1,7 +1,7 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-10-02T20:20:00Z
+- Last verified UTC: 2026-10-02T22:55:00Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Current Canary source SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885; beta.106 accepted, current health recovered
 - Scope: closed beta.95 → beta.106 product card plus In progress Local recovery / beta.107 erasure task
@@ -9,6 +9,21 @@
 - Current Production version/build/artifact when known: `0.10.0-beta.106` / `sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z` / `art_7aebf504ae354ce7981c58359a1ff546`; health/readiness and delivery receipt acceptance PASS; product package 7/7 Production accepted
 
 ## Current task — Local Runtime & Documentation Canonicalization
+
+PR #314 merge checkpoint (2026-10-02T22:55Z) supersedes the historical
+CI-pending paragraphs below: the final PR head
+`6194ef0d247651c34729add32debcead9d2bc102` passed all five required
+checks: Static, Ubuntu, Windows self-hosted, Python and bridge. The Windows
+`python-tests` job completed 6153 passed / 147 skipped; the other Windows
+full suite passed after its normal ~70-minute run. The single runner stayed
+online and served queued jobs serially; no runner service restart was needed.
+PR #314 was merged to exact `main`
+`5e69165c8bc33dabdd9746059f3706ba8b92859b`. Mandatory CI on **that**
+main SHA is running (`ci` run `37074945281`); the bridge job already passed
+and the full `python-tests` job is active. No signed beta.107 artifact or
+Canary/Production deployment exists. The beta.106 server baseline and 7/7
+product closeout remain unchanged. Next gate: final-main CI PASS, then one
+immutable beta.107 artifact and Canary lifecycle QA.
 
 PR #314 CI update (2026-10-02T20:20Z): on the current head
 `57d5dfac253714f55cfc3a664e0ab845fb12d8ba`, Ubuntu executed full

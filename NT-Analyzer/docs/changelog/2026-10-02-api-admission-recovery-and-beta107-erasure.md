@@ -91,3 +91,16 @@ still running full pytest on the superseded head, with another queued behind
 the same `online/busy` runner. No runner service restart, code workaround for
 queue contention, merge, artifact or deployment has occurred. This change
 awaits commit and new required CI on its own final PR head.
+
+## PR #314 merge / final-main CI checkpoint (2026-10-02T22:55Z)
+
+The narrow correction was committed as
+`6194ef0d247651c34729add32debcead9d2bc102` and passed all five required
+PR checks. The two Windows full suites executed sequentially on the single
+healthy `windows-self-hosted` runner; `python-tests` passed 6153 cases with
+147 skips, and `Tests (windows-self-hosted)` passed after ~70 minutes. The
+runner was never restarted; queued jobs were not misclassified as code
+failures. PR #314 merged into exact `main`
+`5e69165c8bc33dabdd9746059f3706ba8b92859b` at 22:54Z. Required
+final-main `ci` run `37074945281` is in progress: bridge passed, Python
+tests active. No beta.107 artifact, migration or environment deployment yet.
