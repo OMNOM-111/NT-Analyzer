@@ -244,6 +244,8 @@ def test_owner_billing_and_ninja_endpoints_over_http(cabinet_store, monkeypatch)
 
 
 def test_admin_user_panel_endpoints(cabinet_store, monkeypatch) -> None:
+    from app import account_lifecycle
+    monkeypatch.setattr(account_lifecycle.runtime_env, "is_development", lambda: True)
     monkeypatch.delenv("NTA_TEST_BYPASS_AUTH", raising=False)
     monkeypatch.setenv(telegram_service.TOKEN_ENV, "123456:test-bot-token-value")
     account_auth.set_auth_required(True)

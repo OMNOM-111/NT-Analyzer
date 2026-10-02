@@ -1,7 +1,7 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-10-02T19:24:00Z
+- Last verified UTC: 2026-10-02T20:20:00Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Current Canary source SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885; beta.106 accepted, current health recovered
 - Scope: closed beta.95 → beta.106 product card plus In progress Local recovery / beta.107 erasure task
@@ -9,6 +9,22 @@
 - Current Production version/build/artifact when known: `0.10.0-beta.106` / `sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z` / `art_7aebf504ae354ce7981c58359a1ff546`; health/readiness and delivery receipt acceptance PASS; product package 7/7 Production accepted
 
 ## Current task — Local Runtime & Documentation Canonicalization
+
+PR #314 CI update (2026-10-02T20:20Z): on the current head
+`57d5dfac253714f55cfc3a664e0ab845fb12d8ba`, Ubuntu executed full
+pytest and failed 25 tests (6131 passed, 144 skipped); this is **not** a
+Windows runner outage. Twenty-one failures were old mocked Production
+fixtures that did not stub the new PostgreSQL deletion-receipt read, two
+Local-erasure cases relied on an implicit Development environment, one
+architecture check caught a reverse import, and one migration-count assertion
+still expected 24 instead of 25. The new test-specific stubs, exact Local
+test context, migration assertion and core-layer import preserve server
+fail-closed behavior. The 25 failed cases now pass locally; the eight affected
+files pass 382/382. These changes are not yet committed or CI-accepted.
+GitHub still shows Windows runner ID 21 `online/busy` executing full pytest,
+with the other Windows job queued behind it; its service is Running. No
+runner restart or application change was made to treat this queue as failure.
+PR/final-main CI, artifact and deployment remain pending.
 
 CI runner checkpoint (2026-10-02T19:24Z): PR #314 current head is
 `141dc2adeaec07618f1c878f74f2df4d6d42c67a`. Its Static gates passed;

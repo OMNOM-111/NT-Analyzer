@@ -5,7 +5,7 @@ import copy
 
 import pytest
 
-from app import community, sf_chat, storage_router
+from app import account_lifecycle, community, sf_chat, storage_router
 
 from . import _relational_fake
 from app.production_storage import StorageUnavailableError
@@ -101,6 +101,8 @@ def test_explicit_server_environment_uses_authoritative_documents(monkeypatch):
     writes = []
 
     monkeypatch.setattr(storage_router, "production_enabled", lambda: True)
+    monkeypatch.setattr(account_lifecycle, "deleted_ids", lambda: set())
+    monkeypatch.setattr(account_lifecycle, "deleted_legacy_ids", lambda: set())
 
     def read_document(name, default):
         return copy.deepcopy(documents.get(name, default))

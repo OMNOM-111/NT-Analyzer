@@ -304,7 +304,7 @@ def _freeze(client, uid: int, *, reason: str) -> None:
 
 
 def _erase_agent_world(conn, environment: str, canonical: str, workspaces: set[str]) -> None:
-    from ..ai_control_center.sqlite_repository import _canonical
+    from .core import _canonical
     # Historical shared-model calls may have been made in a workspace the
     # caller has since left. Retain the receipt, but remove their display name
     # under the exact original caller scope before private-record deletion.

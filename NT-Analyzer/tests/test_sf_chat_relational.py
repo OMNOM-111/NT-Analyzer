@@ -13,7 +13,7 @@ import copy
 
 import pytest
 
-from app import community, sf_chat, storage_router
+from app import account_lifecycle, community, sf_chat, storage_router
 
 from . import _relational_fake
 
@@ -39,6 +39,8 @@ def production(monkeypatch):
         or "00000000-0000-4000-8000-%012d" % int(user_id or 0),
     )
     monkeypatch.setattr(storage_router, "production_enabled", lambda: True)
+    monkeypatch.setattr(account_lifecycle, "deleted_ids", lambda: set())
+    monkeypatch.setattr(account_lifecycle, "deleted_legacy_ids", lambda: set())
     monkeypatch.setattr(storage_router, "read_document", read_document)
     monkeypatch.setattr(storage_router, "write_document", write_document)
     fake = _relational_fake.install(monkeypatch, documents)

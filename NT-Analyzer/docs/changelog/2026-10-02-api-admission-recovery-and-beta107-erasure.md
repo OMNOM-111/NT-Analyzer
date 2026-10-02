@@ -73,3 +73,21 @@ is evidenced; no service restart, job rerun or application change was made.
 Runner-local `_diag` access was denied, so no log contents were claimed. The
 safe action is to let the active job finish and evaluate only the final-head
 checks when the runner takes them.
+
+## PR #314 full-CI failure classification (2026-10-02T20:20Z)
+
+On head `57d5dfac253714f55cfc3a664e0ab845fb12d8ba`, Static and bridge
+checks passed. Ubuntu completed full pytest with 25 failures, 6131 passes and
+144 skips. This is a test/code-contract failure, distinct from the healthy
+single Windows runner's queue. The failures comprise 21 mocked Production
+tests trying to read the new authoritative PostgreSQL deletion receipt
+without a configured DSN, two Local deletion tests missing explicit Local
+context, one reverse-layer import and one stale 24-migration assertion. The
+server receipt path remains fail-closed; the correction changes only test
+contexts/stubs, the import to the existing production-storage core helper,
+and the expected migration count to 25. Exact formerly failing cases pass
+25/25 locally; all eight affected test files pass 382/382. Windows job is
+still running full pytest on the superseded head, with another queued behind
+the same `online/busy` runner. No runner service restart, code workaround for
+queue contention, merge, artifact or deployment has occurred. This change
+awaits commit and new required CI on its own final PR head.
