@@ -1,12 +1,33 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
-- Current superseding checkpoint (2026-10-01 UTC): the owner-approved Local beta.95 → beta.96 product package is published as `0.10.0-beta.105` on both Canary and Production from the same signed immutable artifact `art_dda57f0beab14b83a3375d6ecff1caa8`, source `91d8a4c1ac25f988b643ff71e119502a1df3d3f7`, build `sf-0.10.0-beta.105-91d8a4c1ac25-20261001T001822Z`. Focused Canary and real Professional Production model POST, provider receipt, usage/cost, owner/caller audit, SF Chat result, share-off denial, `/live` and `/ready` are PASS. Production Deputy controller delivered one control audit and one daily summary through SF Chat and Telegram; Local notification gate and Scheduled Task are OFF, Canary is non-owner. The owner approved immediate activation of all periodic flags on 30 September PT, accepting possible repeats. Monthly and quarterly reports then failed before provider dispatch because the legacy orchestrator router has no enabled model on Linux and does not consume the new server owner models. Full reporting cutover is PARTIAL; the product card remains In progress. [Current release record](../changelog/2026-09-30-beta105-production-model-completion.md). All older beta.103/beta.104 bullets below are historical checkpoints, not current status.
-- Last verified UTC: 2026-10-01T06:00:35Z
-- Verified against Git SHA: 91d8a4c1ac25f988b643ff71e119502a1df3d3f7
-- Current Canary and Production source SHA: 91d8a4c1ac25f988b643ff71e119502a1df3d3f7; exact same beta.105 release directory
-- Status: PARTIAL
-- Current Production version/build/artifact when known: `0.10.0-beta.105` / `sf-0.10.0-beta.105-91d8a4c1ac25-20261001T001822Z` / `art_dda57f0beab14b83a3375d6ecff1caa8`; focused model and daily reporting smoke PASS, monthly/quarterly PARTIAL
+- Last verified UTC: 2026-10-01T15:41:00Z
+- Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
+- Current Production version/build/artifact when known: `0.10.0-beta.106` / `sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z` / `art_7aebf504ae354ce7981c58359a1ff546`; deployment health and periodic delivery acceptance PASS
+- Scope: Current product/runtime state after beta.106 same-artifact Canary and Production promotion
+- Status: DONE
+- Latest checkpoint, superseding the beta.105 and Development bullets below
+  (2026-10-01 UTC): beta.106 is live on Canary and Production from one signed
+  immutable artifact `art_7aebf504ae354ce7981c58359a1ff546`, exact source
+  `e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885`, build
+  `sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z` and runtime artifact SHA256
+  `0579C9C3FFD089EC91426D6F75B4E7ED257C612D9FBDD1F958561A50BEB0929C`.
+  PR #311/final-main CI, Canary acceptance/non-sender and Production
+  `/live`/`/ready` are PASS. One real owner-authenticated Weekly, Monthly and
+  Quarterly event each completed through the Production owner Gemini model,
+  durable provider usage/report, SF Chat message and Telegram outbox `sent`
+  with one attempt. Daily and control audit had prior PASS on their unchanged
+  route. Production alone holds the Telegram coordinator lease; Canary is a
+  non-sender and Local `StratForge Vitek` is Disabled. The seven-function
+  product package is Production PASS/Done. PR #312 records this documentation
+  closeout; it does not change the deployed beta.106 source or artifact.
+  [Current release record](../changelog/2026-10-01-beta106-periodic-owner-model-route.md).
+- Historical beta.105 checkpoint (superseded by beta.106 above): the owner-approved Local beta.95 → beta.96 product package was published as `0.10.0-beta.105` on both Canary and Production from the same signed immutable artifact `art_dda57f0beab14b83a3375d6ecff1caa8`, source `91d8a4c1ac25f988b643ff71e119502a1df3d3f7`, build `sf-0.10.0-beta.105-91d8a4c1ac25-20261001T001822Z`. Focused Canary and real Professional Production model POST, provider receipt, usage/cost, owner/caller audit, SF Chat result, share-off denial, `/live` and `/ready` passed. Production Deputy controller delivered one control audit and one daily summary through SF Chat and Telegram; Local notification gate and Scheduled Task were OFF, Canary non-sender. The owner approved immediate activation of all periodic flags on 30 September PT, accepting possible repeats. Monthly and quarterly then failed before provider dispatch because the legacy orchestrator router had no enabled model on Linux. This historical PARTIAL led to beta.106. [Historical release record](../changelog/2026-09-30-beta105-production-model-completion.md).
+- Last verified UTC: 2026-10-01T15:41:00Z
+- Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
+- Current Canary and Production source SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885; same immutable beta.106 artifact
+- Historical checkpoint status: PARTIAL (superseded by beta.106 PASS above)
+- Historical snapshot note: beta.106 deployment health PASS; periodic acceptance was pending at this earlier checkpoint and has since passed as recorded above.
 - Scope: one owner-approved product card originating in Local beta.95 → beta.96, technically released as beta.97–beta.105 iterations; ordinary-user Telegram issue #296 is separate
 - Development delta (2026-10-01 UTC): beta.106 adds a server-only bridge from
   non-daily SF Chat periodic reports to the existing owner-scoped PostgreSQL

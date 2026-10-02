@@ -1,17 +1,17 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-10-01T06:00:35Z
-- Verified against Git SHA: 91d8a4c1ac25f988b643ff71e119502a1df3d3f7
-- Current Canary source SHA: 91d8a4c1ac25f988b643ff71e119502a1df3d3f7; beta.105 focused acceptance PASS
-- Scope: owner-approved Local beta.95 → beta.96 product card reached beta.105 same-artifact Canary and Production model PASS; Production periodic reporting remains PARTIAL after a confirmed server orchestrator route gap
-- Status: PARTIAL
-- Current Production version/build/artifact when known: `0.10.0-beta.105` / `sf-0.10.0-beta.105-91d8a4c1ac25-20261001T001822Z` / `art_dda57f0beab14b83a3375d6ecff1caa8`; focused smoke PASS
+- Last verified UTC: 2026-10-01T15:41:00Z
+- Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
+- Current Canary source SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885; beta.106 acceptance PASS
+- Scope: owner-approved Local beta.95 → beta.96 product card, completed after beta.106 same-artifact Canary/Production reporting acceptance
+- Status: DONE
+- Current Production version/build/artifact when known: `0.10.0-beta.106` / `sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z` / `art_7aebf504ae354ce7981c58359a1ff546`; health/readiness and delivery receipt acceptance PASS; product package 7/7 Production accepted
 
-## Current beta.106 Development handoff (2026-10-01 UTC)
+## Current beta.106 release handoff (2026-10-01 UTC)
 
-The owner-authorized narrow patch is implemented on
-`codex/beta106-periodic-orchestrator` from docs-evidence base `35585304`.
+The owner-authorized narrow patch merged through PR #311 to exact `main`
+`e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885`.
 Canary/Production non-daily periodic generation now reads the one active
 general owner Persona model through the existing PostgreSQL Agent World store,
 ServerSecrets, universal provider client, workspace budget and usage ledger.
@@ -21,9 +21,26 @@ Python compilation, 8 focused tests and 336 related regression tests PASS. A
 full collection recorded 6,131 PASS/140 skipped plus 13 expected isolation
 failures caused by a repository-local temporary root; the complete affected
 subset passed 91/91 with an external temporary root.
-PR/CI, merged main SHA, immutable artifact, Canary, same-artifact Production,
-real month/quarter delivery and daily regression are pending. Do not mark the
-product card Done. [Change record](../changelog/2026-10-01-beta106-periodic-owner-model-route.md).
+Final-main CI 36857075970 PASS. Immutable artifact
+`art_7aebf504ae354ce7981c58359a1ff546` passed Canary and is Production live as
+deployment `dep_bf86528c36c944d1a5906f0586126b93`; public `/live` and `/ready`
+match exact beta.106 identity. The existing owner-authenticated browser session
+submitted exactly one accepted event per Weekly, Monthly and Quarterly type via
+the shipped CSRF-protected application API. Each completed with one real Gemini
+provider response, durable usage/report, corresponding SF Chat message and
+Telegram outbox `sent` with attempts=1. Stable report keys and matching message
+and outbox dedupe hashes establish one delivery per acceptance request. Daily
+and control audit had prior Production PASS on the unchanged route. Post-check
+Production `/live` and `/ready` are 200; one Production coordinator lease is
+active, Canary remains non-sender and Local `StratForge Vitek` is Disabled.
+The product card is Done; Release Center's terminal state is `production_live`
+with verification PASS (there is no separate `completed` state).
+[Change record](../changelog/2026-10-01-beta106-periodic-owner-model-route.md).
+
+Historical pre-acceptance note: the initial browser attempt did not submit an
+event. A raw POST without the CSRF token returned 403 and created no job. The
+subsequent sanctioned `window.API.http.vitekEvent` client used the real owner
+session and CSRF protection; no new runtime control or beta iteration was needed.
 
 ## Current beta.105 handoff (2026-10-01 UTC)
 
@@ -707,7 +724,7 @@ to that deployment anchor, not to the Agent World branch.
 
 | Deployment metadata | Recorded value |
 | --- | --- |
-| Current Git SHA | `91d8a4c1ac25f988b643ff71e119502a1df3d3f7` (pack-wide deployed artifact source) |
+| Current Git SHA | `e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885` (pack-wide deployed artifact source) |
 | Local accepted base SHA | `4ae766ea0c3258a8bb049644ac2afbba6cb89330` |
 
 This task did not access Canary/Production. The last recorded operational
