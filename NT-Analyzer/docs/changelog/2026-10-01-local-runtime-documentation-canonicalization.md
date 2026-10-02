@@ -61,6 +61,13 @@ card remains Done with 7/7 Production PASS.
   `start-ai-lab.ps1` now identifies itself as an explicit legacy research
   entrypoint, not the default. The scheduled `StratForge Vitek` task remains
   Disabled, and Local Telegram delivery is fail-closed.
+- After the documentation commit `fa8880ac92591003172dec828e8650e871b14bc4`,
+  the previous exact Local supervisor/worker were stopped, and the actual
+  Desktop shortcut was invoked once. It started a single listener (PID 10160)
+  with clean `dev-0.10.0-beta.106-fa8880ac9259`; `/live` and `/ready` were
+  200, and the owner AI Center reopened without `agent_world_local_disabled`.
+  This is a process restart/shortcut acceptance, **not** evidence of a new
+  Windows reboot; the latter remains to be observed.
 - The 15 tracked context files were moved by `git mv` to repository-root
   `AI_CONTEXT/`; all relative links were rebased and validated. The exporter,
   governance instructions, link references and CI documentation gate were

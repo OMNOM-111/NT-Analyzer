@@ -17,8 +17,10 @@
   `agent_world_local_disabled`. The accepted `56945ac6` Local was historical,
   not the final baseline. The old checkout and all data were preserved; a
   verified quiesced snapshot plus WAL checkpoint preceded the switch. New
-  canonical `local-current` from main serves clean beta.106 application code
-  at `b809911c73c219b92e43c9b46d0d79b26a118b7a`, with the original
+  canonical `local-current` from main serves clean beta.106 application code;
+  initial clean runtime was `b809911c73c219b92e43c9b46d0d79b26a118b7a`.
+  Subsequent docs-only commits do not change the app; query
+  `/api/runtime/env` for the exact live Local build/SHA. It uses the original
   owner data root and exact workspace `ws_owner_training_c1fe3f2f8a52`.
   Browser owner AI Center overview and six tabs load without the old denial.
   The new Desktop shortcut targets the guarded launcher; actual post-reboot

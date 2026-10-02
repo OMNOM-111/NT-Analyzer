@@ -29,9 +29,11 @@ incident, environment parity and AI_CONTEXT/documentation governance.
   SQLite databases; subsequent WAL checkpoint/integrity checks passed.
   Nothing in the old dirty checkout was reset, cleaned or merged.
 - Canonical Local: permanent `local-current` worktree on
-  `codex/local-runtime-doc-canonicalization`, clean runtime commit
+  `codex/local-runtime-doc-canonicalization`, initial clean runtime commit
   `b809911c73c219b92e43c9b46d0d79b26a118b7a`, beta.106 application
-  baseline. The fail-fast launcher reuses the original owner data root,
+  baseline. Documentation-only branch commits can advance the launcher SHA;
+  the exact active build is exposed at `/api/runtime/env`. The fail-fast
+  launcher reuses the original owner data root,
   enables exact Local workspace admission, leaves newer unaccepted mechanism
   flags OFF, and disables Local Telegram/report delivery. Actual browser
   owner overview and AI Center tabs loaded without the former denial.

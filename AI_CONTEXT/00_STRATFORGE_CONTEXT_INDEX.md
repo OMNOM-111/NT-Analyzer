@@ -27,7 +27,7 @@
 | Git main at task start | `9483bac868d829f3891e5e09fe84c18d242cf9c6` (PR #312 docs-only closeout) |
 | Deployed application source | `e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885` |
 | Operational artifact | `art_7aebf504ae354ce7981c58359a1ff546`; build `sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z`; [release record](../NT-Analyzer/docs/changelog/2026-10-01-beta106-periodic-owner-model-route.md) |
-| DEV | `http://127.0.0.1:8765/ui/`; clean beta.106 application runtime `b809911c73c219b92e43c9b46d0d79b26a118b7a` in `local-current`, original owner data root; owner Agent World/Social/Chat click-through PASS; some new-user surfaces remain partial |
+| DEV | `http://127.0.0.1:8765/ui/`; clean beta.106 application baseline in `local-current`, original owner data root; first clean launch `b809911c73c219b92e43c9b46d0d79b26a118b7a`, exact current build/SHA from `/api/runtime/env`; owner Agent World/Social/Chat click-through PASS; some new-user surfaces remain partial |
 | CANARY | `https://canary.stratforges.com`; beta.106 same artifact, live/ready 200; owner Agent World/Social/Chat and public registration step 1/3 observed; real non-owner trial expired |
 | PRODUCTION | `https://app.stratforges.com`; beta.106 same artifact, 7/7 product package PASS, live/ready 200; owner UI and public registration step observed; real non-owner trial expired for fresh chart/security check |
 | Current task | Local Runtime & Documentation Canonicalization — In progress; [handoff](11_ACTIVE_WORK_AND_HANDOFF.md) |
