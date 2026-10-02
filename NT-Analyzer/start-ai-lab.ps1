@@ -1,10 +1,10 @@
 <#
 .SYNOPSIS
-    Full StratForge AI Lab launcher.
+    Legacy AI Lab research launcher; not the normal StratForge startup.
 
 .DESCRIPTION
-    Best-effort startup for the local research stack:
-    LM Studio server -> StratForge AI UI.
+    Historical best-effort startup for the local research stack. The accepted
+    Agent World workflow uses tools/start-canonical-local.ps1 and AI Center.
 
     NinjaTrader is NOT started by default (prevents login lockouts after reboot).
     Pass -StartNinjaTrader only when you intentionally want the process launched;
@@ -24,6 +24,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Write-Warning 'Legacy AI Lab only. For the current StratForge AI Center use tools/start-canonical-local.ps1; this script is not the normal startup path.'
 $scriptDir = $PSScriptRoot
 if (-not $scriptDir) { $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
 if (-not $scriptDir) { $scriptDir = (Get-Location).Path }

@@ -205,8 +205,8 @@ baselines.
 
 - [beta.79 secret management and cancel closeout](../changelog/2026-08-29-beta79-secret-management-and-cancel-closeout.md)
 - [current clean closeout](../current/CLEAN_CLOSEOUT_HANDOFF.md)
-- [environments and release](../external-gpt-context/04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md)
-- [AI agents and worker queues](../external-gpt-context/07_AI_AGENTS_AND_AUTOMATION.md)
-- [market data and Connector](../external-gpt-context/06_MARKET_DATA_TRADING_CONNECTOR.md)
+- [environments and release](../../../AI_CONTEXT/04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md)
+- [AI agents and worker queues](../../../AI_CONTEXT/07_AI_AGENTS_AND_AUTOMATION.md)
+- [market data and Connector](../../../AI_CONTEXT/06_MARKET_DATA_TRADING_CONNECTOR.md)
 - [Community/SF Chat Development record](../changelog/2026-09-01-community-sf-chat-development.md)
 - [Device Confirmation Development record](../changelog/2026-09-02-device-confirmation-trusted-access.md)

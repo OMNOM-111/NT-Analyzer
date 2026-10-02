@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Export the canonical External GPT Context Pack for owner upload use.
 
-The canonical source remains ``docs/external-gpt-context/``. This tool copies
+The canonical source remains repository-root ``AI_CONTEXT/``. This tool copies
 exactly the 15 canonical markdown files into a local owner-facing export folder
 after first validating the pack.
 """
@@ -116,7 +116,7 @@ def _clean_previous_export(output_dir: Path, manifest: dict[str, object] | None)
 def _write_manifest(output_dir: Path, git_sha: str, exported_at_utc: str) -> None:
     payload = {
         "tool": "export_external_gpt_context.py",
-        "canonical_source": str(SOURCE_DIR.relative_to(ROOT)).replace("\\", "/"),
+        "canonical_source": str(SOURCE_DIR.relative_to(ROOT.parent)).replace("\\", "/"),
         "git_sha": git_sha,
         "exported_at_utc": exported_at_utc,
         "exported_docs": EXPORT_DOCS,

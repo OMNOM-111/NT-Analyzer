@@ -1,7 +1,7 @@
 # 09. Documentation, Governance and Legal
 
 - Context Pack document: 09_DOCUMENTATION_GOVERNANCE_LEGAL.md
-- Last verified UTC: 2026-10-01T01:27:27Z
+- Last verified UTC: 2026-10-02T05:14:45Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Scope: Docs source-of-truth model, revision rules, localization policy and legal status
 - Status: DONE
@@ -11,7 +11,7 @@
 The docs tree is intentionally partitioned into `current`, `architecture`,
 `operations`, `security`, `product`, `agents`, `strategies`, `governance`,
 `changelog`, `adr`, `archive`, `schemas`, `legal` and this compact
-`external-gpt-context` upload set.
+root `AI_CONTEXT` upload set.
 
 ## Governance model
 
@@ -71,11 +71,11 @@ path traversal candidates and the independent `/api/documents/*` namespace.
 
 ## Canonical evidence
 
-- [../DOCUMENTATION_GOVERNANCE.md](../DOCUMENTATION_GOVERNANCE.md)
-- [../DOCS_STRUCTURE.md](../DOCS_STRUCTURE.md)
-- [../LOCALIZATION.md](../LOCALIZATION.md)
-- [../legal/README.md](../legal/README.md)
-- [../governance/AI_PROVENANCE_POLICY.md](../governance/AI_PROVENANCE_POLICY.md)
-- [../governance/RELEASE_GOVERNANCE_POLICY.md](../governance/RELEASE_GOVERNANCE_POLICY.md)
+- [../DOCUMENTATION_GOVERNANCE.md](../NT-Analyzer/docs/DOCUMENTATION_GOVERNANCE.md)
+- [../DOCS_STRUCTURE.md](../NT-Analyzer/docs/DOCS_STRUCTURE.md)
+- [../LOCALIZATION.md](../NT-Analyzer/docs/LOCALIZATION.md)
+- [../legal/README.md](../NT-Analyzer/docs/legal/README.md)
+- [../governance/AI_PROVENANCE_POLICY.md](../NT-Analyzer/docs/governance/AI_PROVENANCE_POLICY.md)
+- [../governance/RELEASE_GOVERNANCE_POLICY.md](../NT-Analyzer/docs/governance/RELEASE_GOVERNANCE_POLICY.md)
 - `data/governance/change_log.jsonl`
 - `app/production_storage/migrations/0011_document_specifications.sql`

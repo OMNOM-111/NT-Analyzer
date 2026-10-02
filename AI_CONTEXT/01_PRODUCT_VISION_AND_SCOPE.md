@@ -81,9 +81,9 @@ backtest -> анализ -> controlled runtime.
 
 ## Canonical evidence
 
-- [../../README.md](../../README.md)
-- [../architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md](../architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md)
-- [../architecture/UI_API_MAP.md](../architecture/UI_API_MAP.md)
+- [../../README.md](../NT-Analyzer/README.md)
+- [../architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md](../NT-Analyzer/docs/architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md)
+- [../architecture/UI_API_MAP.md](../NT-Analyzer/docs/architecture/UI_API_MAP.md)
 - [04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md](04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md)
 - [06_MARKET_DATA_TRADING_CONNECTOR.md](06_MARKET_DATA_TRADING_CONNECTOR.md)
-- [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md)
+- [../changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md](../NT-Analyzer/docs/changelog/2026-08-12-live-release-snapshot-0.10.0-beta.1.md)

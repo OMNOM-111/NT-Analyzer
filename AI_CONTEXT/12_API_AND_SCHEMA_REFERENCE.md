@@ -5,8 +5,8 @@
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Local source verified SHA: 2b6d0112bef88c5bfb73970de64ec5518443e56b (clean beta.96 runtime; real handoff/manual delivery and original report/PNG verified, exact-code CI PASS)
 - Local verification UTC: 2026-09-05T19:05:43Z; pack-wide deployment anchor above remains historical, not a claim of new Production verification
-- Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
-- Current program delta: [integrated review record](../changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. Full-program/owner acceptance remains open.
+- Current UI correction: [SF Chat dialog receipt](../NT-Analyzer/docs/changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
+- Current program delta: [integrated review record](../NT-Analyzer/docs/changelog/2026-09-05-agent-world-program-review.md) — clean 2b6d0112 active; genuine report/PNG observations, real fact handoff and deduplicated manual SF Chat delivery verified; 4235/44 skipped full suite, 542-file bundles and CI 33984524477 3/3 PASS. Full-program/owner acceptance remains open.
 - Active scope: verified integrated Local, result presentation, same-input Consensus and three-model Court; full program and owner-dependent acceptance remain open
 - Unified Local base: beta.96, PR #280; separate owner-review slice above foundation PR #281; no merge or Canary/Production promotion
 - Scope: Compact index of important endpoint families, entities and capability names
@@ -56,8 +56,8 @@ Execution V2, autonomous routines and an Agent World PG adapter are not implemen
 All ten flags default OFF; exact admitted Local workspace has eight paths ON,
 Router/Execution V2 OFF. Preview has separate synthetic flags, no real side effects.
 The earlier 93bb1298/other-SHA test and provider history is preserved in the
-[canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
-[integrated changelog](../changelog/2026-09-05-agent-world-integrated-local.md).
+[canonical status](../NT-Analyzer/docs/current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
+[integrated changelog](../NT-Analyzer/docs/changelog/2026-09-05-agent-world-integrated-local.md).
 
 ## Key endpoint families
 
@@ -202,8 +202,8 @@ the new exact-workspace Development composition enables `AI_CONTROL_CENTER_READ_
 `AI_CONSENSUS_V2`, `AI_COURT_V1` and `AI_SOCIAL_PUBLISH_V1`. `AI_ROUTER_SHADOW_V2`
 and `AI_EXECUTION_V2` remain OFF. Existing `ai_lab`, `ai_pro_models`, `community`,
 backtesting, session/device and budget authorities still decide access. See
-[ADR-0010](../adr/0010-agent-world-owner-review.md) and
-[ADR-0011](../adr/0011-agent-world-real-local-jobs.md).
+[ADR-0010](../NT-Analyzer/docs/adr/0010-agent-world-owner-review.md) and
+[ADR-0011](../NT-Analyzer/docs/adr/0011-agent-world-real-local-jobs.md).
 
 ## Capability names worth recognizing
 

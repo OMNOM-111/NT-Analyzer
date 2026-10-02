@@ -4,7 +4,7 @@
 - Last verified UTC: 2026-10-01T01:27:27Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Local source verified SHA: 95912cbff8152905966e6bb7bfc2a45d3db15f80 (clean beta.96 runtime; SF Chat in-app dialogs browser-verified; prior provider evidence is separately recorded on aa54c294)
-- Current UI correction: [SF Chat dialog receipt](../changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
+- Current UI correction: [SF Chat dialog receipt](../NT-Analyzer/docs/changelog/2026-09-05-sf-chat-app-dialogs.md); existing backend/data/flags unchanged, no release
 - Active scope: verified integrated Local, result presentation, same-input Consensus and three-model Court; full program and owner-dependent acceptance remain open
 - Unified Local base: `0.10.0-beta.96`, PR #280; no Canary/Production promotion
 - Scope: Identity, providers, sessions, devices, permissions and critical security gates
@@ -16,7 +16,7 @@ Preview uses that path and no longer grants all permission overrides. Explicit
 shared-model/no-AI profiles retain model-ownership/automation/admin denials.
 The bounded Local model bridge carries only call descriptors and responses;
 provider credentials/settings stay with the connection owner. Session/workspace
-checks remain mandatory. See [continuation record](../changelog/2026-09-22-shared-models-local-continuation.md).
+checks remain mandatory. See [continuation record](../NT-Analyzer/docs/changelog/2026-09-22-shared-models-local-continuation.md).
 
 ## Previous verified model/domain checkpoint — aa54c294
 
@@ -49,17 +49,17 @@ Execution V2, autonomous routines and an Agent World PG adapter are not implemen
 All ten flags default OFF; exact admitted Local workspace has eight paths ON,
 Router/Execution V2 OFF. Preview has separate synthetic flags, no real side effects.
 The earlier 93bb1298/other-SHA test and provider history is preserved in the
-[canonical status](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
-[integrated changelog](../changelog/2026-09-05-agent-world-integrated-local.md).
+[canonical status](../NT-Analyzer/docs/current/AGENT_WORLD_IMPLEMENTATION_STATUS.md) and
+[integrated changelog](../NT-Analyzer/docs/changelog/2026-09-05-agent-world-integrated-local.md).
 
 ## Identity model
 
 | Layer | Current fact | Evidence |
 | --- | --- | --- |
-| Internal identity | canonical user identity is an opaque UUID; Telegram numeric id is an external provider identity | [../adr/0002-unified-identity.md](../adr/0002-unified-identity.md), `app/auth_identity.py`, `0005_identity_uuid.sql` |
-| External identities | Telegram / Google / email are modeled as provider identities, not as the primary key | [../adr/0002-unified-identity.md](../adr/0002-unified-identity.md), `sf_auth_identities` |
+| Internal identity | canonical user identity is an opaque UUID; Telegram numeric id is an external provider identity | [../adr/0002-unified-identity.md](../NT-Analyzer/docs/adr/0002-unified-identity.md), `app/auth_identity.py`, `0005_identity_uuid.sql` |
+| External identities | Telegram / Google / email are modeled as provider identities, not as the primary key | [../adr/0002-unified-identity.md](../NT-Analyzer/docs/adr/0002-unified-identity.md), `sf_auth_identities` |
 | Sessions | authenticated sessions remain explicit and environment-scoped | `app/account_auth.py`, `sf_auth_sessions` |
-| Workspaces | identity and workspace/membership are separate entities | [../architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md](../architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md) |
+| Workspaces | identity and workspace/membership are separate entities | [../architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md](../NT-Analyzer/docs/architecture/MULTI_USER_ACCOUNT_ARCHITECTURE.md) |
 
 ## Login providers
 
@@ -230,7 +230,7 @@ synthetic identity does not receive owner privileges. New routes additionally
 require trusted Preview control and scoped default-off flags. Mutation checkpoints
 refresh access rather than trusting stale UI capabilities. Reset is serialized
 with the new SQLite operations before it wipes only synthetic state.
-See [ADR-0010](../adr/0010-agent-world-owner-review.md). Auth/provider registration
+See [ADR-0010](../NT-Analyzer/docs/adr/0010-agent-world-owner-review.md). Auth/provider registration
 logic, real credentials and the ordinary Local owner runtime are not replaced.
 
 The real Local adapter is independent: Development only, Preview forbidden,
@@ -286,15 +286,15 @@ publication from GET, completion, Court or shared Memory is permitted.
 
 ## Canonical evidence
 
-- [Current Agent World baseline](../current/AGENT_WORLD_IMPLEMENTATION_STATUS.md)
-- [Historical pre-foundation context](../archive/AGENT_WORLD_PRE_FOUNDATION_CONTEXT_2026-09-04.md)
-- [../adr/0002-unified-identity.md](../adr/0002-unified-identity.md)
-- [../adr/0003-trusted-devices-and-step-up.md](../adr/0003-trusted-devices-and-step-up.md)
-- [../adr/0004-admin-panel-and-capabilities.md](../adr/0004-admin-panel-and-capabilities.md)
-- [Device Confirmation Development record](../changelog/2026-09-02-device-confirmation-trusted-access.md)
-- [Owner Preview sandbox Development record](../changelog/2026-09-03-owner-preview-synthetic-sandbox.md)
+- [Current Agent World baseline](../NT-Analyzer/docs/current/AGENT_WORLD_IMPLEMENTATION_STATUS.md)
+- [Historical pre-foundation context](../NT-Analyzer/docs/archive/AGENT_WORLD_PRE_FOUNDATION_CONTEXT_2026-09-04.md)
+- [../adr/0002-unified-identity.md](../NT-Analyzer/docs/adr/0002-unified-identity.md)
+- [../adr/0003-trusted-devices-and-step-up.md](../NT-Analyzer/docs/adr/0003-trusted-devices-and-step-up.md)
+- [../adr/0004-admin-panel-and-capabilities.md](../NT-Analyzer/docs/adr/0004-admin-panel-and-capabilities.md)
+- [Device Confirmation Development record](../NT-Analyzer/docs/changelog/2026-09-02-device-confirmation-trusted-access.md)
+- [Owner Preview sandbox Development record](../NT-Analyzer/docs/changelog/2026-09-03-owner-preview-synthetic-sandbox.md)
 - `app/account_auth.py`
 - `app/auth_identity.py`
 - `app/security_devices.py`
 - `app/personal_nt_security.py`
-- [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../changelog/2026-08-22-market-data-responsive-release-beta29.md)
+- [../changelog/2026-08-22-market-data-responsive-release-beta29.md](../NT-Analyzer/docs/changelog/2026-08-22-market-data-responsive-release-beta29.md)

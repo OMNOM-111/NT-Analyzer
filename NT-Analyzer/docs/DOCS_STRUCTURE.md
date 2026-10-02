@@ -26,15 +26,15 @@ docs/
     audits/      Dated point-in-time audits.
   schemas/       Machine schemas (e.g. connector protocol).
   legal/         User-facing legal package (ToS/EULA, Privacy, risk & consent) — DRAFT, pending counsel.
-  external-gpt-context/ Compact upload pack for external LLM projects with no repo/server access.
+../AI_CONTEXT/    Canonical technical context for all agents and external LLMs.
 ```
 
 `current/`, `architecture/`, `operations/`, `governance/`, `adr/`, `schemas/`
 already exist. Phase 10 additionally creates `security/`, `product/`, `agents/`,
 `strategies/`, `changelog/`, `archive/`, `archive/audits/` and the compact
-`external-gpt-context/` upload surface.
+root `AI_CONTEXT/` upload surface.
 
-Canonical path for the upload pack: `docs/external-gpt-context/`.
+Canonical path for the upload pack: repository-root `AI_CONTEXT/`.
 
 ## Separation rule (acceptance criterion)
 

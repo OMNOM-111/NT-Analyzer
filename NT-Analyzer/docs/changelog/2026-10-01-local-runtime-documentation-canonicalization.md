@@ -53,15 +53,73 @@ card remains Done with 7/7 Production PASS.
   The Local mechanism opt-in document is explicit and empty: previously
   accepted base Agent World functionality is enabled by the workspace gate;
   newer unaccepted mechanism flags remain OFF.
-- Syntax and the fail-fast dirty-worktree rejection passed. Clean-launch,
-  Desktop shortcut, browser parity, AI_CONTEXT migration and CI governance
-  gate remain **PENDING** and must not be described as PASS yet.
+- Initial clean-launch commit `b809911c73c219b92e43c9b46d0d79b26a118b7a`
+  passed source/dirty guards. Local `/live` and `/ready` returned 200; runtime
+  identified `0.10.0-beta.106`, Development, that clean SHA, and the original
+  data root. The new Desktop shortcut targets the canonical launcher; the
+  previous `.lnk` and its hash are preserved in ignored recovery evidence.
+  `start-ai-lab.ps1` now identifies itself as an explicit legacy research
+  entrypoint, not the default. The scheduled `StratForge Vitek` task remains
+  Disabled, and Local Telegram delivery is fail-closed.
+- The 15 tracked context files were moved by `git mv` to repository-root
+  `AI_CONTEXT/`; all relative links were rebased and validated. The exporter,
+  governance instructions, link references and CI documentation gate were
+  updated together. Focused documentation tests: 21 PASS. PR/main adoption
+  and post-reboot startup observation remain pending.
+
+## Dirty old checkout classification — no deletion
+
+The 25 modified tracked and 36 untracked porcelain entries are fully listed
+with hashes in the ignored inventory. Disposition is by category, not a blind
+copy to current main:
+
+| Category | Entries | Disposition |
+| --- | --- | --- |
+| KEEP | `data/ai_control_center`, `data/ai_lab` SQLite/registries, `data/governance` and `data/development/governance` journals/source, catalog/rating state | User/runtime state; retained in original data root and verified snapshot. Do not commit or delete. |
+| ARCHIVE | old `docs/current`/governance/context edits, three old change records, old root `timeline.html`, `ИСТОРИЯ_РАЗРАБОТКИ.md`, `TIMELINE_КРАТКАЯ.txt`, `CLAUDE.md`, nested `.worktrees/*` and `timeline-review-worktree` | Preserve in old checkout and recovery inventory for later comparison; historical decisions are not automatically merged. |
+| GENERATED | `data/*/governance-rendered/*`, SQLite `-wal`/`-shm`, cached report summaries, release-center DPAPI backup, legacy AI archive and `documents.json.backup-*` | Preserve as generated/runtime/rollback evidence, never ordinary Git staging. |
+| MERGE | No old dirty file merged into this branch. Current governance and AI_CONTEXT edits were written against clean main plus evidence. | Review any genuinely unique old material separately after release; no automated merge. |
+| DELETE | None. | No potentially user-owned file was proved disposable. |
+
+## Fresh visual/technical parity — scoped post-release check
+
+This is **not** a repeat of the previously accepted beta.106 7/7 product
+release. A fresh read-only click-through was attempted, without provider
+calls, new users, posts, messages or server changes. `PASS` below means the
+stated surface was observed now; `PARTIAL` identifies a narrower observation,
+not a regression verdict.
+
+| Capability | Local | Canary | Production |
+| --- | --- | --- | --- |
+| SF Social | PASS: feed/profile/company and 9-post owner feed | PASS: owner page/feed/profile | PASS: owner page/feed/profile |
+| SF Chat | PASS: dialogs/history/topics/Deputy selector | PASS: owner dialog/history/Deputy | PASS: owner dialog/history/Deputy |
+| Registration | PARTIAL: current owner session and accepted code, fresh guest step not reached | PASS: public Professional → Register → step 1/3, Telegram/Google choices | PASS: same public step 1/3 |
+| Device trust | PARTIAL: owner session works; two-mode settings not freshly walked | PARTIAL: same | PARTIAL: same |
+| Agent World / AI Center | PASS: owner overview and all six tabs, no denial | PASS: owner overview and all six tabs | PASS: owner overview and all six tabs |
+| Shared models | PASS: owner model cards/history, no key plaintext | PASS: owner model cards, no invocation repeated | PASS: four owner model cards in “Мои модели”; no invocation repeated |
+| New/test-user charts | PARTIAL: owner UI only; no fresh separate-new-user chart | PARTIAL: real Chrome non-owner trial expired; historical MBT candle acceptance retained | PARTIAL: real Chrome non-owner trial expired; historical Production acceptance retained |
+
+Technical identity: Local canonical clean `b809911c` on beta.106 app source;
+Canary and Production unchanged `e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885`,
+same signed artifact `art_7aebf504ae354ce7981c58359a1ff546` and build
+`sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z`; all `/live` and
+`/ready` probes returned 200. Local uses the original Windows owner data and
+DPAPI path, not Production secrets; server environments keep isolated
+PostgreSQL/SecretStore state. Production remains sole Telegram/report sender,
+Canary non-sender, Local Vitek Disabled.
+
+The real Chrome Professional trial has expired in both Canary and Production,
+so fresh non-owner chart/security click-through cannot be represented as PASS
+without a legitimate entitlement action. The previous beta.106 product-card
+7/7 Production PASS remains historically valid. This new canonicalization
+card remains In progress; no new server artifact or release iteration exists.
 
 ## Release impact and next step
 
 No new beta or server artifact is warranted by a Local shortcut/environment
-incident. Next: commit the scoped launcher/checkpoint, activate the canonical
-Local on port 8765 against the preserved original data root, verify owner
-Agent World and navigation, then complete the documented environment-parity
-and AI_CONTEXT work. Any actual application-code defect gets its own versioned
-release path. Production beta.106 remains untouched.
+incident. Next: finish scoped Git/PR and CI review of this documentation and
+launcher work, then obtain a fresh real non-owner visual chart/security check
+through ordinary access before marking the new task Done. A clean startup
+after a future actual reboot is still unobserved. Any proved application-code
+defect would follow a new versioned release path. Production beta.106 remains
+untouched.

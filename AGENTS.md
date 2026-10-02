@@ -58,12 +58,14 @@
 
 ## External GPT Context Pack
 
-- Канонический upload-пакет для внешних моделей без доступа к репозиторию хранится в `NT-Analyzer/docs/external-gpt-context/`.
+- Канонический технический контекст для всех исполнителей (Codex, Claude, Dots и будущих агентов) хранится только в корневом `AI_CONTEXT/`; прежний `NT-Analyzer/docs/external-gpt-context/` не является источником истины.
+- До работы читать корневые `timeline.html`, `AI_CONTEXT/00_STRATFORGE_CONTEXT_INDEX.md`, `AI_CONTEXT/02_CURRENT_SYSTEM_STATE.md` и `AI_CONTEXT/11_ACTIVE_WORK_AND_HANDOFF.md`. Для новой задачи создать текущую Timeline-карточку, для продолжения — обновлять существующую.
+- Обязательный порядок завершения: `CODE / CONFIG / ACTION → TEST → TIMELINE SYNC → AI_CONTEXT SYNC → VALIDATION → FINAL RESPONSE`. Timeline показывает product progress; AI_CONTEXT — техническое состояние, решения, evidence и handoff. Задача не закрыта без обоих обновлений.
 - Перед Git closeout каждый AI developer (Codex/GPT/Grok/Claude/Cursor/иная модель) обязан проверить, затронула ли задача External GPT Context Pack.
 - Если задача изменила architecture, current system state, API/schema, auth/security, environment/release/deployment, Connector/market data/trading, agents, UI product contract, documentation/governance/legal status, active blockers или roadmap, соответствующий файл Context Pack обновляется в той же задаче и том же commit.
-- Минимальная обязательная проверка после каждой значимой завершённой задачи: `NT-Analyzer/docs/external-gpt-context/02_CURRENT_SYSTEM_STATE.md` и `NT-Analyzer/docs/external-gpt-context/11_ACTIVE_WORK_AND_HANDOFF.md`.
-- После подтверждённого Canary/Production deployment или release acceptance обязательно обновлять `NT-Analyzer/docs/external-gpt-context/02_CURRENT_SYSTEM_STATE.md`, `NT-Analyzer/docs/external-gpt-context/04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md` и `NT-Analyzer/docs/external-gpt-context/11_ACTIVE_WORK_AND_HANDOFF.md` как часть того же release closeout.
+- Минимальная обязательная проверка после каждой значимой завершённой задачи: `AI_CONTEXT/02_CURRENT_SYSTEM_STATE.md` и `AI_CONTEXT/11_ACTIVE_WORK_AND_HANDOFF.md`.
+- После подтверждённого Canary/Production deployment или release acceptance обязательно обновлять `AI_CONTEXT/02_CURRENT_SYSTEM_STATE.md`, `AI_CONTEXT/04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md` и `AI_CONTEXT/11_ACTIVE_WORK_AND_HANDOFF.md` как часть того же release closeout.
 - Такой release closeout обязан сохранять exact operational release identity: `version`, artifact git SHA, authoritative manifest/archive SHA256 из release evidence, `build ID`, Canary/Production status, `same_release_dir` при наличии, `previous`/rollback slot и все `PARTIAL` / `EXTERNAL BLOCKED` пункты.
 - Если operational release evidence ещё не отражено в канонических repo docs, сначала записать его в компактный canonical changelog/handoff snapshot, и только потом ссылаться на него из Context Pack.
 - Нельзя массово переписывать даты или делать cosmetic refresh всего пакета. Обновляются только документы, чьи факты действительно изменились.
-- Перед closeout прогонять `python tools/validate_external_gpt_context.py` из `NT-Analyzer/`.
+- Перед closeout прогонять `python tools/validate_external_gpt_context.py` и `python tools/validate_documentation_sync.py` из `NT-Analyzer/`; CI проверяет синхронизацию с diff задачи.

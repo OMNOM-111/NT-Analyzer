@@ -7,7 +7,7 @@
 - Scope: NinjaTrader authority, Connector protocol, market-data gateway and trading safety gates
 - Status: PARTIAL
 
-Local routing incident (2026-09-23): a Development public-origin collision with the Production gateway blocked consumption despite available owner credentials. The supervisor correction keeps the designated hub and fail-closed entitlement rules. Authorized upstream reads returned real MET 09-26 candles; unavailable MBT 08-26 is a separate contract issue. [Evidence and remaining acceptance](../changelog/2026-09-23-local-chart-gateway.md).
+Local routing incident (2026-09-23): a Development public-origin collision with the Production gateway blocked consumption despite available owner credentials. The supervisor correction keeps the designated hub and fail-closed entitlement rules. Authorized upstream reads returned real MET 09-26 candles; unavailable MBT 08-26 is a separate contract issue. [Evidence and remaining acceptance](../NT-Analyzer/docs/changelog/2026-09-23-local-chart-gateway.md).
 
 ## Non-negotiable current rules
 
@@ -111,8 +111,8 @@ realtime or rendering only after a reproduced defect with targeted evidence.
 
 ## Canonical evidence
 
-- [beta.48 LIVE Connector closeout](../changelog/2026-08-26-beta48-live-connector-storage-reconciliation.md)
-- [Connector protocol v1](../architecture/CONNECTOR_PROTOCOL_V1.md)
-- [market-data resilience plan](../architecture/MARKET_DATA_RESILIENCE_PLAN.md)
+- [beta.48 LIVE Connector closeout](../NT-Analyzer/docs/changelog/2026-08-26-beta48-live-connector-storage-reconciliation.md)
+- [Connector protocol v1](../NT-Analyzer/docs/architecture/CONNECTOR_PROTOCOL_V1.md)
+- [market-data resilience plan](../NT-Analyzer/docs/architecture/MARKET_DATA_RESILIENCE_PLAN.md)
 - `app/connector_protocol.py`
 - `app/production_storage/core.py`

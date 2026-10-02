@@ -18,7 +18,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PACK_DIR = ROOT / "docs" / "external-gpt-context"
+PACK_DIR = ROOT.parent / "AI_CONTEXT"
 REQUIRED_DOCS = [
     "00_STRATFORGE_CONTEXT_INDEX.md",
     "01_PRODUCT_VISION_AND_SCOPE.md",

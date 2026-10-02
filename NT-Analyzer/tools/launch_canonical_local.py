@@ -112,6 +112,18 @@ def open_when_ready() -> None:
             time.sleep(1)
 
 
+def existing_runtime_matches(sha: str, build_id: str) -> bool:
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8765/api/runtime/env", timeout=3) as response:
+            status = json.load(response)
+    except Exception:
+        return False
+    return (status.get("environment") == "development"
+            and status.get("git_commit_sha") == sha
+            and status.get("build_id") == build_id
+            and status.get("dirty") is False)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="validate source/environment without startup")
@@ -124,7 +136,11 @@ def main() -> int:
         return 0
     with socket.socket() as probe:
         if probe.connect_ex(("127.0.0.1", 8765)) == 0:
-            raise RuntimeError("Port 8765 is already occupied; refusing a second Local runtime")
+            if not existing_runtime_matches(sha, values["BUILD_ID"]):
+                raise RuntimeError("Port 8765 is owned by a different Local runtime; refusing a second server")
+            if not args.no_browser:
+                webbrowser.open("http://127.0.0.1:8765/ui/")
+            return 0
     if not args.no_browser:
         threading.Thread(target=open_when_ready, daemon=True).start()
     from app.backend_supervisor import supervise
