@@ -58,3 +58,18 @@ survives. Git worktree was clean after commit. Required PR CI is pending;
 no merge, beta.107 artifact, Canary/Production schema change or real-account
 delete has occurred. The saturation trigger remains UNKNOWN despite both
 environments' current public `/live` and `/ready` returning 200.
+
+## PR #314 Windows CI queue diagnosis (2026-10-02T19:24Z)
+
+The current PR head is `141dc2adeaec07618f1c878f74f2df4d6d42c67a`;
+Static gates passed. The repository's only Windows runner (ID 21,
+`stratforge-dev-DIMONCHECK`) is GitHub `online/busy`, and its Automatic Windows
+service is Running with live Listener/Worker processes. It is running the
+previous head `7979e32b` `python-tests` job `110989526878`, specifically its
+full pytest step. Earlier setup, checkout, toolchain, dependencies and release
+runner steps succeeded. The current-head Windows jobs are merely queued with
+no runner assigned. No code failure, runner disconnect or service-start defect
+is evidenced; no service restart, job rerun or application change was made.
+Runner-local `_diag` access was denied, so no log contents were claimed. The
+safe action is to let the active job finish and evaluate only the final-head
+checks when the runner takes them.

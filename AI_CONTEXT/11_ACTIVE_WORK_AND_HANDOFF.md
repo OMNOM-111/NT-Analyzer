@@ -1,7 +1,7 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-10-02T19:13:00Z
+- Last verified UTC: 2026-10-02T19:24:00Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Current Canary source SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885; beta.106 accepted, current health recovered
 - Scope: closed beta.95 → beta.106 product card plus In progress Local recovery / beta.107 erasure task
@@ -9,6 +9,22 @@
 - Current Production version/build/artifact when known: `0.10.0-beta.106` / `sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z` / `art_7aebf504ae354ce7981c58359a1ff546`; health/readiness and delivery receipt acceptance PASS; product package 7/7 Production accepted
 
 ## Current task — Local Runtime & Documentation Canonicalization
+
+CI runner checkpoint (2026-10-02T19:24Z): PR #314 current head is
+`141dc2adeaec07618f1c878f74f2df4d6d42c67a`. Its Static gates passed;
+the Windows self-hosted checks are queued, not failed. GitHub reports the
+single `stratforge-dev-DIMONCHECK` runner `online/busy`; Windows service
+`actions.runner.OMNOM-111-NT-Analyzer.stratforge-dev-DIMONCHECK` is Running
+and Automatic with a live Listener/Worker. The worker is executing the full
+pytest step of the previous PR head `7979e32b` job `110989526878`; checkout,
+toolchain, dependency and release gates already passed there. Current-head
+Windows jobs `110990543914`, `110990543367` and `110990543717` await that
+single runner. This is queue contention after the documentation follow-up
+commit, not evidence of application-code failure or runner disconnect. Do not
+restart a healthy busy runner or rerun jobs while they are still queued.
+Runner `_diag` was not readable from this process (Access denied); the GitHub
+job/runner APIs and local Windows service/process state establish this cause.
+Next check only on a state change or after 5–10 minutes.
 
 Development checkpoint (2026-10-02T19:13Z): PR #314 is open on committed
 `codex/beta107-relational-account-erasure` SHA
