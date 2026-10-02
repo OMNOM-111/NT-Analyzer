@@ -1,14 +1,79 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-10-02T11:09:18Z
+- Last verified UTC: 2026-10-02T20:20:00Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
-- Current Canary source SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885; beta.106 acceptance PASS
-- Scope: closed beta.95 → beta.106 product card plus separate Local Runtime & Documentation Canonicalization task
+- Current Canary source SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885; beta.106 accepted, current health recovered
+- Scope: closed beta.95 → beta.106 product card plus In progress Local recovery / beta.107 erasure task
 - Status: IN DEVELOPMENT
 - Current Production version/build/artifact when known: `0.10.0-beta.106` / `sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z` / `art_7aebf504ae354ce7981c58359a1ff546`; health/readiness and delivery receipt acceptance PASS; product package 7/7 Production accepted
 
 ## Current task — Local Runtime & Documentation Canonicalization
+
+PR #314 CI update (2026-10-02T20:20Z): on the current head
+`57d5dfac253714f55cfc3a664e0ab845fb12d8ba`, Ubuntu executed full
+pytest and failed 25 tests (6131 passed, 144 skipped); this is **not** a
+Windows runner outage. Twenty-one failures were old mocked Production
+fixtures that did not stub the new PostgreSQL deletion-receipt read, two
+Local-erasure cases relied on an implicit Development environment, one
+architecture check caught a reverse import, and one migration-count assertion
+still expected 24 instead of 25. The new test-specific stubs, exact Local
+test context, migration assertion and core-layer import preserve server
+fail-closed behavior. The 25 failed cases now pass locally; the eight affected
+files pass 382/382. These changes are not yet committed or CI-accepted.
+GitHub still shows Windows runner ID 21 `online/busy` executing full pytest,
+with the other Windows job queued behind it; its service is Running. No
+runner restart or application change was made to treat this queue as failure.
+PR/final-main CI, artifact and deployment remain pending.
+
+CI runner checkpoint (2026-10-02T19:24Z): PR #314 current head is
+`141dc2adeaec07618f1c878f74f2df4d6d42c67a`. Its Static gates passed;
+the Windows self-hosted checks are queued, not failed. GitHub reports the
+single `stratforge-dev-DIMONCHECK` runner `online/busy`; Windows service
+`actions.runner.OMNOM-111-NT-Analyzer.stratforge-dev-DIMONCHECK` is Running
+and Automatic with a live Listener/Worker. The worker is executing the full
+pytest step of the previous PR head `7979e32b` job `110989526878`; checkout,
+toolchain, dependency and release gates already passed there. Current-head
+Windows jobs `110990543914`, `110990543367` and `110990543717` await that
+single runner. This is queue contention after the documentation follow-up
+commit, not evidence of application-code failure or runner disconnect. Do not
+restart a healthy busy runner or rerun jobs while they are still queued.
+Runner `_diag` was not readable from this process (Access denied); the GitHub
+job/runner APIs and local Windows service/process state establish this cause.
+Next check only on a state change or after 5–10 minutes.
+
+Development checkpoint (2026-10-02T19:13Z): PR #314 is open on committed
+`codex/beta107-relational-account-erasure` SHA
+`7979e32b1175d4730cd20e71a5c954206645027a`, with VERSION beta.107,
+migration 0025 and the PostgreSQL/RLS server erasure adapter. Fresh disposable
+TLS PostgreSQL applied 0001–0025 from scratch; 170/170 affected regression
+tests passed with a `NOBYPASSRLS` application role. Tests cover freeze/rollback/
+retry, owner/service/shared refusal, private Social/Chat/Agent World/credential
+removal, usage/audit retention, exact file and legacy AI-chat scope cleanup,
+foreign data preservation and a freed Google subject. Pre-release bundle,
+Context Pack and documentation validators passed. PR required CI, final-main
+CI, artifact, server backup/migration/QA and actual reboot remain pending.
+The server incident's exact retained handler route is still unknown.
+Do not infer beta.107 Canary/Production acceptance from this Development work.
+The next step is PR CI; no server promotion is authorized by a local test.
+The historical beta.106 7/7 Done card remains unchanged.
+
+Latest checkpoint (2026-10-02T17:47Z): the 503 `api_admission_saturated`
+incident was recovered by guarded Canary-then-Production API-only restarts.
+Both environments remained on beta.106 and returned `/live` and `/ready` 200;
+no new admission rejections were observed after recovery. Pre-restart metrics
+prove held HTTP handlers rather than a semaphore accounting leak, but the
+exact route/trigger is unknown. Preserve the secured log snapshot and do not
+claim a permanent code fix. PR #313 passed all 5 required checks at head
+`67db21d569c533c6b1e33cbb7126f18135602320` and merged to `main`
+`bfc26c962bf3456cb1f811c421156245240ad1ac`. The clean new
+`codex/beta107-relational-account-erasure` worktree starts from that commit.
+No beta.107 artifact exists yet, no account deletion or grant has occurred,
+and the current card remains In progress. Historical beta.106 7/7 is Done.
+[Incident/Development record](../NT-Analyzer/docs/changelog/2026-10-02-api-admission-recovery-and-beta107-erasure.md).
+
+The dated bullets below describe the pre-recovery/PR-draft checkpoint and are
+kept as historical evidence; they do not override this latest checkpoint.
 
 The earlier seven-function product package is closed at Production beta.106;
 do not repeat provider/report acceptance or reopen its Timeline card. The

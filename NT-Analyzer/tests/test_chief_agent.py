@@ -222,11 +222,13 @@ def test_production_event_and_background_task_require_persisted_scope(tmp_path, 
 
 
 def test_production_poll_never_falls_back_to_legacy_unscoped_runtime(tmp_path, monkeypatch) -> None:
-    from app import runtime_env, workspaces
+    from app import account_lifecycle, runtime_env, workspaces
 
     _isolate(tmp_path, monkeypatch)
     monkeypatch.setattr(runtime_env, "is_production", lambda: True)
     monkeypatch.setattr(runtime_env, "environment_explicit", lambda: True)
+    monkeypatch.setattr(account_lifecycle, "deleted_ids", lambda: set())
+    monkeypatch.setattr(account_lifecycle, "deleted_legacy_ids", lambda: set())
     monkeypatch.setattr(workspaces, "runtime_monitor_scopes", lambda: [])
     monkeypatch.setattr(chief_agent, "_mission_tick", lambda: None)
     monkeypatch.setattr(chief_agent, "_scheduled_audit_tick", lambda: None)

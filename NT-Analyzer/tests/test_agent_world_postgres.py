@@ -54,7 +54,7 @@ def database():
         assert not role["rolsuper"] and not role["rolbypassrls"]
         assert conn.execute("SELECT count(*) AS n FROM pg_tables WHERE schemaname='public' AND tableowner=current_user").fetchone()["n"] == 0
     with admin.transaction(Scope.global_service_scope(), read_only=True) as conn:
-        assert conn.execute("SELECT max(version) AS version FROM sf_schema_migrations").fetchone()["version"] == 24
+        assert conn.execute("SELECT max(version) AS version FROM sf_schema_migrations").fetchone()["version"] == 25
     return app, admin
 
 
@@ -662,7 +662,9 @@ def test_owner_model_migration_real_postgres_rls_idempotent_and_revocable(databa
             context=owner, model_id=model_id)["provider_account_id"] == str(account_id)
     assert server_secrets.ServerSecrets(repository, other).get_secret("aw_provider." + str(account_id)) is None
     assert server_model_sharing.available(other)[0]["model_id"] == str(model_id)
-    with admin.transaction(Scope.global_service_scope(), read_only=True) as conn:
+    # BYOK ciphertext is owner-scoped even for the schema-owner fixture role:
+    # a global service scope cannot see this RLS table.
+    with raw(app, owner, read_only=True) as conn:
         ciphertext = conn.execute("SELECT ciphertext FROM sf_aw_credentials WHERE account_id=%s",
             (account_id,)).fetchone()["ciphertext"]
     assert b"fixture-server-migration-key" not in bytes(ciphertext)

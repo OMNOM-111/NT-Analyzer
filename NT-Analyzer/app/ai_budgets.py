@@ -13,6 +13,7 @@ import math
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any, Dict, Mapping, Optional
 
 from . import observability, runtime_env
@@ -226,6 +227,53 @@ def reserve(
         return {"ok": False, "code": "storage_unavailable"}
 
 
+def _record_deleted_account_usage(
+    *, request_id: str, user_id: int, provider: str, model: str,
+    role: str, purpose: str, status: str, input_tokens: int,
+    output_tokens: int, cost_usd: float, prompt_sha256: str,
+) -> Optional[Dict[str, Any]]:
+    """A late provider receipt remains metered without resurrecting identity.
+
+    This is not a paid-call admission path. It only resolves a completed
+    request after a verified account deletion receipt already exists.
+    """
+    with get_client().transaction(Scope.global_service_scope()) as conn:
+        receipt = conn.execute(
+            "SELECT identifier_fingerprint FROM sf_deleted_accounts WHERE legacy_user_id=%s",
+            (user_id,),
+        ).fetchone()
+        if not receipt:
+            return None
+        fingerprint = str(receipt["identifier_fingerprint"])
+        row = conn.execute(
+            """INSERT INTO sf_ai_usage_events(
+                 request_id,workspace_id,user_id,provider,model,role,purpose,status,
+                 input_tokens,output_tokens,cost_usd,prompt_sha256,document,
+                 deleted_user_fingerprint)
+               VALUES(%s,NULL,NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT(request_id) DO NOTHING RETURNING request_id""",
+            (request_id, provider, model, role, purpose, status, input_tokens,
+             output_tokens, cost_usd, prompt_sha256,
+             _jsonb({"user_name": "Удалённый пользователь", "deleted_user": True}),
+             fingerprint),
+        ).fetchone()
+        if row:
+            return {"ok": True, "code": "recorded_deleted_user"}
+        prior = conn.execute("""SELECT provider,model,role,purpose,status,input_tokens,
+            output_tokens,cost_usd,prompt_sha256,deleted_user_fingerprint
+            FROM sf_ai_usage_events WHERE request_id=%s""", (request_id,)).fetchone()
+        if prior and Decimal(str(prior["cost_usd"])) == Decimal(str(cost_usd)) and all(
+            (str(prior[key]) == str(value)) for key, value in (
+            ("provider", provider), ("model", model), ("role", role),
+            ("purpose", purpose), ("status", status),
+            ("input_tokens", input_tokens), ("output_tokens", output_tokens),
+            ("prompt_sha256", prompt_sha256),
+            ("deleted_user_fingerprint", fingerprint),
+        )):
+            return {"ok": True, "code": "recorded_deleted_user"}
+        return {"ok": False, "code": "idempotency_conflict"}
+
+
 def record_usage(
     request_id: str,
     workspace_id: str,
@@ -268,6 +316,15 @@ def record_usage(
         if clean_input > 2_000_000_000 or clean_output > 2_000_000_000:
             return {"ok": False, "code": "invalid_usage"}
         clean_cost = _clean_cost(cost_usd)
+        late = _record_deleted_account_usage(
+            request_id=str(request_id), user_id=user, provider=clean_provider,
+            model=clean_model, role=clean_role, purpose=clean_purpose,
+            status=valid_status, input_tokens=clean_input,
+            output_tokens=clean_output, cost_usd=clean_cost,
+            prompt_sha256=clean_prompt_hash,
+        )
+        if late is not None:
+            return late
         scope = Scope(workspace_id=workspace)
         with get_client().transaction(scope) as conn:
             inserted = conn.execute(

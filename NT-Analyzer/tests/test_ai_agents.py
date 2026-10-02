@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from app import secure_store
+from app import account_lifecycle, secure_store
 from app import server as server_mod
 from app.ai_lab import agent_registry, agent_router, chief_agent, news_agent, paths, response_cache, runner, universal_llm
 from app.ai_lab import orchestrator as lab_orchestrator
@@ -18,6 +18,10 @@ from app.ai_lab import orchestrator as lab_orchestrator
 
 @pytest.fixture()
 def isolated_agents(tmp_path, monkeypatch):
+    # Production-routing unit cases fake model/budget boundaries, not the
+    # authoritative relational deletion receipt store.
+    monkeypatch.setattr(account_lifecycle, "deleted_ids", lambda: set())
+    monkeypatch.setattr(account_lifecycle, "deleted_legacy_ids", lambda: set())
     monkeypatch.setattr(agent_registry, "registry_path", lambda: tmp_path / "ai_agents.registry.json")
     monkeypatch.setattr(agent_registry, "usage_dir", lambda: tmp_path / "agent_usage")
     monkeypatch.setattr(secure_store, "store_path", lambda: tmp_path / "ai_agent_keys.dpapi")

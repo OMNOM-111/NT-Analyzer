@@ -558,7 +558,9 @@ def test_block_requires_owner_and_spares_owner(auth_store) -> None:
         account_auth.set_user_status(999, 999, "blocked")  # cannot block the owner
 
 
-def test_delete_user_removes_row(auth_store) -> None:
+def test_delete_user_removes_row(auth_store, monkeypatch) -> None:
+    from app import account_lifecycle
+    monkeypatch.setattr(account_lifecycle.runtime_env, "is_development", lambda: True)
     _seed_owner_and_user(auth_store)
     account_auth.delete_user(999, 42)
     ids = [u["user_id"] for u in account_auth.list_users(999)["users"]]

@@ -1089,8 +1089,9 @@ def test_account_owned_operational_rows_are_released_before_the_user_prune():
     deletes = [s for s, _ in conn.statements if s.startswith("DELETE FROM")]
     tables = {s.split()[2] for s in deletes}
     assert "sf_commands" in tables, "the table that actually blocked production"
-    assert {"sf_jobs", "sf_artifacts", "sf_ai_usage_events",
-            "sf_ai_reservations", "sf_market_data_subscriptions"} <= tables
+    assert {"sf_jobs", "sf_artifacts", "sf_ai_reservations",
+            "sf_market_data_subscriptions"} <= tables
+    assert "sf_ai_usage_events" not in tables, "metering must be anonymized and retained"
     # Surviving accounts keep their rows.
     assert all("NOT (" in s for s in deletes)
 
@@ -1223,22 +1224,16 @@ def test_append_audit_scope_falls_back_to_the_owner(monkeypatch):
     assert not captured["scope_user"]
 
 
-def test_workspaces_are_purged_before_the_account_document_is_written():
-    """sf_workspaces.owner_user_id is ON DELETE RESTRICT.
-
-    Pruning sf_users while a workspace still names the account raises a foreign
-    key violation that rolls the whole document write back, so purging
-    workspaces afterwards could never succeed -- the write it was waiting for
-    had already failed.
-    """
+def test_server_admin_deletion_uses_one_relational_erasure_adapter():
+    """Admin authority is checked before one ordered PostgreSQL transaction."""
     import inspect
 
     from app import account_auth as aa
+    from app.production_storage import account_erasure
 
     source = inspect.getsource(aa.delete_user)
-    purge = source.index("workspaces.purge_user(")
-    write = source.index("_write_doc(doc)")
-    assert purge < write, "the workspace purge has to precede the account write"
-    # And it must still run only after the refusals, never before them.
-    assert source.index('report["is_owner"]') < purge
-    assert source.index("workspace_shared") < purge
+    assert source.index("account_footprint(owner_id, uid)") < source.index(
+        'account_lifecycle.erase(uid, reason="owner_requested")')
+    assert "workspaces.purge_user(" not in source
+    assert "_write_doc(doc)" not in source
+    assert account_erasure._DOC_SYNC_ORDER.index("workspaces") < account_erasure._DOC_SYNC_ORDER.index("auth")

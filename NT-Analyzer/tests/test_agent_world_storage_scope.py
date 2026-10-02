@@ -39,7 +39,7 @@ BASELINE = {
 
 # The merged contract these tests now assert.
 MERGED = {
-    "shipped_migrations": 24,
+    "shipped_migrations": 25,
     "agent_world_migration": "0023_agent_world_repository.sql",
     "agent_world_repositories": {"sqlite_repository.py", "postgres_repository.py"},
     "agent_world_suite": "test_agent_world_postgres.py",

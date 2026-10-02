@@ -82,6 +82,26 @@ def test_self_delete_requires_fresh_purpose_session_and_exact_confirmation(previ
     assert all(not account_lifecycle._matches(row, uid, canonical) for rows in doc.values() if isinstance(rows, list) for row in rows)
 
 
+def test_self_delete_rejects_expired_or_other_purpose_code(preview_env):
+    uid, _, sid = _registered()
+    other = security_devices.create_challenge(user_id=uid, purpose="step_up", session_id=sid)
+    with pytest.raises(security_devices.SecurityDeviceError) as wrong_purpose:
+        account_lifecycle.confirm(uid, sid, challenge_id=other["challenge_id"],
+            code=other["test_code"], confirmation="УДАЛИТЬ")
+    assert wrong_purpose.value.code == "challenge_wrong_purpose"
+    started = account_lifecycle.start(uid, sid)
+    doc = account_auth._read_doc()
+    challenge = next(row for row in doc["security_challenges"]
+                     if row["challenge_id"] == started["challenge_id"])
+    challenge["expires_at"] = 1
+    account_auth._write_doc(doc)
+    with pytest.raises(security_devices.SecurityDeviceError) as stale:
+        account_lifecycle.confirm(uid, sid, challenge_id=started["challenge_id"],
+            code=started["test_code"], confirmation="УДАЛИТЬ")
+    assert stale.value.code in {"challenge_expired", "challenge_not_found"}
+    assert account_auth.find_active_user(uid)
+
+
 def test_erasure_keeps_usage_but_removes_workspace_chat_model_secrets(preview_env):
     from app import secure_store
     from app.ai_lab import chief_agent
