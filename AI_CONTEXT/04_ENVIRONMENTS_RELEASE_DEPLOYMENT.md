@@ -1,10 +1,19 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-10-02T05:14:45Z
+- Last verified UTC: 2026-10-02T17:47:20Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Scope: Environment isolation, immutable release, promotion and rollback
-- Status: DONE
+- Status: IN DEVELOPMENT
+- Current operational checkpoint: both servers still run the exact beta.106
+  artifact below. Guarded Canary API restart followed by guarded Production API
+  restart restored public/backend `/live` and `/ready` to 200, with admission
+  active slots returning to zero and no new rejections during observation.
+  Worker/Telegram services, schema, config, source and artifact were unchanged.
+  Production remains the sole Telegram sender, Canary non-sender, Local Vitek
+  Disabled. The precise old stuck route is unknown; restart is recovery only.
+  PR #313 merged after 5/5 checks as `main` `bfc26c962bf3456cb1f811c421156245240ad1ac`;
+  beta.107 has no artifact or deployment yet. [Incident evidence](../NT-Analyzer/docs/changelog/2026-10-02-api-admission-recovery-and-beta107-erasure.md).
 - New post-release second-account QA checkpoint: the Chrome identity uses
   different canonical users in Canary (`8798656225084765`) and Production
   (`8813453773725695`). Both PostgreSQL entitlement stores retain expired
@@ -12,11 +21,12 @@
   this read-only diagnosis. Shipped account erasure is Local/Preview-only,
   not a safe server operation. PR #313 remains draft; no beta.106 artifact,
   schema, sender, scheduler or release identity changed.
-- Current health is not the historical release snapshot: a read-only probe
+- Historical pre-recovery health, not the current snapshot: a read-only probe
   on 2026-10-02T14:27–14:30Z returned 503 `api_admission_saturated` from
   both public Canary and Production live/ready, and from Production's
   host-local backend health, despite Supervisor RUNNING. Local health is
-  200. No server process, config, artifact or database was changed.
+  200. This was recovered by API-only restarts as recorded above; no config,
+  artifact or database was changed.
 - Current task: Local configuration and documentation only. `main` at task
   start is `9483bac868d829f3891e5e09fe84c18d242cf9c6`, after the
   documentation-only PR #312. Canary/Production still run the single beta.106

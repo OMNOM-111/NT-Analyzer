@@ -1,14 +1,31 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-10-02T11:09:18Z
+- Last verified UTC: 2026-10-02T17:47:20Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
-- Current Canary source SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885; beta.106 acceptance PASS
-- Scope: closed beta.95 → beta.106 product card plus separate Local Runtime & Documentation Canonicalization task
+- Current Canary source SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885; beta.106 accepted, current health recovered
+- Scope: closed beta.95 → beta.106 product card plus In progress Local recovery / beta.107 erasure task
 - Status: IN DEVELOPMENT
 - Current Production version/build/artifact when known: `0.10.0-beta.106` / `sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z` / `art_7aebf504ae354ce7981c58359a1ff546`; health/readiness and delivery receipt acceptance PASS; product package 7/7 Production accepted
 
 ## Current task — Local Runtime & Documentation Canonicalization
+
+Latest checkpoint (2026-10-02T17:47Z): the 503 `api_admission_saturated`
+incident was recovered by guarded Canary-then-Production API-only restarts.
+Both environments remained on beta.106 and returned `/live` and `/ready` 200;
+no new admission rejections were observed after recovery. Pre-restart metrics
+prove held HTTP handlers rather than a semaphore accounting leak, but the
+exact route/trigger is unknown. Preserve the secured log snapshot and do not
+claim a permanent code fix. PR #313 passed all 5 required checks at head
+`67db21d569c533c6b1e33cbb7126f18135602320` and merged to `main`
+`bfc26c962bf3456cb1f811c421156245240ad1ac`. The clean new
+`codex/beta107-relational-account-erasure` worktree starts from that commit.
+No beta.107 artifact exists yet, no account deletion or grant has occurred,
+and the current card remains In progress. Historical beta.106 7/7 is Done.
+[Incident/Development record](../NT-Analyzer/docs/changelog/2026-10-02-api-admission-recovery-and-beta107-erasure.md).
+
+The dated bullets below describe the pre-recovery/PR-draft checkpoint and are
+kept as historical evidence; they do not override this latest checkpoint.
 
 The earlier seven-function product package is closed at Production beta.106;
 do not repeat provider/report acceptance or reopen its Timeline card. The

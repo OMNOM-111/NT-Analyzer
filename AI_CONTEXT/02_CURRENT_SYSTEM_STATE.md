@@ -1,11 +1,21 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
-- Last verified UTC: 2026-10-02T11:09:18Z
+- Last verified UTC: 2026-10-02T17:47:20Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Current Production version/build/artifact when known: `0.10.0-beta.106` / `sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z` / `art_7aebf504ae354ce7981c58359a1ff546`; deployment health and periodic delivery acceptance PASS
-- Scope: Current product/runtime state after beta.106, plus separate Local recovery task
-- Status: DONE
+- Scope: Closed beta.106 product release plus In progress Local recovery / beta.107 erasure task
+- Status: IN DEVELOPMENT
+- Current post-release checkpoint: Canary and Production beta.106 API health was
+  recovered with guarded API-only restarts after 503 `api_admission_saturated`.
+  Both `/live` and `/ready` returned 200 after five-minute observation and
+  remained healthy without new rejections at the later 17:02Z probe. Exact
+  retained HTTP route/trigger remains unproven; the restart is not a code fix.
+  PR #313 passed 5/5 required checks at `67db21d` and merged to `main`
+  `bfc26c962bf3456cb1f811c421156245240ad1ac`; no deployed artifact
+  changed. beta.107 PostgreSQL relational account erasure is now in Development
+  on a separate branch, with no Canary/Production deployment or destructive QA.
+  See [incident and source checkpoint](../NT-Analyzer/docs/changelog/2026-10-02-api-admission-recovery-and-beta107-erasure.md).
 - Second-account QA checkpoint (2026-10-02): Chrome is the owner's second
   personal Google account, not Preview. Separate IDs are Canary
   `8798656225084765` and Production `8813453773725695`. Read-only server
@@ -16,12 +26,12 @@
   because relational erasure is unavailable. No deletion/re-registration or
   reboot PASS is claimed; PR #313 and its Timeline card remain In progress.
   The earlier beta.106 7/7 product release remains Done and unchanged.
-- Current availability warning, 2026-10-02T14:27–14:30Z: public Canary and
+- Historical pre-recovery availability warning, 2026-10-02T14:27–14:30Z: public Canary and
   Production `/live` and `/ready` returned 503 `api_admission_saturated`;
   Production host-local backend health returned the same 503. Supervisor
   process state was RUNNING, Local health remained 200. No fix or restart
   was attempted. Historical beta.106 acceptance does not supersede this
-  current runtime observation.
+  pre-recovery observation; superseded by the 200/200 checkpoint above.
 - Current Git main at task start is `9483bac868d829f3891e5e09fe84c18d242cf9c6`
   (PR #312 documentation-only). The deployed application source remains the
   beta.106 SHA in the header. The previous big product card is Done/7 of 7
