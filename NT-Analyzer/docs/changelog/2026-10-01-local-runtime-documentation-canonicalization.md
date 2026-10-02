@@ -83,7 +83,8 @@ card remains Done with 7/7 Production PASS.
   was absent and is now a Windows junction to the sole tracked canonical
   `local-current\AI_CONTEXT`. SHA256 of `11_ACTIVE_WORK_AND_HANDOFF.md`
   through both paths matches
-  `803B7C8E9E5657F05536B82B849F6A1CE1851471316A7A791294CA89DC252E72`.
+  `BB938C495C3C885B854C00792C98AF3E7DB44321616EC5031A812B2E4F30016D`
+  at the 2026-10-02 entitlement-diagnosis checkpoint.
   No historical context file was deleted or copied into a divergent tree.
 
 ## Dirty old checkout classification — no deletion
@@ -142,19 +143,58 @@ user ID `8798656225084765`. Both owner user panels show active, non-owner,
 `Пробный доступ завершён` after five hours of active use. Workspace control
 does not grant product entitlement. The owner UI offers an auditable
 Pro plan grant with `Срок дней (0=бессрочно)`; no grant has yet been applied
-at this checkpoint. A browser-action confirmation is pending because Pro
-also includes Live-read/Live-control capability. Thus, fresh non-owner
+at this checkpoint. Pro also includes Live-read/Live-control capability;
+the prior read-only checkpoint did not expand access. Thus, fresh non-owner
 chart/security click-through cannot be represented as PASS
 without a legitimate entitlement action. The previous beta.106 product-card
 7/7 Production PASS remains historically valid. This new canonicalization
 card remains In progress; no new server artifact or release iteration exists.
 
+## Second-account lifecycle checkpoint — 2026-10-02
+
+The owner clarified that Chrome is a second personal Google identity for
+ordinary-user lifecycle QA, not a disposable Preview identity. Read-only
+server entitlement inspection matched the already identified, separate
+Canary user `8798656225084765` and Production user `8813453773725695`.
+Both initial trial rows persist with `active_seconds_used=18000` (the full
+five-hour active-use allowance). Both also have manual `pro` rows still in
+PostgreSQL; neither is currently effective because its one-day expiry has
+passed. Canary's grants ran 2026-09-28T22:59:15Z–2026-09-29T22:59:15Z and
+2026-09-30T01:59:06Z–2026-10-01T01:59:06Z. Production's grant ran
+2026-09-30T05:24:24Z–2026-10-01T05:24:24Z. Thus the observed expired-trial
+UI does not demonstrate lost grants, cross-environment identity reuse or a
+PostgreSQL reset. The later `updated_at_utc` on the trial row is not yet
+explained but is not needed to account for effective access. No new
+grant/revoke or provider call was made in this checkpoint.
+
+The requested destructive delete → same-Google re-registration test is
+**blocked by the shipped server contract**, not by an untried OTP: the
+beta.106 `account_lifecycle._preflight` rejects every non-Development or
+PostgreSQL-backed account deletion with HTTP 503 because the relational
+erasure adapter does not yet exist. The canonical Local/Preview flow cannot
+be treated as server evidence. This is an application capability gap outside
+this launcher/documentation PR; it cannot be repaired through a direct DB
+delete or by broadening PR #313. No account data was deleted. Fresh Canary
+and Edge Production browser navigation was also blocked client-side before
+the page loaded, so no new UI acceptance is claimed. Keep this card In
+progress and PR #313 draft; do not mark lifecycle or reboot PASS.
+
+At 2026-10-02T14:27–14:30Z a separate read-only availability probe found
+Local `/live` and `/ready` = 200 but both public Canary and Production
+`/live` and `/ready` = HTTP 503 with exact code `api_admission_saturated`.
+The repeated public `/live` check stayed 503. A host-local Production
+`api-app` health probe on its backend also returned the same 503 while
+Supervisor listed the required processes as `RUNNING`; process state alone
+therefore does not establish readiness. No restart, config, schema, artifact
+or data change was made. This is a current runtime availability blocker for
+fresh three-environment browser QA, independent of the relational account
+erasure gap. Its cause has not been diagnosed in this scoped checkpoint.
+
 ## Release impact and next step
 
-No new beta or server artifact is warranted by a Local shortcut/environment
-incident. Next: finish scoped Git/PR and CI review of this documentation and
-launcher work, then obtain a fresh real non-owner visual chart/security check
-through ordinary access before marking the new task Done. A clean startup
-after a future actual reboot is still unobserved. Any proved application-code
-defect would follow a new versioned release path. Production beta.106 remains
-untouched.
+No new beta or server artifact is warranted by the Local shortcut/environment
+incident. The separately requested full second-account server lifecycle
+cannot be closed under beta.106 without a scoped relational account-erasure
+implementation and its normal release path. PR #313 remains draft and the
+post-reboot Local acceptance is unobserved. Production beta.106 remains
+untouched; the earlier seven-function product card remains Done.

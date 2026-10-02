@@ -58,14 +58,39 @@ incident, environment parity and AI_CONTEXT/documentation governance.
   `8813453773725695`, Canary user `8798656225084765`, both active and
   non-owner. Its `Полное управление` workspace label does not provide product
   entitlement. Owner UI supports audited Pro grant with `0=бессрочно`, but
-  no grant has been applied while browser-action confirmation is pending;
+  no fresh grant has been applied during the current diagnosis;
   Pro includes Live-read/Live-control as well as AI/SF Chat/charts.
+- The owner clarified that Chrome is their second personal Google identity for
+  full ordinary-user lifecycle QA. Read-only PostgreSQL inspection on
+  2026-10-02 found five hours of used trial time in both environments, plus
+  preserved but expired one-day manual Pro grants: Canary 2026-09-28/29 and
+  2026-09-30/10-01 UTC; Production 2026-09-30/10-01 UTC. The apparent loss of
+  access is explained by grant expiry plus exhausted trial, not missing
+  entitlement rows or a reused cross-environment user ID. No fresh grant,
+  deletion, provider request or server change was made.
+- Full server account delete/re-register is blocked by the current shipped
+  contract: `account_lifecycle._preflight` returns 503 for non-Development or
+  PostgreSQL-backed storage because relational erasure is not implemented.
+  Do not use direct database deletion or call Local/Preview deletion server
+  acceptance. Canary and new Edge Production navigation were also blocked by
+  the browser client before the page loaded. PR #313 must remain draft and
+  the current Timeline card In progress; post-reboot Local acceptance is
+  still unobserved. The closed beta.106 7/7 product card is unchanged.
+- A separate read-only health probe at 2026-10-02T14:27–14:30Z found Local
+  live/ready 200, but Canary and Production public live/ready 503 with
+  `api_admission_saturated`; repeated public live stayed 503. Host-local
+  Production `api-app` health was also 503 although Supervisor showed
+  processes RUNNING. No runtime change or restart was made. This current
+  availability failure blocks fresh QA independently of server account
+  erasure; do not present historical beta.106 PASS as a current health PASS.
 
-Next: finish Git/PR/CI of the scoped launcher and documentation gate; use
-ordinary real non-owner access for the remaining fresh chart/security visual
-check, then observe startup after the next actual reboot. Do not set the new
-card Done until all requested checks actually PASS. Do not alter Production/
-Canary, re-enable Local reporting or make another provider call for parity.
+Next: investigate and restore current server API admission health through a
+separately authorized, data-safe operational diagnosis. Then owner decision
+on whether to authorize a separately versioned server relational-erasure
+implementation or narrow QA to the supported non-destructive lifecycle.
+Do not merge PR #313 as a full-lifecycle PASS,
+set the new card Done, alter Production/Canary, re-enable Local reporting or
+make another provider call for parity while this is unresolved.
 [Current scoped change record](../NT-Analyzer/docs/changelog/2026-10-01-local-runtime-documentation-canonicalization.md).
 
 ## Current beta.106 release handoff (2026-10-01 UTC)

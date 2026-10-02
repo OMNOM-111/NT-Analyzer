@@ -5,6 +5,18 @@
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: DONE
+- New post-release second-account QA checkpoint: the Chrome identity uses
+  different canonical users in Canary (`8798656225084765`) and Production
+  (`8813453773725695`). Both PostgreSQL entitlement stores retain expired
+  one-day Pro rows and exhausted trial usage; neither server was changed by
+  this read-only diagnosis. Shipped account erasure is Local/Preview-only,
+  not a safe server operation. PR #313 remains draft; no beta.106 artifact,
+  schema, sender, scheduler or release identity changed.
+- Current health is not the historical release snapshot: a read-only probe
+  on 2026-10-02T14:27–14:30Z returned 503 `api_admission_saturated` from
+  both public Canary and Production live/ready, and from Production's
+  host-local backend health, despite Supervisor RUNNING. Local health is
+  200. No server process, config, artifact or database was changed.
 - Current task: Local configuration and documentation only. `main` at task
   start is `9483bac868d829f3891e5e09fe84c18d242cf9c6`, after the
   documentation-only PR #312. Canary/Production still run the single beta.106

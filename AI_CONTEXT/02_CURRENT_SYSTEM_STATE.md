@@ -6,6 +6,22 @@
 - Current Production version/build/artifact when known: `0.10.0-beta.106` / `sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z` / `art_7aebf504ae354ce7981c58359a1ff546`; deployment health and periodic delivery acceptance PASS
 - Scope: Current product/runtime state after beta.106, plus separate Local recovery task
 - Status: DONE
+- Second-account QA checkpoint (2026-10-02): Chrome is the owner's second
+  personal Google account, not Preview. Separate IDs are Canary
+  `8798656225084765` and Production `8813453773725695`. Read-only server
+  entitlement rows retain the exhausted five-hour trials and expired one-day
+  Pro grants in both environments. No permanent Pro was granted. The new
+  full-lifecycle QA is **BLOCKED** at server deletion: beta.106 intentionally
+  returns 503 before account-delete challenge in PostgreSQL environments
+  because relational erasure is unavailable. No deletion/re-registration or
+  reboot PASS is claimed; PR #313 and its Timeline card remain In progress.
+  The earlier beta.106 7/7 product release remains Done and unchanged.
+- Current availability warning, 2026-10-02T14:27–14:30Z: public Canary and
+  Production `/live` and `/ready` returned 503 `api_admission_saturated`;
+  Production host-local backend health returned the same 503. Supervisor
+  process state was RUNNING, Local health remained 200. No fix or restart
+  was attempted. Historical beta.106 acceptance does not supersede this
+  current runtime observation.
 - Current Git main at task start is `9483bac868d829f3891e5e09fe84c18d242cf9c6`
   (PR #312 documentation-only). The deployed application source remains the
   beta.106 SHA in the header. The previous big product card is Done/7 of 7
