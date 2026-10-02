@@ -1,7 +1,7 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
-- Last verified UTC: 2026-10-02T05:14:45Z
+- Last verified UTC: 2026-10-02T11:09:18Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Current Production version/build/artifact when known: `0.10.0-beta.106` / `sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z` / `art_7aebf504ae354ce7981c58359a1ff546`; deployment health and periodic delivery acceptance PASS
 - Scope: Current product/runtime state after beta.106, plus separate Local recovery task
@@ -29,6 +29,14 @@
   Canary/Production registration reached step 1 of 3. The existing Chrome
   non-owner Professional trial is expired in both server environments, so a
   fresh new-user chart/security walk was not possible without changing access.
+  The Chrome Google account was matched in owner UI to separate active,
+  non-owner user IDs `8798656225084765` (Canary) and `8813453773725695`
+  (Production). Its `Полное управление` workspace label is not an active
+  product entitlement; both environments show the spent five-hour trial.
+  No Pro grant has been applied at this checkpoint. The owner-stable old-root
+  `AI_CONTEXT` path is a verified junction to the sole tracked canonical
+  `local-current/AI_CONTEXT` directory; PR #313 is draft with 5/5 required
+  checks passing at `2c60367f` before its next documentation checkpoint.
   This does not invalidate the recorded beta.106 product acceptance; see the
   [scoped parity matrix](../NT-Analyzer/docs/changelog/2026-10-01-local-runtime-documentation-canonicalization.md).
 - The Local `StratForge Vitek` Scheduled Task stays Disabled. Local Telegram

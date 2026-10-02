@@ -100,6 +100,13 @@ copy to current main:
 | MERGE | No old dirty file merged into this branch. Current governance and AI_CONTEXT edits were written against clean main plus evidence. | Review any genuinely unique old material separately after release; no automated merge. |
 | DELETE | None. | No potentially user-owned file was proved disposable. |
 
+The two nested `.worktrees` and `timeline-review-worktree` are separate Git
+worktrees, not disposable folders. Heads `256af9db` (shared-model completion)
+and `3266e08f` (timeline review) are ancestors of current `origin/main`;
+`f7add2d3` (chart-gateway closeout) is not, but its branch-only diff is
+documentation/context, not application code. All three remain intact for
+later owner-reviewed archival; none was cleaned or removed here.
+
 ## Fresh visual/technical parity — scoped post-release check
 
 This is **not** a repeat of the previously accepted beta.106 7/7 product
