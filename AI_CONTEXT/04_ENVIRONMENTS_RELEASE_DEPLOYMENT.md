@@ -1,10 +1,30 @@
 # 04. Environments, Release and Deployment
 
 - Context Pack document: 04_ENVIRONMENTS_RELEASE_DEPLOYMENT.md
-- Last verified UTC: 2026-10-02T18:44:00Z
+- Last verified UTC: 2026-10-03T00:20:00Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Scope: Environment isolation, immutable release, promotion and rollback
 - Status: IN DEVELOPMENT
+- Latest environment checkpoint: `main`
+  `5e69165c8bc33dabdd9746059f3706ba8b92859b`, final-main CI
+  `37074945281` PASS. One signed immutable beta.107 artifact
+  `art_f1d36d6e639e49ea806b938d725af8a5`, build
+  `sf-0.10.0-beta.107-5e69165c8bc3-20261002T235748Z`, archive SHA256
+  `D3FD6210D9F76B2A27056E0534582E62A3CD47DD064EFED87A46AC931D54F8D9`,
+  manifest/runtime SHA256
+  `8C3B7B7C525C32002CC3E56578744AA766F86A8B349E480933245897858BE977`.
+  Canary deployment `dep_62928d31139744219ad959e542a71200` applied
+  schema 25 (pending 0) and public `/live` and `/ready` are 200. Canary
+  current release is beta.107; prior beta.106 release remains its rollback
+  slot. Verified pre-deploy backup
+  `pre-beta107-canary-peer-20261003T001840Z` manifest SHA256
+  `653E93C30950A79B2365445566CC22248930503B5F7D3B3E1BEDB134A02D4887`.
+  Two earlier backup attempts failed only because Cloudflare returned 403/1010
+  to the helper's Python-urllib User-Agent; their snapshots are retained but
+  are not PASS. Only the ignored probe was corrected. Canary lifecycle QA
+  remains pending. Production still runs beta.106 artifact
+  `art_7aebf504ae354ce7981c58359a1ff546`, is the sole Telegram sender;
+  no beta.107 Production promotion. Older bullets below are dated history.
 - beta.107 is Development source only: migration 0025 and the relational
   erasure adapter passed initial disposable PostgreSQL/RLS tests. Its VERSION
   is `0.10.0-beta.107`; there is no clean final source SHA, PR CI, signed

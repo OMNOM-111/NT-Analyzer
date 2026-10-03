@@ -2,6 +2,47 @@
 
 Status: operational recovery PASS; incident trigger UNKNOWN; beta.107 DEVELOPMENT IN PROGRESS. This record extends the current post-beta.106 task, not the closed beta.106 product release.
 
+## beta.107 final-main CI, immutable artifact and Canary deployment (2026-10-03T00:20Z)
+
+Required CI run `37074945281` passed on exact merged `main`
+`5e69165c8bc33dabdd9746059f3706ba8b92859b`. The release-control
+Development runtime was clean at that SHA. One signed immutable artifact
+`art_f1d36d6e639e49ea806b938d725af8a5` was created for
+`0.10.0-beta.107`: build
+`sf-0.10.0-beta.107-5e69165c8bc3-20261002T235748Z`, archive SHA256
+`D3FD6210D9F76B2A27056E0534582E62A3CD47DD064EFED87A46AC931D54F8D9`,
+manifest/runtime SHA256
+`8C3B7B7C525C32002CC3E56578744AA766F86A8B349E480933245897858BE977`.
+The release candidate is `rc_504d02a0ee6c44c28acb0e550a3c8b4a`.
+
+Canary backup attempts `pre-beta107-canary-peer-20261003T000437Z` and
+`pre-beta107-canary-peer-20261003T000852Z` retained their snapshots but
+failed the post-restart public health gate and are **not** retroactive PASS.
+Read-only reproduction showed Cloudflare HTTP 403, code 1010, for the
+helper's default `Python-urllib/3.11` User-Agent; the same Canary `/live`
+and `/ready` returned HTTP 200 with `StratForge-BackupHealth/1`. Supervisor
+processes were RUNNING on unchanged beta.106. The only correction was to
+the ignored operational backup helper's HTTP probe; no product/runtime code,
+artifact, schema or server security gate changed. New backup
+`pre-beta107-canary-peer-20261003T001840Z` exited 0: quiesce, peer
+PostgreSQL dump (the configured backup role still lacks `BYPASSRLS`),
+runtime/config snapshot, independent checksums and `pg_restore --list`,
+restart, `/live` and `/ready` 200, exact beta.106 current/previous identity.
+Its manifest SHA256 is
+`653E93C30950A79B2365445566CC22248930503B5F7D3B3E1BEDB134A02D4887`,
+dump SHA256
+`1D4CA5046067DFAEDC357B7326002A33265CCB213546F2F5CFDB9D05F8156EC0`.
+All snapshots and rollback slots remain on the server outside Git/artifact.
+
+Release Center deployment `dep_62928d31139744219ad959e542a71200`
+promoted the same artifact to Canary with all eight adapter stages PASS,
+including migration 0025, schema latest 25 and pending 0. Canary public
+`/live` and `/ready` returned 200 with beta.107, exact source/build and
+manifest/runtime identity. **Canary functional acceptance remains pending**:
+the real separate Chrome account has not yet completed delete/re-register.
+Production remains on beta.106; no Production promotion or real-account
+deletion has occurred. The prior beta.106 product card stays Done 7/7.
+
 ## Current incident and recovery
 
 Both Canary and Production beta.106 returned HTTP 503 `api_admission_saturated` on public and backend `/live` and `/ready` while Supervisor reported the API processes RUNNING. Canary had 24/24 HTTP admission slots occupied (4,734 accepted, 4,710 completed, at least 954 rejected); Production had 48/48 (27,689 accepted, 26,037 completed, 1,604 completed/promoted WebSockets, at least 886 rejected). The accounting identity `accepted - completed HTTP - completed WebSocket = active` held in both environments: this was occupied handler capacity, not a demonstrated semaphore leak. Canary had 22 backend `CLOSE-WAIT` sockets; Production had 41. PostgreSQL latency was below 13 ms with no waiting locks; worker, command and Telegram outbox queues had no active work. The specific route/stack that held the HTTP handlers cannot be established from the available pre-restart telemetry; do not attribute it to a provider, database, or particular endpoint without evidence.
