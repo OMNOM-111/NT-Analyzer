@@ -1,6 +1,6 @@
 # 2026-10-02 — API admission recovery and beta.107 relational-erasure development
 
-Status: operational recovery PASS; incident trigger UNKNOWN; beta.107 DEVELOPMENT IN PROGRESS. This record extends the current post-beta.106 task, not the closed beta.106 product release.
+Status: operational recovery PASS; incident trigger UNKNOWN; beta.107 signed Canary runtime PASS, lifecycle acceptance pending. This record extends the current post-beta.106 task, not the closed beta.106 product release.
 
 ## beta.107 final-main CI, immutable artifact and Canary deployment (2026-10-03T00:20Z)
 
