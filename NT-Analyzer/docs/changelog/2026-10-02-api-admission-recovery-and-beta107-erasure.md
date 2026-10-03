@@ -1,6 +1,47 @@
 # 2026-10-02 — API admission recovery and beta.107 relational-erasure development
 
-Status: operational recovery PASS; incident trigger UNKNOWN; beta.107 DEVELOPMENT IN PROGRESS. This record extends the current post-beta.106 task, not the closed beta.106 product release.
+Status: operational recovery PASS; incident trigger UNKNOWN; beta.107 signed Canary runtime PASS, lifecycle acceptance pending. This record extends the current post-beta.106 task, not the closed beta.106 product release.
+
+## beta.107 final-main CI, immutable artifact and Canary deployment (2026-10-03T00:20Z)
+
+Required CI run `37074945281` passed on exact merged `main`
+`5e69165c8bc33dabdd9746059f3706ba8b92859b`. The release-control
+Development runtime was clean at that SHA. One signed immutable artifact
+`art_f1d36d6e639e49ea806b938d725af8a5` was created for
+`0.10.0-beta.107`: build
+`sf-0.10.0-beta.107-5e69165c8bc3-20261002T235748Z`, archive SHA256
+`D3FD6210D9F76B2A27056E0534582E62A3CD47DD064EFED87A46AC931D54F8D9`,
+manifest/runtime SHA256
+`8C3B7B7C525C32002CC3E56578744AA766F86A8B349E480933245897858BE977`.
+The release candidate is `rc_504d02a0ee6c44c28acb0e550a3c8b4a`.
+
+Canary backup attempts `pre-beta107-canary-peer-20261003T000437Z` and
+`pre-beta107-canary-peer-20261003T000852Z` retained their snapshots but
+failed the post-restart public health gate and are **not** retroactive PASS.
+Read-only reproduction showed Cloudflare HTTP 403, code 1010, for the
+helper's default `Python-urllib/3.11` User-Agent; the same Canary `/live`
+and `/ready` returned HTTP 200 with `StratForge-BackupHealth/1`. Supervisor
+processes were RUNNING on unchanged beta.106. The only correction was to
+the ignored operational backup helper's HTTP probe; no product/runtime code,
+artifact, schema or server security gate changed. New backup
+`pre-beta107-canary-peer-20261003T001840Z` exited 0: quiesce, peer
+PostgreSQL dump (the configured backup role still lacks `BYPASSRLS`),
+runtime/config snapshot, independent checksums and `pg_restore --list`,
+restart, `/live` and `/ready` 200, exact beta.106 current/previous identity.
+Its manifest SHA256 is
+`653E93C30950A79B2365445566CC22248930503B5F7D3B3E1BEDB134A02D4887`,
+dump SHA256
+`1D4CA5046067DFAEDC357B7326002A33265CCB213546F2F5CFDB9D05F8156EC0`.
+All snapshots and rollback slots remain on the server outside Git/artifact.
+
+Release Center deployment `dep_62928d31139744219ad959e542a71200`
+promoted the same artifact to Canary with all eight adapter stages PASS,
+including migration 0025, schema latest 25 and pending 0. Canary public
+`/live` and `/ready` returned 200 with beta.107, exact source/build and
+manifest/runtime identity. **Canary functional acceptance remains pending**:
+the real separate Chrome account has not yet completed delete/re-register.
+Production remains on beta.106; no Production promotion or real-account
+deletion has occurred. The prior beta.106 product card stays Done 7/7.
 
 ## Current incident and recovery
 
@@ -91,3 +132,16 @@ still running full pytest on the superseded head, with another queued behind
 the same `online/busy` runner. No runner service restart, code workaround for
 queue contention, merge, artifact or deployment has occurred. This change
 awaits commit and new required CI on its own final PR head.
+
+## PR #314 merge / final-main CI checkpoint (2026-10-02T22:55Z)
+
+The narrow correction was committed as
+`6194ef0d247651c34729add32debcead9d2bc102` and passed all five required
+PR checks. The two Windows full suites executed sequentially on the single
+healthy `windows-self-hosted` runner; `python-tests` passed 6153 cases with
+147 skips, and `Tests (windows-self-hosted)` passed after ~70 minutes. The
+runner was never restarted; queued jobs were not misclassified as code
+failures. PR #314 merged into exact `main`
+`5e69165c8bc33dabdd9746059f3706ba8b92859b` at 22:54Z. Required
+final-main `ci` run `37074945281` is in progress: bridge passed, Python
+tests active. No beta.107 artifact, migration or environment deployment yet.

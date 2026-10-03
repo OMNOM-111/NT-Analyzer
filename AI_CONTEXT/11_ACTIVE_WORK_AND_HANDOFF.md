@@ -1,14 +1,53 @@
 # 11. Active Work and Handoff
 
 - Context Pack document: 11_ACTIVE_WORK_AND_HANDOFF.md
-- Last verified UTC: 2026-10-02T20:20:00Z
+- Last verified UTC: 2026-10-03T00:20:00Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
-- Current Canary source SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885; beta.106 accepted, current health recovered
+- Current Canary source SHA: 5e69165c8bc33dabdd9746059f3706ba8b92859b; beta.107 runtime live/ready PASS, lifecycle acceptance pending
 - Scope: closed beta.95 → beta.106 product card plus In progress Local recovery / beta.107 erasure task
 - Status: IN DEVELOPMENT
 - Current Production version/build/artifact when known: `0.10.0-beta.106` / `sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z` / `art_7aebf504ae354ce7981c58359a1ff546`; health/readiness and delivery receipt acceptance PASS; product package 7/7 Production accepted
 
 ## Current task — Local Runtime & Documentation Canonicalization
+
+Latest release checkpoint (2026-10-03T00:20Z): required final-main CI run
+`37074945281` passed on exact `main`
+`5e69165c8bc33dabdd9746059f3706ba8b92859b`. Release Center signed
+one immutable beta.107 artifact `art_f1d36d6e639e49ea806b938d725af8a5`,
+build `sf-0.10.0-beta.107-5e69165c8bc3-20261002T235748Z`, archive SHA256
+`D3FD6210D9F76B2A27056E0534582E62A3CD47DD064EFED87A46AC931D54F8D9`,
+manifest/runtime SHA256
+`8C3B7B7C525C32002CC3E56578744AA766F86A8B349E480933245897858BE977`.
+The first two Canary backup attempts produced retained snapshots but failed
+their health gate: Cloudflare returned HTTP 403 / code 1010 to the backup
+helper's default `Python-urllib` User-Agent while the same `/live` and
+`/ready` routes returned 200 to a service User-Agent. Only the ignored
+operational helper probe was corrected. A fresh peer backup
+`pre-beta107-canary-peer-20261003T001840Z` exited 0 and independently
+verified manifest SHA256
+`653E93C30950A79B2365445566CC22248930503B5F7D3B3E1BEDB134A02D4887`,
+PostgreSQL dump, runtime/config and `pg_restore --list`; beta.106 was ready
+after restart. The exact signed artifact then deployed to Canary through
+Release Center (`dep_62928d31139744219ad959e542a71200`): migration 0025
+applied, pending 0, public `/live` and `/ready` 200 with beta.107 identity.
+Canary lifecycle QA is **not yet accepted**. Production remains beta.106;
+there is no Production promotion or account deletion yet. The historical
+beta.106 product card remains Done 7/7.
+
+PR #314 merge checkpoint (2026-10-02T22:55Z) supersedes the historical
+CI-pending paragraphs below: the final PR head
+`6194ef0d247651c34729add32debcead9d2bc102` passed all five required
+checks: Static, Ubuntu, Windows self-hosted, Python and bridge. The Windows
+`python-tests` job completed 6153 passed / 147 skipped; the other Windows
+full suite passed after its normal ~70-minute run. The single runner stayed
+online and served queued jobs serially; no runner service restart was needed.
+PR #314 was merged to exact `main`
+`5e69165c8bc33dabdd9746059f3706ba8b92859b`. Mandatory CI on **that**
+main SHA is running (`ci` run `37074945281`); the bridge job already passed
+and the full `python-tests` job is active. No signed beta.107 artifact or
+Canary/Production deployment exists. The beta.106 server baseline and 7/7
+product closeout remain unchanged. Next gate: final-main CI PASS, then one
+immutable beta.107 artifact and Canary lifecycle QA.
 
 PR #314 CI update (2026-10-02T20:20Z): on the current head
 `57d5dfac253714f55cfc3a664e0ab845fb12d8ba`, Ubuntu executed full

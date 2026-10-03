@@ -1,11 +1,24 @@
 # 02. Current System State
 
 - Context Pack document: 02_CURRENT_SYSTEM_STATE.md
-- Last verified UTC: 2026-10-02T19:13:00Z
+- Last verified UTC: 2026-10-03T00:20:00Z
 - Verified against Git SHA: e7ecd2133c65f7ec6ce2bf8dc02eb797819ea885
 - Current Production version/build/artifact when known: `0.10.0-beta.106` / `sf-0.10.0-beta.106-e7ecd2133c65-20261001T150927Z` / `art_7aebf504ae354ce7981c58359a1ff546`; deployment health and periodic delivery acceptance PASS
 - Scope: Closed beta.106 product release plus In progress Local recovery / beta.107 erasure task
 - Status: IN DEVELOPMENT
+- Latest release checkpoint: PR #314 merged into `main`
+  `5e69165c8bc33dabdd9746059f3706ba8b92859b`; required final-main CI
+  `37074945281` PASS. Signed immutable beta.107 artifact
+  `art_f1d36d6e639e49ea806b938d725af8a5` (build
+  `sf-0.10.0-beta.107-5e69165c8bc3-20261002T235748Z`, archive SHA256
+  `D3FD6210D9F76B2A27056E0534582E62A3CD47DD064EFED87A46AC931D54F8D9`,
+  manifest/runtime SHA256
+  `8C3B7B7C525C32002CC3E56578744AA766F86A8B349E480933245897858BE977`)
+  is now on Canary. Canary schema 25/pending 0, `/live` and `/ready` 200;
+  real second-account lifecycle acceptance still pending. Production remains
+  beta.106 and the sole Telegram sender. The historical beta.106 product
+  package stays 7/7 Done. Older Development-only bullets below are dated
+  history, not current deployment status. [Release checkpoint](../NT-Analyzer/docs/changelog/2026-10-02-api-admission-recovery-and-beta107-erasure.md).
 - beta.107 Development update: `VERSION.json` names `0.10.0-beta.107` on
   open PR #314, source `7979e32b1175d4730cd20e71a5c954206645027a`.
   PostgreSQL migration 0025 applied from scratch on disposable TLS loopback
